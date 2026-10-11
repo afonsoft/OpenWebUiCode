@@ -47,6 +47,10 @@ public sealed class WorkspaceGitService
         {
             return Empty;
         }
+        if (!await IsRepoRootAsync(workdir, ct))
+        {
+            return Empty;
+        }
 
         var branch = await RunGitAsync(workdir, ct, "rev-parse", "--abbrev-ref", "HEAD");
         if (branch is null)
@@ -208,5 +212,50 @@ public sealed class WorkspaceGitService
         catch (InvalidOperationException) { return null; }
         catch (IOException) { return null; }
         catch (TimeoutException) { return null; }
+    }
+
+    /// <summary>
+    /// Commit do painel SCM (SPEC-20261011-ide-search-scm): <c>git add -A</c>
+    /// + <c>git commit</c> com identidade <c>-c</c> (não depender de config do
+    /// repo). Retorna o hash novo; null no erro/sem git.
+    /// </summary>
+    public async Task<string?> CommitAsync(string workdir, string message, CancellationToken ct)
+    {
+        if (!await IsRepoRootAsync(workdir, ct))
+        {
+            return null; // workdir não é raiz de repo — não commitar no pai
+        }
+        var add = await RunGitAsync(workdir, ct, "add", "-A");
+        if (add is null)
+        {
+            return null;
+        }
+        var commit = await RunGitAsync(workdir, ct,
+            "-c", "user.name=OpenWebUI IDE",
+            "-c", "user.email=ide@openwebui.local",
+            "commit", "--no-verify", "-m", message);
+        if (commit is null)
+        {
+            return null; // nada a commitar ou falha do git
+        }
+        var head = await RunGitAsync(workdir, ct, "rev-parse", "HEAD");
+        return head?.Trim();
+    }
+
+    /// <summary>True só quando <paramref name="workdir"/> é a raiz do repo git —
+    /// impede que <c>git</c> escale pra um repo pai (workdir sob o clone do app)
+    /// e leia/escreva no repositório errado (SPEC-20261011-ide-search-scm).</summary>
+    private static async Task<bool> IsRepoRootAsync(string workdir, CancellationToken ct)
+    {
+        var top = await RunGitAsync(workdir, ct, "rev-parse", "--show-toplevel");
+        if (top is null)
+        {
+            return false;
+        }
+        return string.Equals(
+            Path.GetFullPath(top.Trim().Replace('/', Path.DirectorySeparatorChar))
+                .TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetFullPath(workdir).TrimEnd(Path.DirectorySeparatorChar),
+            StringComparison.Ordinal);
     }
 }

@@ -42,6 +42,24 @@ public sealed record WorkspaceFileRenameRequest(string? From, string? To);
 /// <summary>Remoção de arquivo ou diretório (recursiva).</summary>
 public sealed record WorkspaceFileDeleteRequest(string? Path);
 
+/// <summary>Match de busca global no workdir (SPEC-20261011-ide-search-scm, Fase C).</summary>
+/// <param name="Path">Caminho relativo ao workdir.</param>
+/// <param name="Line">Linha do match (0-based).</param>
+/// <param name="Col">Coluna do match (0-based).</param>
+/// <param name="Text">Linha inteira (trimmed, cap 300 chars).</param>
+public sealed record WorkspaceSearchMatchItem(string Path, int Line, int Col, string Text);
+
+/// <summary>Resultado da busca global.</summary>
+/// <param name="Truncated">True quando hits excederam o cap (200).</param>
+public sealed record WorkspaceSearchResponse(
+    IReadOnlyList<WorkspaceSearchMatchItem> Matches, bool Truncated);
+
+/// <summary>Commit SCM do painel (SPEC-20261011-ide-search-scm): <c>git add -A + commit</c>.</summary>
+public sealed record WorkspaceCommitRequest(string? Message);
+
+/// <summary>Resultado do commit: hash novo ou erro do git.</summary>
+public sealed record WorkspaceCommitResponse(bool Ok, string? Commit, string? Error);
+
 /// <summary>Item de skill do repositório (descoberta em <c>**/SKILL.md</c>).</summary>
 /// <param name="Name">Nome do slash command (frontmatter <c>name</c> ou diretório-pai).</param>
 /// <param name="Description">Descrição curta (frontmatter).</param>

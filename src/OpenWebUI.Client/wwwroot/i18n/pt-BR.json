@@ -915,5 +915,12 @@
   "ide.tab_close_right": "Fechar à Direita",
   "ide.tab_close_all": "Fechar Todas",
   "ide.tab_pin": "Manter Aberta",
-  "ide.tab_copy_path": "Copiar Caminho"
+  "ide.tab_copy_path": "Copiar Caminho",
+  "ide.view_search": "Busca",
+  "ide.search_placeholder": "Buscar",
+  "ide.search_hint": "Digite para buscar em todos os arquivos",
+  "ide.search_truncated": "Resultados truncados (200+ matches)",
+  "ide.commit": "Commit",
+  "ide.commit_message": "Mensagem de commit",
+  "ide.commit_placeholder": "Mensagem (Ctrl+Enter para commitar)"
 }

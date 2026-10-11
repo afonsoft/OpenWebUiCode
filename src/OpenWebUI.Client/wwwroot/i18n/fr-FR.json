@@ -915,5 +915,12 @@
   "ide.tab_close_right": "Fermer à droite",
   "ide.tab_close_all": "Tout fermer",
   "ide.tab_pin": "Garder ouvert",
-  "ide.tab_copy_path": "Copier le chemin"
+  "ide.tab_copy_path": "Copier le chemin",
+  "ide.view_search": "Recherche",
+  "ide.search_placeholder": "Rechercher",
+  "ide.search_hint": "Tapez pour rechercher dans tous les fichiers",
+  "ide.search_truncated": "Résultats tronqués (200+ correspondances)",
+  "ide.commit": "Commit",
+  "ide.commit_message": "Message de commit",
+  "ide.commit_placeholder": "Message (Ctrl+Entrée pour commiter)"
 }

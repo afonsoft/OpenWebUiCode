@@ -36,7 +36,20 @@ public static class WorkspaceFileEndpoints
         repo.MapPost("/rename", RenameAsync);
         repo.MapPost("/delete", DeleteAsync);
         repo.MapGet("/git", GitAsync);
+        repo.MapGet("/search", SearchAsync);
+        repo.MapPost("/commit", CommitAsync);
     }
+
+    /// <summary>Extensões puladas pela busca global (binárias/geradas).</summary>
+    private static readonly HashSet<string> SearchSkipExt = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz",
+        ".woff", ".woff2", ".ttf", ".otf", ".dll", ".exe", ".so", ".dylib",
+        ".wasm", ".dat", ".db", ".sqlite", ".min.js", ".map", ".lock",
+    };
+
+    private const int SearchMaxFileBytes = 512 * 1024;
+    private const int SearchMaxMatches = 200;
 
     /// <summary>Guard comum: usuário autenticado + repo vinculado → workdir.</summary>
     private static async Task<(string? UserId, string? Workdir, IResult? Reject)> BoundWorkdirAsync(
@@ -77,7 +90,8 @@ public static class WorkspaceFileEndpoints
     /// carga de <c>GET /chats/{id}/runs/{runId}/diff</c>, sem run).</summary>
     private static async Task<IResult> GitAsync(
         string? chatId, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        WorkspaceGitService git, CancellationToken ct)
+        WorkspaceGitService git, ConfigService config, IConfiguration configuration,
+        CancellationToken ct)
     {
         var (_, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
         if (reject is not null)
@@ -87,11 +101,25 @@ public static class WorkspaceFileEndpoints
         var workdir = w!;
 
         var info = await git.GetInfoAsync(workdir, ct);
+        var gitWrite = await GitWriteEnabledAsync(config, configuration, ct);
         return Results.Ok(new WorkspaceGitResponse(
             info.IsRepo, info.Branch, info.Added, info.Removed,
             info.Files.Select(f => new WorkspaceGitFileResponse(
                 f.Path, f.Added, f.Removed, f.Status)).ToList(),
-            info.Diff, info.DiffTruncated));
+            info.Diff, info.DiffTruncated, GitWrite: gitWrite));
+    }
+
+    /// <summary>Flag do commit SCM (SPEC-20261011-ide-search-scm): env
+    /// <c>Ide:GitWrite</c>/<c>IDE_GIT_WRITE</c> → kv <c>ide.git_write</c> → off.</summary>
+    private static async Task<bool> GitWriteEnabledAsync(
+        ConfigService config, IConfiguration configuration, CancellationToken ct)
+    {
+        if (bool.TryParse(configuration["Ide:GitWrite"], out var v)
+            || bool.TryParse(Environment.GetEnvironmentVariable("IDE_GIT_WRITE"), out v))
+        {
+            return v;
+        }
+        return await config.GetAsync<bool?>("ide.git_write", null, ct) ?? false;
     }
 
     // ---------- GET /tree ----------
@@ -457,4 +485,157 @@ public static class WorkspaceFileEndpoints
     /// <summary>ETag opaco por mtime+size — invalida em qualquer escrita.</summary>
     private static string ETagOf(string full, long size) =>
         $"\"{File.GetLastWriteTimeUtc(full).Ticks:x}-{size:x}\"";
+
+    // ---------- GET /search (SPEC-20261011-ide-search-scm, Fase C) ----------
+
+    /// <summary>Busca global no workdir (Ctrl+Shift+F): literal
+    /// case-insensitive por linha, pulando dirs colapsados, symlinks,
+    /// binários e arquivos &gt;512KB. Cap de 200 matches.</summary>
+    private static async Task<IResult> SearchAsync(
+        string? q, string? path, string? chatId,
+        HttpContext http, AppDbContext db, WorkspaceRepoService repos, CancellationToken ct)
+    {
+        var (_, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        if (reject is not null)
+        {
+            return reject;
+        }
+        var workdir = w!;
+
+        if (string.IsNullOrWhiteSpace(q))
+        {
+            return Results.Ok(new WorkspaceSearchResponse([], false));
+        }
+        var root = WorkspaceFiles.ResolveInsideFinal(workdir, path, out var error);
+        if (root is null)
+        {
+            return Results.BadRequest(new { detail = error });
+        }
+        if (!Directory.Exists(root))
+        {
+            return NotFoundResult();
+        }
+
+        var matches = new List<WorkspaceSearchMatchItem>();
+        var truncated = false;
+        foreach (var file in EnumerateSearchable(root))
+        {
+            if (matches.Count >= SearchMaxMatches)
+            {
+                truncated = true;
+                break;
+            }
+            string[] lines;
+            try
+            {
+                lines = await File.ReadAllLinesAsync(file, ct);
+            }
+            catch (IOException) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
+
+            var rel = WorkspaceFiles.RelativeOf(workdir, file);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                var col = lines[i].IndexOf(q, StringComparison.OrdinalIgnoreCase);
+                if (col < 0)
+                {
+                    continue;
+                }
+                var text = lines[i].Trim();
+                matches.Add(new WorkspaceSearchMatchItem(
+                    rel, i, col, text.Length > 300 ? text[..300] : text));
+                if (matches.Count >= SearchMaxMatches)
+                {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+        return Results.Ok(new WorkspaceSearchResponse(matches, truncated));
+    }
+
+    /// <summary>DFS de arquivos pesquisáveis: pula dirs colapsados, symlinks,
+    /// extensões binárias e arquivos acima do cap de tamanho.</summary>
+    private static IEnumerable<string> EnumerateSearchable(string dir)
+    {
+        IEnumerable<string> dirs;
+        IEnumerable<string> files;
+        try
+        {
+            dirs = Directory.EnumerateDirectories(dir);
+            files = Directory.EnumerateFiles(dir);
+        }
+        catch (IOException) { yield break; }
+        catch (UnauthorizedAccessException) { yield break; }
+
+        foreach (var d in dirs)
+        {
+            var name = Path.GetFileName(d);
+            if (CollapsedDirs.Contains(name) || new DirectoryInfo(d).LinkTarget is not null)
+            {
+                continue;
+            }
+            foreach (var f in EnumerateSearchable(d))
+            {
+                yield return f;
+            }
+        }
+
+        foreach (var f in files)
+        {
+            var ext = Path.GetExtension(f);
+            if (SearchSkipExt.Contains(ext)
+                || f.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            long size;
+            try { size = new FileInfo(f).Length; }
+            catch (IOException) { continue; }
+            if (size > SearchMaxFileBytes)
+            {
+                continue;
+            }
+            yield return f;
+        }
+    }
+
+    // ---------- POST /commit (SPEC-20261011-ide-search-scm) ----------
+
+    /// <summary>Commit SCM do painel: gated por <c>ide.git_write</c>
+    /// (default off). <c>git add -A + commit -m</c> no workdir.</summary>
+    private static async Task<IResult> CommitAsync(
+        WorkspaceCommitRequest? request, string? chatId,
+        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
+        WorkspaceGitService git, ConfigService config, IConfiguration configuration,
+        ILogger<Program> logger, CancellationToken ct)
+    {
+        var (uid, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        if (reject is not null)
+        {
+            return reject;
+        }
+        if (!await GitWriteEnabledAsync(config, configuration, ct))
+        {
+            return Results.Json(
+                new WorkspaceCommitResponse(false, null,
+                    "Escrita git desabilitada (ide.git_write)."),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+        var message = request?.Message?.Trim();
+        if (string.IsNullOrEmpty(message))
+        {
+            return Results.BadRequest(
+                new WorkspaceCommitResponse(false, null, "Mensagem de commit vazia."));
+        }
+
+        var head = await git.CommitAsync(w!, message, ct);
+        if (head is null)
+        {
+            return Results.Ok(new WorkspaceCommitResponse(
+                false, null, "Commit falhou (nada a commitar ou git indisponível)."));
+        }
+        logger.LogInformation("workspace commit user={UserId} sha={Sha}", uid, head);
+        return Results.Ok(new WorkspaceCommitResponse(true, head, null));
+    }
 }

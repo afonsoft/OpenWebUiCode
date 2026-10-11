@@ -1,3 +1,4 @@
+@inject ApiService Api
 @inject LocalizationService L
 @inject IdeTestRunService TestRun
 
@@ -52,6 +53,21 @@ else
         <div class="px-2 py-1.5 text-[0.625rem] text-amber-600 dark:text-amber-400">@L["ide.diff_truncated"]</div>
     }
 }
+@if (Git?.GitWrite == true)
+{
+    @* Commit SCM (SPEC-20261011-ide-search-scm): gated por ide.git_write. *@
+    <div class="border-t border-gray-100 dark:border-gray-800 p-2 flex items-center gap-1.5">
+        <input class="min-w-0 flex-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent px-2 py-1 text-xs outline-none"
+               placeholder="@L["ide.commit_placeholder"]" aria-label="@L["ide.commit_message"]"
+               @bind="_commitMsg" @onkeydown="OnCommitKeyDown" />
+        <button class="auth-submit !w-auto px-3 py-1 text-[0.6875rem]" disabled="@_committing"
+            @onclick="CommitAsync">@L["ide.commit"]</button>
+    </div>
+    @if (_commitFeedback is not null)
+    {
+        <div class="px-2 pb-2 text-[0.6875rem] @(_commitOk ? "text-green-600 dark:text-green-400" : "text-red-500")">@_commitFeedback</div>
+    }
+}
 <div class="border-t border-gray-100 dark:border-gray-800 p-2">
     <button class="auth-submit !w-auto px-3 py-1.5 text-[0.6875rem]"
             @onclick="RunTestsAsync">@L["ide.run_tests"]</button>
@@ -72,6 +88,10 @@ else
 
     private string? _gitDiffSource;
     private Dictionary<string, string>? _gitDiffByFile;
+    private string _commitMsg = "";
+    private bool _committing;
+    private string? _commitFeedback;
+    private bool _commitOk;
 
     private string? GitFileDiff(string path)
     {
@@ -88,4 +108,35 @@ else
     }
 
     private Task RunTestsAsync() => TestRun.StartAsync();
+
+    private async Task OnCommitKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await CommitAsync();
+        }
+    }
+
+    /// <summary>git add -A + commit via endpoint (flag ide.git_write no server).</summary>
+    private async Task CommitAsync()
+    {
+        var msg = _commitMsg.Trim();
+        if (msg.Length == 0 || _committing)
+        {
+            return;
+        }
+        _committing = true;
+        _commitFeedback = null;
+        var r = await Api.CommitWorkspaceAsync(msg, ChatId);
+        _committing = false;
+        _commitOk = r?.Ok == true;
+        _commitFeedback = _commitOk
+            ? $"✓ {r!.Commit?[..Math.Min(8, r.Commit.Length)]}"
+            : r?.Error ?? "?";
+        if (_commitOk)
+        {
+            _commitMsg = "";
+            await OnChanged.InvokeAsync();
+        }
+    }
 }

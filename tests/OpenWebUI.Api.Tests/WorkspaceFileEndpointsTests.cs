@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenWebUI.Application.Contracts;
@@ -422,12 +423,29 @@ public class WorkspaceFileEndpointsTests
     public async Task Git_RepoVinculado_RetornaSnapshot()
     {
         using var ctx = await NewAppAsync(bound: true);
+        // A fixture cria .git como dir vazio — o guard toplevel==workdir
+        // (SPEC-20261011-ide-search-scm) rejeita .git falso; repo real
+        // com commit inicial exercita o caminho IsRepo=true.
+        await InitRepoAsync(ctx.Workdir!);
+
         var res = await ctx.Client.GetAsync("/api/v1/workspace/repo/git");
         Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         var body = await res.Content.ReadFromJsonAsync<WorkspaceGitResponse>();
         Assert.That(body, Is.Not.Null);
-        // O workdir semeado tem .git vazio → IsRepo true (repo existe, sem diff).
         Assert.That(body!.Git, Is.True);
+    }
+
+    /// <summary>.git vazio (sem repo real) → Git=false — não escala pra
+    /// repo pai quando o workdir mora dentro de um clone (SPEC Fase C).</summary>
+    [Test]
+    public async Task Git_DotGitFalso_NaoEscalaProRepoPai()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var res = await ctx.Client.GetAsync("/api/v1/workspace/repo/git");
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await res.Content.ReadFromJsonAsync<WorkspaceGitResponse>();
+        Assert.That(body, Is.Not.Null);
+        Assert.That(body!.Git, Is.False);
     }
 
     [Test]
@@ -595,6 +613,140 @@ public class WorkspaceFileEndpointsTests
         var json = JsonSerializer.Serialize(new WorkspaceRepoBinding(repo, "main", dir));
         db.ConfigEntries.Add(new ConfigEntry { Key = $"chat:{chatId}:workspace.repo", ValueJson = json });
         await db.SaveChangesAsync();
+    }
+
+    // ---------- SPEC-20261011-ide-search-scm (Fase C): /search + /commit ----------
+
+    /// <summary>Match textual (case-insensitive) no arquivo → linha/col certas.</summary>
+    [Test]
+    public async Task Search_EncontraMatch_LinhaECol()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var put = await ctx.Client.PutAsJsonAsync("/api/v1/workspace/repo/file",
+            new WorkspaceFileWriteRequest("a.txt", "hello\nworld HELLO\n"));
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var r = await ctx.Client.GetFromJsonAsync<WorkspaceSearchResponse>(
+            "/api/v1/workspace/repo/search?q=hello");
+        Assert.That(r, Is.Not.Null);
+        Assert.That(r!.Matches.Count, Is.EqualTo(2));
+        Assert.That(r.Matches[0].Path, Is.EqualTo("a.txt"));
+        Assert.That(r.Matches[0].Line, Is.EqualTo(0));
+        Assert.That(r.Matches[0].Col, Is.EqualTo(0));
+        Assert.That(r.Matches[1].Line, Is.EqualTo(1));
+        Assert.That(r.Matches[1].Col, Is.EqualTo(6));
+    }
+
+    /// <summary>Arquivo em diretório colapsado (.git) é ignorado pela busca.</summary>
+    [Test]
+    public async Task Search_PulaCollapsedDirs()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        File.WriteAllText(Path.Join(ctx.Workdir!, ".git", "hidden.txt"), "needle\n");
+
+        var r = await ctx.Client.GetFromJsonAsync<WorkspaceSearchResponse>(
+            "/api/v1/workspace/repo/search?q=needle");
+        Assert.That(r!.Matches, Is.Empty);
+    }
+
+    /// <summary>q vazio → resposta vazia (sem varrer o disco).</summary>
+    [Test]
+    public async Task Search_QueryVazia_Vazio()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.GetFromJsonAsync<WorkspaceSearchResponse>(
+            "/api/v1/workspace/repo/search?q=");
+        Assert.That(r!.Matches, Is.Empty);
+        Assert.That(r.Truncated, Is.False);
+    }
+
+    /// <summary>Path fora do workdir → 400 (jail ResolveInsideFinal).</summary>
+    [Test]
+    public async Task Search_PathForaDoJail_400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.GetAsync("/api/v1/workspace/repo/search?q=x&path=/etc");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    /// <summary>GET /git informa GitWrite=false por default (flag off).</summary>
+    [Test]
+    public async Task Git_Default_GitWriteFalse()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.GetFromJsonAsync<WorkspaceGitResponse>(
+            "/api/v1/workspace/repo/git");
+        Assert.That(r, Is.Not.Null);
+        Assert.That(r!.GitWrite, Is.False);
+    }
+
+    /// <summary>POST /commit sem a flag ide.git_write → 403.</summary>
+    [Test]
+    public async Task Commit_FlagOff_403()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/repo/commit",
+            new WorkspaceCommitRequest("teste"));
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+    }
+
+    /// <summary>Com Ide:GitWrite=true o commit cria HEAD e responde o sha.</summary>
+    [Test]
+    public async Task Commit_FlagOn_CriaCommit()
+    {
+        var dbPath = Path.Join(Path.GetTempPath(), $"openwebui-wf-{Guid.NewGuid():N}.db");
+        Environment.SetEnvironmentVariable("ConnectionStrings__Default", $"Data Source={dbPath}");
+        var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(
+            b => b.ConfigureAppConfiguration(
+                (_, cfg) => cfg.AddInMemoryCollection(
+                    new Dictionary<string, string?> { ["Ide:GitWrite"] = "true" })));
+        var (client, workdir, uid) = await SignUpAndBindAsync(factory, dbPath);
+        try
+        {
+            // A fixture cria .git como dir vazio — promove a repo real.
+            await InitRepoAsync(workdir!);
+
+            var put = await client.PutAsJsonAsync("/api/v1/workspace/repo/file",
+                new WorkspaceFileWriteRequest("novo.txt", "conteudo\n"));
+            Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+            var r = await client.PostAsJsonAsync("/api/v1/workspace/repo/commit",
+                new WorkspaceCommitRequest("feat: novo arquivo"));
+            Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            var body = await r.Content.ReadFromJsonAsync<WorkspaceCommitResponse>();
+            Assert.That(body, Is.Not.Null);
+            Assert.That(body!.Ok, Is.True);
+            Assert.That(body.Commit, Is.Not.Null.And.Not.Empty);
+            Assert.That(File.Exists(Path.Join(workdir!, ".git", "HEAD")), Is.True);
+        }
+        finally
+        {
+            client.Dispose();
+            factory.Dispose();
+            CleanupBoundWorkspace(uid);
+        }
+    }
+
+    /// <summary><c>git init</c> + commit vazio — repo real com HEAD válido
+    /// (abbrev-ref HEAD falha em repo sem commits).</summary>
+    private static async Task InitRepoAsync(string workdir)
+    {
+        foreach (var (label, args) in new (string, string)[]
+        {
+            ("init", "init"),
+            ("commit", "-c user.name=t -c user.email=t@t commit --allow-empty -m init"),
+        })
+        {
+            var p = System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo("git", args)
+                {
+                    WorkingDirectory = workdir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                })!;
+            await p.WaitForExitAsync();
+            Assert.That(p.ExitCode, Is.EqualTo(0), $"git {label} falhou");
+        }
     }
 
     // ---------- fixture helpers ----------

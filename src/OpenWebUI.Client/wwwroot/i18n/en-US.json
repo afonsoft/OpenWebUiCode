@@ -915,5 +915,12 @@
   "ide.tab_close_right": "Close to the Right",
   "ide.tab_close_all": "Close All",
   "ide.tab_pin": "Keep Open",
-  "ide.tab_copy_path": "Copy Path"
+  "ide.tab_copy_path": "Copy Path",
+  "ide.view_search": "Search",
+  "ide.search_placeholder": "Search",
+  "ide.search_hint": "Type to search across all files",
+  "ide.search_truncated": "Results truncated (200+ matches)",
+  "ide.commit": "Commit",
+  "ide.commit_message": "Commit message",
+  "ide.commit_placeholder": "Message (Ctrl+Enter to commit)"
 }

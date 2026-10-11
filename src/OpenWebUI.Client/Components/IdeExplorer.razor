@@ -1,6 +1,7 @@
 @inject ApiService Api
 @inject LocalizationService L
 @inject DialogService Dialog
+@inject IJSRuntime JS
 
 @* File explorer da /ide (S2 RF-001): tree lazy via GET /tree, menu de contexto
    com New file/folder, Rename, Delete (confirm). Branch + dirty badge no topo. *@
@@ -41,6 +42,21 @@
             <div class="px-3 py-2 text-xs text-gray-400">@L["ide.empty_tree"]</div>
         }
     </div>
+
+    @* Menu de contexto do item (SPEC-20261011-ide-search-scm). *@
+    @if (_ctxNode is not null)
+    {
+        <div class="fixed inset-0 z-50" @onclick="() => _ctxNode = null" @oncontextmenu="() => _ctxNode = null" @oncontextmenu:preventDefault></div>
+        <div class="fixed z-50 min-w-44 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1 shadow-xl"
+             style="left:@(_ctxX)px; top:@(_ctxY)px" role="menu">
+            <button class="ide-menu-item" role="menuitem" @onclick='() => MenuActionAsync("new_file")'>@L["ide.new_file"]</button>
+            <button class="ide-menu-item" role="menuitem" @onclick='() => MenuActionAsync("new_folder")'>@L["ide.new_folder"]</button>
+            <div class="my-1 border-t border-gray-100 dark:border-gray-800"></div>
+            <button class="ide-menu-item" role="menuitem" @onclick='() => MenuActionAsync("rename")'>@L["ide.rename"]</button>
+            <button class="ide-menu-item" role="menuitem" @onclick='() => MenuActionAsync("copy_path")'>@L["ide.tab_copy_path"]</button>
+            <button class="ide-menu-item" role="menuitem" @onclick='() => MenuActionAsync("delete")'>@L["ide.delete"]</button>
+        </div>
+    }
 </div>
 
 @code {
@@ -59,8 +75,13 @@
     /// <summary>Chat cujo binding resolve o workdir (null = global).</summary>
     [Parameter] public string? ChatId { get; set; }
 
+    /// <summary>Status git por path (decoration SPEC-20261011-ide-search-scm).</summary>
+    [Parameter] public IReadOnlyDictionary<string, string>? GitStatus { get; set; }
+
     private List<IdeTreeEntry> _roots = [];
     private bool _loadFailed;
+    private IdeTreeEntry? _ctxNode;
+    private int _ctxX, _ctxY;
 
     /// <summary>Nó de tree com filhos carregados sob demanda.</summary>
     public sealed class IdeTreeEntry
@@ -75,7 +96,39 @@
     }
 
     /// <summary>Ação do menu de contexto.</summary>
-    public enum FileAction { NewFile, NewFolder, Rename, Delete }
+    public enum FileAction { NewFile, NewFolder, Rename, Delete, CopyPath }
+
+    /// <summary>Status git do path (decoration): M/A/??/D/etc.</summary>
+    public string? GitStatusFor(string path) =>
+        GitStatus is not null && GitStatus.TryGetValue(path, out var s) ? s : null;
+
+    /// <summary>Botão direito num nó → menu de contexto posicionado.</summary>
+    internal void OnNodeContext(MouseEventArgs e, IdeTreeEntry node)
+    {
+        _ctxNode = node;
+        _ctxX = (int)e.ClientX;
+        _ctxY = (int)e.ClientY;
+    }
+
+    /// <summary>Dispatch do menu de contexto da tree.</summary>
+    private async Task MenuActionAsync(string action)
+    {
+        var node = _ctxNode;
+        _ctxNode = null;
+        switch (action)
+        {
+            case "new_file": await PromptAsync(FileAction.NewFile, node); break;
+            case "new_folder": await PromptAsync(FileAction.NewFolder, node); break;
+            case "rename": await PromptAsync(FileAction.Rename, node); break;
+            case "delete": await PromptAsync(FileAction.Delete, node); break;
+            case "copy_path":
+                if (node is not null)
+                {
+                    await JS.InvokeVoidAsync("owuiIdeLayout.copyText", node.Path);
+                }
+                break;
+        }
+    }
 
     /// <inheritdoc/>
     protected override async Task OnInitializedAsync() => await RefreshAsync();

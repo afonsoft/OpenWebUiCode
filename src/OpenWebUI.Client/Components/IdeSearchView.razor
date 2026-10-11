@@ -1,0 +1,114 @@
+@inject ApiService Api
+@inject LocalizationService L
+
+@* Busca global do workbench (SPEC-20261011-ide-search-scm, Fase C):
+   input + resultados agrupados por arquivo, clique abre na linha.
+   Backend: GET /workspace/repo/search (literal case-insensitive). *@
+
+<div class="flex h-full min-h-0 flex-col">
+    <div class="flex items-center gap-1 px-2 py-1.5 border-b border-gray-200 dark:border-gray-800">
+        <input @ref="_input" class="min-w-0 flex-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent px-2 py-1 text-xs outline-none"
+               placeholder="@L["ide.search_placeholder"]" aria-label="@L["ide.view_search"]"
+               @bind="_query" @bind:event="oninput" @bind:after="OnQueryChanged"
+               @onkeydown="OnKeyDown" />
+    </div>
+
+    <div class="flex-1 min-h-0 overflow-auto py-1">
+        @if (_searching)
+        {
+            <div class="px-3 py-2 text-xs text-gray-400">…</div>
+        }
+        else if (_result is not null)
+        {
+            @if (_result.Matches.Count == 0)
+            {
+                <div class="px-3 py-2 text-xs text-gray-400">@L["ide.no_results"]</div>
+            }
+            @if (_result.Truncated)
+            {
+                <div class="px-3 py-1 text-[0.6875rem] text-amber-600 dark:text-amber-400">@L["ide.search_truncated"]</div>
+            }
+            @foreach (var group in _result.Matches.GroupBy(m => m.Path))
+            {
+                <div class="px-2 pt-1.5 text-[0.6875rem] font-semibold text-gray-600 dark:text-gray-300 truncate">
+                    @group.Key <span class="font-normal text-gray-400">(@group.Count())</span>
+                </div>
+                @foreach (var m in group)
+                {
+                    <button class="flex w-full items-baseline gap-2 px-4 py-0.5 text-left text-[0.6875rem] hover:bg-gray-100 dark:hover:bg-gray-800"
+                            @onclick="() => OnMatchClick.InvokeAsync(m)">
+                        <span class="shrink-0 text-gray-400">@(m.Line + 1)</span>
+                        <span class="truncate text-gray-700 dark:text-gray-300">@m.Text</span>
+                    </button>
+                }
+            }
+        }
+        else
+        {
+            <div class="px-3 py-2 text-xs text-gray-400">@L["ide.search_hint"]</div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>Chat cujo binding resolve o workdir.</summary>
+    [Parameter] public string? ChatId { get; set; }
+
+    /// <summary>Clique num match → abrir arquivo na linha/col (0-based).</summary>
+    [Parameter] public EventCallback<WorkspaceSearchMatchItem> OnMatchClick { get; set; }
+
+    private string _query = "";
+    private WorkspaceSearchResponse? _result;
+    private bool _searching;
+    private CancellationTokenSource? _debounce;
+    private ElementReference _input;
+    private bool _focused;
+
+    /// <inheritdoc/>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_focused)
+        {
+            _focused = true;
+            await _input.FocusAsync();
+        }
+    }
+
+    /// <summary>Debounce 400ms por digitação.</summary>
+    private void OnQueryChanged()
+    {
+        _debounce?.Cancel();
+        if (string.IsNullOrWhiteSpace(_query))
+        {
+            _result = null;
+            return;
+        }
+        _debounce = new CancellationTokenSource();
+        var ct = _debounce.Token;
+        var q = _query;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(400, ct);
+                await InvokeAsync(async () =>
+                {
+                    _searching = true;
+                    StateHasChanged();
+                    _result = await Api.SearchWorkspaceAsync(q, chatId: ChatId);
+                    _searching = false;
+                    StateHasChanged();
+                });
+            }
+            catch (OperationCanceledException) { /* digitação seguinte */ }
+        }, ct);
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && _result?.Matches.Count > 0)
+        {
+            await OnMatchClick.InvokeAsync(_result.Matches[0]);
+        }
+    }
+}
