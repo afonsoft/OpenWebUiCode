@@ -71,19 +71,36 @@ public class LspFakeServerTests
                                         'end': {'line': 0, 'character': 5}},
                               'severity': 2, 'message': 'fake warning', 'source': 'faketest'}]}})
             elif method == 'textDocument/completion':
-                send({'jsonrpc': '2.0', 'id': mid, 'result': {'items': [
-                    {'label': 'alpha', 'kind': 3, 'detail': 'fn alpha',
-                     'documentation': 'alpha docs', 'insertText': 'alpha()',
-                     'textEdit': {'range': {'start': {'line': 0, 'character': 0},
-                                            'end': {'line': 0, 'character': 3}},
-                                  'newText': 'alpha()'}},
-                    {'label': 'beta', 'kind': 6, 'detail': 'var beta'},
-                    {'nolabel': True}]}})
+                pos = msg['params']['position']
+                if pos['line'] == 1:
+                    items = [{'label': f'k{k}', 'kind': k} for k in range(1, 26)]
+                elif pos['line'] == 5:
+                    items = [{'label': 'noedit', 'kind': 1}]
+                else:
+                    items = [
+                        {'label': 'alpha', 'kind': 3, 'detail': 'fn alpha',
+                         'documentation': 'alpha docs', 'insertText': 'alpha()',
+                         'textEdit': {'range': {'start': {'line': 0, 'character': 0},
+                                                'end': {'line': 0, 'character': 3}},
+                                      'newText': 'alpha()'}},
+                        {'label': 'beta', 'kind': 6, 'detail': 'var beta'},
+                        {'nolabel': True}]
+                send({'jsonrpc': '2.0', 'id': mid, 'result': {'items': items}})
             elif method == 'textDocument/definition':
-                send({'jsonrpc': '2.0', 'id': mid, 'result': {
-                    'uri': root + '/defs.py',
-                    'range': {'start': {'line': 4, 'character': 1},
-                              'end': {'line': 4, 'character': 6}}}})
+                if msg['params']['position']['character'] == 999:
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': [{
+                        'targetUri': root + '/defs.py',
+                        'targetRange': {'start': {'line': 4, 'character': 1},
+                                        'end': {'line': 4, 'character': 6}},
+                        'targetSelectionRange': {'start': {'line': 4, 'character': 1},
+                                                 'end': {'line': 4, 'character': 4}},
+                        'originSelectionRange': {'start': {'line': 0, 'character': 0},
+                                                 'end': {'line': 0, 'character': 5}}}]})
+                else:
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': {
+                        'uri': root + '/defs.py',
+                        'range': {'start': {'line': 4, 'character': 1},
+                                  'end': {'line': 4, 'character': 6}}}})
             elif method == 'textDocument/references':
                 send({'jsonrpc': '2.0', 'id': mid, 'result': [
                     {'uri': root + '/defs.py',
@@ -100,29 +117,52 @@ public class LspFakeServerTests
                 edit = {'range': {'start': {'line': 0, 'character': 0},
                                   'end': {'line': 0, 'character': 5}},
                         'newText': 'beta'}
-                send({'jsonrpc': '2.0', 'id': mid, 'result': {'changes': {
-                    td: [edit], root + '/other.py': [edit]}}})
+                if msg['params'].get('newName') == 'docchanges':
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': {'documentChanges': [
+                        {'textDocument': {'uri': td, 'version': None},
+                         'edits': [edit]},
+                        {'textDocument': {'uri': root + '/other.py', 'version': None},
+                         'edits': [edit]}]}})
+                else:
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': {'changes': {
+                        td: [edit], root + '/other.py': [edit]}}})
             elif method == 'textDocument/formatting':
                 send({'jsonrpc': '2.0', 'id': mid, 'result': [
                     {'range': {'start': {'line': 0, 'character': 0},
                                'end': {'line': 99, 'character': 0}},
                      'newText': '# formatted\n'}]})
             elif method == 'textDocument/documentSymbol':
-                rng = {'start': {'line': 0, 'character': 0},
-                       'end': {'line': 5, 'character': 0}}
-                sel = {'start': {'line': 0, 'character': 4},
-                       'end': {'line': 0, 'character': 8}}
-                send({'jsonrpc': '2.0', 'id': mid, 'result': [
-                    {'name': 'main', 'kind': 12, 'detail': 'def main',
-                     'range': rng, 'selectionRange': sel, 'children': [
-                         {'name': 'inner', 'kind': 6,
-                          'range': {'start': {'line': 1, 'character': 4},
-                                    'end': {'line': 1, 'character': 9}},
-                          'selectionRange': {'start': {'line': 1, 'character': 4},
-                                             'end': {'line': 1, 'character': 9}}}]}]})
+                uri = msg['params']['textDocument']['uri']
+                if uri.endswith('syminfo.py'):
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': [
+                        {'name': 'flat1', 'kind': 12,
+                         'location': {'uri': uri,
+                                      'range': {'start': {'line': 0, 'character': 0},
+                                                'end': {'line': 0, 'character': 9}}}},
+                        {'name': 'flat2', 'kind': 6,
+                         'location': {'uri': uri,
+                                      'range': {'start': {'line': 2, 'character': 0},
+                                                'end': {'line': 2, 'character': 9}}}}]})
+                else:
+                    rng = {'start': {'line': 0, 'character': 0},
+                           'end': {'line': 5, 'character': 0}}
+                    sel = {'start': {'line': 0, 'character': 4},
+                           'end': {'line': 0, 'character': 8}}
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': [
+                        {'name': 'main', 'kind': 12, 'detail': 'def main',
+                         'range': rng, 'selectionRange': sel, 'children': [
+                             {'name': 'inner', 'kind': 6,
+                              'range': {'start': {'line': 1, 'character': 4},
+                                        'end': {'line': 1, 'character': 9}},
+                              'selectionRange': {'start': {'line': 1, 'character': 4},
+                                                 'end': {'line': 1, 'character': 9}}}]}]})
             elif method == 'textDocument/hover':
-                send({'jsonrpc': '2.0', 'id': mid, 'result': {
-                    'contents': {'kind': 'markdown', 'value': '**alpha** docs'}}})
+                if msg['params']['position']['character'] == 999:
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': {
+                        'contents': {'kind': 'plaintext', 'value': 'plain docs'}}})
+                else:
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': {
+                        'contents': {'kind': 'markdown', 'value': '**alpha** docs'}}})
             else:
                 send({'jsonrpc': '2.0', 'id': mid, 'result': None})
         """;
@@ -563,6 +603,109 @@ public class LspFakeServerTests
         var response = await _client.GetAsync("/api/v1/workspace/lsp/hover?path=a.xyz&line=0&col=1");
         var json = await ReadJsonAsync(response);
         Assert.That(json.GetProperty("hover").ValueKind, Is.EqualTo(JsonValueKind.Null));
+    }
+
+    [Test]
+    public async Task Completion_TodosKinds_MapeiaTipos()
+    {
+        await BoundUserWithFilesAsync();
+        await OpenDocAsync();
+        var response = await _client.PostAsJsonAsync("/api/v1/workspace/lsp/completion",
+            new LspPosRequest("app.py", 1, 0));
+        var json = await ReadJsonAsync(response);
+        var items = json.GetProperty("items").EnumerateArray().ToArray();
+        Assert.That(items.Length, Is.EqualTo(25));
+        var tipos = items.Select(i => i.GetProperty("type").GetString()).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(tipos[0], Is.Null);              // kind 1 → default null
+            Assert.That(tipos[2], Is.EqualTo("function")); // kind 3
+            Assert.That(tipos[6], Is.EqualTo("class"));    // kind 7
+            Assert.That(tipos[7], Is.EqualTo("interface"));
+            Assert.That(tipos[8], Is.EqualTo("namespace"));
+            Assert.That(tipos[14], Is.EqualTo("text"));    // kind 15
+            Assert.That(tipos[23], Is.EqualTo("type"));    // kind 24
+            Assert.That(tipos[24], Is.EqualTo("keyword")); // kind 25
+        });
+    }
+
+    [Test]
+    public async Task Completion_SemTextEdit_FromFallback()
+    {
+        await BoundUserWithFilesAsync();
+        await OpenDocAsync();
+        var response = await _client.PostAsJsonAsync("/api/v1/workspace/lsp/completion",
+            new LspPosRequest("app.py", 5, 5));
+        var json = await ReadJsonAsync(response);
+        var from = json.GetProperty("from");
+        Assert.Multiple(() =>
+        {
+            Assert.That(from.GetProperty("line").GetInt32(), Is.EqualTo(5));
+            Assert.That(from.GetProperty("col").GetInt32(), Is.EqualTo(4));
+            Assert.That(json.GetProperty("items").GetArrayLength(), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task Definition_LocationLink_Mapeada()
+    {
+        await BoundUserWithFilesAsync();
+        await OpenDocAsync();
+        var response = await _client.GetAsync(
+            "/api/v1/workspace/lsp/definition?path=app.py&line=0&col=999");
+        var json = await ReadJsonAsync(response);
+        var loc = json.GetProperty("locations").EnumerateArray().ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.GetProperty("available").GetBoolean(), Is.True);
+            Assert.That(loc.Length, Is.EqualTo(1));
+            Assert.That(loc[0].GetProperty("path").GetString(), Is.EqualTo("defs.py"));
+        });
+    }
+
+    [Test]
+    public async Task Rename_DocumentChanges_EscreveOutrosArquivos()
+    {
+        var uid = await BoundUserWithFilesAsync();
+        await OpenDocAsync();
+        var response = await _client.PostAsJsonAsync("/api/v1/workspace/lsp/rename",
+            new LspRenameRequest("app.py", 0, 1, "docchanges", "app.py"));
+        var json = await ReadJsonAsync(response);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.GetProperty("available").GetBoolean(), Is.True);
+            Assert.That(json.GetProperty("filesUpdated").GetArrayLength(), Is.EqualTo(1));
+        });
+        var disk = await File.ReadAllTextAsync(Path.Join(WorkdirOf(uid), "other.py"));
+        Assert.That(disk, Is.EqualTo("beta\n"));
+    }
+
+    [Test]
+    public async Task Symbols_SymbolInformation_Flattened()
+    {
+        var uid = await BoundUserWithFilesAsync();
+        await File.WriteAllTextAsync(Path.Join(WorkdirOf(uid), "syminfo.py"), "def flat1():\n    pass\ndef flat2():\n    pass\n");
+        await OpenDocAsync();
+        var response = await _client.GetAsync("/api/v1/workspace/lsp/symbols?path=syminfo.py");
+        var json = await ReadJsonAsync(response);
+        var symbols = json.GetProperty("symbols").EnumerateArray().ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.GetProperty("available").GetBoolean(), Is.True);
+            Assert.That(symbols.Length, Is.EqualTo(2));
+            Assert.That(symbols[0].GetProperty("name").GetString(), Is.EqualTo("flat1"));
+        });
+    }
+
+    [Test]
+    public async Task Hover_Plaintext_Mapeado()
+    {
+        await BoundUserWithFilesAsync();
+        await OpenDocAsync();
+        var response = await _client.GetAsync(
+            "/api/v1/workspace/lsp/hover?path=app.py&line=0&col=1000");
+        var json = await ReadJsonAsync(response);
+        Assert.That(json.GetProperty("hover").GetString(), Does.Contain("plain docs"));
     }
 
     // ---------- file-head (WorkspaceFileEndpoints) ----------
