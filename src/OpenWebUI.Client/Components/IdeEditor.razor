@@ -59,7 +59,46 @@
         {
             <div class="absolute inset-0 flex items-center justify-center text-xs text-gray-400">…</div>
         }
-        <div id="ide-cm-host" class="absolute inset-0 @(_active is null || _active.Loading ? "opacity-0" : "")"></div>
+        <div class="absolute inset-0 flex">
+            <div id="ide-cm-host" class="relative min-w-0 flex-1 @(_active is null || _active.Loading ? "opacity-0" : "")"></div>
+            <div id="ide-cm-host-2" class="relative min-w-0 flex-1 border-l border-gray-200 dark:border-gray-800 @(_split ? "" : "hidden")"></div>
+        </div>
+
+        @* Fase E: barra de rename (F2). *@
+        @if (_renameOpen)
+        {
+            <div class="absolute left-1/2 top-2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-md border border-gray-300 bg-white px-2 py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                <input class="w-52 rounded border border-gray-300 bg-transparent px-1.5 py-0.5 text-xs dark:border-gray-700 dark:text-gray-100"
+                       @bind="_renameName" @bind:event="oninput" @onkeydown="OnRenameKeyDown"
+                       aria-label="@L["ide.rename_placeholder"]" placeholder="@L["ide.rename_placeholder"]" />
+                <button class="rounded bg-blue-600 px-2 py-0.5 text-xs text-white hover:bg-blue-700"
+                        @onclick="ConfirmRenameAsync">@L["ide.rename_apply"]</button>
+                <button class="rounded px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        @onclick="() => _renameOpen = false">@L["ide.cancel"]</button>
+            </div>
+        }
+
+        @* Fase E: peek de references/definições (lista flutuante). *@
+        @if (_refs.Count > 0)
+        {
+            <div class="absolute bottom-4 left-1/2 z-40 max-h-60 w-[28rem] -translate-x-1/2 overflow-hidden rounded-md border border-gray-300 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+                <div class="flex items-center justify-between border-b border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 dark:border-gray-800 dark:text-gray-300">
+                    <span>@_refsTitle (@_refs.Count)</span>
+                    <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                            @onclick="() => _refs.Clear()" aria-label="@L["ide.cancel"]">✕</button>
+                </div>
+                <div class="max-h-52 overflow-y-auto py-1">
+                    @foreach (var loc in _refs)
+                    {
+                        <button class="flex w-full items-baseline gap-2 px-2.5 py-1 text-left text-xs hover:bg-gray-100 dark:hover:bg-gray-800"
+                                @onclick="() => GotoLocationAsync(loc)">
+                            <span class="truncate text-gray-700 dark:text-gray-200">@loc.Path</span>
+                            <span class="shrink-0 text-gray-400">:@(loc.Range.Line + 1):@(loc.Range.Col + 1)</span>
+                        </button>
+                    }
+                </div>
+            </div>
+        }
 
         @if (_active?.Notice is { } notice)
         {
@@ -338,6 +377,187 @@
     /// <summary>JS → Ctrl+S/Cmd+S no editor.</summary>
     [JSInvokable]
     public async Task OnSaveRequested() => await SaveAsync();
+
+    // ---------- Fase E: LSP navigation / rename / completion / minimap / split ----------
+
+    private bool _split;
+    private bool _minimap;
+    private bool _renameOpen;
+    private string _renameName = "";
+    private string? _renamePath;
+    private int _renameLine;
+    private int _renameCol;
+    private string _refsTitle = "";
+    private readonly List<LspFileLocation> _refs = [];
+
+    /// <summary>Seleção vinda do JS (path + anchor/head 0-based).</summary>
+    public sealed record JsSelPos(string? Path, LspPosition Anchor, LspPosition Head);
+
+    /// <summary>JS → completion source do CM (chamado pelo autocomplete).</summary>
+    [JSInvokable]
+    public async Task<LspCompletionResponse?> OnLspCompletionRequested(
+        string path, int line, int col) =>
+        await Api.LspCompleteAsync(path, line, col, ChatId);
+
+    /// <summary>JS → F12: definition; 1 loc → goto; várias → peek list.</summary>
+    [JSInvokable]
+    public async Task OnDefinitionRequested(JsSelPos sel)
+    {
+        if (sel.Path is null)
+        {
+            return;
+        }
+        var r = await Api.GetLspDefinitionAsync(
+            sel.Path, sel.Head.Line, sel.Head.Col, ChatId);
+        if (r?.Available == true && r.Locations.Count == 1)
+        {
+            await GotoLocationAsync(r.Locations[0]);
+        }
+        else if (r?.Available == true && r.Locations.Count > 1)
+        {
+            ShowRefs(L["ide.definitions"], r.Locations);
+        }
+    }
+
+    /// <summary>JS → Shift+F12: references → peek list.</summary>
+    [JSInvokable]
+    public async Task OnReferencesRequested(JsSelPos sel)
+    {
+        if (sel.Path is null)
+        {
+            return;
+        }
+        var r = await Api.GetLspReferencesAsync(
+            sel.Path, sel.Head.Line, sel.Head.Col, ChatId);
+        if (r?.Available == true && r.Locations.Count > 0)
+        {
+            ShowRefs(L["ide.references"], r.Locations);
+        }
+    }
+
+    private void ShowRefs(string title, IReadOnlyList<LspFileLocation> locs)
+    {
+        _refsTitle = title;
+        _refs.Clear();
+        _refs.AddRange(locs);
+        StateHasChanged();
+    }
+
+    private async Task GotoLocationAsync(LspFileLocation loc)
+    {
+        _refs.Clear();
+        if (loc.Path != _active?.Path)
+        {
+            await OpenFileAsync(loc.Path, preview: false);
+        }
+        await GotoLineAsync(loc.Range.Line, loc.Range.Col);
+    }
+
+    /// <summary>JS → F2: rename — abre a barra com o nome atual.</summary>
+    [JSInvokable]
+    public async Task OnRenameRequested(JsSelPos sel)
+    {
+        if (sel.Path is null)
+        {
+            return;
+        }
+        var w = await JS.InvokeAsync<JsonElement?>(
+            "owuiIde.wordAt", "ide-cm-host", sel.Head.Line, sel.Head.Col);
+        _renamePath = sel.Path;
+        _renameLine = sel.Head.Line;
+        _renameCol = sel.Head.Col;
+        _renameName = w is { ValueKind: JsonValueKind.Object } el
+            && el.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+        _renameOpen = true;
+        StateHasChanged();
+    }
+
+    private void OnRenameKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            _ = ConfirmRenameAsync();
+        }
+        else if (e.Key == "Escape")
+        {
+            _renameOpen = false;
+        }
+    }
+
+    /// <summary>Aplica rename: edits do arquivo ativo via replaceRange
+    /// (preserva dirty); tabs limpas de arquivos escritos no disco → reload.</summary>
+    private async Task ConfirmRenameAsync()
+    {
+        _renameOpen = false;
+        if (string.IsNullOrWhiteSpace(_renameName) || _renamePath is null)
+        {
+            return;
+        }
+        var r = await Api.LspRenameAsync(
+            _renamePath, _renameLine, _renameCol, _renameName, _active?.Path, ChatId);
+        if (r?.Available != true)
+        {
+            return;
+        }
+        foreach (var fe in r.ClientEdits)
+        {
+            foreach (var e in fe.Edits
+                .OrderByDescending(x => x.Range.Line).ThenByDescending(x => x.Range.Col))
+            {
+                await JS.InvokeVoidAsync("owuiIde.replaceRange", "ide-cm-host",
+                    new { line = e.Range.Line, col = e.Range.Col },
+                    new { line = e.Range.EndLine, col = e.Range.EndCol },
+                    e.NewText);
+            }
+        }
+        foreach (var path in r.FilesUpdated)
+        {
+            var t = _tabs.FirstOrDefault(x => x.Path == path);
+            if (t is { Dirty: false })
+            {
+                var f = await Api.GetWorkspaceFileAsync(path, null, null, ChatId);
+                if (f is { } body)
+                {
+                    t.Doc = body.Content;
+                    if (t == _active)
+                    {
+                        await JS.InvokeVoidAsync(
+                            "owuiIde.setDoc", "ide-cm-host", body.Content, path);
+                    }
+                }
+            }
+        }
+        await OnSaved.InvokeAsync();
+    }
+
+    /// <summary>Ctrl+\ — split do editor na mesma doc (panes sync).</summary>
+    public async Task ToggleSplitAsync()
+    {
+        _split = !_split;
+        if (_split && _active is not null)
+        {
+            StateHasChanged(); // renderiza o host-2 antes do create
+            await Task.Delay(30);
+            await JS.InvokeVoidAsync(
+                "owuiIde.createSplit", "ide-cm-host-2", "ide-cm-host", new { dark = _dark });
+        }
+        else if (!_split)
+        {
+            await JS.InvokeVoidAsync("owuiIde.unlinkCompanion", "ide-cm-host");
+            await JS.InvokeVoidAsync("owuiIde.destroy", "ide-cm-host-2");
+        }
+    }
+
+    /// <summary>Minimap on/off (paleta).</summary>
+    public async Task ToggleMinimapAsync()
+    {
+        _minimap = !_minimap;
+        await JS.InvokeVoidAsync("owuiIde.setMinimap", "ide-cm-host", _minimap);
+        if (_split)
+        {
+            await JS.InvokeVoidAsync("owuiIde.setMinimap", "ide-cm-host-2", _minimap);
+        }
+    }
 
     // ---------- Fase B: tabs VS Code + autosave + símbolos ----------
 

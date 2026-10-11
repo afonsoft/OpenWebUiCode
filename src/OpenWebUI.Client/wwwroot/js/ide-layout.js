@@ -44,6 +44,7 @@
             case "b": case "B": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "side"); break;
             case "j": case "J": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "bottom"); break;
             case "`": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "terminal"); break;
+            case "\\": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "split"); break;
             case "k": case "K": chord = now; break;
             // SPEC-20261011-ide-editor-core Fase B: quick open / palette / goto.
             case "p": case "P":

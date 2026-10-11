@@ -926,5 +926,14 @@
   "ide.outline": "アウトライン",
   "ide.outline_no_file": "ファイルを開いてアウトラインを表示",
   "ide.outline_no_lsp": "このファイルの言語サーバーがありません",
-  "ide.cmd_format": "ドキュメントのフォーマット"
+  "ide.cmd_format": "ドキュメントのフォーマット",
+  "ide.rename_placeholder": "新しい名前",
+  "ide.rename_apply": "名前の変更",
+  "ide.cancel": "キャンセル",
+  "ide.definitions": "定義",
+  "ide.references": "参照",
+  "ide.cmd_split": "エディタを分割",
+  "ide.cmd_minimap": "ミニマップの切り替え",
+  "ide.cmd_diff_head": "HEAD と比較",
+  "ide.diff_close": "差分を閉じる"
 }

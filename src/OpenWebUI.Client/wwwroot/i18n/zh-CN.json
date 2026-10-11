@@ -926,5 +926,14 @@
   "ide.outline": "大纲",
   "ide.outline_no_file": "打开文件以查看其大纲",
   "ide.outline_no_lsp": "此文件没有语言服务器",
-  "ide.cmd_format": "格式化文档"
+  "ide.cmd_format": "格式化文档",
+  "ide.rename_placeholder": "新名称",
+  "ide.rename_apply": "重命名",
+  "ide.cancel": "取消",
+  "ide.definitions": "定义",
+  "ide.references": "引用",
+  "ide.cmd_split": "拆分编辑器",
+  "ide.cmd_minimap": "切换小地图",
+  "ide.cmd_diff_head": "与 HEAD 比较",
+  "ide.diff_close": "关闭差异"
 }

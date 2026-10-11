@@ -926,5 +926,14 @@
   "ide.outline": "Outline",
   "ide.outline_no_file": "Abra um arquivo para ver o outline",
   "ide.outline_no_lsp": "Sem servidor de linguagem para este arquivo",
-  "ide.cmd_format": "Formatar Documento"
+  "ide.cmd_format": "Formatar Documento",
+  "ide.rename_placeholder": "Novo nome",
+  "ide.rename_apply": "Renomear",
+  "ide.cancel": "Cancelar",
+  "ide.definitions": "Definições",
+  "ide.references": "Referências",
+  "ide.cmd_split": "Dividir Editor",
+  "ide.cmd_minimap": "Alternar Minimap",
+  "ide.cmd_diff_head": "Comparar com HEAD",
+  "ide.diff_close": "Fechar diff"
 }

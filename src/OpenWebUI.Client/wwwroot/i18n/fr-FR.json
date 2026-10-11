@@ -926,5 +926,14 @@
   "ide.outline": "Plan",
   "ide.outline_no_file": "Ouvrez un fichier pour voir son plan",
   "ide.outline_no_lsp": "Pas de serveur de langage pour ce fichier",
-  "ide.cmd_format": "Formater le document"
+  "ide.cmd_format": "Formater le document",
+  "ide.rename_placeholder": "Nouveau nom",
+  "ide.rename_apply": "Renommer",
+  "ide.cancel": "Annuler",
+  "ide.definitions": "Définitions",
+  "ide.references": "Références",
+  "ide.cmd_split": "Fractionner l'éditeur",
+  "ide.cmd_minimap": "Basculer la minimap",
+  "ide.cmd_diff_head": "Comparer avec HEAD",
+  "ide.diff_close": "Fermer le diff"
 }

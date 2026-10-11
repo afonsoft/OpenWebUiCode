@@ -926,5 +926,14 @@
   "ide.outline": "Gliederung",
   "ide.outline_no_file": "Datei öffnen, um die Gliederung zu sehen",
   "ide.outline_no_lsp": "Kein Sprachserver für diese Datei",
-  "ide.cmd_format": "Dokument formatieren"
+  "ide.cmd_format": "Dokument formatieren",
+  "ide.rename_placeholder": "Neuer Name",
+  "ide.rename_apply": "Umbenennen",
+  "ide.cancel": "Abbrechen",
+  "ide.definitions": "Definitionen",
+  "ide.references": "Referenzen",
+  "ide.cmd_split": "Editor teilen",
+  "ide.cmd_minimap": "Minimap umschalten",
+  "ide.cmd_diff_head": "Mit HEAD vergleichen",
+  "ide.diff_close": "Diff schließen"
 }

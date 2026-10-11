@@ -30,6 +30,10 @@ public static class LspEndpoints
         group.MapGet("/hover", HoverAsync);
         group.MapGet("/symbols", SymbolsAsync);
         group.MapPost("/format", FormatAsync);
+        group.MapPost("/completion", CompletionAsync);
+        group.MapGet("/definition", DefinitionAsync);
+        group.MapGet("/references", ReferencesAsync);
+        group.MapPost("/rename", RenameAsync);
         return group;
     }
 
@@ -369,6 +373,383 @@ public static class LspEndpoints
                 return Results.Ok(new LspHoverResponse(null));
             }
         });
+
+    // ---------- Fase E: completion / definition / references / rename ----------
+
+    /// <summary>Guard LSP compartilhado: jail + linguagem + servidor Running.
+    /// Retorna (full, language) ou null quando deve degradar.</summary>
+    private static (string Full, Infrastructure.Lsp.LspLanguage Language)? LspReady(
+        LspService lsp, string workdir, string? path, out IResult? early)
+    {
+        early = null;
+        var full = WorkspaceFiles.ResolveInside(workdir, path, out var error);
+        if (full is null)
+        {
+            early = Results.BadRequest(new { detail = error });
+            return null;
+        }
+        var language = lsp.LanguageFor(full);
+        if (language is null
+            || lsp.StateOf(workdir, language.ServerKey) != LspServerState.Running)
+        {
+            return null; // degrade — sem erro
+        }
+        return (full, language);
+    }
+
+    /// <summary>POST /completion: textDocument/completion → itens mapeados
+    /// pro shape do CM autocomplete (From = início do range de replace).</summary>
+    private static Task<IResult> CompletionAsync(
+        LspPosRequest? request, string? chatId, HttpContext http,
+        AppDbContext db, WorkspaceRepoService repos, LspService lsp,
+        CancellationToken ct) =>
+        WithWorkdirAsync(http, db, repos, chatId, ct, async (uid, workdir) =>
+        {
+            var ready = LspReady(lsp, workdir, request?.Path, out var early);
+            if (early is not null)
+            {
+                return early;
+            }
+            if (ready is null)
+            {
+                return Results.Ok(new LspCompletionResponse(false, null, []));
+            }
+            try
+            {
+                var res = await lsp.RequestAsync(workdir, ready.Value.Full,
+                    "textDocument/completion",
+                    PosParams(ready.Value.Full, request!.Line, request.Col), ct);
+                var items = res.ValueKind == JsonValueKind.Array ? res
+                    : res.TryGetProperty("items", out JsonElement arr) ? arr : res;
+                var list = new List<LspCompletionItem>();
+                LspPosition? from = null;
+                if (items.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var it in items.EnumerateArray())
+                    {
+                        var label = it.TryGetProperty("label", out JsonElement l) ? l.GetString() : null;
+                        if (label is null)
+                        {
+                            continue;
+                        }
+                        var kind = it.TryGetProperty("kind", out JsonElement k) && k.ValueKind == JsonValueKind.Number
+                            ? k.GetInt32() : 0;
+                        var detail = it.TryGetProperty("detail", out JsonElement d) ? d.GetString() : null;
+                        var info = it.TryGetProperty("documentation", out JsonElement doc)
+                            ? doc.ValueKind == JsonValueKind.String ? doc.GetString()
+                            : doc.TryGetProperty("value", out var dv) ? dv.GetString() : null
+                            : null;
+                        var apply = it.TryGetProperty("insertText", out JsonElement ins) ? ins.GetString() : label;
+                        // range explícito (textEdit) → from único; senão o client
+                        // usa a palavra sob o cursor.
+                        JsonElement textEdit = default, textRange = default;
+                        if (from is null
+                            && it.TryGetProperty("textEdit", out textEdit)
+                            && textEdit.ValueKind == JsonValueKind.Object
+                            && textEdit.TryGetProperty("range", out textRange))
+                        {
+                            var (sl, sc) = Pos(textRange, "start");
+                            from = new LspPosition(sl, sc);
+                        }
+                        list.Add(new LspCompletionItem(
+                            label, KindToCmType(kind), detail, info, apply));
+                    }
+                }
+                return Results.Ok(new LspCompletionResponse(
+                    true, from ?? new LspPosition(request!.Line, Math.Max(0, request.Col - 1)), list));
+            }
+            catch (Exception ex) when (ex is LspUnavailableException or LspRequestException
+                or IOException or TimeoutException)
+            {
+                return Results.Ok(new LspCompletionResponse(false, null, []));
+            }
+        });
+
+    /// <summary>LSP CompletionItemKind → tipo do CM autocomplete.</summary>
+    private static string? KindToCmType(int kind) => kind switch
+    {
+        2 or 3 => "function",
+        4 => "function",    // constructor
+        5 or 6 => "variable", // field / variable
+        7 => "class",
+        8 => "interface",
+        9 => "namespace",   // module
+        10 => "property",
+        11 => "constant",   // unit → enum member-ish
+        12 or 13 => "variable",
+        14 => "constant",   // keyword → enum
+        15 => "text",
+        17 => "constant",   // file
+        18 => "namespace",  // reference
+        19 => "constant",   // folder
+        20 or 21 or 22 or 23 => "constant",
+        24 => "type",
+        25 => "keyword",
+        _ => null,
+    };
+
+    /// <summary>GET /definition e /references: Location|Location[]|LocationLink[]
+    /// → lista normalizada com path relativo ao workdir (uri file:// só se
+    /// dentro do jail).</summary>
+    private static Task<IResult> DefinitionAsync(
+        string? path, int? line, int? col, string? chatId, HttpContext http,
+        AppDbContext db, WorkspaceRepoService repos, LspService lsp,
+        CancellationToken ct) =>
+        LocationsAsync(path, line, col, "textDocument/definition",
+            http, db, repos, lsp, ct, chatId);
+
+    private static Task<IResult> ReferencesAsync(
+        string? path, int? line, int? col, string? chatId, HttpContext http,
+        AppDbContext db, WorkspaceRepoService repos, LspService lsp,
+        CancellationToken ct) =>
+        LocationsAsync(path, line, col, "textDocument/references",
+            http, db, repos, lsp, ct, chatId, includeDecl: true);
+
+    private static Task<IResult> LocationsAsync(
+        string? path, int? line, int? col, string method,
+        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
+        LspService lsp, CancellationToken ct, string? chatId,
+        bool includeDecl = false) =>
+        WithWorkdirAsync(http, db, repos, chatId, ct, async (uid, workdir) =>
+        {
+            var ready = LspReady(lsp, workdir, path, out var early);
+            if (early is not null)
+            {
+                return early;
+            }
+            if (ready is null)
+            {
+                return Results.Ok(new LspLocationsResponse(false, []));
+            }
+            try
+            {
+                var p = PosParams(ready.Value.Full, line ?? 0, col ?? 0);
+                var @params = method == "textDocument/references"
+                    ? new
+                    {
+                        textDocument = p.textDocument,
+                        position = p.position,
+                        context = new { includeDeclaration = includeDecl },
+                    }
+                    : (object)p;
+                var res = await lsp.RequestAsync(workdir, ready.Value.Full, method, @params, ct);
+                var list = new List<LspFileLocation>();
+                foreach (var loc in EnumerateLocations(res))
+                {
+                    var rel = RelPath(workdir, loc.Uri);
+                    if (rel is not null)
+                    {
+                        list.Add(new LspFileLocation(rel, loc.Range));
+                    }
+                }
+                return Results.Ok(new LspLocationsResponse(true, list));
+            }
+            catch (Exception ex) when (ex is LspUnavailableException or LspRequestException
+                or IOException or TimeoutException)
+            {
+                return Results.Ok(new LspLocationsResponse(false, []));
+            }
+        });
+
+    /// <summary>Normaliza Location | Location[] | LocationLink[].</summary>
+    private static IEnumerable<(string Uri, LspRange Range)> EnumerateLocations(JsonElement res)
+    {
+        if (res.ValueKind == JsonValueKind.Null || res.ValueKind == JsonValueKind.Undefined)
+        {
+            yield break;
+        }
+        var arr = res.ValueKind == JsonValueKind.Array ? res.EnumerateArray()
+            : new[] { res }.AsEnumerable();
+        foreach (var loc in arr)
+        {
+            string? uri = null;
+            JsonElement range = default;
+            if (loc.TryGetProperty("uri", out var u))
+            {
+                uri = u.GetString();
+                loc.TryGetProperty("range", out range);
+            }
+            else if (loc.TryGetProperty("targetUri", out var tu))
+            {
+                uri = tu.GetString();
+                loc.TryGetProperty("targetRange", out range);
+            }
+            if (uri is null || range.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+            var (sl, sc) = Pos(range, "start");
+            var (el, ec) = Pos(range, "end");
+            yield return (uri, new LspRange(sl, sc, el, ec));
+        }
+    }
+
+    /// <summary>file:// uri → path relativo ao workdir (null se fora).</summary>
+    private static string? RelPath(string workdir, string uri)
+    {
+        if (!Uri.TryCreate(uri, UriKind.Absolute, out var u) || u.Scheme != "file")
+        {
+            return null;
+        }
+        var full = Path.GetFullPath(u.LocalPath);
+        var root = Path.GetFullPath(workdir);
+        if (!full.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+            StringComparison.Ordinal))
+        {
+            return null;
+        }
+        return full[(root.TrimEnd(Path.DirectorySeparatorChar).Length + 1)..]
+            .Replace(Path.DirectorySeparatorChar, '/');
+    }
+
+    /// <summary>POST /rename: workspace/applyEdit equivalente — edits do
+    /// arquivo ativo voltam pro client (replaceRange, preserva dirty); os
+    /// demais arquivos são escritos direto no disco (mesmo jail).</summary>
+    private static Task<IResult> RenameAsync(
+        LspRenameRequest? request, string? chatId, HttpContext http,
+        AppDbContext db, WorkspaceRepoService repos, LspService lsp,
+        CancellationToken ct) =>
+        WithWorkdirAsync(http, db, repos, chatId, ct, async (uid, workdir) =>
+        {
+            var ready = LspReady(lsp, workdir, request?.Path, out var early);
+            if (early is not null)
+            {
+                return early;
+            }
+            if (ready is null || string.IsNullOrWhiteSpace(request?.NewName))
+            {
+                return Results.Ok(new LspRenameResponse(false, [], [],
+                    string.IsNullOrWhiteSpace(request?.NewName) ? "Nome vazio." : null));
+            }
+            try
+            {
+                var p = PosParams(ready.Value.Full, request.Line, request.Col);
+                var res = await lsp.RequestAsync(workdir, ready.Value.Full,
+                    "textDocument/rename",
+                    new
+                    {
+                        textDocument = p.textDocument,
+                        position = p.position,
+                        newName = request.NewName,
+                    }, ct);
+
+                var activeRel = request.ActivePath?.Replace('\\', '/');
+                var clientEdits = new List<LspRenameFileEdits>();
+                var updated = new List<string>();
+                foreach (var (uri, edits) in WorkspaceEdits(res))
+                {
+                    var rel = RelPath(workdir, uri);
+                    if (rel is null || edits.Count == 0)
+                    {
+                        continue;
+                    }
+                    if (string.Equals(rel, activeRel, StringComparison.Ordinal))
+                    {
+                        clientEdits.Add(new LspRenameFileEdits(rel, edits));
+                        continue;
+                    }
+                    var full = WorkspaceFiles.ResolveInside(workdir, rel, out _);
+                    if (full is null || !File.Exists(full))
+                    {
+                        continue;
+                    }
+                    var text = await File.ReadAllTextAsync(full, ct);
+                    var applied = text;
+                    var arr = JsonSerializer.SerializeToElement(
+                        edits.Select(e => new
+                        {
+                            range = new
+                            {
+                                start = new { line = e.Range.Line, character = e.Range.Col },
+                                end = new { line = e.Range.EndLine, character = e.Range.EndCol },
+                            },
+                            newText = e.NewText,
+                        }).ToArray(), JsonOptions);
+                    applied = ApplyTextEdits(applied, arr);
+                    if (applied != text)
+                    {
+                        await File.WriteAllTextAsync(full, applied, ct);
+                        updated.Add(rel);
+                    }
+                }
+                return Results.Ok(new LspRenameResponse(true, clientEdits, updated, null));
+            }
+            catch (Exception ex) when (ex is LspUnavailableException or LspRequestException
+                or IOException or TimeoutException)
+            {
+                return Results.Ok(new LspRenameResponse(false, [], [], ex.Message));
+            }
+        });
+
+    /// <summary>WorkspaceEdit: {changes:{uri:[edit]}} ou {documentChanges:[
+    /// {textDocument:{uri}, edits:[...]}]} — só textDocument edits (ops de
+    /// recurso como rename-file são ignorados).</summary>
+    private static IEnumerable<(string Uri, List<LspRenameEdit> Edits)> WorkspaceEdits(JsonElement res)
+    {
+        if (res.TryGetProperty("changes", out var changes)
+            && changes.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in changes.EnumerateObject())
+            {
+                var edits = ParseEdits(prop.Value);
+                if (edits.Count > 0)
+                {
+                    yield return (prop.Name, edits);
+                }
+            }
+        }
+        if (res.TryGetProperty("documentChanges", out var docs)
+            && docs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var dc in docs.EnumerateArray())
+            {
+                if (!dc.TryGetProperty("textDocument", out var td)
+                    || !td.TryGetProperty("uri", out var u)
+                    || !dc.TryGetProperty("edits", out var es))
+                {
+                    continue;
+                }
+                var edits = ParseEdits(es);
+                var uri = u.GetString();
+                if (uri is not null && edits.Count > 0)
+                {
+                    yield return (uri, edits);
+                }
+            }
+        }
+    }
+
+    private static List<LspRenameEdit> ParseEdits(JsonElement arr)
+    {
+        var list = new List<LspRenameEdit>();
+        if (arr.ValueKind != JsonValueKind.Array)
+        {
+            return list;
+        }
+        foreach (var e in arr.EnumerateArray())
+        {
+            if (!e.TryGetProperty("range", out var r) || r.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+            var (sl, sc) = Pos(r, "start");
+            var (el, ec) = Pos(r, "end");
+            var nt = e.TryGetProperty("newText", out var n) ? n.GetString() ?? "" : "";
+            list.Add(new LspRenameEdit(new LspRange(sl, sc, el, ec), nt));
+        }
+        return list;
+    }
+
+    /// <summary>Params comuns textDocument+position (0-based, direto).</summary>
+    private static dynamic PosParams(string full, int line, int col) => new
+    {
+        textDocument = new { uri = LspClient.UriForPath(full) },
+        position = new
+        {
+            line = Math.Max(0, line),
+            character = Math.Max(0, col),
+        },
+    };
 
     // ---------- guard comum ----------
 
