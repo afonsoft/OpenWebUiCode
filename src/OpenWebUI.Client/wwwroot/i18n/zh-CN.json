@@ -888,5 +888,14 @@
   "chat.parent": "",
   "chat.repo_source_chat": "此聊天",
   "chat.repo_source_user": "全局",
-  "chat.repo_source_none": "无"
+  "chat.repo_source_none": "无",
+  "ide.activity_bar": "活动栏",
+  "ide.view_explorer": "资源管理器",
+  "ide.view_scm": "源代码管理",
+  "ide.bottom_panel": "面板",
+  "ide.problems_none": "未发现问题",
+  "ide.status_bar": "状态栏",
+  "ide.toggle_bottom": "切换面板",
+  "ide.zen_mode": "禅模式",
+  "ide.breadcrumbs": "面包屑导航"
 }

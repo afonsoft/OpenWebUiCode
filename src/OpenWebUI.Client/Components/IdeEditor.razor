@@ -97,6 +97,22 @@
     /// <summary>Chat cujo binding resolve o workdir + LSP (null = global).</summary>
     [Parameter] public string? ChatId { get; set; }
 
+    /// <summary>Aba ativa mudou (workbench: breadcrumbs/status bar).</summary>
+    [Parameter] public EventCallback<string?> OnActiveFileChanged { get; set; }
+
+    /// <summary>Lista de diagnostics mudou (workbench: aba Problems/status bar).</summary>
+    [Parameter] public EventCallback<IReadOnlyList<LspDiagnosticItem>> OnProblemsChanged { get; set; }
+
+    /// <summary>Diagnostics LSP atuais (aba Problems do panel inferior).</summary>
+    public IReadOnlyList<LspDiagnosticItem> Problems => _lspProblems;
+
+    /// <summary>Pula para linha/coluna do arquivo ativo (clique no Problems).</summary>
+    public async Task GotoLineAsync(int line, int col)
+    {
+        await JS.InvokeVoidAsync("owuiIde.goto", "ide-cm-host", line, col);
+        await JS.InvokeVoidAsync("owuiIde.focus", "ide-cm-host");
+    }
+
     private enum ConflictChoice { Reload, Overwrite, CopyAs }
 
     private sealed class IdeTab
@@ -236,12 +252,14 @@
         var t = _active;
         if (t is null || t.Loading)
         {
+            _ = OnActiveFileChanged.InvokeAsync(t?.Path);
             return;
         }
         await JS.InvokeVoidAsync("owuiIde.setDoc", "ide-cm-host", t.Doc, t.Path);
         await JS.InvokeVoidAsync("owuiIde.setLanguage", "ide-cm-host", t.Path);
         await JS.InvokeVoidAsync("owuiIde.setReadonly", "ide-cm-host", t.ReadOnly);
         _ = SyncLspOpenAsync(t);
+        _ = OnActiveFileChanged.InvokeAsync(t.Path);
     }
 
     /// <summary>Roving tabindex nas abas do editor (SPEC a11y).</summary>
@@ -375,6 +393,7 @@
         _lspProblems.AddRange(r.Diagnostics);
         var activeDiags = _lspProblems.Where(d => d.Path == path).ToList();
         await JS.InvokeVoidAsync("owuiIde.setDiagnostics", "ide-cm-host", activeDiags);
+        _ = OnProblemsChanged.InvokeAsync(_lspProblems.ToList());
         StateHasChanged();
     }
 

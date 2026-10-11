@@ -888,5 +888,14 @@
   "chat.parent": "Chat parent",
   "chat.repo_source_chat": "de ce chat",
   "chat.repo_source_user": "global",
-  "chat.repo_source_none": "aucun"
+  "chat.repo_source_none": "aucun",
+  "ide.activity_bar": "Barre d'activité",
+  "ide.view_explorer": "Explorateur",
+  "ide.view_scm": "Gestion de code source",
+  "ide.bottom_panel": "Panneau",
+  "ide.problems_none": "Aucun problème détecté",
+  "ide.status_bar": "Barre d'état",
+  "ide.toggle_bottom": "Basculer le panneau",
+  "ide.zen_mode": "Mode Zen",
+  "ide.breadcrumbs": "Fil d'Ariane"
 }

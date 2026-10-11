@@ -1,0 +1,91 @@
+@inject LocalizationService L
+@inject IdeTestRunService TestRun
+
+@* View Source Control da sidebar (SPEC-20261011-ide-workbench Fase A): o
+   conteúdo de Changes sai da aba do painel direito pra view dedicada —
+   padrão VS Code (SCM na sidebar, não no panel). *@
+
+<div class="p-2 pb-0">
+    <CheckpointList Checkpoints="Checkpoints" ChatId="ChatId" OnReverted="OnChanged" />
+</div>
+@if (Git is null)
+{
+    <div class="px-2 py-6 text-center text-xs text-gray-400">…</div>
+}
+else if (!Git.Git)
+{
+    <div class="px-2 py-6 text-center text-xs text-gray-400">@L["ide.not_a_repo"]</div>
+}
+else if (Git.Files.Count == 0)
+{
+    <div class="px-2 py-6 text-center text-xs text-gray-400">@L["ide.clean_tree"]</div>
+}
+else
+{
+    <div class="divide-y divide-gray-100 dark:divide-gray-800">
+        @foreach (var f in Git.Files)
+        {
+            var fileDiff = GitFileDiff(f.Path);
+            <div>
+                <div class="flex items-center gap-2 px-2 py-1.5">
+                    <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@f.Path</span>
+                    @if (f.Added > 0)
+                    {
+                        <span class="text-[0.625rem] text-green-600 dark:text-green-400">+@f.Added</span>
+                    }
+                    @if (f.Removed > 0)
+                    {
+                        <span class="text-[0.625rem] text-red-500">−@f.Removed</span>
+                    }
+                    <span class="text-[0.625rem] text-gray-400 uppercase">@f.Status</span>
+                </div>
+                @if (fileDiff is not null)
+                {
+                    <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950 px-2 py-1.5 text-[0.625rem] font-mono leading-4">@foreach (var line in GitDiffRender.Lines(fileDiff)){<span class="@line.Css">@line.Text
+</span>}</pre>
+                }
+            </div>
+        }
+    </div>
+    @if (Git.DiffTruncated)
+    {
+        <div class="px-2 py-1.5 text-[0.625rem] text-amber-600 dark:text-amber-400">@L["ide.diff_truncated"]</div>
+    }
+}
+<div class="border-t border-gray-100 dark:border-gray-800 p-2">
+    <button class="auth-submit !w-auto px-3 py-1.5 text-[0.6875rem]"
+            @onclick="RunTestsAsync">@L["ide.run_tests"]</button>
+</div>
+
+@code {
+    /// <summary>Snapshot git do workdir (atualizado pela página).</summary>
+    [Parameter] public WorkspaceGitResponse? Git { get; set; }
+
+    /// <summary>Checkpoints do workdir (Revert por snapshot).</summary>
+    [Parameter] public IReadOnlyList<WorkspaceCheckpointItem> Checkpoints { get; set; } = [];
+
+    /// <summary>Chat cujo binding resolve o workspace (null = global).</summary>
+    [Parameter] public string? ChatId { get; set; }
+
+    /// <summary>Callback pós-mudança (revert/tests) — página recarrega.</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private string? _gitDiffSource;
+    private Dictionary<string, string>? _gitDiffByFile;
+
+    private string? GitFileDiff(string path)
+    {
+        if (Git?.Diff is null)
+        {
+            return null;
+        }
+        if (!string.Equals(_gitDiffSource, Git.Diff, StringComparison.Ordinal))
+        {
+            _gitDiffSource = Git.Diff;
+            _gitDiffByFile = GitDiffRender.SplitDiff(Git.Diff);
+        }
+        return _gitDiffByFile!.GetValueOrDefault(path);
+    }
+
+    private Task RunTestsAsync() => TestRun.StartAsync();
+}

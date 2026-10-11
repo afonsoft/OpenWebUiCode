@@ -888,5 +888,14 @@
   "chat.parent": "Chat genitore",
   "chat.repo_source_chat": "di questa chat",
   "chat.repo_source_user": "globale",
-  "chat.repo_source_none": "nessuno"
+  "chat.repo_source_none": "nessuno",
+  "ide.activity_bar": "Barra delle attività",
+  "ide.view_explorer": "Explorer",
+  "ide.view_scm": "Controllo del codice sorgente",
+  "ide.bottom_panel": "Pannello",
+  "ide.problems_none": "Nessun problema rilevato",
+  "ide.status_bar": "Barra di stato",
+  "ide.toggle_bottom": "Attiva/disattiva pannello",
+  "ide.zen_mode": "Modalità Zen",
+  "ide.breadcrumbs": "Breadcrumb"
 }

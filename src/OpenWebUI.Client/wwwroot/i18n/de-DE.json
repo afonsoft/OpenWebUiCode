@@ -888,5 +888,14 @@
   "chat.parent": "Übergeordneter Chat",
   "chat.repo_source_chat": "dieses Chats",
   "chat.repo_source_user": "global",
-  "chat.repo_source_none": "keins"
+  "chat.repo_source_none": "keins",
+  "ide.activity_bar": "Aktivitätsleiste",
+  "ide.view_explorer": "Explorer",
+  "ide.view_scm": "Quellcodeverwaltung",
+  "ide.bottom_panel": "Bereich",
+  "ide.problems_none": "Keine Probleme erkannt",
+  "ide.status_bar": "Statusleiste",
+  "ide.toggle_bottom": "Bereich umschalten",
+  "ide.zen_mode": "Zen-Modus",
+  "ide.breadcrumbs": "Breadcrumbs"
 }

@@ -888,5 +888,14 @@
   "chat.parent": "Parent chat",
   "chat.repo_source_chat": "this chat",
   "chat.repo_source_user": "workspace",
-  "chat.repo_source_none": "none"
+  "chat.repo_source_none": "none",
+  "ide.activity_bar": "Activity Bar",
+  "ide.view_explorer": "Explorer",
+  "ide.view_scm": "Source Control",
+  "ide.bottom_panel": "Panel",
+  "ide.problems_none": "No problems detected",
+  "ide.status_bar": "Status Bar",
+  "ide.toggle_bottom": "Toggle Panel",
+  "ide.zen_mode": "Zen Mode",
+  "ide.breadcrumbs": "Breadcrumbs"
 }

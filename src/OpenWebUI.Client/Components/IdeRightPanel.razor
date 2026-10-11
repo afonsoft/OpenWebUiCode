@@ -6,8 +6,9 @@
 @inject IdeTestRunService TestRun
 @implements IDisposable
 
-@* Painel direito da /ide (S2 RF-003/RF-004/RF-005): abas Chat | Changes |
-   Terminal | Jobs. Terminal some quando a flag estiver off. *@
+@* Painel direito (secondary sidebar) da /ide (SPEC-20261011-ide-workbench
+   Fase A): abas Chat | Pulls | Tests — SCM virou view da sidebar primária e
+   Terminal/Jobs/Preview moveram pro panel inferior estilo VS Code. *@
 
 <div class="flex h-full min-h-0 flex-col">
     <div class="flex border-b border-gray-200 dark:border-gray-800" role="tablist"
@@ -42,62 +43,6 @@
                 </div>
                 break;
 
-            case "changes":
-                @* Checkpoints do workdir (S6): Revert por snapshot. *@
-                <div class="p-2 pb-0">
-                    <CheckpointList Checkpoints="Checkpoints" ChatId="ChatId" OnReverted="OnChanged" />
-                </div>
-                @if (Git is null)
-                {
-                    <div class="px-2 py-6 text-center text-xs text-gray-400">…</div>
-                }
-                else if (!Git.Git)
-                {
-                    <div class="px-2 py-6 text-center text-xs text-gray-400">@L["ide.not_a_repo"]</div>
-                }
-                else if (Git.Files.Count == 0)
-                {
-                    <div class="px-2 py-6 text-center text-xs text-gray-400">@L["ide.clean_tree"]</div>
-                }
-                else
-                {
-                    <div class="divide-y divide-gray-100 dark:divide-gray-800">
-                        @foreach (var f in Git.Files)
-                        {
-                            var fileDiff = GitFileDiff(f.Path);
-                            <div>
-                                <div class="flex items-center gap-2 px-2 py-1.5">
-                                    <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@f.Path</span>
-                                    @if (f.Added > 0)
-                                    {
-                                        <span class="text-[0.625rem] text-green-600 dark:text-green-400">+@f.Added</span>
-                                    }
-                                    @if (f.Removed > 0)
-                                    {
-                                        <span class="text-[0.625rem] text-red-500">−@f.Removed</span>
-                                    }
-                                    <span class="text-[0.625rem] text-gray-400 uppercase">@f.Status</span>
-                                </div>
-                                @if (fileDiff is not null)
-                                {
-                                    <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-all border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950 px-2 py-1.5 text-[0.625rem] font-mono leading-4">@foreach (var line in GitDiffRender.Lines(fileDiff)){<span class="@line.Css">@line.Text
-</span>}</pre>
-                                }
-                            </div>
-                        }
-                    </div>
-                    @if (Git.DiffTruncated)
-                    {
-                        <div class="px-2 py-1.5 text-[0.625rem] text-amber-600 dark:text-amber-400">@L["ide.diff_truncated"]</div>
-                    }
-                }
-                @* Botão Run tests da aba Changes (SPEC-20261009-ide-mentions-tests RF-004). *@
-                <div class="border-t border-gray-100 dark:border-gray-800 p-2">
-                    <button class="auth-submit !w-auto px-3 py-1.5 text-[0.6875rem]"
-                            @onclick="RunTestsAsync">@L["ide.run_tests"]</button>
-                </div>
-                break;
-
             case "pulls":
                 @* PRs abertos do repo vinculado + rollup de checks (D1). *@
                 <WorkspacePullsPanel ChatId="ChatId" />
@@ -106,58 +51,15 @@
             case "tests":
                 <IdeTestsPanel />
                 break;
-
-            case "preview":
-                @* Preview de porta do host (E16 D4 — proxy /preview/{port}). *@
-                <IdePreviewPanel />
-                break;
-
-            case "terminal":
-                <TerminalView />
-                break;
-
-            case "jobs":
-                @if (Jobs.Count == 0)
-                {
-                    <div class="px-2 py-6 text-center text-xs text-gray-400">@L["chat.panel_no_jobs"]</div>
-                }
-                else
-                {
-                    <div class="divide-y divide-gray-100 dark:divide-gray-800">
-                        @foreach (var job in Jobs)
-                        {
-                            <div class="flex items-center gap-2 px-2 py-1.5">
-                                <span class="h-1.5 w-1.5 shrink-0 rounded-full @JobDotCss(job.Status)" aria-hidden="true"></span>
-                                <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300" title="@job.Command">@job.Command</span>
-                                <span class="text-[0.625rem] text-gray-400">@job.Status</span>
-                                @if (job.Status == "running")
-                                {
-                                    <button class="text-[0.625rem] text-red-500 hover:underline"
-                                            @onclick="() => KillJobAsync(job.Id)">kill</button>
-                                }
-                            </div>
-                        }
-                    </div>
-                }
-                break;
         }
     </div>
 </div>
 
 @code {
-    /// <summary>Snapshot git do workdir (atualizado pela página).</summary>
-    [Parameter] public WorkspaceGitResponse? Git { get; set; }
-
-    /// <summary>Jobs de background do usuário.</summary>
-    [Parameter] public List<ChatJobResponse> Jobs { get; set; } = [];
-
     /// <summary>Arquivo ativo no editor (para "discutir este arquivo").</summary>
     [Parameter] public string? ActiveFile { get; set; }
 
-    /// <summary>Checkpoints do workdir (S6 — aba Changes com Revert).</summary>
-    [Parameter] public IReadOnlyList<WorkspaceCheckpointItem> Checkpoints { get; set; } = [];
-
-    /// <summary>Callback pós-kill — página recarrega jobs.</summary>
+    /// <summary>Callback pós-mudança — página recarrega dados.</summary>
     [Parameter] public EventCallback OnChanged { get; set; }
 
     /// <summary>Chat cujo binding resolve o workspace (null = global).</summary>
@@ -165,33 +67,8 @@
 
     private ElementReference _tabList;
     private string _tab = "chat";
-    private bool _terminalEnabled;
-    private bool _previewEnabled;
-    private string? _gitDiffSource;
-    private Dictionary<string, string>? _gitDiffByFile;
 
-    private IEnumerable<string> Tabs => (_terminalEnabled, _previewEnabled) switch
-    {
-        (true, true) => ["chat", "changes", "pulls", "tests", "terminal", "jobs", "preview"],
-        (true, false) => ["chat", "changes", "pulls", "tests", "terminal", "jobs"],
-        (false, true) => ["chat", "changes", "pulls", "tests", "jobs", "preview"],
-        _ => ["chat", "changes", "pulls", "tests", "jobs"],
-    };
-
-    /// <inheritdoc/>
-    protected override async Task OnInitializedAsync()
-    {
-        try
-        {
-            _terminalEnabled = await Api.GetTerminalEnabledAsync();
-            _previewEnabled = await Api.GetPreviewEnabledAsync();
-        }
-        catch (HttpRequestException ex)
-        {
-            // Offline: abas extras somem — chat/changes/pulls/tests/jobs restam.
-            await Console.Error.WriteLineAsync($"[IdeRightPanel] init falhou: {ex.Message}");
-        }
-    }
+    private static readonly string[] Tabs = ["chat", "pulls", "tests"];
 
     /// <summary>Ao iniciar um run (botão do header ou da aba Changes) salta à aba Tests.</summary>
     protected override void OnInitialized() => TestRun.Changed += OnTestRunChanged;
@@ -209,8 +86,6 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
-    private Task RunTestsAsync() => TestRun.StartAsync();
-
     /// <summary>Roving tabindex nas abas do painel (SPEC a11y).</summary>
     private async Task OnTabKeyDown(KeyboardEventArgs e)
     {
@@ -223,34 +98,10 @@
     private string TabLabel(string tab) => tab switch
     {
         "chat" => L["ide.tab_chat"],
-        "changes" => L["chat.panel_tab_changes"],
         "pulls" => L["chat.panel_tab_pulls"],
-        "terminal" => L["chat.panel_tab_terminal"],
-        "jobs" => L["chat.panel_tab_jobs"],
         "tests" => L["chat.panel_tab_tests"],
-        "preview" => L["chat.panel_tab_preview"],
         _ => tab,
     };
-
-    private string? GitFileDiff(string path)
-    {
-        if (Git?.Diff is null)
-        {
-            return null;
-        }
-        if (!string.Equals(_gitDiffSource, Git.Diff, StringComparison.Ordinal))
-        {
-            _gitDiffSource = Git.Diff;
-            _gitDiffByFile = GitDiffRender.SplitDiff(Git.Diff);
-        }
-        return _gitDiffByFile!.GetValueOrDefault(path);
-    }
-
-    private async Task KillJobAsync(string jobId)
-    {
-        await Api.KillJobAsync(jobId);
-        await OnChanged.InvokeAsync();
-    }
 
     /// <summary>"Discutir este arquivo" — pré-preenche o composer com @path (RF-005).</summary>
     private async Task DiscussActiveFileAsync()
@@ -262,12 +113,4 @@
         await Storage.SetAsync("chat:draft:new", $"@{ActiveFile} ");
         Nav.NavigateTo("/");
     }
-
-    private static string JobDotCss(string status) => status switch
-    {
-        "running" => "bg-blue-500 animate-pulse",
-        "completed" => "bg-green-500",
-        "killed" or "failed" => "bg-red-500",
-        _ => "bg-gray-300 dark:bg-gray-600",
-    };
 }

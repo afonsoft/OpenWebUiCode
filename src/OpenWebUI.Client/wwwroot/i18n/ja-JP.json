@@ -888,5 +888,14 @@
   "chat.parent": "チャット",
   "chat.repo_source_chat": "このチャット",
   "chat.repo_source_user": "グローバル",
-  "chat.repo_source_none": "なし"
+  "chat.repo_source_none": "なし",
+  "ide.activity_bar": "アクティビティバー",
+  "ide.view_explorer": "エクスプローラー",
+  "ide.view_scm": "ソース管理",
+  "ide.bottom_panel": "パネル",
+  "ide.problems_none": "問題は検出されていません",
+  "ide.status_bar": "ステータスバー",
+  "ide.toggle_bottom": "パネルの切り替え",
+  "ide.zen_mode": "Zen モード",
+  "ide.breadcrumbs": "パンくずリスト"
 }

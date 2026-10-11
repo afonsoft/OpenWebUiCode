@@ -1,0 +1,60 @@
+@inject LocalizationService L
+
+@* Activity Bar estilo VS Code (SPEC-20261011-ide-workbench Fase A): rail de
+   ícones 44px que alterna a view da sidebar primária. *@
+
+<nav class="ide-activity" role="tablist" aria-label="@L["ide.activity_bar"]" aria-orientation="vertical">
+    @foreach (var view in Views)
+    {
+        var isActive = Active == view;
+        <button class="ide-activity-item @(isActive ? "ide-activity-active" : "")"
+                role="tab" aria-selected="@(isActive ? "true" : "false")"
+                title="@ViewLabel(view)" aria-label="@ViewLabel(view)"
+                @onclick="() => OnView.InvokeAsync(view)">
+            <span aria-hidden="true">@ViewIcon(view)</span>
+            @if (view == "scm" && DirtyCount > 0)
+            {
+                <span class="ide-activity-badge">@(DirtyCount > 99 ? "99+" : DirtyCount)</span>
+            }
+        </button>
+    }
+    <div class="flex-1"></div>
+    <button class="ide-activity-item" title="@L["ide.zen_mode"]" aria-label="@L["ide.zen_mode"]"
+            aria-pressed="@(Zen ? "true" : "false")"
+            @onclick="() => OnZenToggle.InvokeAsync()">
+        <span aria-hidden="true">⧉</span>
+    </button>
+</nav>
+
+@code {
+    /// <summary>View ativa da sidebar (explorer | scm).</summary>
+    [Parameter] public string Active { get; set; } = "explorer";
+
+    /// <summary>Arquivos modificados — badge no ícone SCM.</summary>
+    [Parameter] public int DirtyCount { get; set; }
+
+    /// <summary>Zen mode ativo (chrome mínimo).</summary>
+    [Parameter] public bool Zen { get; set; }
+
+    /// <summary>Callback: usuário escolheu view.</summary>
+    [Parameter] public EventCallback<string> OnView { get; set; }
+
+    /// <summary>Callback: toggle zen mode.</summary>
+    [Parameter] public EventCallback OnZenToggle { get; set; }
+
+    private static readonly string[] Views = ["explorer", "scm"];
+
+    private static string ViewIcon(string view) => view switch
+    {
+        "explorer" => "📄",
+        "scm" => "⑂",
+        _ => "•",
+    };
+
+    private string ViewLabel(string view) => view switch
+    {
+        "explorer" => L["ide.view_explorer"],
+        "scm" => L["ide.view_scm"],
+        _ => view,
+    };
+}
