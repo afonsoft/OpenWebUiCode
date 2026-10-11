@@ -25,6 +25,12 @@
     window.addEventListener("keydown", (e) => {
         if (!dotnet) return;
         const mod = e.ctrlKey || e.metaKey;
+        // Fase D: Shift+Alt+F = Format Document (antes do gate ctrl/meta).
+        if (!mod && e.altKey && e.shiftKey && (e.key === "F" || e.key === "f")) {
+            e.preventDefault();
+            dotnet.invokeMethodAsync("OnLayoutKey", "format");
+            return;
+        }
         if (!mod) { chord = 0; return; }
         const now = Date.now();
         if (chord && now - chord < 900 && (e.key === "z" || e.key === "Z")) {

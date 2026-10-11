@@ -922,5 +922,9 @@
   "ide.search_truncated": "結果が切り捨てられました（200+ヒット）",
   "ide.commit": "コミット",
   "ide.commit_message": "コミットメッセージ",
-  "ide.commit_placeholder": "メッセージ（Ctrl+Enter でコミット）"
+  "ide.commit_placeholder": "メッセージ（Ctrl+Enter でコミット）",
+  "ide.outline": "アウトライン",
+  "ide.outline_no_file": "ファイルを開いてアウトラインを表示",
+  "ide.outline_no_lsp": "このファイルの言語サーバーがありません",
+  "ide.cmd_format": "ドキュメントのフォーマット"
 }

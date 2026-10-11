@@ -1,0 +1,88 @@
+@inject ApiService Api
+@inject LocalizationService L
+
+@* Outline do arquivo ativo (SPEC-20261011-ide-intellisense, Fase D):
+   documentSymbol LSP achatado com indentação por Depth; clique → goto.
+   Sem servidor → degrade no hint (a busca por @ do QuickOpen continua
+   cobrindo o fallback regex local). *@
+
+<div class="flex h-full min-h-0 flex-col">
+    <div class="px-3 py-1.5 text-[0.6875rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800 truncate">
+        @(ActiveFile ?? L["ide.outline"])
+    </div>
+    <div class="flex-1 min-h-0 overflow-auto py-1">
+        @if (_loading)
+        {
+            <div class="px-3 py-2 text-xs text-gray-400">…</div>
+        }
+        else if (_symbols is not { Count: > 0 })
+        {
+            <div class="px-3 py-2 text-xs text-gray-400">
+                @(ActiveFile is null ? L["ide.outline_no_file"]
+                    : _available == false ? L["ide.outline_no_lsp"]
+                    : L["ide.no_results"])
+            </div>
+        }
+        else
+        {
+            @foreach (var s in _symbols)
+            {
+                <button class="flex w-full items-baseline gap-1.5 py-0.5 pr-2 text-left text-[0.6875rem] hover:bg-gray-100 dark:hover:bg-gray-800"
+                        style="padding-left:@(0.5 + s.Depth * 0.8)rem"
+                        title="@(s.Detail ?? "")"
+                        @onclick="() => OnGotoLine.InvokeAsync(s.Line)">
+                    <span class="shrink-0 text-gray-400" aria-hidden="true">@KindIcon(s.Kind)</span>
+                    <span class="truncate text-gray-700 dark:text-gray-300">@s.Name</span>
+                    <span class="shrink-0 text-gray-400">@(s.Line + 1)</span>
+                </button>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>Arquivo ativo do editor (path relativo; null = nenhum).</summary>
+    [Parameter] public string? ActiveFile { get; set; }
+
+    /// <summary>Chat cujo binding resolve o workdir.</summary>
+    [Parameter] public string? ChatId { get; set; }
+
+    /// <summary>Clique num símbolo → ir pra linha (0-based).</summary>
+    [Parameter] public EventCallback<int> OnGotoLine { get; set; }
+
+    private List<LspOutlineItem>? _symbols;
+    private bool _loading;
+    private bool? _available;
+    private string? _lastPath;
+
+    /// <inheritdoc/>
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ActiveFile != _lastPath)
+        {
+            _lastPath = ActiveFile;
+            _symbols = null;
+            _available = null;
+            if (ActiveFile is not null)
+            {
+                _loading = true;
+                var r = await Api.GetLspSymbolsAsync(ActiveFile, ChatId);
+                _loading = false;
+                _available = r?.Available;
+                _symbols = r?.Symbols.ToList();
+            }
+        }
+    }
+
+    /// <summary>Ícone por SymbolKind LSP (aprox. glyph do VS Code).</summary>
+    private static string KindIcon(int kind) => kind switch
+    {
+        5 => "◆",   // Class
+        6 or 24 => "ƒ", // Method/Operator
+        10 => "◈",  // Enum
+        11 => "◇",  // Interface
+        12 or 13 => "▪", // Function/Variable
+        23 => "⬚",  // Struct
+        _ => "•",
+    };
+}

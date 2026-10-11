@@ -922,5 +922,9 @@
   "ide.search_truncated": "结果已截断（200+匹配）",
   "ide.commit": "提交",
   "ide.commit_message": "提交信息",
-  "ide.commit_placeholder": "信息（Ctrl+Enter 提交）"
+  "ide.commit_placeholder": "信息（Ctrl+Enter 提交）",
+  "ide.outline": "大纲",
+  "ide.outline_no_file": "打开文件以查看其大纲",
+  "ide.outline_no_lsp": "此文件没有语言服务器",
+  "ide.cmd_format": "格式化文档"
 }

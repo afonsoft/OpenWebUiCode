@@ -749,6 +749,57 @@ public class WorkspaceFileEndpointsTests
         }
     }
 
+    // ---------- SPEC-20261011-ide-intellisense (Fase D): /lsp/symbols + /lsp/format ----------
+
+    /// <summary>/symbols sem servidor LSP (workdir fake) → available:false, 200.</summary>
+    [Test]
+    public async Task LspSymbols_SemServidor_AvailableFalse()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.unknownext"), "x\n");
+        var r = await ctx.Client.GetFromJsonAsync<LspSymbolsResponse>(
+            "/api/v1/workspace/lsp/symbols?path=a.unknownext");
+        Assert.That(r, Is.Not.Null);
+        Assert.That(r!.Available, Is.False);
+        Assert.That(r.Symbols, Is.Empty);
+    }
+
+    /// <summary>/symbols fora do jail → 400.</summary>
+    [Test]
+    public async Task LspSymbols_PathFora_400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.GetAsync("/api/v1/workspace/lsp/symbols?path=/etc/passwd");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    /// <summary>/format sem servidor → available:false, text null.</summary>
+    [Test]
+    public async Task LspFormat_SemServidor_AvailableFalse()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.unknownext"), "x\n");
+        var r = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/format",
+            new LspFormatRequest("a.unknownext"));
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await r.Content.ReadFromJsonAsync<LspFormatResponse>();
+        Assert.That(body!.Available, Is.False);
+        Assert.That(body.Text, Is.Null);
+    }
+
+    /// <summary>/format em arquivo inexistente → 404; fora do jail → 400.</summary>
+    [Test]
+    public async Task LspFormat_InexistenteEFora_404E400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var miss = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/format",
+            new LspFormatRequest("nao-existe.txt"));
+        Assert.That(miss.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var outside = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/format",
+            new LspFormatRequest("/etc/passwd"));
+        Assert.That(outside.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
     // ---------- fixture helpers ----------
 
 

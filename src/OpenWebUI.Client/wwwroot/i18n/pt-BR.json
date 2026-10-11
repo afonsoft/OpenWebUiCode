@@ -922,5 +922,9 @@
   "ide.search_truncated": "Resultados truncados (200+ matches)",
   "ide.commit": "Commit",
   "ide.commit_message": "Mensagem de commit",
-  "ide.commit_placeholder": "Mensagem (Ctrl+Enter para commitar)"
+  "ide.commit_placeholder": "Mensagem (Ctrl+Enter para commitar)",
+  "ide.outline": "Outline",
+  "ide.outline_no_file": "Abra um arquivo para ver o outline",
+  "ide.outline_no_lsp": "Sem servidor de linguagem para este arquivo",
+  "ide.cmd_format": "Formatar Documento"
 }

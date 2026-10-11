@@ -922,5 +922,9 @@
   "ide.search_truncated": "Risultati troncati (200+ corrispondenze)",
   "ide.commit": "Commit",
   "ide.commit_message": "Messaggio di commit",
-  "ide.commit_placeholder": "Messaggio (Ctrl+Invio per committare)"
+  "ide.commit_placeholder": "Messaggio (Ctrl+Invio per committare)",
+  "ide.outline": "Struttura",
+  "ide.outline_no_file": "Apri un file per vederne la struttura",
+  "ide.outline_no_lsp": "Nessun language server per questo file",
+  "ide.cmd_format": "Formatta documento"
 }
