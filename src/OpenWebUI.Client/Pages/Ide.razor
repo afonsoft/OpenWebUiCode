@@ -76,10 +76,15 @@ else
                         <IdeScmView Git="_git" Checkpoints="_checkpoints" ChatId="ChatId"
                                     OnChanged="RefreshSideAsync" />
                     }
+                    else if (_sideView == "search")
+                    {
+                        <IdeSearchView ChatId="ChatId" OnMatchClick="OnSearchMatchAsync" />
+                    }
                     else
                     {
                         <IdeExplorer @ref="_explorer" Branch="@_git?.Branch" ChatId="ChatId"
                                      DirtyCount="@(_git?.Files.Count ?? 0)"
+                                     GitStatus="_gitStatus"
                                      OnOpenFile="OnOpenFileAsync" OnChanged="RefreshSideAsync" />
                     }
                 </aside>
@@ -189,6 +194,7 @@ else
     private IReadOnlyList<IdeQuickOpen.IdeCommand> _qoCommands = [];
     private IReadOnlyList<IdeQuickOpen.IdeSymbol> _qoSymbols = [];
     private bool _filesLoaded;
+    private IReadOnlyDictionary<string, string>? _gitStatus;
 
     /// <inheritdoc/>
     protected override async Task OnInitializedAsync() => await LoadInitAsync();
@@ -262,6 +268,7 @@ else
             case "palette": OpenQuickOpen(">"); break;
             case "gotoline": OpenQuickOpen(":"); break;
             case "symbol": OpenQuickOpen("@"); break;
+            case "search": OnSideView("search"); break;
         }
         StateHasChanged();
         return Task.CompletedTask;
@@ -482,6 +489,9 @@ else
         try
         {
             _git = await Api.GetWorkspaceGitAsync(ChatId);
+            _gitStatus = _git?.Files is { } files
+                ? files.ToDictionary(f => f.Path, f => f.Status)
+                : null;
             _jobs = await Api.GetJobsAsync(all: true);
             _checkpoints = await Api.GetCheckpointsAsync(ChatId);
         }
@@ -495,6 +505,16 @@ else
 
     /// <summary>Botão ▶ do header — inicia o test run (RF-004).</summary>
     private Task RunTestsAsync() => TestRun.StartAsync();
+
+    /// <summary>Clique num match da busca → abre arquivo na posição.</summary>
+    private async Task OnSearchMatchAsync(WorkspaceSearchMatchItem m)
+    {
+        if (_editor is not null)
+        {
+            await _editor.OpenFileAsync(m.Path);
+            await _editor.GotoLineAsync(m.Line, m.Col);
+        }
+    }
 
     /// <inheritdoc/>
     protected override void OnInitialized() => TestRun.Changed += OnTestRunChanged;

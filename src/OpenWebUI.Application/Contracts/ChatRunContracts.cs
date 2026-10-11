@@ -227,4 +227,5 @@ public sealed record WorkspaceGitResponse(
     IReadOnlyList<WorkspaceGitFileResponse> Files,
     string? Diff,
     bool DiffTruncated,
-    bool Worktree = false);
+    bool Worktree = false,
+    bool GitWrite = false);

@@ -915,5 +915,12 @@
   "ide.tab_close_right": "右側をすべて閉じる",
   "ide.tab_close_all": "すべて閉じる",
   "ide.tab_pin": "開いたままにする",
-  "ide.tab_copy_path": "パスをコピー"
+  "ide.tab_copy_path": "パスをコピー",
+  "ide.view_search": "検索",
+  "ide.search_placeholder": "検索",
+  "ide.search_hint": "すべてのファイルを検索するには入力",
+  "ide.search_truncated": "結果が切り捨てられました（200+ヒット）",
+  "ide.commit": "コミット",
+  "ide.commit_message": "コミットメッセージ",
+  "ide.commit_placeholder": "メッセージ（Ctrl+Enter でコミット）"
 }

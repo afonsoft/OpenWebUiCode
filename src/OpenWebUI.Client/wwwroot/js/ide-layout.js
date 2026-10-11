@@ -46,6 +46,13 @@
                 break;
             case "g": case "G": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "gotoline"); break;
             case "o": case "O": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "symbol"); break;
+            // Fase C: Ctrl+Shift+F busca global (Ctrl+F simples fica pro browser).
+            case "f": case "F":
+                if (e.shiftKey) {
+                    e.preventDefault();
+                    dotnet.invokeMethodAsync("OnLayoutKey", "search");
+                }
+                break;
         }
     }, { capture: true });
 

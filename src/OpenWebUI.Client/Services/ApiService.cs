@@ -1067,6 +1067,24 @@ public class ApiService(HttpClient http, AuthService auth)
         SendAsync<WorkspaceGitResponse>(HttpMethod.Get, "/api/v1/workspace/repo/git"
             + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
 
+    /// <summary>Busca global no workdir (SPEC-20261011-ide-search-scm); null em erro.</summary>
+    public Task<WorkspaceSearchResponse?> SearchWorkspaceAsync(
+        string q, string? path = null, string? chatId = null)
+    {
+        var qs = "?q=" + Uri.EscapeDataString(q)
+            + (path is null ? "" : "&path=" + Uri.EscapeDataString(path))
+            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId));
+        return SendAsync<WorkspaceSearchResponse>(HttpMethod.Get,
+            $"/api/v1/workspace/repo/search{qs}");
+    }
+
+    /// <summary>Commit SCM (flag ide.git_write); resposta com Ok/Commit/Error.</summary>
+    public Task<WorkspaceCommitResponse?> CommitWorkspaceAsync(string message, string? chatId = null) =>
+        SendAsync<WorkspaceCommitResponse>(HttpMethod.Post,
+            "/api/v1/workspace/repo/commit"
+            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            new WorkspaceCommitRequest(message));
+
     /// <summary>PRs abertos do repo vinculado (SPEC-20261009-pr-ci-panel); null em 404/erro.</summary>
     public Task<WorkspacePullsResponse?> GetWorkspacePullsAsync(string? chatId = null) =>
         SendAsync<WorkspacePullsResponse>(HttpMethod.Get, "/api/v1/workspace/repo/pulls"

@@ -7,7 +7,8 @@
     <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer select-none"
          style="padding-left: @(0.5 + Depth * 0.85)rem"
          role="treeitem" aria-expanded="@(Node.Type == "dir" ? Node.Expanded.ToString().ToLowerInvariant() : null)"
-         @onclick="ClickAsync">
+         @onclick="ClickAsync"
+         @oncontextmenu="(e) => Explorer?.OnNodeContext(e, Node)" @oncontextmenu:preventDefault>
         @if (Node.Type == "dir")
         {
             <span class="text-gray-400 text-[0.625rem] w-3 shrink-0" aria-hidden="true">
@@ -20,7 +21,11 @@
             <span class="w-3 shrink-0" aria-hidden="true"></span>
             <span aria-hidden="true">@IconFor(Node)</span>
         }
-        <span class="min-w-0 flex-1 truncate text-xs text-gray-700 dark:text-gray-300">@Node.Name</span>
+        <span class="min-w-0 flex-1 truncate text-xs @NameCss">@Node.Name</span>
+        @if (_status is { } st)
+        {
+            <span class="shrink-0 text-[0.625rem] font-semibold @StatusCss" aria-hidden="true">@st</span>
+        }
         <span class="hidden group-hover:flex items-center gap-0.5 shrink-0">
             <button class="msg-action !p-0.5" title="@L["ide.rename"]" aria-label="@L["ide.rename"]"
                     @onclick:stopPropagation @onclick="() => OnAction.InvokeAsync((IdeExplorer.FileAction.Rename, Node))">✎</button>
@@ -55,6 +60,26 @@
 
     /// <summary>Ação de contexto (rename/delete) — sobe pro explorer executar.</summary>
     [Parameter] public EventCallback<(IdeExplorer.FileAction, IdeExplorer.IdeTreeEntry)> OnAction { get; set; }
+
+    /// <summary>Status git do nó (decoration SPEC-20261011-ide-search-scm).</summary>
+    private string? _status => Explorer?.GitStatusFor(Node.Path);
+
+    /// <summary>Cor do nome: M âmbar, A/?? verde, D vermelho (VS Code decorations).</summary>
+    private string NameCss => _status switch
+    {
+        "M" or "R" or "C" => "text-amber-600 dark:text-amber-400",
+        "A" or "??" or "U" => "text-green-600 dark:text-green-400",
+        "D" => "text-red-500 dark:text-red-400 line-through",
+        _ => "text-gray-700 dark:text-gray-300",
+    };
+
+    private string StatusCss => _status switch
+    {
+        "M" or "R" or "C" => "text-amber-500",
+        "A" or "??" or "U" => "text-green-500",
+        "D" => "text-red-400",
+        _ => "text-gray-400",
+    };
 
     private async Task ClickAsync()
     {

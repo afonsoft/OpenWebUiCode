@@ -915,5 +915,12 @@
   "ide.tab_close_right": "关闭右侧",
   "ide.tab_close_all": "全部关闭",
   "ide.tab_pin": "保持打开",
-  "ide.tab_copy_path": "复制路径"
+  "ide.tab_copy_path": "复制路径",
+  "ide.view_search": "搜索",
+  "ide.search_placeholder": "搜索",
+  "ide.search_hint": "输入以搜索所有文件",
+  "ide.search_truncated": "结果已截断（200+匹配）",
+  "ide.commit": "提交",
+  "ide.commit_message": "提交信息",
+  "ide.commit_placeholder": "信息（Ctrl+Enter 提交）"
 }
