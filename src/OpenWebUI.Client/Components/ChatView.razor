@@ -861,6 +861,12 @@
             // em vez de cair na blazor-error-ui.
             await Console.Error.WriteLineAsync($"[ChatView] init falhou: {ex.Message}");
         }
+        catch (Exception ex)
+        {
+            // OnInitializedAsync é lifecycle: qualquer escape vai direto pra
+            // blazor-error-ui — loga e renderiza degradado em vez de cair.
+            await Console.Error.WriteLineAsync($"[ChatView] init falhou: {ex}");
+        }
 
         // OnParametersSetAsync pode rodar antes das tools carregarem —
         // garante o default "genéricas ligadas" num chat novo.
@@ -871,7 +877,15 @@
 
         Realtime.OnChatMessageUpdated += HandleChatMessageUpdated;
         Realtime.OnChatMessageDeleted += HandleChatMessageDeleted;
-        await Realtime.ConnectAsync(Nav.BaseUri, Auth.Token);
+        try
+        {
+            await Realtime.ConnectAsync(Nav.BaseUri, Auth.Token);
+        }
+        catch (Exception ex)
+        {
+            // Realtime é best-effort: falha na conexão não pode derrubar a página.
+            await Console.Error.WriteLineAsync($"[ChatView] realtime falhou: {ex.Message}");
+        }
     }
 
     private async Task<string?> StoredWebSearchAsync()
@@ -891,10 +905,18 @@
     {
         if (firstRender)
         {
-            _voiceSupported = await JS.InvokeAsync<bool>("openwebui.audio.sttSupported");
-            _ttsSupported = await JS.InvokeAsync<bool>("openwebui.audio.ttsSupported");
-            // Listener de "perto do fim" para o auto-scroll do stream.
-            await JS.InvokeVoidAsync("openwebui.initPinnedScroll", _scrollContainer);
+            try
+            {
+                _voiceSupported = await JS.InvokeAsync<bool>("openwebui.audio.sttSupported");
+                _ttsSupported = await JS.InvokeAsync<bool>("openwebui.audio.ttsSupported");
+                // Listener de "perto do fim" para o auto-scroll do stream.
+                await JS.InvokeVoidAsync("openwebui.initPinnedScroll", _scrollContainer);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+            {
+                // Interop indisponível: áudio/scroll degradam sem derrubar a página.
+                await Console.Error.WriteLineAsync($"[ChatView] js init falhou: {ex.Message}");
+            }
             if (_voiceSupported || _ttsSupported)
             {
                 StateHasChanged();
@@ -1059,9 +1081,17 @@
             // Chat novo: só as tools genéricas vêm selecionadas por padrão.
             _toolIds = DefaultToolIds();
             // Modo de permissão volta ao padrão do composer (última escolha).
-            _approvalPreset = await StoredPresetAsync();
-            _agentMode = await StoredAgentModeAsync();
-            await LoadComposerStateAsync(null);
+            try
+            {
+                _approvalPreset = await StoredPresetAsync();
+                _agentMode = await StoredAgentModeAsync();
+                await LoadComposerStateAsync(null);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+            {
+                // Interop indisponível: segue com defaults (lifecycle nunca propaga).
+                await Console.Error.WriteLineAsync($"[ChatView] composer state falhou: {ex.Message}");
+            }
             return;
         }
 
@@ -1094,9 +1124,17 @@
             _parentChatId = chat.ParentChatId;
 
         // Binding por chat: substitui o global carregado no init.
-        var chatRepo = await Api.GetChatWorkspaceRepoAsync(chat.Id);
-        _repo = chatRepo?.Binding;
-        _repoSource = chatRepo?.Source;
+        try
+        {
+            var chatRepo = await Api.GetChatWorkspaceRepoAsync(chat.Id);
+            _repo = chatRepo?.Binding;
+            _repoSource = chatRepo?.Source;
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Sem o binding o chat abre sem contexto de repo — degradado, não crash.
+            await Console.Error.WriteLineAsync($"[ChatView] repo binding falhou: {ex.Message}");
+        }
             _parentTitle = chat.ParentTitle;
             // Chat sem ToolIds persistidos (legado/nunca tocado): default genérico.
             _toolIds = chat.ToolIds.Count > 0
@@ -1113,7 +1151,15 @@
             }
 
             // Run ainda em execução (aba fechou/reload): anexa ao stream e mostra a geração ao vivo.
-            var activeRun = await ChatStream.GetActiveRunAsync(chat.Id);
+            ChatRunResponse? activeRun = null;
+            try
+            {
+                activeRun = await ChatStream.GetActiveRunAsync(chat.Id);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
+            {
+                await Console.Error.WriteLineAsync($"[ChatView] active run falhou: {ex.Message}");
+            }
             _ = activeRun is not null
                 ? AttachActiveRunAsync(activeRun)
                 // Git bar: snapshot do workspace quando há runs anteriores.

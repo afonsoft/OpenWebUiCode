@@ -81,6 +81,12 @@ public sealed class AttentionInboxState(ApiService api) : IAsyncDisposable
             // Sem rede — mantém o último número conhecido.
             return;
         }
+        catch (Exception ex)
+        {
+            // Refresh falha de forma inesperada — loga e mantém o último número.
+            await Console.Error.WriteLineAsync($"[AttentionInboxState] refresh falhou: {ex.Message}");
+            return;
+        }
 
         if (count == Count)
         {
@@ -118,6 +124,11 @@ public sealed class AttentionInboxState(ApiService api) : IAsyncDisposable
         catch (OperationCanceledException)
         {
             // Dispose encerra o loop.
+        }
+        catch (Exception ex)
+        {
+            // Loop fire-and-forget: nada pode escapar para a blazor-error-ui.
+            await Console.Error.WriteLineAsync($"[AttentionInboxState] poll falhou: {ex.Message}");
         }
     }
 

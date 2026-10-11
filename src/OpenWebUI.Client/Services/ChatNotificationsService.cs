@@ -64,7 +64,15 @@ public sealed class ChatNotificationsService : IAsyncDisposable
 
             _started = true;
             _realtime.OnRunCompleted += HandleRunCompleted;
-            await _realtime.ConnectAsync(_nav.BaseUri, _auth.Token);
+            try
+            {
+                await _realtime.ConnectAsync(_nav.BaseUri, _auth.Token);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
+            {
+                // API indisponível: hub reconecta sozinho (WithAutomaticReconnect).
+                await Console.Error.WriteLineAsync($"[ChatNotifications] connect falhou: {ex.Message}");
+            }
             _ = SyncPushAsync();
         }
         finally
@@ -165,9 +173,14 @@ public sealed class ChatNotificationsService : IAsyncDisposable
                 await _js.InvokeAsync<object>("openwebui.notify.unsubscribePush", api);
             }
         }
-        catch (Exception ex) when (ex is HttpRequestException or JSException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Push indisponível (SW/permission) — notificações seguem sem ele.
+        }
+        catch (Exception ex)
+        {
+            // _ = SyncPushAsync() é fire-and-forget: escape = banner de erro.
+            await Console.Error.WriteLineAsync($"[ChatNotifications] sync push falhou: {ex.Message}");
         }
     }
 

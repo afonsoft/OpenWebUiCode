@@ -122,6 +122,11 @@
         {
             /* painel fechado */
         }
+        catch (Exception ex)
+        {
+            // Loop fire-and-forget: nada pode escapar para a blazor-error-ui.
+            await Console.Error.WriteLineAsync($"[WorkspacePullsPanel] poll falhou: {ex.Message}");
+        }
     }
 
     /// <summary>Recarrega binding + lista (refresh manual e polling).</summary>

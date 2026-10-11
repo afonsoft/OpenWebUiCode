@@ -132,6 +132,11 @@
         {
             // Componente desmontado entre o tick e o InvokeAsync(StateHasChanged).
         }
+        catch (Exception ex)
+        {
+            // O poll é fire-and-forget: qualquer escape vira banner de erro.
+            await Console.Error.WriteLineAsync($"[NotificationBell] poll falhou: {ex.Message}");
+        }
     }
 
     private async Task ToggleAsync()
@@ -163,6 +168,12 @@
         {
             // Offline/SW: badge vazio e o poll retenta sozinho — nunca
             // propagar para a blazor-error-ui.
+            _offline = true;
+            await Console.Error.WriteLineAsync($"[NotificationBell] refresh falhou: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // Idem: refresh falha de forma inesperada não pode derrubar a UI.
             _offline = true;
             await Console.Error.WriteLineAsync($"[NotificationBell] refresh falhou: {ex.Message}");
         }

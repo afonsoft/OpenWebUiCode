@@ -143,8 +143,15 @@
             : errorLog.map(function (e) { return "[" + e.at + "] " + e.text; }).join("\n\n");
     }
 
+    // Falhas transitórias (rede/offline/storage) nunca devem derrubar a UI.
+    var transientRe = /failed to fetch|network ?error|err_(internet|connection|network|name|timed|address|empty_response|aborted)|aborterror|\babort(ed)?\b|timed? ?out|service ?worker|jsdisconnected|quotaexceeded|securityerror|notallowederror|offline/i;
+    var lastTransientAt = 0;
+
     function recordError(value) {
         var text = errorText(value);
+        if (transientRe.test(text)) {
+            lastTransientAt = Date.now();
+        }
         var last = errorLog.at(-1);
         if (last && last.text === text) {
             return; // falha do renderer relança por evento — manter uma cópia
@@ -157,6 +164,29 @@
         if (panel && !panel.hidden) {
             renderErrorLog(panel);
         }
+    }
+
+    // Última linha de defesa no DOM: QUALQUER código que exiba #blazor-error-ui
+    // escreve style.display — se a exibição veio logo após um erro transitório
+    // registrado, reverte para oculto. Bugs reais (sem erro transitório
+    // precedente) seguem mostrando o banner normalmente.
+    function guardErrorUi() {
+        var el = document.getElementById("blazor-error-ui");
+        if (!el || el.__guardObserved) {
+            return;
+        }
+        el.__guardObserved = true;
+        new MutationObserver(function () {
+            if (el.style.display === "block" && Date.now() - lastTransientAt < 4000) {
+                el.style.display = "none";
+                console.warn("[boot] banner de erro suprimido: falha transitória em curso");
+            }
+        }).observe(el, { attributes: true, attributeFilter: ["style"] });
+    }
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", guardErrorUi);
+    } else {
+        guardErrorUi();
     }
 
     var originalConsoleError = console.error.bind(console);
@@ -318,6 +348,47 @@
                     return null;
                 }
             }
+        }).then(function () {
+            // Última linha de defesa no lado JS: exceções do .NET que cheguem ao
+            // renderer chamam dotNetCriticalError, que exibe #blazor-error-ui
+            // (uma trava que só sai com reload). Falhas transitórias de rede/
+            // storage/offline NÃO devem derrubar a UI — o app continua rodando
+            // e os componentes já degradam sozinhos. Erros de lógica/bug real
+            // seguem exibindo o banner normalmente.
+            //
+            // _internal só é populado depois que o runtime WASM inicia — pode
+            // chegar DEPOIS deste .then. Faz polling até a função existir.
+            var transientRe = /failed to fetch|network ?error|err_(internet|connection|network|name|timed|address|empty_response|aborted)|aborterror|\babort(ed)?\b|timed? ?out|service ?worker|jsdisconnected|quotaexceeded|securityerror|notallowederror|offline/i;
+            var attempts = 0;
+            var wrap = function () {
+                var internal = window.Blazor && window.Blazor._internal;
+                var original = internal && internal.dotNetCriticalError;
+                if (typeof original !== "function" || internal.__critGuarded) {
+                    if (!internal || !internal.__critGuarded) {
+                        if (++attempts < 100) setTimeout(wrap, 100);
+                    }
+                    return;
+                }
+                try {
+                    internal.__critGuarded = true;
+                    internal.dotNetCriticalError = function (error) {
+                        var text;
+                        try {
+                            text = String((error && (error.stack || error.message)) || error || "");
+                        } catch {
+                            text = "";
+                        }
+                        if (transientRe.test(text)) {
+                            console.warn("[boot] falha transitória suprimida do banner: " + text.substring(0, 500));
+                            return;
+                        }
+                        return original.call(this, error);
+                    };
+                } catch (e) {
+                    if (++attempts < 100) setTimeout(wrap, 100);
+                }
+            };
+            wrap();
         }).catch(showBootError);
     } catch {
         showBootError();

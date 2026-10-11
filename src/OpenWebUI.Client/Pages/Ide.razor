@@ -540,7 +540,19 @@ else
             // Offline: mantém o último snapshot; o timer retenta sozinho.
             await Console.Error.WriteLineAsync($"[Ide] refresh falhou: {ex.Message}");
         }
-        await InvokeAsync(StateHasChanged);
+        catch (Exception ex)
+        {
+            // Chamado via Timer fire-and-forget: escape = banner de erro.
+            await Console.Error.WriteLineAsync($"[Ide] refresh falhou: {ex.Message}");
+        }
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException or TaskCanceledException)
+        {
+            // Componente desmontado entre refresh e render.
+        }
     }
 
     /// <summary>Botão ▶ do header — inicia o test run (RF-004).</summary>

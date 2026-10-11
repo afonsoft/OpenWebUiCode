@@ -79,7 +79,7 @@ public class AuthService(HttpClient http, BrowserStorage storage, LocalizationSe
         if (user is not null)
         {
             CurrentUser = user;
-            await storage.SetAsync(UserKey, System.Text.Json.JsonSerializer.Serialize(user, JsonOptions));
+            await SetStorageSafeAsync(UserKey, System.Text.Json.JsonSerializer.Serialize(user, JsonOptions));
             Changed?.Invoke();
         }
     }
@@ -89,8 +89,8 @@ public class AuthService(HttpClient http, BrowserStorage storage, LocalizationSe
     {
         _token = null;
         CurrentUser = null;
-        await storage.RemoveAsync(TokenKey);
-        await storage.RemoveAsync(UserKey);
+        await RemoveStorageSafeAsync(TokenKey);
+        await RemoveStorageSafeAsync(UserKey);
         Changed?.Invoke();
     }
 
@@ -131,7 +131,7 @@ public class AuthService(HttpClient http, BrowserStorage storage, LocalizationSe
         }
 
         _token = token;
-        await storage.SetAsync(TokenKey, token);
+        await SetStorageSafeAsync(TokenKey, token);
         await RefreshUserAsync();
         return IsAuthenticated ? null : l10n["auth.error_load_user"];
     }
@@ -201,10 +201,39 @@ public class AuthService(HttpClient http, BrowserStorage storage, LocalizationSe
 
         _token = auth.Token;
         CurrentUser = auth.User;
-        await storage.SetAsync(TokenKey, auth.Token);
-        await storage.SetAsync(UserKey, System.Text.Json.JsonSerializer.Serialize(auth.User, JsonOptions));
+        await SetStorageSafeAsync(TokenKey, auth.Token);
+        await SetStorageSafeAsync(UserKey, System.Text.Json.JsonSerializer.Serialize(auth.User, JsonOptions));
         Changed?.Invoke();
         return null;
+    }
+
+    /// <summary>
+    /// Persiste no storage sem propagar: browser pode negar localStorage
+    /// (modo privado, cookies bloqueados) — a sessão em memória segue válida.
+    /// </summary>
+    private async Task SetStorageSafeAsync(string key, string value)
+    {
+        try
+        {
+            await storage.SetAsync(key, value);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+        {
+            await Console.Error.WriteLineAsync($"[AuthService] persistência indisponível: {ex.Message}");
+        }
+    }
+
+    /// <summary>Remove do storage sem propagar (ver <see cref="SetStorageSafeAsync"/>).</summary>
+    private async Task RemoveStorageSafeAsync(string key)
+    {
+        try
+        {
+            await storage.RemoveAsync(key);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+        {
+            await Console.Error.WriteLineAsync($"[AuthService] persistência indisponível: {ex.Message}");
+        }
     }
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonOptions =
