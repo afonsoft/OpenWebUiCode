@@ -258,6 +258,46 @@ public class BuiltinToolsTests
         Assert.That(outcome!.Text, Does.Contain("não existe"));
     }
 
+    [Test]
+    public void NormalizeArgs_DesembrulhaStringDoubleEncoded()
+    {
+        // Modelos (ex.: Gemini) às vezes emitem arguments como string JSON
+        // contendo o objeto — o registry precisa desembrulhar em vez de
+        // derrubar a run com InvalidOperationException.
+        var unwrapped = BuiltinToolRegistry.NormalizeArgs(
+            "\"{\\\"action\\\":\\\"list\\\"}\"");
+        Assert.Multiple(() =>
+        {
+            Assert.That(unwrapped.ValueKind, Is.EqualTo(JsonValueKind.Object));
+            Assert.That(unwrapped.GetProperty("action").GetString(), Is.EqualTo("list"));
+            Assert.That(BuiltinToolRegistry.NormalizeArgs(null).ValueKind,
+                Is.EqualTo(JsonValueKind.Object));
+            Assert.That(BuiltinToolRegistry.NormalizeArgs("").ValueKind,
+                Is.EqualTo(JsonValueKind.Object));
+            Assert.That(BuiltinToolRegistry.NormalizeArgs("{}").ValueKind,
+                Is.EqualTo(JsonValueKind.Object));
+        });
+    }
+
+    [Test]
+    public async Task Registry_ArgsNaoObjeto_RetornaErroSemExcecao()
+    {
+        var registry = new BuiltinToolRegistry(
+            [new FetchUrlBuiltinTool(new StubHttpClientFactory())],
+            new ConfigurationBuilder().Build());
+        var tool = registry.ResolveIds(["builtin:fetch_url"], [])[0];
+
+        // String não-JSON e array são rejeitados como erro de tool — nunca
+        // propagam InvalidOperationException que falharia a run inteira.
+        var plain = await registry.ExecuteAsync(tool, "\"abc\"", Ctx(), default);
+        var array = await registry.ExecuteAsync(tool, "[1,2]", Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(plain!.Text, Does.Contain("esperado objeto JSON"));
+            Assert.That(array!.Text, Does.Contain("esperado objeto JSON"));
+        });
+    }
+
     // ---------------- FetchUrl (SSRF) ----------------
 
     [Test]
@@ -958,6 +998,8 @@ public class BuiltinToolsTests
         Assert.Multiple(() =>
         {
             Assert.That(r.Text, Does.Contain("3 tarefa(s)").And.Contain("1 concluída"));
+            // Aponta a próxima tarefa (primeira não-completa) pra encadear a continuação.
+            Assert.That(r.Text, Does.Contain("Próxima tarefa: implementar"));
             var tasks = r.Result!.GetType().GetProperty("tasks")!.GetValue(r.Result)
                 as System.Collections.IEnumerable;
             Assert.That(tasks!.Cast<object>().Count(), Is.EqualTo(3));
@@ -971,6 +1013,15 @@ public class BuiltinToolsTests
         var r = await tool.ExecuteAsync(
             Args("{\"todos\":[{\"content\":\"x\",\"status\":\"blocked\"}]}"), Ctx(), default);
         Assert.That(r.Text, Does.Contain("pending|in_progress|completed"));
+    }
+
+    [Test]
+    public async Task TodoWrite_TudoConcluido_SemProximaTarefa()
+    {
+        var tool = new TodoWriteBuiltinTool();
+        var r = await tool.ExecuteAsync(
+            Args("{\"todos\":[{\"content\":\"a\",\"status\":\"completed\"}]}"), Ctx(), default);
+        Assert.That(r.Text, Does.Not.Contain("Próxima tarefa"));
     }
 
     [Test]

@@ -66,6 +66,7 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
         }
 
         var items = new List<object>();
+        string? nextPendingContent = null;
         var done = 0;
         var doing = 0;
         var i = 0;
@@ -107,11 +108,23 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
                 doing++;
             }
 
+            if (status is "pending" or "in_progress" && nextPendingContent is null)
+            {
+                nextPendingContent = content;
+            }
+
             items.Add(new { id, content, status });
         }
 
         var text = $"Plano atualizado: {items.Count} tarefa(s) — "
             + $"{done} concluída(s), {doing} em andamento.";
+        // A próxima tarefa pendente volta no resultado: o modelo vê na hora
+        // o que falta e encadeia a continuação sem precisar de intervenção
+        // do usuário ("vai para a próxima tarefa" manual).
+        if (nextPendingContent is not null)
+        {
+            text += $" Próxima tarefa: {nextPendingContent} — continue sem interrupção.";
+        }
         return Task.FromResult(new BuiltinToolResult(text, new { tasks = items }));
     }
 }
