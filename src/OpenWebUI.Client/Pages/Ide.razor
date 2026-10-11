@@ -80,6 +80,11 @@ else
                     {
                         <IdeSearchView ChatId="ChatId" OnMatchClick="OnSearchMatchAsync" />
                     }
+                    else if (_sideView == "outline")
+                    {
+                        <IdeOutlineView ActiveFile="@_activePath" ChatId="ChatId"
+                                        OnGotoLine="OnOutlineGotoAsync" />
+                    }
                     else
                     {
                         <IdeExplorer @ref="_explorer" Branch="@_git?.Branch" ChatId="ChatId"
@@ -269,6 +274,7 @@ else
             case "gotoline": OpenQuickOpen(":"); break;
             case "symbol": OpenQuickOpen("@"); break;
             case "search": OnSideView("search"); break;
+            case "format": _ = FormatActiveAsync(); break;
         }
         StateHasChanged();
         return Task.CompletedTask;
@@ -351,6 +357,8 @@ else
         new("goto_line", L["ide.goto_line"]),
         new("close_all", L["ide.tab_close_all"]),
         new("toggle_autosave", L["ide.cmd_autosave"]),
+        new("format", L["ide.cmd_format"]),
+        new("outline", L["ide.outline"]),
     ];
 
     private async Task OnQoFileAsync(string path)
@@ -401,6 +409,8 @@ else
             case "toggle_autosave":
                 if (_editor is not null) { await _editor.ToggleAutosaveAsync(); }
                 break;
+            case "format": await FormatActiveAsync(); break;
+            case "outline": OnSideView("outline"); break;
         }
         StateHasChanged();
     }
@@ -513,6 +523,25 @@ else
         {
             await _editor.OpenFileAsync(m.Path);
             await _editor.GotoLineAsync(m.Line, m.Col);
+        }
+    }
+
+    /// <summary>Clique num símbolo do outline → goto linha no arquivo ativo.</summary>
+    private async Task OnOutlineGotoAsync(int line)
+    {
+        if (_editor is not null)
+        {
+            await _editor.GotoLineAsync(line, 0);
+        }
+    }
+
+    /// <summary>Format Document (Shift+Alt+F / palette) — LSP formatting no
+    /// arquivo ativo; degrade silencioso sem servidor.</summary>
+    private async Task FormatActiveAsync()
+    {
+        if (_editor is not null)
+        {
+            await _editor.FormatActiveAsync();
         }
     }
 

@@ -27,7 +27,7 @@
 </nav>
 
 @code {
-    /// <summary>View ativa da sidebar (explorer | search | scm).</summary>
+    /// <summary>View ativa da sidebar (explorer | search | scm | outline).</summary>
     [Parameter] public string Active { get; set; } = "explorer";
 
     /// <summary>Arquivos modificados — badge no ícone SCM.</summary>
@@ -42,13 +42,14 @@
     /// <summary>Callback: toggle zen mode.</summary>
     [Parameter] public EventCallback OnZenToggle { get; set; }
 
-    private static readonly string[] Views = ["explorer", "search", "scm"];
+    private static readonly string[] Views = ["explorer", "search", "scm", "outline"];
 
     private static string ViewIcon(string view) => view switch
     {
         "explorer" => "📄",
         "search" => "🔍",
         "scm" => "⑂",
+        "outline" => "≣",
         _ => "•",
     };
 
@@ -57,6 +58,7 @@
         "explorer" => L["ide.view_explorer"],
         "search" => L["ide.view_search"],
         "scm" => L["ide.view_scm"],
+        "outline" => L["ide.outline"],
         _ => view,
     };
 }

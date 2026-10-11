@@ -1085,6 +1085,19 @@ public class ApiService(HttpClient http, AuthService auth)
             + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
             new WorkspaceCommitRequest(message));
 
+    /// <summary>Outline LSP do arquivo (documentSymbol); null em erro.</summary>
+    public Task<LspSymbolsResponse?> GetLspSymbolsAsync(string path, string? chatId = null) =>
+        SendAsync<LspSymbolsResponse>(HttpMethod.Get,
+            "/api/v1/workspace/lsp/symbols?path=" + Uri.EscapeDataString(path)
+            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+
+    /// <summary>Format Document via LSP — devolve texto novo (sem escrever disco).</summary>
+    public Task<LspFormatResponse?> FormatLspDocumentAsync(string path, string? chatId = null) =>
+        SendAsync<LspFormatResponse>(HttpMethod.Post,
+            "/api/v1/workspace/lsp/format"
+            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            new LspFormatRequest(path));
+
     /// <summary>PRs abertos do repo vinculado (SPEC-20261009-pr-ci-panel); null em 404/erro.</summary>
     public Task<WorkspacePullsResponse?> GetWorkspacePullsAsync(string? chatId = null) =>
         SendAsync<WorkspacePullsResponse>(HttpMethod.Get, "/api/v1/workspace/repo/pulls"

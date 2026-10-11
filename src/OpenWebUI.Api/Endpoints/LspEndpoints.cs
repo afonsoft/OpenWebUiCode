@@ -28,7 +28,166 @@ public static class LspEndpoints
         group.MapPost("/doc", DocSyncAsync);
         group.MapGet("/diagnostics", DiagnosticsAsync);
         group.MapGet("/hover", HoverAsync);
+        group.MapGet("/symbols", SymbolsAsync);
+        group.MapPost("/format", FormatAsync);
         return group;
+    }
+
+    // ---------- GET /symbols?path= (SPEC-20261011-ide-intellisense) ----------
+
+    /// <summary>Outline do arquivo: documentSymbol → lista plana com Depth.
+    /// Sem servidor → <c>available:false</c> (degrade, nunca 5xx).</summary>
+    private static Task<IResult> SymbolsAsync(
+        string? path, string? chatId, HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, LspService lsp, CancellationToken ct) =>
+        WithWorkdirAsync(http, db, repos, chatId, ct, async (uid, workdir) =>
+        {
+            var full = WorkspaceFiles.ResolveInside(workdir, path, out var error);
+            if (full is null)
+            {
+                return Results.BadRequest(new { detail = error });
+            }
+            var language = lsp.LanguageFor(full);
+            if (language is null
+                || lsp.StateOf(workdir, language.ServerKey) != LspServerState.Running)
+            {
+                return Results.Ok(new LspSymbolsResponse(false, []));
+            }
+            try
+            {
+                await lsp.OpenDocumentAsync(workdir, full, null, ct);
+                var result = await lsp.RequestAsync(workdir, full,
+                    "textDocument/documentSymbol",
+                    new { textDocument = new { uri = LspClient.UriForPath(full) } }, ct);
+                var symbols = new List<LspOutlineItem>();
+                FlattenSymbols(result, 0, symbols);
+                return Results.Ok(new LspSymbolsResponse(true, symbols));
+            }
+            catch (LspUnavailableException)
+            {
+                return Results.Ok(new LspSymbolsResponse(false, []));
+            }
+        });
+
+    /// <summary>Achata DocumentSymbol[] (recursivo) ou SymbolInformation[] (flat).</summary>
+    private static void FlattenSymbols(JsonElement node, int depth, List<LspOutlineItem> output)
+    {
+        if (node.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+        foreach (var s in node.EnumerateArray())
+        {
+            var name = s.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
+            var detail = s.TryGetProperty("detail", out var d) && d.ValueKind == JsonValueKind.String
+                ? d.GetString() : null;
+            var kind = s.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.Number
+                ? k.GetInt32() : 0;
+            // DocumentSymbol: range+selectionRange; SymbolInformation: location.range.
+            var range = s.TryGetProperty("range", out var r) ? r
+                : s.TryGetProperty("location", out var loc) && loc.TryGetProperty("range", out r) ? r
+                : default;
+            if (range.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+            var (line, col) = Pos(range, "start");
+            var (endLine, endCol) = Pos(range, "end");
+            output.Add(new LspOutlineItem(name, detail, kind, line, col, endLine, endCol, depth));
+            if (s.TryGetProperty("children", out var children))
+            {
+                FlattenSymbols(children, depth + 1, output);
+            }
+        }
+    }
+
+    private static (int Line, int Col) Pos(JsonElement range, string key) =>
+        range.TryGetProperty(key, out var p)
+            ? ((p.TryGetProperty("line", out var l) ? l.GetInt32() : 0),
+               (p.TryGetProperty("character", out var c) ? c.GetInt32() : 0))
+            : (0, 0);
+
+    // ---------- POST /format (SPEC-20261011-ide-intellisense) ----------
+
+    /// <summary>Format Document: textDocument/formatting → aplica os TextEdits
+    /// no conteúdo e devolve o texto novo — escrita fica no fluxo PUT /file.</summary>
+    private static Task<IResult> FormatAsync(
+        LspFormatRequest? request, string? chatId, HttpContext http,
+        AppDbContext db, WorkspaceRepoService repos, LspService lsp,
+        CancellationToken ct) =>
+        WithWorkdirAsync(http, db, repos, chatId, ct, async (uid, workdir) =>
+        {
+            var full = WorkspaceFiles.ResolveInside(workdir, request?.Path, out var error);
+            if (full is null)
+            {
+                return Results.BadRequest(new { detail = error });
+            }
+            if (!File.Exists(full))
+            {
+                return Results.NotFound(new { detail = "Arquivo não existe." });
+            }
+            var language = lsp.LanguageFor(full);
+            if (language is null
+                || lsp.StateOf(workdir, language.ServerKey) != LspServerState.Running)
+            {
+                return Results.Ok(new LspFormatResponse(false, null, false));
+            }
+            try
+            {
+                await lsp.OpenDocumentAsync(workdir, full, null, ct);
+                var edits = await lsp.RequestAsync(workdir, full,
+                    "textDocument/formatting",
+                    new
+                    {
+                        textDocument = new { uri = LspClient.UriForPath(full) },
+                        options = new { tabSize = 4, insertSpaces = true },
+                    }, ct);
+                var original = await File.ReadAllTextAsync(full, ct);
+                var formatted = ApplyTextEdits(original, edits);
+                return Results.Ok(new LspFormatResponse(
+                    true, formatted, formatted != original));
+            }
+            catch (LspUnavailableException)
+            {
+                return Results.Ok(new LspFormatResponse(false, null, false));
+            }
+        });
+
+    /// <summary>Aplica LSP TextEdits (range start/end 0-based) de trás pra
+    /// frente sobre o texto — posições são UTF-16 code units.</summary>
+    private static string ApplyTextEdits(string text, JsonElement edits)
+    {
+        if (edits.ValueKind != JsonValueKind.Array)
+        {
+            return text;
+        }
+        var lineStart = new List<int> { 0 };
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\n')
+            {
+                lineStart.Add(i + 1);
+            }
+        }
+        int Off(int line, int col) =>
+            line >= lineStart.Count ? text.Length : Math.Min(lineStart[line] + col, text.Length);
+
+        var ordered = edits.EnumerateArray()
+            .Where(e => e.TryGetProperty("range", out var r) && r.ValueKind == JsonValueKind.Object)
+            .Select(e =>
+            {
+                var r = e.GetProperty("range");
+                var (sl, sc) = Pos(r, "start");
+                var (el, ec) = Pos(r, "end");
+                return (Start: Off(sl, sc), End: Off(el, ec),
+                    Text: e.TryGetProperty("newText", out var nt) ? nt.GetString() ?? "" : "");
+            })
+            .OrderByDescending(e => e.Start).ToList();
+        foreach (var e in ordered)
+        {
+            text = string.Concat(text.AsSpan(0, e.Start), e.Text, text.AsSpan(e.End));
+        }
+        return text;
     }
 
     // ---------- GET /status?path= ----------

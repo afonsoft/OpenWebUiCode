@@ -922,5 +922,9 @@
   "ide.search_truncated": "Resultados truncados (200+ coincidencias)",
   "ide.commit": "Commit",
   "ide.commit_message": "Mensaje de commit",
-  "ide.commit_placeholder": "Mensaje (Ctrl+Enter para confirmar)"
+  "ide.commit_placeholder": "Mensaje (Ctrl+Enter para confirmar)",
+  "ide.outline": "Esquema",
+  "ide.outline_no_file": "Abre un archivo para ver su esquema",
+  "ide.outline_no_lsp": "Sin servidor de lenguaje para este archivo",
+  "ide.cmd_format": "Formatear documento"
 }

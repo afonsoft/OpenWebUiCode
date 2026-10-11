@@ -922,5 +922,9 @@
   "ide.search_truncated": "Ergebnisse gekürzt (200+ Treffer)",
   "ide.commit": "Commit",
   "ide.commit_message": "Commit-Nachricht",
-  "ide.commit_placeholder": "Nachricht (Ctrl+Enter zum Committen)"
+  "ide.commit_placeholder": "Nachricht (Ctrl+Enter zum Committen)",
+  "ide.outline": "Gliederung",
+  "ide.outline_no_file": "Datei öffnen, um die Gliederung zu sehen",
+  "ide.outline_no_lsp": "Kein Sprachserver für diese Datei",
+  "ide.cmd_format": "Dokument formatieren"
 }

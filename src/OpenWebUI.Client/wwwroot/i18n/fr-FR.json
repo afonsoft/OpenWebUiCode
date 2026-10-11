@@ -922,5 +922,9 @@
   "ide.search_truncated": "Résultats tronqués (200+ correspondances)",
   "ide.commit": "Commit",
   "ide.commit_message": "Message de commit",
-  "ide.commit_placeholder": "Message (Ctrl+Entrée pour commiter)"
+  "ide.commit_placeholder": "Message (Ctrl+Entrée pour commiter)",
+  "ide.outline": "Plan",
+  "ide.outline_no_file": "Ouvrez un fichier pour voir son plan",
+  "ide.outline_no_lsp": "Pas de serveur de langage pour ce fichier",
+  "ide.cmd_format": "Formater le document"
 }

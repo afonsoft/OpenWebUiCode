@@ -347,6 +347,25 @@
     /// <summary>Caminho da aba ativa (null quando fechada).</summary>
     public string? ActivePath => _active?.Path;
 
+    /// <summary>Format Document (Fase D): LSP formatting → setDoc + dirty;
+    /// escrita fica no fluxo Save/PUT /file. false sem servidor/arquivo.</summary>
+    public async Task<bool> FormatActiveAsync()
+    {
+        if (_active is null)
+        {
+            return false;
+        }
+        var r = await Api.FormatLspDocumentAsync(_active.Path, ChatId);
+        if (r?.Text is null || r.Changed == false)
+        {
+            return false;
+        }
+        _active.Doc = r.Text;
+        _active.Dirty = true;
+        await JS.InvokeVoidAsync("owuiIde.setDoc", "ide-cm-host", r.Text, _active.Path);
+        return true;
+    }
+
     /// <summary>Pin uma aba preview (dblclick).</summary>
     private void PinTab(IdeTab tab)
     {

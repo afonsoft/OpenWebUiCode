@@ -60,6 +60,23 @@ public sealed record WorkspaceCommitRequest(string? Message);
 /// <summary>Resultado do commit: hash novo ou erro do git.</summary>
 public sealed record WorkspaceCommitResponse(bool Ok, string? Commit, string? Error);
 
+// ---------- Fase D (SPEC-20261011-ide-intellisense): outline + format ----------
+
+/// <summary>Símbolo do documentSymbol achatado (Depth = nível na hierarquia).</summary>
+public sealed record LspOutlineItem(
+    string Name, string? Detail, int Kind,
+    int Line, int Col, int EndLine, int EndCol, int Depth);
+
+/// <summary>Outline do arquivo ativo; Available=false quando sem servidor LSP.</summary>
+public sealed record LspSymbolsResponse(
+    bool Available, IReadOnlyList<LspOutlineItem> Symbols);
+
+/// <summary>Format Document — path relativo do arquivo aberto.</summary>
+public sealed record LspFormatRequest(string? Path);
+
+/// <summary>Texto formatado (Changed=false quando já estava ok).</summary>
+public sealed record LspFormatResponse(bool Available, string? Text, bool Changed);
+
 /// <summary>Item de skill do repositório (descoberta em <c>**/SKILL.md</c>).</summary>
 /// <param name="Name">Nome do slash command (frontmatter <c>name</c> ou diretório-pai).</param>
 /// <param name="Description">Descrição curta (frontmatter).</param>
