@@ -20,4 +20,12 @@
     <ProjectReference Include="..\OpenWebUI.Client\OpenWebUI.Client.csproj" />
   </ItemGroup>
 
+  <!-- O diretório data/ abriga o clone do workspace do usuário (IDE): nunca compilar. -->
+  <ItemGroup>
+    <Compile Remove="data/**" />
+    <None Remove="data/**" />
+    <Content Remove="data/**" />
+    <EmbeddedResource Remove="data/**" />
+  </ItemGroup>
+
 </Project>

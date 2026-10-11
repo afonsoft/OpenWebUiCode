@@ -20,7 +20,7 @@ import {
 import {
   autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
 } from "@codemirror/autocomplete";
-import { searchKeymap, openSearchPanel } from "@codemirror/search";
+import { searchKeymap, openSearchPanel, highlightSelectionMatches } from "@codemirror/search";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
 import { css } from "@codemirror/lang-css";

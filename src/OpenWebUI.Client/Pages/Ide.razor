@@ -73,21 +73,21 @@ else
                        class="shrink-0 overflow-auto border-r border-gray-200 dark:border-gray-800 max-lg:absolute max-lg:inset-y-0 max-lg:left-11 max-lg:z-30 max-lg:bg-white max-lg:dark:bg-gray-950 @(_explorerOpen ? "" : "max-lg:hidden")">
                     @if (_sideView == "scm")
                     {
-                        <IdeScmView Git="_git" Checkpoints="_checkpoints" ChatId="ChatId"
+                        <IdeScmView Git="_git" Checkpoints="_checkpoints" ChatId="@ChatId"
                                     OnChanged="RefreshSideAsync" />
                     }
                     else if (_sideView == "search")
                     {
-                        <IdeSearchView ChatId="ChatId" OnMatchClick="OnSearchMatchAsync" />
+                        <IdeSearchView ChatId="@ChatId" OnMatchClick="OnSearchMatchAsync" />
                     }
                     else if (_sideView == "outline")
                     {
-                        <IdeOutlineView ActiveFile="@_activePath" ChatId="ChatId"
+                        <IdeOutlineView ActiveFile="@_activePath" ChatId="@ChatId"
                                         OnGotoLine="OnOutlineGotoAsync" />
                     }
                     else
                     {
-                        <IdeExplorer @ref="_explorer" Branch="@_git?.Branch" ChatId="ChatId"
+                        <IdeExplorer @ref="_explorer" Branch="@_git?.Branch" ChatId="@ChatId"
                                      DirtyCount="@(_git?.Files.Count ?? 0)"
                                      GitStatus="_gitStatus"
                                      OnOpenFile="OnOpenFileAsync" OnChanged="RefreshSideAsync" />
@@ -114,7 +114,7 @@ else
                     </nav>
                 }
                 <div class="relative min-w-0 flex-1 min-h-0">
-                    <IdeEditor @ref="_editor" Dark="_dark" ChatId="ChatId"
+                    <IdeEditor @ref="_editor" Dark="_dark" ChatId="@ChatId"
                                OnSaved="RefreshSideAsync" OnActiveFileChanged="OnActiveFileChanged"
                                OnProblemsChanged="OnProblemsChanged" />
                     @* Fase E: diff HEAD × atual (MergeView overlay). *@
@@ -145,7 +145,7 @@ else
                      role="separator" aria-orientation="vertical" aria-hidden="true"></div>
                 <aside id="ide-aux" style="width:@(_auxW)px"
                        class="shrink-0 overflow-auto border-l border-gray-200 dark:border-gray-800 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-30 max-lg:bg-white max-lg:dark:bg-gray-950 @(_panelOpen ? "" : "max-lg:hidden")">
-                    <IdeRightPanel ChatId="ChatId"
+                    <IdeRightPanel ChatId="@ChatId"
                                    ActiveFile="@_activePath" OnChanged="RefreshSideAsync" />
                 </aside>
             }
@@ -159,7 +159,7 @@ else
         @* Quick Open / Command Palette (SPEC-20261011-ide-editor-core Fase B). *@
         @if (_qoOpen)
         {
-            <IdeQuickOpen Seed="_qoSeed" Files="_qoFiles" Commands="_qoCommands" Symbols="_qoSymbols"
+            <IdeQuickOpen Seed="@_qoSeed" Files="_qoFiles" Commands="_qoCommands" Symbols="_qoSymbols"
                           OnClose="() => _qoOpen = false"
                           OnPickFile="OnQoFileAsync" OnPickCommand="OnQoCommandAsync"
                           OnPickLine="OnQoLineAsync" OnPickSymbol="OnQoSymbolAsync" />
@@ -311,22 +311,28 @@ else
     private async Task LoadFileListAsync()
     {
         var files = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
         try
         {
-            await WalkDirAsync("", files, 0);
+            await WalkDirAsync("", files, seen, visited, 0);
         }
-        catch (HttpRequestException)
+        catch (Exception ex)
         {
-            /* offline — lista fica vazia, quick open segue funcional */ 
+            Console.WriteLine($"[qo] file walk falhou: {ex.GetType().Name}: {ex.Message}");
         }
+        Console.WriteLine($"[qo] file index: {files.Count}");
         _qoFiles = files;
         _filesLoaded = true;
         await InvokeAsync(StateHasChanged);
     }
 
-    private async Task WalkDirAsync(string dir, List<string> files, int depth)
+    /// <summary>Walk recursivo (depth 3 por chamada). Dedup por path — a janela
+    /// de 3 níveis já traz filhos dos dirs expandidos; visited evita re-fetch.</summary>
+    private async Task WalkDirAsync(string dir, List<string> files,
+        HashSet<string> seen, HashSet<string> visited, int depth)
     {
-        if (files.Count >= 4000 || depth > 10)
+        if (files.Count >= 4000 || depth > 10 || !visited.Add(dir))
         {
             return;
         }
@@ -341,13 +347,23 @@ else
             {
                 return;
             }
-            if (e.Type == "file")
+            if (e.Type == "file" && seen.Add(e.Path))
             {
                 files.Add(e.Path);
             }
-            else if (e.Type == "dir" && !e.Collapsed)
+        }
+        // Recursa só dirs na borda da janela de 3 níveis (filhos fora dela).
+        var dirSeg = string.IsNullOrEmpty(dir) ? 0 : dir.Split('/').Length;
+        foreach (var e in tree.Entries)
+        {
+            if (files.Count >= 4000)
             {
-                await WalkDirAsync(e.Path, files, depth + 1);
+                return;
+            }
+            if (e.Type == "dir" && !e.Collapsed
+                && e.Path.Split('/').Length - dirSeg >= 3)
+            {
+                await WalkDirAsync(e.Path, files, seen, visited, depth + 1);
             }
         }
     }

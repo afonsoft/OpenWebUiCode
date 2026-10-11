@@ -78,7 +78,7 @@
 
             case "changes":
                 @* Checkpoints da run (S6): Revert por snapshot. *@
-                <CheckpointList Checkpoints="Checkpoints" ChatId="ChatId" OnReverted="OnReverted" />
+                <CheckpointList Checkpoints="Checkpoints" ChatId="@ChatId" OnReverted="OnReverted" />
                 @if (Git is { Git: true } git)
                 {
                     @* Workspace é repo git: branch + numstat + diff real (RF-018). *@
@@ -269,7 +269,7 @@
 
             case "pulls":
                 @* PRs abertos do repo vinculado + rollup de checks (D1). *@
-                <WorkspacePullsPanel ChatId="ChatId" />
+                <WorkspacePullsPanel ChatId="@ChatId" />
                 break;
 
             case "tests":
