@@ -138,6 +138,15 @@ else
                       Errors="_errCount" Warnings="_warnCount" Language="@LangFor(_activePath)"
                       OnScmClick="OnScmClicked" OnProblemsClick="OpenProblemsPanel"
                       OnTogglePanel="() => _bottomOpen = !_bottomOpen" />
+
+        @* Quick Open / Command Palette (SPEC-20261011-ide-editor-core Fase B). *@
+        @if (_qoOpen)
+        {
+            <IdeQuickOpen Seed="_qoSeed" Files="_qoFiles" Commands="_qoCommands" Symbols="_qoSymbols"
+                          OnClose="() => _qoOpen = false"
+                          OnPickFile="OnQoFileAsync" OnPickCommand="OnQoCommandAsync"
+                          OnPickLine="OnQoLineAsync" OnPickSymbol="OnQoSymbolAsync" />
+        }
     </div>
 }
 
@@ -173,6 +182,13 @@ else
     private int _errCount;
     private int _warnCount;
     private DotNetObjectReference<Ide>? _selfRef;
+    // Quick Open (Fase B): estado + caches lazy.
+    private bool _qoOpen;
+    private string _qoSeed = "";
+    private IReadOnlyList<string> _qoFiles = [];
+    private IReadOnlyList<IdeQuickOpen.IdeCommand> _qoCommands = [];
+    private IReadOnlyList<IdeQuickOpen.IdeSymbol> _qoSymbols = [];
+    private bool _filesLoaded;
 
     /// <inheritdoc/>
     protected override async Task OnInitializedAsync() => await LoadInitAsync();
@@ -241,9 +257,145 @@ else
                 _bottomPanel?.ShowTab("terminal");
                 break;
             case "zen": _zen = !_zen; break;
+            // Fase B: quick open / palette / goto line / goto symbol.
+            case "quickopen": OpenQuickOpen(""); break;
+            case "palette": OpenQuickOpen(">"); break;
+            case "gotoline": OpenQuickOpen(":"); break;
+            case "symbol": OpenQuickOpen("@"); break;
         }
         StateHasChanged();
         return Task.CompletedTask;
+    }
+
+    // ---------- Quick Open / Command Palette (SPEC-20261011-ide-editor-core) ----------
+
+    /// <summary>Abre o Quick Open com o seed do modo; carrega a lista de arquivos lazy.</summary>
+    private void OpenQuickOpen(string seed)
+    {
+        _qoSeed = seed;
+        _qoOpen = true;
+        BuildCommands();
+        if (_editor is not null)
+        {
+            _qoSymbols = _editor.GetSymbols()
+                .Select(s => new IdeQuickOpen.IdeSymbol(s.Line, s.Label)).ToList();
+        }
+        if (!_filesLoaded)
+        {
+            _ = LoadFileListAsync();
+        }
+    }
+
+    /// <summary>Walk recursivo da tree API (depth 3 por chamada, dirs comum) — cap 4000.</summary>
+    private async Task LoadFileListAsync()
+    {
+        var files = new List<string>();
+        try
+        {
+            await WalkDirAsync("", files, 0);
+        }
+        catch (HttpRequestException)
+        {
+            /* offline — lista fica vazia, quick open segue funcional */ 
+        }
+        _qoFiles = files;
+        _filesLoaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task WalkDirAsync(string dir, List<string> files, int depth)
+    {
+        if (files.Count >= 4000 || depth > 10)
+        {
+            return;
+        }
+        var tree = await Api.GetWorkspaceTreeAsync(dir, 3, chatId: ChatId);
+        if (tree is null)
+        {
+            return;
+        }
+        foreach (var e in tree.Entries)
+        {
+            if (files.Count >= 4000)
+            {
+                return;
+            }
+            if (e.Type == "file")
+            {
+                files.Add(e.Path);
+            }
+            else if (e.Type == "dir" && !e.Collapsed)
+            {
+                await WalkDirAsync(e.Path, files, depth + 1);
+            }
+        }
+    }
+
+    /// <summary>Lista da paleta — labels localizadas, ids estáveis.</summary>
+    private void BuildCommands() => _qoCommands =
+    [
+        new("save", L["ide.cmd_save"]),
+        new("save_all", L["ide.cmd_save_all"]),
+        new("run_tests", L["ide.run_tests"]),
+        new("toggle_sidebar", L["ide.cmd_toggle_sidebar"]),
+        new("toggle_panel", L["ide.toggle_bottom"]),
+        new("toggle_aux", L["ide.cmd_toggle_aux"]),
+        new("toggle_zen", L["ide.zen_mode"]),
+        new("goto_line", L["ide.goto_line"]),
+        new("close_all", L["ide.tab_close_all"]),
+        new("toggle_autosave", L["ide.cmd_autosave"]),
+    ];
+
+    private async Task OnQoFileAsync(string path)
+    {
+        _activePath = path;
+        if (_editor is not null)
+        {
+            await _editor.OpenFileAsync(path, preview: false);
+        }
+    }
+
+    private async Task OnQoLineAsync(int line)
+    {
+        if (_editor is not null)
+        {
+            await _editor.GotoLineAsync(line - 1, 0);
+        }
+    }
+
+    private async Task OnQoSymbolAsync(int line)
+    {
+        if (_editor is not null)
+        {
+            await _editor.GotoLineAsync(line - 1, 0);
+        }
+    }
+
+    /// <summary>Ação da Command Palette.</summary>
+    private async Task OnQoCommandAsync(string id)
+    {
+        switch (id)
+        {
+            case "save":
+                if (_editor is not null) { await _editor.SaveAsync(); }
+                break;
+            case "save_all":
+                if (_editor is not null) { await _editor.SaveAllAsync(); }
+                break;
+            case "run_tests": await RunTestsAsync(); break;
+            case "toggle_sidebar": _sideOpen = !_sideOpen; _explorerOpen = _sideOpen; break;
+            case "toggle_panel": _bottomOpen = !_bottomOpen; break;
+            case "toggle_aux": _auxOpen = !_auxOpen; _panelOpen = _auxOpen; break;
+            case "toggle_zen": _zen = !_zen; break;
+            case "goto_line": OpenQuickOpen(":"); break;
+            case "close_all":
+                if (_editor is not null) { await _editor.CloseAllTabsAsync(); }
+                break;
+            case "toggle_autosave":
+                if (_editor is not null) { await _editor.ToggleAutosaveAsync(); }
+                break;
+        }
+        StateHasChanged();
     }
 
     private void OnSideView(string view)

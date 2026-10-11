@@ -17,6 +17,9 @@
         attachKeys: (ref) => { dotnet = ref; },
         detachKeys: () => { dotnet = null; },
         sashValue: (k) => store.get("sash:" + k),
+        copyText: (t) => { try { navigator.clipboard.writeText(t); } catch { /* sem permissão */ } },
+        getAutosave: () => store.get("autosave") === "1",
+        setAutosave: (on) => store.set("autosave", on ? "1" : "0"),
     };
 
     window.addEventListener("keydown", (e) => {
@@ -36,6 +39,13 @@
             case "j": case "J": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "bottom"); break;
             case "`": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "terminal"); break;
             case "k": case "K": chord = now; break;
+            // SPEC-20261011-ide-editor-core Fase B: quick open / palette / goto.
+            case "p": case "P":
+                e.preventDefault();
+                dotnet.invokeMethodAsync("OnLayoutKey", e.shiftKey ? "palette" : "quickopen");
+                break;
+            case "g": case "G": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "gotoline"); break;
+            case "o": case "O": e.preventDefault(); dotnet.invokeMethodAsync("OnLayoutKey", "symbol"); break;
         }
     }, { capture: true });
 
