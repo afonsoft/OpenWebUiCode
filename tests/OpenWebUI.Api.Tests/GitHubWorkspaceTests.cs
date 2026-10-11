@@ -280,7 +280,11 @@ public class GitHubWorkspaceTests
             _db, _config, rag: null!, webSearch: null!, _repos, default);
         var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
         Assert.That(system?.Content, Does.Contain("Open WebUI agent")
-            .And.Contain("autonomous").And.Contain("user's language"));
+            .And.Contain("autonomous").And.Contain("user's language")
+            // Disciplina de tools obrigatória no prompt base (todo + memória).
+            .And.Contain("builtin_todo_write")
+            .And.Contain("builtin_memory_save")
+            .And.Contain("builtin_memory_search"));
     }
 
     // ---------------- GitHubService: caminhos de erro ----------------
