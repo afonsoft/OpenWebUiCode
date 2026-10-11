@@ -76,7 +76,7 @@
         {
             _chat = await Api.GetSharedChatAsync(ShareId);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             await Console.Error.WriteLineAsync($"[SharedChat] carga falhou: {ex.Message}");

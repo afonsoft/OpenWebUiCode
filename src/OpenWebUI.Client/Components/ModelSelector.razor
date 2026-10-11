@@ -74,7 +74,7 @@
         {
             _models = await Api.GetModelsAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _models = [];
             await Console.Error.WriteLineAsync($"[ModelSelector] carga falhou: {ex.Message}");

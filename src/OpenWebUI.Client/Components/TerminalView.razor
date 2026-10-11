@@ -82,7 +82,7 @@ else
         {
             _enabled = await Api.GetTerminalEnabledAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: painel degradado com retry manual, não a error UI.
             _enabled = true;
@@ -131,7 +131,7 @@ else
         {
             _sessions = await Api.GetTerminalSessionsAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: mantém a lista anterior; o poll/refresh retenta.
             _loadError = _sessions.Count == 0;

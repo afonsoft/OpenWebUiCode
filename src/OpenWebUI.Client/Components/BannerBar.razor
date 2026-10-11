@@ -54,7 +54,7 @@
             var all = await Api.GetBannersAsync();
             _banners = all.Where(b => !_dismissed.Contains(b.Id)).ToList();
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Rede indisponível — banners simplesmente não aparecem.
         }

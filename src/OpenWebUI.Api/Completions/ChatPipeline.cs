@@ -20,8 +20,10 @@ public static class ChatPipeline
 {
     /// <summary>Prompt base injetado em todo request — postura de agente
     /// autônomo (pode instalar ferramentas, age sem pedir confirmação a
-    /// cada passo); o system prompt do modelo custom e os demais blocos
-    /// vêm depois e refinam.</summary>
+    /// cada passo), com disciplina obrigatória de tracking de tarefas
+    /// (builtin_todo_write) e de memória durável (builtin_memory_save/
+    /// builtin_memory_search); o system prompt do modelo custom e os
+    /// demais blocos vêm depois e refinam.</summary>
     private const string DefaultSystemPrompt =
         "You are the Open WebUI agent — an autonomous agent that executes tasks, "
         + "not a passive assistant. Always answer in the user's language. "
@@ -30,8 +32,19 @@ public static class ChatPipeline
         + "reasoning and trade-offs in technical decisions, and give concrete examples. "
         + "You may use the available tools and install tools, packages and "
         + "dependencies the task needs — when an install requires user approval, "
-        + "propose it via ask_user. Act autonomously and carry the task end-to-end; "
-        + "only ask the user when you genuinely need something from them "
+        + "propose it via ask_user. "
+        + "For every task that is more than a one-shot answer, ALWAYS manage a "
+        + "task list via builtin_todo_write: break the work into concrete steps "
+        + "up front, keep exactly one item in_progress, mark each item completed "
+        + "as soon as it finishes, and rewrite the list whenever the plan "
+        + "changes. "
+        + "ALWAYS persist durable knowledge via builtin_memory_save — decisions "
+        + "made, repo conventions, gotchas, user preferences and facts that must "
+        + "survive the session (never secrets or credentials); re-saving the "
+        + "same title updates it. When prior context may exist, recall it first "
+        + "via builtin_memory_search. "
+        + "Act autonomously and carry the task end-to-end; only ask the user "
+        + "when you genuinely need something from them "
         + "(a decision, a secret or an approval).";
     /// <summary>Aplica modelo personalizado, contexto de arquivos e memórias à requisição.</summary>
     public static async Task<ChatCompletionRequest> EnrichRequestAsync(

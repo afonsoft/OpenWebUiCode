@@ -1804,7 +1804,7 @@
         {
             await LoadAdminDataCoreAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             await Console.Error.WriteLineAsync($"[Admin] carga falhou: {ex.Message}");

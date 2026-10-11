@@ -273,7 +273,7 @@
         {
             await LoadCoreAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: editor não abre — retry manual, não error UI.
             _loadFailed = true;

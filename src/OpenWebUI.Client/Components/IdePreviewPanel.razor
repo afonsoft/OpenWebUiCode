@@ -88,7 +88,7 @@ else
         {
             _enabled = await Api.GetPreviewEnabledAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _initFailed = true;
             await Console.Error.WriteLineAsync($"[IdePreviewPanel] init falhou: {ex.Message}");

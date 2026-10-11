@@ -24,6 +24,11 @@ public sealed class OfflineInitResilienceTests
     private sealed class SwitchableHandler : HttpMessageHandler
     {
         public bool Offline { get; set; } = true;
+
+        /// <summary>Quando seta, lança essa exceção no lugar do
+        /// HttpRequestException padrão (timeout/abort/parse de proxy).</summary>
+        public Exception? OfflineException { get; set; }
+
         public Func<HttpRequestMessage, HttpResponseMessage>? Route { get; set; }
         public List<(string Method, string Path)> Calls { get; } = [];
 
@@ -33,7 +38,7 @@ public sealed class OfflineInitResilienceTests
             Calls.Add((request.Method.Method, request.RequestUri?.PathAndQuery ?? ""));
             if (Offline)
             {
-                throw new HttpRequestException("Failed to fetch");
+                throw OfflineException ?? new HttpRequestException("Failed to fetch");
             }
             return Task.FromResult(
                 Route?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.OK)
@@ -132,6 +137,47 @@ public sealed class OfflineInitResilienceTests
         using var cut = fx.Ctx.Render<Sidebar>();
 
         // Nav/casca continua renderizando com o aviso offline + retry.
+        cut.WaitForAssertion(() =>
+            Assert.That(cut.FindAll("[data-offline-fallback]"), Is.Not.Empty));
+    }
+
+    [Test]
+    public void NotificationBell_Timeout_NaoPropagaExcecao()
+    {
+        // TaskCanceledException do timeout do HttpClient: antes caía na
+        // blazor-error-ui porque só HttpRequestException era tratada.
+        using var fx = SetupBell();
+        fx.Handler.OfflineException = new TaskCanceledException("timeout");
+        using var cut = fx.Ctx.Render<NotificationBell>();
+
+        cut.WaitForAssertion(() =>
+            Assert.That(cut.FindAll("[aria-label*='notifications.unread_aria']"), Is.Empty));
+    }
+
+    [Test]
+    public void Sidebar_Timeout_RenderizaCascaComFallback()
+    {
+        using var fx = SetupFull();
+        fx.Handler.OfflineException = new TaskCanceledException("timeout");
+        using var cut = fx.Ctx.Render<Sidebar>();
+
+        cut.WaitForAssertion(() =>
+            Assert.That(cut.FindAll("[data-offline-fallback]"), Is.Not.Empty));
+    }
+
+    [Test]
+    public void Ide_RespostaNaoJson_NaoPropagaExcecao()
+    {
+        // Proxy/CDN devolvendo página HTML com 200: ReadFromJsonAsync lança
+        // JsonException — também é falha transitória, não erro fatal da UI.
+        using var fx = SetupFull();
+        fx.Handler.Offline = false;
+        fx.Handler.Route = _ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html>bad gateway</html>", Encoding.UTF8, "text/html"),
+        };
+        using var cut = fx.Ctx.Render<Ide>();
+
         cut.WaitForAssertion(() =>
             Assert.That(cut.FindAll("[data-offline-fallback]"), Is.Not.Empty));
     }

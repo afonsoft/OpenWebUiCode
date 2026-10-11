@@ -57,7 +57,7 @@
         {
             _notes = await Api.GetNotesAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             _notes = [];

@@ -22,7 +22,9 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
 
     /// <inheritdoc />
     public string Description =>
-        "Update the task list — call when planning progress.";
+        "Manage the run's task list — REQUIRED for every multi-step task: "
+            + "break work into steps up front, keep exactly one in_progress, "
+            + "mark items completed as they finish, rewrite when plans change.";
 
     /// <inheritdoc />
     public string ParametersJson => """

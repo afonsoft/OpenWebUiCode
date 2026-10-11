@@ -1212,7 +1212,7 @@ public class ApiService(HttpClient http, AuthService auth)
             using var response = await http.SendAsync(request);
             return response.StatusCode;
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             return null;
         }

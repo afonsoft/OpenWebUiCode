@@ -128,6 +128,10 @@
         {
             // Dispose encerra o loop.
         }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+        {
+            // Componente desmontado entre o tick e o InvokeAsync(StateHasChanged).
+        }
     }
 
     private async Task ToggleAsync()
@@ -155,7 +159,7 @@
             _unread = page.Unread;
             _offline = false;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline/SW: badge vazio e o poll retenta sozinho — nunca
             // propagar para a blazor-error-ui.

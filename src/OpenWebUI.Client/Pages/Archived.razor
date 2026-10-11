@@ -54,7 +54,7 @@
         {
             _chats = await Api.GetArchivedChatsAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             _chats = [];

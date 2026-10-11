@@ -81,15 +81,7 @@ public sealed class IdeTestRunService(ApiService api)
                 Error = result.Detail ?? "Não foi possível iniciar os testes.";
             }
         }
-        catch (HttpRequestException)
-        {
-            Error = "Não foi possível iniciar os testes.";
-        }
-        catch (TaskCanceledException)
-        {
-            Error = "Não foi possível iniciar os testes.";
-        }
-        catch (System.Text.Json.JsonException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             Error = "Não foi possível iniciar os testes.";
         }

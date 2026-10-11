@@ -118,7 +118,10 @@
             }
         }
         catch (OperationCanceledException) { /* painel fechado */ }
-        catch (ObjectDisposedException) { /* painel fechado */ }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+        {
+            /* painel fechado */
+        }
     }
 
     /// <summary>Recarrega binding + lista (refresh manual e polling).</summary>
@@ -138,7 +141,7 @@
             _pulls = await Api.GetWorkspacePullsAsync(ChatId);
             _loadFailed = false;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: mantém o último dado / empty state honesto.
             _loadFailed = true;

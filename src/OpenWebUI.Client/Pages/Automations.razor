@@ -197,7 +197,7 @@
             _models = await Api.GetModelsAsync();
             _items = await Api.GetAutomationsAsync();
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             _items = [];

@@ -142,11 +142,7 @@ public sealed class LocalizationService(HttpClient http, IJSRuntime js)
                     .ToList();
             }
         }
-        catch (HttpRequestException)
-        {
-            // Locale do browser indisponível — usa fallback.
-        }
-        catch (System.Text.Json.JsonException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Locale do browser indisponível — usa fallback.
         }
@@ -163,7 +159,7 @@ public sealed class LocalizationService(HttpClient http, IJSRuntime js)
             return await http.GetFromJsonAsync<Dictionary<string, string>>($"i18n/{language}.json")
                 ?? new Dictionary<string, string>();
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             return new Dictionary<string, string>();
         }

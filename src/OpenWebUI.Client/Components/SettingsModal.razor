@@ -722,7 +722,7 @@
                 .Select(m => $"{m.Provider}:{m.Id}")
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _modelCatalog = [];
             _modelsMessage = L["settings.models_load_error"];

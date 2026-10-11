@@ -30,8 +30,16 @@ public class AuthService(HttpClient http, BrowserStorage storage, LocalizationSe
         }
 
         _initialized = true;
-        _token = await storage.GetAsync(TokenKey);
-        var userJson = await storage.GetAsync(UserKey);
+        string? userJson = null;
+        try
+        {
+            _token = await storage.GetAsync(TokenKey);
+            userJson = await storage.GetAsync(UserKey);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Storage/interop indisponível no boot — segue como deslogado.
+        }
         if (_token is not null && userJson is not null)
         {
             try
@@ -145,11 +153,19 @@ public class AuthService(HttpClient http, BrowserStorage storage, LocalizationSe
 
     private async Task<T?> SendGetAsync<T>(string uri)
     {
-        using var request = CreateRequest(HttpMethod.Get, uri);
-        using var response = await http.SendAsync(request);
-        return response.IsSuccessStatusCode
-            ? await response.Content.ReadFromJsonAsync<T>(JsonOptions)
-            : default;
+        try
+        {
+            using var request = CreateRequest(HttpMethod.Get, uri);
+            using var response = await http.SendAsync(request);
+            return response.IsSuccessStatusCode
+                ? await response.Content.ReadFromJsonAsync<T>(JsonOptions)
+                : default;
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Falha transitória (offline/timeout/parse) — como resposta vazia.
+            return default;
+        }
     }
 
     private async Task<string?> PersistOrErrorAsync(HttpResponseMessage response)

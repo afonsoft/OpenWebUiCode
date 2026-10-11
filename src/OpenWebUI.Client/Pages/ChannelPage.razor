@@ -266,7 +266,7 @@
             _channel = await Api.GetChannelAsync(Id);
             _messages = await Api.GetChannelMessagesAsync(Id);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: shell do canal renderiza + retry manual.
             _loadFailed = true;

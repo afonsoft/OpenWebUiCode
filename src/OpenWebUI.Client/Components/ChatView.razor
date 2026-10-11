@@ -855,7 +855,7 @@
             // a escolha explícita do usuário (localStorage) tem precedência.
             _webSearch = storedTask.Result == "true" && _webSearchAvailable;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline/SW: chat renderiza degradado (sem prompts/tools/modelos)
             // em vez de cair na blazor-error-ui.
@@ -1071,7 +1071,7 @@
         {
             chat = await Api.GetChatAsync(ChatId);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: o chat não abre — erro honesto na área de mensagens,
             // não a blazor-error-ui.
@@ -1649,7 +1649,7 @@
         {
             generated = await Api.GenerateImagesAsync(message.Content);
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             generated = null;
         }
@@ -2436,8 +2436,7 @@
                 runId = (await ChatStream.GetRunsAsync(_loadedChatId))
                     .FirstOrDefault()?.Id;
             }
-            catch (HttpRequestException) { return; }
-            catch (TaskCanceledException) { return; }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex)) { return; }
         }
         if (runId is null)
         {
