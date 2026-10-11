@@ -122,14 +122,61 @@ public sealed class BuiltinToolRegistry(IEnumerable<IBuiltinChatTool> tools, ICo
         JsonElement args;
         try
         {
-            args = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson)
-                .RootElement;
+            args = NormalizeArgs(argumentsJson);
         }
         catch (JsonException)
         {
             return new BuiltinToolResult($"Argumentos inválidos para '{name}' — JSON malformado.");
         }
 
+        if (args.ValueKind != JsonValueKind.Object)
+        {
+            // Args não-objeto (ex.: modelo mandou string/array em vez de
+            // objeto) viram erro da tool, nunca exceção — um TryGetProperty
+            // no elemento errado encerrava a run inteira como failed.
+            return new BuiltinToolResult(
+                $"Argumentos inválidos para '{name}' — esperado objeto JSON.");
+        }
+
         return await builtin.ExecuteAsync(args, context, ct);
+    }
+
+    /// <summary>
+    /// Normaliza o JSON de argumentos da tool call: alguns modelos emitem os
+    /// args "double-encoded" — uma string JSON contendo o objeto (ex. Gemini).
+    /// Desembrulha até 2 níveis de string; o resto vai cru e o chamador
+    /// rejeita se o root final não for objeto.
+    /// </summary>
+    internal static JsonElement NormalizeArgs(string? argumentsJson)
+    {
+        var current = string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson;
+        JsonElement last = default;
+        for (var i = 0; i < 3; i++)
+        {
+            JsonDocument doc;
+            try
+            {
+                doc = JsonDocument.Parse(current);
+            }
+            catch (JsonException) when (i > 0)
+            {
+                // Nível interno não é JSON válido — devolve o último que
+                // parseou; o chamador rejeita se não for objeto.
+                return last;
+            }
+            using (doc)
+            {
+                var root = doc.RootElement.Clone();
+                last = root;
+                if (root.ValueKind != JsonValueKind.String
+                    || root.GetString() is not { } inner
+                    || string.IsNullOrWhiteSpace(inner))
+                {
+                    return root;
+                }
+                current = inner;
+            }
+        }
+        return last;
     }
 }
