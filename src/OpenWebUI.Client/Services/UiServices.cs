@@ -16,16 +16,30 @@ public class ThemeService(IJSRuntime js, BrowserStorage storage)
     /// <summary>Carrega o tema persistido e o aplica ao documento.</summary>
     public async Task InitializeAsync()
     {
-        var saved = await storage.GetAsync(ThemeKey);
-        Current = saved is "light" or "dark" or "system" ? saved : "light";
-        await ApplyAsync();
+        try
+        {
+            var saved = await storage.GetAsync(ThemeKey);
+            Current = saved is "light" or "dark" or "system" ? saved : "light";
+            await ApplyAsync();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Storage/interop indisponível no boot — segue com o tema default.
+        }
     }
 
     /// <summary>Alterna entre claro e escuro.</summary>
     public async Task SetAsync(string theme)
     {
         Current = theme;
-        await storage.SetAsync(ThemeKey, theme);
+        try
+        {
+            await storage.SetAsync(ThemeKey, theme);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Persistência falhou (storage negado) — aplica o tema mesmo assim.
+        }
         await ApplyAsync();
         Changed?.Invoke();
     }

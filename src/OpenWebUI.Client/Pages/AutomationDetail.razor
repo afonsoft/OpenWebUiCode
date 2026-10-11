@@ -104,7 +104,7 @@
             }
             _runs = await Api.GetAutomationRunsAsync(Id);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             await Console.Error.WriteLineAsync($"[AutomationDetail] carga falhou: {ex.Message}");

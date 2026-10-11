@@ -314,7 +314,7 @@
             _knowledge = await Api.GetKnowledgeAsync();
             _skills = await Api.GetSkillsAsync() ?? [];
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             await Console.Error.WriteLineAsync($"[Workspace] carga falhou: {ex.Message}");

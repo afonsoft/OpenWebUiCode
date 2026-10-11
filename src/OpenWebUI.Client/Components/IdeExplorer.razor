@@ -150,7 +150,7 @@
             _roots = tree.Entries.Select(ToEntry).ToList();
             _loadFailed = false;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: tree vazia + retry em vez da blazor-error-ui.
             _loadFailed = true;
@@ -175,7 +175,7 @@
                 var tree = await Api.GetWorkspaceTreeAsync(path: node.Path, depth: 1, chatId: ChatId);
                 node.Children = tree?.Entries.Select(ToEntry).ToList() ?? [];
             }
-            catch (HttpRequestException ex)
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
             {
                 // Offline: nó fica sem filhos; nova expansão retenta.
                 await Console.Error.WriteLineAsync($"[IdeExplorer] expand falhou: {ex.Message}");

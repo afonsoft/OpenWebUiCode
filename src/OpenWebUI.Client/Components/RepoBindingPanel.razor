@@ -180,7 +180,7 @@ else
                 _repos = await Api.GetGitHubReposAsync();
             }
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _message = L["chat.repo_load_error"];
         }

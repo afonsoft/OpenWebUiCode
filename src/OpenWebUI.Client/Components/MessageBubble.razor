@@ -205,7 +205,7 @@
                 _codeExecEnabled = config?.Features.EnableCodeExecution ?? false;
                 _imageGenEnabled = config?.Features.EnableImageGeneration ?? false;
             }
-            catch (HttpRequestException)
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
             {
                 // Offline: bolha renderiza o texto; features extras ficam off.
             }

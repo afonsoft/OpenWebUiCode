@@ -269,7 +269,7 @@
             _runs = await Api.GetAutomationRunsInRangeAsync(from, to);
             _loadFailed = false;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: grade renderiza vazia + retry manual.
             _loadFailed = true;

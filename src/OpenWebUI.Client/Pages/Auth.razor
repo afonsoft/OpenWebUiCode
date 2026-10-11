@@ -146,7 +146,7 @@
             var config = await Api.GetAppConfigAsync();
             _oauthProviders = config?.OAuthProviders ?? [];
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Offline: form de login continua; só os botões OAuth somem.
         }

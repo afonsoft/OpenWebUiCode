@@ -66,7 +66,7 @@
             }
             _chats = await Api.GetFolderChatsAsync(FolderId);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _loadFailed = true;
             await Console.Error.WriteLineAsync($"[FolderPage] carga falhou: {ex.Message}");

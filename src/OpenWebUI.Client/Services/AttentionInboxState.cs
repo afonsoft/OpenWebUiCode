@@ -76,7 +76,7 @@ public sealed class AttentionInboxState(ApiService api) : IAsyncDisposable
         {
             count = await api.GetAttentionCountAsync();
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Sem rede — mantém o último número conhecido.
             return;
@@ -93,7 +93,17 @@ public sealed class AttentionInboxState(ApiService api) : IAsyncDisposable
             FilterActive = false;
         }
 
-        Changed?.Invoke();
+        try
+        {
+            Changed?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            // Subscriber (componente) falhando no desmonte não pode matar o
+            // estado nem o poll — loga e segue.
+            await Console.Error.WriteLineAsync(
+                $"[AttentionInboxState] subscriber falhou: {ex.Message}");
+        }
     }
 
     private async Task PollLoopAsync(CancellationToken ct)

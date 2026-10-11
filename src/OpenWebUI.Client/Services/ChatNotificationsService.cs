@@ -89,7 +89,7 @@ public sealed class ChatNotificationsService : IAsyncDisposable
                 return el.GetBoolean();
             }
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             // Sem rede — default vale.
         }
