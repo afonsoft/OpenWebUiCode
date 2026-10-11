@@ -215,6 +215,19 @@
         setDark: (elId, dark) => call("setDark", [elId, dark]),
         openSearch: (elId) => call("openSearch", [elId]),
         focus: (elId) => call("focus", [elId]),
+        // ---- Fase E: cursor/seleção/minimap/diff ----
+        getCursor: (elId) => call("getCursor", [elId]),
+        setCursor: (elId, line, col) => call("setCursor", [elId, line, col]),
+        getSelection: (elId) => call("getSelection", [elId]),
+        setSelection: (elId, a, h) => call("setSelection", [elId, a, h]),
+        replaceRange: (elId, from, to, text) => call("replaceRange", [elId, from, to, text]),
+        wordAt: (elId, line, col) => call("wordAt", [elId, line, col]),
+        setMinimap: (elId, on) => call("setMinimap", [elId, on]),
+        createDiff: (elId, optsA, optsB, dotnet) => call("createDiff", [elId, optsA, optsB, dotnet]),
+        getDiffDoc: (elId) => call("getDiffDoc", [elId]),
+        destroyDiff: (elId) => call("destroyDiff", [elId]),
+        createSplit: (elId, srcId, opts) => call("createSplit", [elId, srcId, opts]),
+        unlinkCompanion: (elId) => call("unlinkCompanion", [elId]),
         destroy: (elId) => {
             hideTooltip(elId);
             delete lsp[elId];

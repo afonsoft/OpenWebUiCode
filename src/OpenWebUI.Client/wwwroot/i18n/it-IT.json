@@ -926,5 +926,14 @@
   "ide.outline": "Struttura",
   "ide.outline_no_file": "Apri un file per vederne la struttura",
   "ide.outline_no_lsp": "Nessun language server per questo file",
-  "ide.cmd_format": "Formatta documento"
+  "ide.cmd_format": "Formatta documento",
+  "ide.rename_placeholder": "Nuovo nome",
+  "ide.rename_apply": "Rinomina",
+  "ide.cancel": "Annulla",
+  "ide.definitions": "Definizioni",
+  "ide.references": "Riferimenti",
+  "ide.cmd_split": "Dividi editor",
+  "ide.cmd_minimap": "Attiva/disattiva minimappa",
+  "ide.cmd_diff_head": "Confronta con HEAD",
+  "ide.diff_close": "Chiudi diff"
 }

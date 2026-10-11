@@ -38,6 +38,33 @@ public static class WorkspaceFileEndpoints
         repo.MapGet("/git", GitAsync);
         repo.MapGet("/search", SearchAsync);
         repo.MapPost("/commit", CommitAsync);
+        repo.MapGet("/file-head", FileHeadAsync);
+    }
+
+    /// <summary>GET /file-head?path= — conteúdo do arquivo no HEAD do git
+    /// (diff da IDE, SPEC-20261011-ide-bundle). 404 fora do jail / sem HEAD.</summary>
+    private static async Task<IResult> FileHeadAsync(
+        string? path, string? chatId, HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, WorkspaceGitService git, CancellationToken ct)
+    {
+        var (_, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        if (reject is not null)
+        {
+            return reject;
+        }
+        var workdir = w!;
+        var full = WorkspaceFiles.ResolveInside(workdir, path, out var error);
+        if (full is null)
+        {
+            return Results.BadRequest(new { detail = error });
+        }
+        var rel = Path.GetRelativePath(workdir, full).Replace('\\', '/');
+        var text = await git.ShowHeadAsync(workdir, rel, ct);
+        if (text is null)
+        {
+            return Results.NotFound(new { detail = "Sem conteúdo no HEAD." });
+        }
+        return Results.Ok(new WorkspaceFileReadResponse(rel, text, text.Split('\n').Length, false, ""));
     }
 
     /// <summary>Extensões puladas pela busca global (binárias/geradas).</summary>

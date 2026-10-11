@@ -242,6 +242,17 @@ public sealed class WorkspaceGitService
         return head?.Trim();
     }
 
+    /// <summary><c>git show HEAD:rel</c> — conteúdo do arquivo no HEAD
+    /// (diff da IDE). null sem repo/sem commit/arquivo não trackeado.</summary>
+    public async Task<string?> ShowHeadAsync(string workdir, string relPath, CancellationToken ct)
+    {
+        if (!await IsRepoRootAsync(workdir, ct))
+        {
+            return null;
+        }
+        return await RunGitAsync(workdir, ct, "show", $"HEAD:{relPath.Replace('\\', '/')}");
+    }
+
     /// <summary>True só quando <paramref name="workdir"/> é a raiz do repo git —
     /// impede que <c>git</c> escale pra um repo pai (workdir sob o clone do app)
     /// e leia/escreva no repositório errado (SPEC-20261011-ide-search-scm).</summary>

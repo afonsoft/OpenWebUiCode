@@ -77,6 +77,44 @@ public sealed record LspFormatRequest(string? Path);
 /// <summary>Texto formatado (Changed=false quando já estava ok).</summary>
 public sealed record LspFormatResponse(bool Available, string? Text, bool Changed);
 
+// ---------- Fase E: completion / definition / references / rename ----------
+// Posições são 0-based em UTF-16 code units (igual LSP e JS string index).
+
+public sealed record LspPosition(int Line, int Col);
+
+public sealed record LspRange(int Line, int Col, int EndLine, int EndCol);
+
+/// <summary>Posição no arquivo (0-based).</summary>
+public sealed record LspPosRequest(string? Path, int Line, int Col);
+
+public sealed record LspCompletionItem(
+    string Label, string? Type, string? Detail, string? Info, string? ApplyText);
+
+public sealed record LspCompletionResponse(
+    bool Available, LspPosition? From, IReadOnlyList<LspCompletionItem> Items);
+
+/// <summary>Path relativo ao workdir + range 0-based.</summary>
+public sealed record LspFileLocation(string Path, LspRange Range);
+
+public sealed record LspLocationsResponse(
+    bool Available, IReadOnlyList<LspFileLocation> Locations);
+
+/// <summary>ActivePath: arquivo aberto/dirty no editor — seus edits voltam
+/// pro client aplicar via replaceRange (não são escritos no disco).</summary>
+public sealed record LspRenameRequest(
+    string? Path, int Line, int Col, string? NewName, string? ActivePath);
+
+public sealed record LspRenameEdit(LspRange Range, string NewText);
+
+public sealed record LspRenameFileEdits(
+    string Path, IReadOnlyList<LspRenameEdit> Edits);
+
+public sealed record LspRenameResponse(
+    bool Available,
+    IReadOnlyList<LspRenameFileEdits> ClientEdits,
+    IReadOnlyList<string> FilesUpdated,
+    string? Error);
+
 /// <summary>Item de skill do repositório (descoberta em <c>**/SKILL.md</c>).</summary>
 /// <param name="Name">Nome do slash command (frontmatter <c>name</c> ou diretório-pai).</param>
 /// <param name="Description">Descrição curta (frontmatter).</param>

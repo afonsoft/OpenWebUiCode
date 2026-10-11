@@ -117,6 +117,13 @@ else
                     <IdeEditor @ref="_editor" Dark="_dark" ChatId="ChatId"
                                OnSaved="RefreshSideAsync" OnActiveFileChanged="OnActiveFileChanged"
                                OnProblemsChanged="OnProblemsChanged" />
+                    @* Fase E: diff HEAD × atual (MergeView overlay). *@
+                    @if (_diffOpen)
+                    {
+                        <div id="ide-diff-host" class="absolute inset-0 z-30 bg-white dark:bg-gray-950"></div>
+                        <button class="absolute right-3 top-10 z-40 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-600 shadow hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                                @onclick="CloseDiffAsync">@L["ide.diff_close"]</button>
+                    }
                 </div>
                 @if (_bottomOpen && !_zen)
                 {
@@ -275,6 +282,7 @@ else
             case "symbol": OpenQuickOpen("@"); break;
             case "search": OnSideView("search"); break;
             case "format": _ = FormatActiveAsync(); break;
+            case "split": if (_editor is not null) { _ = _editor.ToggleSplitAsync(); } break;
         }
         StateHasChanged();
         return Task.CompletedTask;
@@ -359,6 +367,9 @@ else
         new("toggle_autosave", L["ide.cmd_autosave"]),
         new("format", L["ide.cmd_format"]),
         new("outline", L["ide.outline"]),
+        new("split", L["ide.cmd_split"]),
+        new("minimap", L["ide.cmd_minimap"]),
+        new("diff_head", L["ide.cmd_diff_head"]),
     ];
 
     private async Task OnQoFileAsync(string path)
@@ -411,6 +422,9 @@ else
                 break;
             case "format": await FormatActiveAsync(); break;
             case "outline": OnSideView("outline"); break;
+            case "split": if (_editor is not null) { await _editor.ToggleSplitAsync(); } break;
+            case "minimap": if (_editor is not null) { await _editor.ToggleMinimapAsync(); } break;
+            case "diff_head": await OpenDiffAsync(); break;
         }
         StateHasChanged();
     }
@@ -533,6 +547,36 @@ else
         {
             await _editor.GotoLineAsync(line, 0);
         }
+    }
+
+    private bool _diffOpen;
+
+    /// <summary>Diff HEAD × buffer atual (palette / SCM). MergeView overlay
+    /// no lugar do editor; lado A = HEAD readonly, lado B = editável.</summary>
+    private async Task OpenDiffAsync()
+    {
+        if (_activePath is null || _editor is null)
+        {
+            return;
+        }
+        var head = await Api.GetFileHeadAsync(_activePath, ChatId);
+        if (head is null)
+        {
+            return; // sem repo/HEAD/arquivo trackeado — degrade silencioso
+        }
+        var cur = await JS.InvokeAsync<string>("owuiIde.getDoc", "ide-cm-host");
+        _diffOpen = true;
+        StateHasChanged();
+        await Task.Delay(30);
+        await JS.InvokeVoidAsync("owuiIde.createDiff", "ide-diff-host",
+            new { doc = head.Content, path = _activePath, dark = _dark },
+            new { doc = cur, path = _activePath, dark = _dark }, (object?)null);
+    }
+
+    private async Task CloseDiffAsync()
+    {
+        _diffOpen = false;
+        await JS.InvokeVoidAsync("owuiIde.destroyDiff", "ide-diff-host");
     }
 
     /// <summary>Format Document (Shift+Alt+F / palette) — LSP formatting no

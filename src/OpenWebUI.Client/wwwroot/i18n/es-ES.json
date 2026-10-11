@@ -926,5 +926,14 @@
   "ide.outline": "Esquema",
   "ide.outline_no_file": "Abre un archivo para ver su esquema",
   "ide.outline_no_lsp": "Sin servidor de lenguaje para este archivo",
-  "ide.cmd_format": "Formatear documento"
+  "ide.cmd_format": "Formatear documento",
+  "ide.rename_placeholder": "Nuevo nombre",
+  "ide.rename_apply": "Renombrar",
+  "ide.cancel": "Cancelar",
+  "ide.definitions": "Definiciones",
+  "ide.references": "Referencias",
+  "ide.cmd_split": "Dividir editor",
+  "ide.cmd_minimap": "Alternar minimapa",
+  "ide.cmd_diff_head": "Comparar con HEAD",
+  "ide.diff_close": "Cerrar diff"
 }

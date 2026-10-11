@@ -1098,6 +1098,53 @@ public class ApiService(HttpClient http, AuthService auth)
             + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
             new LspFormatRequest(path));
 
+    /// <summary>Completion LSP — resposta vai direto pro CM autocomplete via JS.</summary>
+    public Task<LspCompletionResponse?> LspCompleteAsync(
+        string path, int line, int col, string? chatId = null) =>
+        SendAsync<LspCompletionResponse>(HttpMethod.Post,
+            "/api/v1/workspace/lsp/completion"
+            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            new LspPosRequest(path, line, col));
+
+    /// <summary>Go to Definition (F12) → locations.</summary>
+    public Task<LspLocationsResponse?> GetLspDefinitionAsync(
+        string path, int line, int col, string? chatId = null) =>
+        SendAsync<LspLocationsResponse>(HttpMethod.Get,
+            "/api/v1/workspace/lsp/definition?path=" + Uri.EscapeDataString(path)
+            + "&line=" + line + "&col=" + col
+            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+
+    /// <summary>Find References (Shift+F12) → locations (inclui declaração).</summary>
+    public Task<LspLocationsResponse?> GetLspReferencesAsync(
+        string path, int line, int col, string? chatId = null) =>
+        SendAsync<LspLocationsResponse>(HttpMethod.Get,
+            "/api/v1/workspace/lsp/references?path=" + Uri.EscapeDataString(path)
+            + "&line=" + line + "&col=" + col
+            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+
+    /// <summary>Rename Symbol (F2) — edits do arquivo ativo voltam pro
+    /// editor; demais arquivos escritos no disco.</summary>
+    public Task<LspRenameResponse?> LspRenameAsync(
+        string path, int line, int col, string newName, string? activePath,
+        string? chatId = null) =>
+        SendAsync<LspRenameResponse>(HttpMethod.Post,
+            "/api/v1/workspace/lsp/rename"
+            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            new LspRenameRequest(path, line, col, newName, activePath));
+
+    /// <summary>Conteúdo do arquivo no HEAD (diff do IDE); null em 404.</summary>
+    public async Task<WorkspaceFileReadResponse?> GetFileHeadAsync(
+        string path, string? chatId = null)
+    {
+        using var request = auth.CreateRequest(HttpMethod.Get,
+            "/api/v1/workspace/repo/file-head?path=" + Uri.EscapeDataString(path)
+            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+        using var response = await http.SendAsync(request);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<WorkspaceFileReadResponse>(JsonOptions)
+            : null;
+    }
+
     /// <summary>PRs abertos do repo vinculado (SPEC-20261009-pr-ci-panel); null em 404/erro.</summary>
     public Task<WorkspacePullsResponse?> GetWorkspacePullsAsync(string? chatId = null) =>
         SendAsync<WorkspacePullsResponse>(HttpMethod.Get, "/api/v1/workspace/repo/pulls"
