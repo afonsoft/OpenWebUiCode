@@ -750,3 +750,24 @@ button.ide-status-item:hover {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+
+/* SPEC-20261011-ide-editor-core (Fase B): menu de contexto das abas. */
+.ide-menu-item {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.375rem 0.75rem;
+	font-size: 0.75rem;
+	text-align: left;
+	color: var(--color-gray-700);
+}
+.ide-menu-item:hover {
+	background: var(--color-gray-100);
+}
+.dark .ide-menu-item {
+	color: var(--color-gray-200);
+}
+.dark .ide-menu-item:hover {
+	background: var(--color-gray-800);
+}
