@@ -117,6 +117,18 @@
         }
     }
 
+    private IReadOnlyList<string>? _lastFiles;
+
+    /// <summary>Re-filtra quando o índice de arquivos chega depois (walk async).</summary>
+    protected override void OnParametersSet()
+    {
+        if (!ReferenceEquals(_lastFiles, Files))
+        {
+            _lastFiles = Files;
+            ApplyQuery();
+        }
+    }
+
     private void OnQueryChanged() => ApplyQuery();
 
     private void ApplyQuery()
