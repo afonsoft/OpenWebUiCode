@@ -612,3 +612,141 @@
 	background: var(--color-gray-850);
 	color: var(--color-gray-100);
 }
+
+/* SPEC-20261011-ide-workbench (Fase A): chrome do workbench estilo VS Code —
+   activity bar, status bar, sashes e breadcrumbs. */
+.ide-activity {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.125rem;
+	width: 2.75rem;
+	flex-shrink: 0;
+	padding-block: 0.375rem;
+	border-right: 1px solid var(--color-gray-200);
+	background: var(--color-gray-50);
+}
+.dark .ide-activity {
+	border-color: var(--color-gray-800);
+	background: var(--color-gray-925, #0b0f14);
+}
+.ide-activity-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 2.25rem;
+	height: 2.25rem;
+	border-radius: 0.375rem;
+	font-size: 1rem;
+	color: var(--color-gray-500);
+}
+.ide-activity-item:hover {
+	color: var(--color-gray-800);
+	background: var(--color-gray-200);
+}
+.dark .ide-activity-item:hover {
+	color: var(--color-gray-100);
+	background: var(--color-gray-800);
+}
+.ide-activity-active {
+	color: var(--color-blue-600);
+	border-left: 2px solid var(--color-blue-600);
+	border-radius: 0 0.375rem 0.375rem 0;
+	margin-left: -2px;
+}
+.dark .ide-activity-active {
+	color: var(--color-blue-400);
+	border-color: var(--color-blue-400);
+}
+.ide-activity-badge {
+	position: absolute;
+	bottom: 0.125rem;
+	right: 0.125rem;
+	min-width: 0.875rem;
+	padding: 0 0.1875rem;
+	border-radius: 9999px;
+	background: var(--color-blue-600);
+	color: white;
+	font-size: 0.5625rem;
+	line-height: 0.875rem;
+	text-align: center;
+}
+.ide-status {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 1.375rem;
+	flex-shrink: 0;
+	padding-inline: 0.5rem;
+	border-top: 1px solid var(--color-gray-200);
+	background: var(--color-gray-50);
+	font-size: 0.6875rem;
+	color: var(--color-gray-600);
+}
+.dark .ide-status {
+	border-color: var(--color-gray-800);
+	background: var(--color-gray-925, #0b0f14);
+	color: var(--color-gray-300);
+}
+.ide-status-side {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	min-width: 0;
+}
+.ide-status-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0 0.375rem;
+	border-radius: 0.1875rem;
+	white-space: nowrap;
+}
+button.ide-status-item:hover {
+	background: var(--color-gray-200);
+}
+.dark button.ide-status-item:hover {
+	background: var(--color-gray-800);
+}
+.ide-sash {
+	flex-shrink: 0;
+	background: transparent;
+	z-index: 10;
+}
+.ide-sash[data-ide-axis="x"] {
+	width: 4px;
+	margin-inline: -2px;
+	cursor: col-resize;
+}
+.ide-sash[data-ide-axis="y"] {
+	height: 4px;
+	margin-block: -2px;
+	cursor: row-resize;
+}
+.ide-sash:hover, .ide-sash:active {
+	background: var(--color-blue-500);
+}
+.ide-crumbs {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.1875rem 0.5rem;
+	font-size: 0.6875rem;
+	color: var(--color-gray-500);
+	border-bottom: 1px solid var(--color-gray-100);
+	overflow: hidden;
+	white-space: nowrap;
+}
+.dark .ide-crumbs {
+	border-color: var(--color-gray-800);
+	color: var(--color-gray-400);
+}
+.ide-crumb-sep {
+	color: var(--color-gray-400);
+}
+.ide-crumb {
+	display: inline-block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

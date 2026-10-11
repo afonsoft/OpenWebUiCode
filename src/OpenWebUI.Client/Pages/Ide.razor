@@ -5,6 +5,7 @@
 @inject NavigationManager Nav
 @inject ThemeService Theme
 @inject IdeTestRunService TestRun
+@inject IJSRuntime JS
 
 @* /ide — Web IDE (SPEC-20261009-web-ide-surface): explorer + editor CodeMirror +
    painel direito (Chat/Changes/Terminal/Jobs). Gated pela flag ide.enabled;
@@ -63,21 +64,80 @@ else
         </header>
 
         <div class="relative flex flex-1 min-h-0">
-            <aside class="lg:block @(_explorerOpen ? "" : "max-lg:hidden") w-56 shrink-0 border-r border-gray-200 dark:border-gray-800 max-lg:absolute max-lg:inset-y-0 max-lg:left-0 max-lg:z-30 max-lg:bg-white max-lg:dark:bg-gray-950">
-                <IdeExplorer @ref="_explorer" Branch="@_git?.Branch" ChatId="ChatId"
-                             DirtyCount="@(_git?.Files.Count ?? 0)"
-                             OnOpenFile="OnOpenFileAsync" OnChanged="RefreshSideAsync" />
-            </aside>
+            <IdeActivityBar Active="_sideView" DirtyCount="@(_git?.Files.Count ?? 0)"
+                            Zen="_zen" OnView="OnSideView" OnZenToggle="ToggleZen" />
 
-            <main class="min-w-0 flex-1">
-                <IdeEditor @ref="_editor" Dark="_dark" ChatId="ChatId" OnSaved="RefreshSideAsync" />
+            @if (!_zen && _sideOpen)
+            {
+                <aside id="ide-side" style="width:@(_sideW)px"
+                       class="shrink-0 overflow-auto border-r border-gray-200 dark:border-gray-800 max-lg:absolute max-lg:inset-y-0 max-lg:left-11 max-lg:z-30 max-lg:bg-white max-lg:dark:bg-gray-950 @(_explorerOpen ? "" : "max-lg:hidden")">
+                    @if (_sideView == "scm")
+                    {
+                        <IdeScmView Git="_git" Checkpoints="_checkpoints" ChatId="ChatId"
+                                    OnChanged="RefreshSideAsync" />
+                    }
+                    else
+                    {
+                        <IdeExplorer @ref="_explorer" Branch="@_git?.Branch" ChatId="ChatId"
+                                     DirtyCount="@(_git?.Files.Count ?? 0)"
+                                     OnOpenFile="OnOpenFileAsync" OnChanged="RefreshSideAsync" />
+                    }
+                </aside>
+                <div class="ide-sash" data-ide-sash="side" data-ide-target="#ide-side"
+                     data-ide-axis="x" data-ide-min="140" data-ide-max="600" role="separator"
+                     aria-orientation="vertical" aria-hidden="true"></div>
+            }
+
+            <main class="flex min-w-0 flex-1 min-h-0 flex-col">
+                @if (_activePath is { } activePath)
+                {
+                    @* Breadcrumbs do arquivo ativo (SPEC-20261011 Fase A). *@
+                    <nav class="ide-crumbs" aria-label="@L["ide.breadcrumbs"]">
+                        @foreach (var (seg, idx) in activePath.Split('/').Select((s, i) => (s, i)))
+                        {
+                            @if (idx > 0)
+                            {
+                                <span class="ide-crumb-sep" aria-hidden="true">›</span>
+                            }
+                            <span class="ide-crumb">@seg</span>
+                        }
+                    </nav>
+                }
+                <div class="relative min-w-0 flex-1 min-h-0">
+                    <IdeEditor @ref="_editor" Dark="_dark" ChatId="ChatId"
+                               OnSaved="RefreshSideAsync" OnActiveFileChanged="OnActiveFileChanged"
+                               OnProblemsChanged="OnProblemsChanged" />
+                </div>
+                @if (_bottomOpen && !_zen)
+                {
+                    <div class="ide-sash" data-ide-sash="bottom" data-ide-target="#ide-bottom"
+                         data-ide-axis="y" data-ide-grow="reverse" data-ide-min="120" data-ide-max="600"
+                         role="separator" aria-orientation="horizontal" aria-hidden="true"></div>
+                    <section id="ide-bottom" style="height:@(_bottomH)px" class="shrink-0">
+                        <IdeBottomPanel @ref="_bottomPanel" Jobs="_jobs" Problems="_problems"
+                                        OnClose="() => _bottomOpen = false"
+                                        OnProblemClick="OnProblemClickAsync" OnChanged="RefreshSideAsync" />
+                    </section>
+                }
             </main>
 
-            <aside class="lg:block @(_panelOpen ? "" : "max-lg:hidden") w-72 shrink-0 border-l border-gray-200 dark:border-gray-800 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-30 max-lg:bg-white max-lg:dark:bg-gray-950">
-                <IdeRightPanel Git="_git" Jobs="_jobs" Checkpoints="_checkpoints" ChatId="ChatId"
-                               ActiveFile="@_activePath" OnChanged="RefreshSideAsync" />
-            </aside>
+            @if (!_zen && _auxOpen)
+            {
+                <div class="ide-sash" data-ide-sash="aux" data-ide-target="#ide-aux"
+                     data-ide-axis="x" data-ide-grow="reverse" data-ide-min="180" data-ide-max="640"
+                     role="separator" aria-orientation="vertical" aria-hidden="true"></div>
+                <aside id="ide-aux" style="width:@(_auxW)px"
+                       class="shrink-0 overflow-auto border-l border-gray-200 dark:border-gray-800 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-30 max-lg:bg-white max-lg:dark:bg-gray-950 @(_panelOpen ? "" : "max-lg:hidden")">
+                    <IdeRightPanel ChatId="ChatId"
+                                   ActiveFile="@_activePath" OnChanged="RefreshSideAsync" />
+                </aside>
+            }
         </div>
+
+        <IdeStatusBar Branch="@_git?.Branch" DirtyCount="@(_git?.Files.Count ?? 0)"
+                      Errors="_errCount" Warnings="_warnCount" Language="@LangFor(_activePath)"
+                      OnScmClick="OnScmClicked" OnProblemsClick="OpenProblemsPanel"
+                      OnTogglePanel="() => _bottomOpen = !_bottomOpen" />
     </div>
 }
 
@@ -94,11 +154,25 @@ else
 
     private IdeExplorer? _explorer;
     private IdeEditor? _editor;
+    private IdeBottomPanel? _bottomPanel;
     private string? _activePath;
-    private bool _explorerOpen;
+    private bool _explorerOpen = true;
     private bool _panelOpen;
     private bool _dark;
     private Timer? _poll;
+    // Workbench (SPEC-20261011-ide-workbench Fase A): views/toggles/sashes.
+    private string _sideView = "explorer";
+    private bool _sideOpen = true;
+    private bool _auxOpen = true;
+    private bool _bottomOpen;
+    private bool _zen;
+    private int _sideW = 224;
+    private int _auxW = 288;
+    private int _bottomH = 220;
+    private IReadOnlyList<LspDiagnosticItem> _problems = [];
+    private int _errCount;
+    private int _warnCount;
+    private DotNetObjectReference<Ide>? _selfRef;
 
     /// <inheritdoc/>
     protected override async Task OnInitializedAsync() => await LoadInitAsync();
@@ -136,11 +210,100 @@ else
         if (_repo is not null && _poll is null)
         {
             _dark = Theme.Current == "dark";
+            // Atalhos globais + restaura sashes persistidos (Fase A).
+            _selfRef ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("owuiIdeLayout.attachKeys", _selfRef);
+            _sideW = await SashAsync("side", _sideW);
+            _auxW = await SashAsync("aux", _auxW);
+            _bottomH = await SashAsync("bottom", _bottomH);
             await RefreshSideAsync();
             _poll = new Timer(_ => _ = RefreshSideAsync(), null,
                 TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
         }
     }
+
+    private async Task<int> SashAsync(string key, int fallback)
+    {
+        var v = await JS.InvokeAsync<string?>("owuiIdeLayout.sashValue", key);
+        return int.TryParse(v, out var n) && n > 0 ? n : fallback;
+    }
+
+    /// <summary>Atalho global vindo do JS (Ctrl+B/J/` e chord Ctrl+K Z).</summary>
+    [JSInvokable]
+    public Task OnLayoutKey(string what)
+    {
+        switch (what)
+        {
+            case "side": _sideOpen = !_sideOpen; _explorerOpen = _sideOpen; break;
+            case "bottom": _bottomOpen = !_bottomOpen; break;
+            case "terminal":
+                _bottomOpen = true;
+                _bottomPanel?.ShowTab("terminal");
+                break;
+            case "zen": _zen = !_zen; break;
+        }
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void OnSideView(string view)
+    {
+        _sideView = view;
+        _sideOpen = true;
+        _explorerOpen = true;
+    }
+
+    private void OnScmClicked() => OnSideView("scm");
+
+    private void ToggleZen() => _zen = !_zen;
+
+    private Task OnActiveFileChanged(string? path)
+    {
+        _activePath = path;
+        return Task.CompletedTask;
+    }
+
+    private Task OnProblemsChanged(IReadOnlyList<LspDiagnosticItem> problems)
+    {
+        _problems = problems;
+        _errCount = problems.Count(p => p.Severity == 1);
+        _warnCount = problems.Count(p => p.Severity != 1);
+        return Task.CompletedTask;
+    }
+
+    private void OpenProblemsPanel()
+    {
+        _bottomOpen = true;
+        _bottomPanel?.ShowTab("problems");
+    }
+
+    /// <summary>Clique num problema → abre o arquivo e pula pra linha.</summary>
+    private async Task OnProblemClickAsync(LspDiagnosticItem p)
+    {
+        if (_editor is not null)
+        {
+            await _editor.OpenFileAsync(p.Path);
+            await _editor.GotoLineAsync(p.Line, p.Col);
+        }
+    }
+
+    private static string? LangFor(string? path) => path?.Split('.').LastOrDefault() switch
+    {
+        "cs" => "C#",
+        "razor" or "cshtml" => "Razor",
+        "js" => "JavaScript",
+        "ts" => "TypeScript",
+        "json" => "JSON",
+        "md" => "Markdown",
+        "css" => "CSS",
+        "html" or "htm" => "HTML",
+        "py" => "Python",
+        "xml" or "csproj" or "slnx" => "XML",
+        "yml" or "yaml" => "YAML",
+        "sh" => "Shell",
+        { Length: > 0 } ext => ext.ToUpperInvariant(),
+        _ => null,
+    };
 
     private Task OnBoundChangedAsync(WorkspaceRepoResponse? bound) => ReloadAsync();
 
@@ -191,5 +354,7 @@ else
     {
         TestRun.Changed -= OnTestRunChanged;
         _poll?.Dispose();
+        _ = JS.InvokeVoidAsync("owuiIdeLayout.detachKeys");
+        _selfRef?.Dispose();
     }
 }

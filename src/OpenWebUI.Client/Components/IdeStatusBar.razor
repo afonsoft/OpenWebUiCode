@@ -1,0 +1,42 @@
+@inject LocalizationService L
+
+@* Status bar estilo VS Code (SPEC-20261011-ide-workbench Fase A): strip de
+   22px no rodapé — branch + árvore suja à esquerda; erros, linguagem,
+   encoding, EOL e indent à direita. *@
+
+<footer class="ide-status" role="status" aria-label="@L["ide.status_bar"]">
+    <div class="ide-status-side">
+        <button class="ide-status-item" title="@L["ide.view_scm"]" @onclick="() => OnScmClick.InvokeAsync()">
+            <span aria-hidden="true">⑂</span> @(Branch ?? "—")@if (DirtyCount > 0)
+            {
+                <text> *@DirtyCount</text>
+            }
+        </button>
+        <button class="ide-status-item" title="@L["ide.problems"]" @onclick="() => OnProblemsClick.InvokeAsync()">
+            <span aria-hidden="true">✖ @Errors</span>
+            <span aria-hidden="true">⚠ @Warnings</span>
+        </button>
+    </div>
+    <div class="ide-status-side">
+        @if (Language is not null)
+        {
+            <span class="ide-status-item">@Language</span>
+        }
+        <span class="ide-status-item">UTF-8</span>
+        <span class="ide-status-item">LF</span>
+        <button class="ide-status-item" title="@L["ide.toggle_bottom"]"
+                @onclick="() => OnTogglePanel.InvokeAsync()">⬓</button>
+    </div>
+</footer>
+
+@code {
+    [Parameter] public string? Branch { get; set; }
+    [Parameter] public int DirtyCount { get; set; }
+    [Parameter] public int Errors { get; set; }
+    [Parameter] public int Warnings { get; set; }
+    /// <summary>Linguagem do arquivo ativo (inferida da extensão).</summary>
+    [Parameter] public string? Language { get; set; }
+    [Parameter] public EventCallback OnScmClick { get; set; }
+    [Parameter] public EventCallback OnProblemsClick { get; set; }
+    [Parameter] public EventCallback OnTogglePanel { get; set; }
+}
