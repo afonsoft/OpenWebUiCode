@@ -503,6 +503,11 @@ else
             // async void: desmonte entre evento e render não pode vazar —
             // exceção aqui cairia direto na blazor-error-ui.
         }
+        catch (Exception ex)
+        {
+            // async void: qualquer escape cai direto na blazor-error-ui.
+            await Console.Error.WriteLineAsync($"[Sidebar] OnAttentionChanged falhou: {ex.Message}");
+        }
     }
 
     private string Initials =>
@@ -604,8 +609,16 @@ else
 
     private async void OnChatsChanged()
     {
-        await LoadAsync();
-        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            // async void: qualquer escape cai direto na blazor-error-ui.
+            await Console.Error.WriteLineAsync($"[Sidebar] OnChatsChanged falhou: {ex.Message}");
+        }
     }
 
     private async Task LoadAsync()
@@ -632,6 +645,12 @@ else
             // (ou o último dado) — nunca propagar para a blazor-error-ui.
             _loadFailed = true;
             await Console.Error.WriteLineAsync($"[Sidebar] carga falhou: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // LoadAsync roda em lifecycle/async-void: escape = banner de erro.
+            _loadFailed = true;
+            await Console.Error.WriteLineAsync($"[Sidebar] carga falhou: {ex}");
         }
     }
 

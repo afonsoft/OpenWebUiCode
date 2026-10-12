@@ -80,8 +80,23 @@
             await Console.Error.WriteLineAsync($"[ModelSelector] carga falhou: {ex.Message}");
             return;
         }
+        catch (Exception ex)
+        {
+            // _ = LoadModelsAsync() é fire-and-forget: escape = banner.
+            _models = [];
+            await Console.Error.WriteLineAsync($"[ModelSelector] carga falhou: {ex.Message}");
+            return;
+        }
 
-        var saved = await Storage.GetAsync(ModelKey);
+        string? saved;
+        try
+        {
+            saved = await Storage.GetAsync(ModelKey);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+        {
+            saved = null;
+        }
         var selected = _models.Any(m => m.Id == saved)
             ? saved
             : _models.FirstOrDefault()?.Id;

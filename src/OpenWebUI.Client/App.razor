@@ -1,6 +1,32 @@
-﻿<Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+<Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
     <Found Context="routeData">
-        <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)"/>
+        @* Última linha de defesa: qualquer exceção de lifecycle/render numa
+           página (incl. falhas transitórias que escapem dos catches) fica
+           contida aqui — logada no console — em vez de derrubar a app inteira
+           na #blazor-error-ui. *@
+        <ErrorBoundary @ref="_boundary">
+            <ChildContent>
+                <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)"/>
+            </ChildContent>
+            <ErrorContent Context="ex">
+                <div class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                    @L["common.offline_load"]
+                </div>
+                @{
+                    Console.Error.WriteLine($"[OpenWebUI] erro de render contido: {ex}");
+                }
+            </ErrorContent>
+        </ErrorBoundary>
         <FocusOnNavigate RouteData="@routeData" Selector="h1" />
     </Found>
 </Router>
+
+@inject LocalizationService L
+
+@code {
+    private ErrorBoundary? _boundary;
+
+    /// <summary>Recupera o boundary a cada navegação: um erro transitório numa
+    /// página não pode congelar o conteúdo de erro nas rotas seguintes.</summary>
+    protected override void OnParametersSet() => _boundary?.Recover();
+}

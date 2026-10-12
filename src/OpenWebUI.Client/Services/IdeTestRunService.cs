@@ -130,5 +130,10 @@ public sealed class IdeTestRunService(ApiService api)
         {
             // stop/cancel esperado.
         }
+        catch (Exception ex)
+        {
+            // Poll fire-and-forget: escape derrubaria a UI com o banner.
+            await Console.Error.WriteLineAsync($"[IdeTestRunService] poll falhou: {ex.Message}");
+        }
     }
 }

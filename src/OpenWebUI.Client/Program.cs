@@ -28,5 +28,17 @@ builder.Services.AddScoped<DialogService>();
 builder.Services.AddScoped<IdeTestRunService>();
 
 var host = builder.Build();
+
+// Rede de segurança: tasks fire-and-forget que falham sem ser observadas
+// escalariam para a #blazor-error-ui ao serem coletadas. Marca como observada
+// e loga — quedas transitórias de rede nunca derrubam a UI.
+TaskScheduler.UnobservedTaskException += (s, e) =>
+{
+    Console.Error.WriteLine($"[OpenWebUI] exceção não observada: {e.Exception}");
+    e.SetObserved();
+};
+AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+    Console.Error.WriteLine($"[OpenWebUI] exceção não tratada: {e.ExceptionObject}");
+
 await host.Services.GetRequiredService<LocalizationService>().InitializeAsync();
 await host.RunAsync();
