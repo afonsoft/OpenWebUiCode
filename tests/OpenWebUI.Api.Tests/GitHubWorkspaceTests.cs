@@ -211,6 +211,46 @@ public class GitHubWorkspaceTests
     }
 
     [Test]
+    public async Task Repo_Open_CheckoutDivergido_ResetaComBackup()
+    {
+        RequireGit();
+        var origin = CriarOrigem("main");
+        try
+        {
+            var (binding, _) = await _repos.OpenAsync(
+                "u1", "a/b", "main", origin, null, default);
+            Assert.That(binding, Is.Not.Null);
+            var dir = Path.Join(_root, "data", "workspaces", "u1", "repos", "a__b");
+
+            // Diverge o checkout base: commit local-only + commit novo no
+            // origin → pull --ff-only não reconcilia.
+            Git(dir, "-c", "user.email=t@t", "-c", "user.name=t",
+                "commit", "--allow-empty", "-m", "drift local");
+            Git(origin, "-c", "user.email=t@t", "-c", "user.name=t",
+                "commit", "--allow-empty", "-m", "origin novo");
+
+            (binding, var error) = await _repos.OpenAsync(
+                "u1", "a/b", "main", origin, null, default);
+            Assert.That(error, Is.Null);
+            Assert.That(binding, Is.Not.Null);
+
+            Assert.Multiple(() =>
+            {
+                // Base realinhado ao remoto.
+                Assert.That(Git(dir, "rev-parse", "HEAD"),
+                    Is.EqualTo(Git(origin, "rev-parse", "HEAD")));
+                // HEAD divergido preservado em branch de backup.
+                Assert.That(Git(dir, "branch", "--list", "backup/*"),
+                    Does.Contain("backup/main-"));
+            });
+        }
+        finally
+        {
+            Directory.Delete(origin, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Repo_Unbind_VoltaParaRaizDoWorkspace()
     {
         RequireGit();
