@@ -749,6 +749,25 @@ public class WorkspaceFileEndpointsTests
         }
     }
 
+    /// <summary>Roda git com ArgumentList (args com espaços seguros) e
+    /// falha o teste em exit code != 0.</summary>
+    private static async Task GitAsync(string workdir, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            WorkingDirectory = workdir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+        var p = System.Diagnostics.Process.Start(psi)!;
+        await p.WaitForExitAsync();
+        Assert.That(p.ExitCode, Is.EqualTo(0), $"git {string.Join(' ', args)} falhou");
+    }
+
     // ---------- SPEC-20261011-ide-intellisense (Fase D): /lsp/symbols + /lsp/format ----------
 
     /// <summary>/symbols sem servidor LSP (workdir fake) → available:false, 200.</summary>
@@ -798,6 +817,167 @@ public class WorkspaceFileEndpointsTests
         var outside = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/format",
             new LspFormatRequest("/etc/passwd"));
         Assert.That(outside.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    // ---------- SPEC-20261011-ide-bundle (Fase E): /lsp/completion|definition|references|rename ----------
+
+    /// <summary>/completion com servidor não rodando (extensão mapeada, sem
+    /// pylsp) → available:false, from null, items vazio — nunca 5xx.</summary>
+    [Test]
+    public async Task LspCompletion_SemServidor_AvailableFalse()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.py"), "x=1\n");
+        var r = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/completion",
+            new LspPosRequest("a.py", 0, 0));
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await r.Content.ReadFromJsonAsync<LspCompletionResponse>();
+        Assert.That(body, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(body!.Available, Is.False);
+            Assert.That(body.From, Is.Null);
+            Assert.That(body.Items, Is.Empty);
+        });
+    }
+
+    /// <summary>/completion fora do jail → 400.</summary>
+    [Test]
+    public async Task LspCompletion_PathFora_400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/completion",
+            new LspPosRequest("/etc/passwd", 0, 0));
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    /// <summary>/definition e /references sem servidor → available:false,
+    /// locations vazio (degrade compartilhado de LocationsAsync).</summary>
+    [Test]
+    public async Task LspDefinition_References_SemServidor_AvailableFalse()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.py"), "x=1\n");
+        var def = await ctx.Client.GetAsync(
+            "/api/v1/workspace/lsp/definition?path=a.py&line=0&col=0");
+        Assert.That(def.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var defBody = await def.Content.ReadFromJsonAsync<LspLocationsResponse>();
+        Assert.That(defBody!.Available, Is.False);
+        Assert.That(defBody.Locations, Is.Empty);
+
+        var refs = await ctx.Client.GetAsync(
+            "/api/v1/workspace/lsp/references?path=a.py&line=0&col=0");
+        Assert.That(refs.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var refsBody = await refs.Content.ReadFromJsonAsync<LspLocationsResponse>();
+        Assert.That(refsBody!.Available, Is.False);
+        Assert.That(refsBody.Locations, Is.Empty);
+    }
+
+    /// <summary>/definition fora do jail → 400.</summary>
+    [Test]
+    public async Task LspDefinition_PathFora_400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.GetAsync(
+            "/api/v1/workspace/lsp/definition?path=/etc/passwd&line=0&col=0");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    /// <summary>/rename sem servidor → available:false sem erro (degrade);
+    /// nome vazio → available:false com error "Nome vazio.".</summary>
+    [Test]
+    public async Task LspRename_SemServidor_ENomeVazio()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.py"), "x=1\n");
+
+        var rename = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/rename",
+            new LspRenameRequest("a.py", 0, 0, "novoNome", "a.py"));
+        Assert.That(rename.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await rename.Content.ReadFromJsonAsync<LspRenameResponse>();
+        Assert.That(body, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(body!.Available, Is.False);
+            Assert.That(body.Error, Is.Null);
+            Assert.That(body.ClientEdits, Is.Empty);
+            Assert.That(body.FilesUpdated, Is.Empty);
+        });
+
+        var vazio = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/rename",
+            new LspRenameRequest("a.py", 0, 0, "  ", "a.py"));
+        Assert.That(vazio.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var vazioBody = await vazio.Content.ReadFromJsonAsync<LspRenameResponse>();
+        Assert.That(vazioBody!.Error, Is.EqualTo("Nome vazio."));
+    }
+
+    /// <summary>/rename fora do jail → 400.</summary>
+    [Test]
+    public async Task LspRename_PathFora_400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.PostAsJsonAsync("/api/v1/workspace/lsp/rename",
+            new LspRenameRequest("/etc/passwd", 0, 0, "novo", null));
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    // ---------- SPEC-20261011-ide-bundle (Fase E): GET /repo/file-head ----------
+
+    /// <summary>/file-head fora do jail → 400.</summary>
+    [Test]
+    public async Task FileHead_PathFora_400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var r = await ctx.Client.GetAsync("/api/v1/workspace/repo/file-head?path=/etc/passwd");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    /// <summary>/file-head com .git fake (não é raiz de repo) → 404
+    /// "Sem conteúdo no HEAD" — IsRepoRootAsync bloqueia escala pro repo pai.</summary>
+    [Test]
+    public async Task FileHead_SemRepoReal_404()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.txt"), "v1\n");
+        var r = await ctx.Client.GetAsync("/api/v1/workspace/repo/file-head?path=a.txt");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    /// <summary>/file-head em repo real devolve o conteúdo do HEAD — não o
+    /// do working tree (é a base do diff overlay da IDE).</summary>
+    [Test]
+    public async Task FileHead_ComRepoReal_ConteudoDoHead()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        await InitRepoAsync(ctx.Workdir!);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.txt"), "v1\n");
+        await GitAsync(ctx.Workdir!, "add", "a.txt");
+        await GitAsync(ctx.Workdir!, "-c", "user.name=t", "-c", "user.email=t@t",
+            "commit", "-m", "f1");
+
+        // working tree diverge do HEAD — /file-head deve devolver v1.
+        File.WriteAllText(Path.Join(ctx.Workdir!, "a.txt"), "v2\n");
+        var r = await ctx.Client.GetAsync("/api/v1/workspace/repo/file-head?path=a.txt");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await r.Content.ReadFromJsonAsync<WorkspaceFileReadResponse>();
+        Assert.That(body, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(body!.Path, Is.EqualTo("a.txt"));
+            Assert.That(body.Content, Is.EqualTo("v1\n"));
+        });
+    }
+
+    /// <summary>/file-head de arquivo não trackeado (repo real, sem commit
+    /// do arquivo) → 404.</summary>
+    [Test]
+    public async Task FileHead_NaoTrackeado_404()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        await InitRepoAsync(ctx.Workdir!);
+        File.WriteAllText(Path.Join(ctx.Workdir!, "b.txt"), "novo\n");
+        var r = await ctx.Client.GetAsync("/api/v1/workspace/repo/file-head?path=b.txt");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
     // ---------- fixture helpers ----------
