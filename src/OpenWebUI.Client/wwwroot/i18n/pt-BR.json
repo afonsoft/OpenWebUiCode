@@ -593,6 +593,7 @@
   "chat.activity.video": "Gerando vídeo",
   "chat.activity.image": "Gerando imagem",
   "chat.activity.tool": "Usando ferramenta",
+  "chat.activity.decision_auto": "Decisão automática",
   "chat.worklog.steps": "{{count}} passos",
   "chat.tasks": "Tarefas",
   "chat.status_auto_approved": "auto-aprovada: {{name}}",

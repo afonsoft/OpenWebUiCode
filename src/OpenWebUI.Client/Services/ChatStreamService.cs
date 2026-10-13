@@ -59,6 +59,9 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         /// <summary>Pergunta estruturada do ask_user aguardando resposta (RF-005).</summary>
         public sealed record QuestionAsked(RunQuestionAskedEvent Asked) : ChatStreamEvent;
 
+        /// <summary>Decisão automática do preset autônomo (SPEC-15 RF-003).</summary>
+        public sealed record DecisionAuto(RunDecisionAutoEvent Info) : ChatStreamEvent;
+
         /// <summary>Evento <c>mode</c>: modo do agente do chat mudou mid-run.</summary>
         public sealed record Mode(RunModeEvent Info) : ChatStreamEvent;
 
@@ -407,6 +410,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             "tool_call" => ParseToolCall(node),
             "tool_result" => ParseToolResult(node),
             "question_asked" => ParseQuestionAsked(node),
+            "decision_auto" => ParseDecisionAuto(node),
             "approval_asked" => ParseApprovalAsked(node),
             "mode" => ParseMode(node),
             "tasks" => ParseTasks(node),
@@ -447,6 +451,14 @@ public class ChatStreamService(HttpClient http, AuthService auth)
                     .Select(o => o?.GetValue<string>() ?? string.Empty)
                     .ToArray() ?? [],
                 node["multiple"]?.GetValue<bool>() ?? false));
+
+    private static ChatStreamEvent ParseDecisionAuto(JsonNode node) =>
+        new ChatStreamEvent.DecisionAuto(
+            new RunDecisionAutoEvent(
+                node["callId"]?.GetValue<string>() ?? string.Empty,
+                node["source"]?.GetValue<string>() ?? "ask_user",
+                node["chosen"]?.GetValue<string>() ?? string.Empty,
+                node["reason"]?.GetValue<string>() ?? "recommended_option"));
 
     private static ChatStreamEvent ParseApprovalAsked(JsonNode node) =>
         new ChatStreamEvent.ApprovalAsked(

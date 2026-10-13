@@ -509,6 +509,7 @@
   "chat.activity.video": "をしています",
   "chat.activity.image": "をしています",
   "chat.activity.tool": "ツールをっています",
+  "chat.activity.decision_auto": "自動決定",
   "chat.worklog.steps": "{{count}} ステップ",
   "chat.tasks": "タスク",
   "chat.status_auto_approved": "自動承認: {{name}}",
