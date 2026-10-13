@@ -1,11 +1,12 @@
-# Open WebUI — .NET (Edição Agente de Código)
+# Open-WebUI+Code — .NET (Edição Agente de Código)
 
 Migração do [Open WebUI](https://github.com/open-webui/open-webui) para
 **.NET 10 · C# 14 · Blazor WebAssembly** (SvelteKit + FastAPI → ASP.NET Core + Blazor),
 fiel ao layout e à configuração do original — **estendida numa plataforma completa de
 agente de codificação** no espírito do [opencode](https://github.com/sst/opencode):
-sessões vinculadas a repositório, sub-agentes em worktrees paralelas, steer no meio
-da run, memória durável, rotinas agendadas e pipeline de revisão em worktree.
+conversas vinculadas a repositório rodando em worktrees git dedicadas, sub-agentes
+em paralelo, steer no meio da run, memória durável, rotinas agendadas, IDE no
+estilo VS Code e pipeline de revisão em worktree.
 
 [![CI Build & Test](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml)
 [![Code Quality](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml)
@@ -20,7 +21,7 @@ da run, memória durável, rotinas agendadas e pipeline de revisão em worktree.
 | Capacidade | Open WebUI (FastAPI/Svelte) | opencode | **Este fork (.NET/Blazor)** |
 |---|---|---|---|
 | Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ qualquer LLM via gateway | ✅ paridade + OmniRoute-friendly |
-| Repo/workspace por sessão | ❌ workspace único | ✅ por projeto | ✅ **binding por chat** (chat → usuário → nenhum) |
+| Repo/workspace por sessão | ❌ workspace único | ✅ por projeto | ✅ **worktree git por chat** — escopo estrito, global nunca vaza |
 | Sub-agentes / sessões paralelas | ❌ | ✅ task tool + sessions | ✅ `delegate_task` async, depth ≤3, isolado em worktree |
 | Revisão antes do merge | ❌ | ✅ orquestrador revisa diffs | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
 | Steer/queue no meio da run | ❌ | ✅ steer/queue durável | ✅ `POST …/runs/{id}/steer` (modos steer + queue) |
@@ -55,7 +56,25 @@ da run, memória durável, rotinas agendadas e pipeline de revisão em worktree.
 - **`delegate_task`** — cria chat filho + run server-side: `wait:false` retorna
   `childRunId` na hora, `wait:true` (padrão) bloqueia até 300s; parâmetros `repo`
   e `persona` (uma Skill do workspace como system prompt); profundidade ≤ 3;
-  cada sub-agente roda na sua própria **git worktree** — workers paralelos nunca colidem.
+  cada sub-agente herda o repo do pai mas trabalha na sua **worktree exclusiva**.
+- **Worktrees de repo por chat** — vincular um chat a `owner/repo` cria uma
+  worktree exclusiva (`workspaces/{user}/worktrees/{owner}__{repo}/{chatId}`,
+  branch `chat/{chatId}`) sobre um checkout base compartilhado; a resolução é
+  estrita por chat — conversa nova nunca herda o binding global. Desvincular,
+  arquivar ou deletar libera a worktree; o checkout base sai de disco quando
+  ninguém mais referencia, e um base divergente se recupera sozinho (HEAD
+  divergente preservado em `backup/*`).
+- **Três modos de agente** — seletor no composer `chat` / `plan` / `build`:
+  `chat` é sem repo (tools de workspace negadas), `build` exige repo vinculado
+  (`PATCH` 400 sem binding; desvincular derruba `build`→`chat`; `plan_exit` só
+  promove a `build` com binding). O gate de workspace cobre `delegate_task`,
+  `lsp_*` e `skill`; o hook de formatação honra o `FormatCommand` do binding.
+- **Decisões autônomas** — presets `smart`/`auto`/`always-allow` respondem
+  sozinhos a prompts `ask_user` que trazem opções (opção recomendada, senão a
+  primeira) sem pausar a run; cada escolha automática emite evento auditável
+  `decision_auto`.
+- **Workspace mobile** — alvos de toque e chips que colapsam mantêm o painel
+  workspace, o seletor de repo e a IDE alcançáveis em telas pequenas.
 - **`run_result` / `worktree_diff` / `worktree_merge`** — colhe resultados assíncronos,
   revisa o diff do filho e faz merge explícito (ou `auto_merge` opt-in).
 - **Steer e queue** — `POST /api/v1/chats/{id}/runs/{runId}/steer` injeta mensagem
@@ -91,7 +110,7 @@ Detalhes por funcionalidade (com screenshots): [docs/pt/RECURSOS-AGENTE.md](docs
   `n8n_list_workflows`/`n8n_trigger`, `todo_write`, `skill`, `lsp_*`, `plan_exit`
 - **Painel Workspace** — Tasks, Changes (diff git), Jobs, MCPs, Terminal (PTY) e
   Info da run; redimensionador arrastável; tela cheia em `/ide`
-- **Modos Plan/Build** + modos de permissão; **checkpoints e revert**;
+- **Modos Chat/Plan/Build** + modos de permissão; **checkpoints e revert**;
   **pause/resume** de runs; slash commands vindos das skills do repo
 - **RAG, Knowledge, Arena, Canais/Notas/Calendário, Admin (usuários, conexões,
   servidores MCP, integrações), i18n em 8 locales, shell PWA offline**
