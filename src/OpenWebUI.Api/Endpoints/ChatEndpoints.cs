@@ -486,8 +486,10 @@ public static class ChatEndpoints
     }
 
     /// <summary>
-    /// Abre/atualiza o repo por chat (checkout compartilhado por slug) ou
-    /// limpa o binding de chat (body vazio/repo nulo → volta ao global).
+    /// Abre/atualiza o repo por chat criando um worktree exclusivo da
+    /// conversa (SPEC-15) ou limpa o binding de chat (body vazio/repo nulo
+    /// → worktree removido; o checkout base sai de disco se nenhuma outra
+    /// conversa/global o referenciar).
     /// </summary>
     private static async Task<IResult> PutWorkspaceRepoAsync(
         string id,
@@ -509,16 +511,10 @@ public static class ChatEndpoints
 
         if (request is null || string.IsNullOrWhiteSpace(request.Repo))
         {
-            // Limpa o binding por chat → resolução cai no global do usuário.
-            await repos.SetChatBindingAsync(id, null, ct);
-            var (fallback, fallbackSource) = await repos.ResolveBindingAsync(user.Id, id, ct);
-            return Results.Ok(new ChatWorkspaceRepoResponse(
-                fallback is null
-                    ? null
-                    : new WorkspaceRepoResponse(
-                        fallback.Repo, fallback.Branch, fallback.Dir,
-                        fallback.TestCommand, fallback.FormatCommand),
-                fallbackSource));
+            // SPEC-15: desvincular libera o worktree da conversa e, se o
+            // repo ficar sem referências, o checkout base sai de disco.
+            await repos.ReleaseChatWorkspaceAsync(user.Id, id, keepBinding: false, ct);
+            return Results.Ok(new ChatWorkspaceRepoResponse(null, "none"));
         }
 
         if (string.IsNullOrWhiteSpace(request.Branch))
@@ -592,6 +588,7 @@ public static class ChatEndpoints
         ChatPatchRequest request,
         HttpContext http,
         AppDbContext db,
+        WorkspaceRepoService repos,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -615,10 +612,17 @@ public static class ChatEndpoints
         }
         if (request.Mode is not null)
         {
-            // SPEC-20261009-agent-modes-plan-build RF-001: build | plan.
-            if (request.Mode is not ("build" or "plan"))
+            // SPEC-20261009 RF-001 + SPEC-15: chat | plan | build — build
+            // exige repositório vinculado à conversa.
+            if (request.Mode is not ("chat" or "build" or "plan"))
             {
                 return Results.BadRequest(new { detail = "mode inválido." });
+            }
+            if (request.Mode == "build"
+                && await repos.GetChatBindingAsync(id, ct) is null)
+            {
+                return Results.BadRequest(
+                    new { detail = "modo build exige repositório vinculado ao chat." });
             }
             chat.Mode = request.Mode;
             changed = true;
@@ -638,7 +642,8 @@ public static class ChatEndpoints
     }
 
     private static async Task<IResult> DeleteChatAsync(
-        string id, HttpContext http, AppDbContext db, CancellationToken ct)
+        string id, HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         var chat = await LoadChatAsync(id, user?.Id, db, ct, tracking: true);
@@ -647,18 +652,32 @@ public static class ChatEndpoints
             return Results.NotFound();
         }
 
+        // SPEC-15: libera o worktree da conversa; o checkout base sai de
+        // disco quando nenhuma outra conversa (nem o global) o referencia.
+        await repos.ReleaseChatWorkspaceAsync(user!.Id, id, keepBinding: false, ct);
+
         db.Chats.Remove(chat);
         await db.SaveChangesAsync(ct);
         return Results.Ok(new StatusResponse(true));
     }
 
     private static async Task<IResult> DeleteAllChatsAsync(
-        HttpContext http, AppDbContext db, CancellationToken ct)
+        HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
+        }
+
+        var chatIds = await db.Chats.AsNoTracking()
+            .Where(c => c.UserId == user.Id)
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+        foreach (var chatId in chatIds)
+        {
+            await repos.ReleaseChatWorkspaceAsync(user.Id, chatId, keepBinding: false, ct);
         }
 
         await db.Chats.Where(c => c.UserId == user.Id).ExecuteDeleteAsync(ct);
@@ -692,7 +711,8 @@ public static class ChatEndpoints
     }
 
     private static async Task<IResult> ToggleArchiveAsync(
-        string id, HttpContext http, AppDbContext db, CancellationToken ct)
+        string id, HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         var chat = await LoadChatAsync(id, user?.Id, db, ct, tracking: true);
@@ -703,17 +723,37 @@ public static class ChatEndpoints
 
         chat.Archived = !chat.Archived;
         chat.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        // SPEC-15: arquivar remove o worktree da conversa (libera o
+        // checkout de trabalho) mantendo o binding e o checkout base — o
+        // worktree é recriado sob demanda ao desarquivar e usar. Excluir
+        // libera também o binding/base.
+        if (chat.Archived)
+        {
+            await repos.ReleaseChatWorkspaceAsync(user!.Id, id, keepBinding: true, ct);
+        }
+
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToResponse(chat));
     }
 
     private static async Task<IResult> ArchiveAllAsync(
-        HttpContext http, AppDbContext db, CancellationToken ct)
+        HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
+        }
+
+        var chatIds = await db.Chats.AsNoTracking()
+            .Where(c => c.UserId == user.Id && !c.Archived)
+            .Select(c => c.Id)
+            .ToListAsync(ct);
+        foreach (var chatId in chatIds)
+        {
+            await repos.ReleaseChatWorkspaceAsync(user.Id, chatId, keepBinding: true, ct);
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();

@@ -28,5 +28,6 @@ Thumbs.db
 
 # Coverage/test artifacts
 TestResults/
+TestResultsGate/
 # a11y audit deps
 node_modules/
