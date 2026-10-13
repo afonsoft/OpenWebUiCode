@@ -410,6 +410,7 @@
                         aria-label="@L["chat.input_placeholder"]"
                         placeholder="@(_uploading ? L["chat.uploading"] : L["chat.input_placeholder"])"
                         rows="1"
+                        @ref="_composerEl"
                         @bind="_input"
                         @bind:event="oninput"
                         @bind:after="OnComposerInputAsync"
@@ -747,6 +748,10 @@
     /// <summary>Aba que o painel abre na próxima renderização (clique no chip git).</summary>
     private string? _requestedPanelTab;
     private ElementReference _scrollContainer;
+    /// <summary>Composer textarea — medido pelo autoResize a cada mudança de _input.</summary>
+    private ElementReference _composerEl;
+    /// <summary>Último valor de _input já medido pelo autoResize (dedup por render).</summary>
+    private string? _composerSized;
     private InputFile? _fileInput;
     private string? _pendingNavigateId;
 
@@ -877,6 +882,7 @@
 
         Realtime.OnChatMessageUpdated += HandleChatMessageUpdated;
         Realtime.OnChatMessageDeleted += HandleChatMessageDeleted;
+        Realtime.OnRunCompleted += HandleRunCompleted;
         try
         {
             await Realtime.ConnectAsync(Nav.BaseUri, Auth.Token);
@@ -946,6 +952,23 @@
         {
             _drawerTrapped = false;
             await JS.InvokeVoidAsync("openwebui.releaseFocus", _drawerEl);
+        }
+
+        // Auto-grow do composer: textarea não cresce sozinho (rows=1 travava
+        // em 1 linha e o texto "sumia" no scroll). Mede depois de qualquer
+        // mudança de _input — digitação via @bind e sets programáticos
+        // (draft restaurado, histórico ↑/↓, prompt/skill, EditAt, envio).
+        if (_composerSized != _input)
+        {
+            _composerSized = _input;
+            try
+            {
+                await JS.InvokeVoidAsync("openwebui.autoResize", _composerEl);
+            }
+            catch (Exception ex) when (ex is JSException or InvalidOperationException)
+            {
+                // Interop indisponível — o composer segue em altura fixa.
+            }
         }
     }
 
@@ -1206,11 +1229,71 @@
         }
     }
 
+    /// <summary>
+    /// run.completed chega por Clients.User (todas as abas), não pelo stream
+    /// anexado — sem este handler a lista ficava velha: o toast avisava
+    /// "resposta concluída" e a tela não mostrava nada (run iniciada em
+    /// outra aba/CLI, subrun, automação, ou attach que morreu antes do fim).
+    /// Recarrega o histórico e, se outra run do chat já estiver ativa
+    /// (steer queue), anexa ao stream dela. Enquanto uma run está anexada
+    /// (_streaming) o finally do consume já recarrega — pular evita corrida
+    /// com o placeholder indexado por posição.
+    /// </summary>
+    private void HandleRunCompleted(RealtimeService.RunCompletedInfo info)
+    {
+        if (_streaming || _loadedChatId is null)
+        {
+            return;
+        }
+
+        var isLoadedChat = info.ChatId == _loadedChatId;
+        if (!isLoadedChat)
+        {
+            // Run de outro chat pode ter deixado marcador de subtarefa neste
+            // (subrun-parent-notify) — reload silencioso, sem puxar o scroll.
+            _ = InvokeAsync(async () =>
+            {
+                try
+                {
+                    await ReloadChatAsync(scrollToEnd: false);
+                }
+                catch (Exception ex)
+                {
+                    await Console.Error.WriteLineAsync(
+                        $"[ChatView] reload pós run.completed (outro chat) falhou: {ex.Message}");
+                }
+            });
+            return;
+        }
+
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                await ReloadChatAsync();
+                await RefreshGitAsync();
+                // Fila de steer: a próxima run do chat pode já estar queued/
+                // running — anexa para o usuário ver a continuação ao vivo.
+                if (!_streaming
+                    && await ChatStream.GetActiveRunAsync(_loadedChatId) is { } next)
+                {
+                    await AttachActiveRunAsync(next);
+                }
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync(
+                    $"[ChatView] reload pós run.completed falhou: {ex.Message}");
+            }
+        });
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
         Realtime.OnChatMessageUpdated -= HandleChatMessageUpdated;
         Realtime.OnChatMessageDeleted -= HandleChatMessageDeleted;
+        Realtime.OnRunCompleted -= HandleRunCompleted;
         _cts?.Dispose();
         _ttsRef?.Dispose();
         GC.SuppressFinalize(this);
@@ -2327,8 +2410,12 @@
             """<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 flex-none"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>""",
     });
 
-    /// <summary>Recarrega o chat do servidor (fonte da verdade após run desacoplada).</summary>
-    private async Task ReloadChatAsync()
+    /// <summary>
+    /// Recarrega o chat do servidor (fonte da verdade após run desacoplada).
+    /// <paramref name="scrollToEnd"/> false mantém a posição de leitura —
+    /// reload disparado por evento de outro chat não pode arrastar a tela.
+    /// </summary>
+    private async Task ReloadChatAsync(bool scrollToEnd = true)
     {
         if (_loadedChatId is null)
         {
@@ -2346,7 +2433,10 @@
         _chatTitle = chat.Title;
         ChatList.NotifyChanged();
         await InvokeAsync(StateHasChanged);
-        await ScrollToEndAsync();
+        if (scrollToEnd)
+        {
+            await ScrollToEndAsync();
+        }
     }
 
     private async Task VoteArenaAsync(string winner)

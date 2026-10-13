@@ -79,11 +79,14 @@ window.openwebui = {
 			document.addEventListener('pointerup', up);
 		});
 	},
+	// Cresce o elemento até scrollHeight, limitado pelo max-height do CSS
+	// (ex.: composer max-h-96). Sem teto declarado, cresce sem limite.
 	autoResize: function (element) {
-		if (element) {
-			element.style.height = 'auto';
-			element.style.height = Math.min(element.scrollHeight, 200) + 'px';
-		}
+		if (!element) return;
+		element.style.height = 'auto';
+		const max = parseFloat(window.getComputedStyle(element).maxHeight);
+		const target = element.scrollHeight;
+		element.style.height = (isFinite(max) ? Math.min(target, max) : target) + 'px';
 	},
 	// Protocolo upstream: abre https://openwebui.com/post?type=<type> em nova aba e
 	// posta o item serializado quando a página sinaliza 'loaded'.
