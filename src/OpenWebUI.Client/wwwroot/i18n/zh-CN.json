@@ -509,6 +509,7 @@
   "chat.activity.video": "",
   "chat.activity.image": "",
   "chat.activity.tool": "",
+  "chat.activity.decision_auto": "自动决策",
   "chat.worklog.steps": "{{count}} ",
   "chat.tasks": "任务",
   "chat.status_auto_approved": "自动批准：{{name}}",

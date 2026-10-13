@@ -532,19 +532,21 @@ public sealed class ChatRunExecutor(
             .FirstOrDefaultAsync(ct);
         var mode = PermissionRuleset.Normalize(gateInfo?.Mode);
 
-        // ask_user (RF-005): sempre pausa — a pergunta é o próprio gate;
-        // não passa por preset nem por remembered. A resposta volta como
-        // ToolGateDecision.Output e vira o resultado da tool.
+        // ask_user (RF-005): a pergunta é o próprio gate; a resposta volta
+        // como ToolGateDecision.Output e vira o resultado da tool. SPEC-15
+        // RF-003: presets autônomos respondem sozinhos quando há opções.
         if (string.Equals(call.Name, "builtin:ask_user", StringComparison.OrdinalIgnoreCase))
         {
-            return await AskUserAsync(run, call, ct);
+            return await AskUserAsync(run, call, gateInfo?.ApprovalPreset, ct);
         }
 
         // plan_exit (RF-003): gate próprio — grava o plano, pergunta o
-        // dono e aprovado promove o chat a build.
+        // dono e aprovado promove o chat a build. SPEC-15 RF-003: presets
+        // autônomos promovem sem perguntar.
         if (string.Equals(call.Name, "builtin:plan_exit", StringComparison.OrdinalIgnoreCase))
         {
-            return await PlanExitAsync(run, tools, call, builtinContext, mode, ct);
+            return await PlanExitAsync(
+                run, tools, call, builtinContext, mode, gateInfo?.ApprovalPreset, ct);
         }
 
         var tool = ToolExecutor.FindTool(tools, call.Name);
@@ -635,7 +637,8 @@ public sealed class ChatRunExecutor(
     /// </summary>
     private async Task<ToolGateDecision> PlanExitAsync(
         ChatRun run, IReadOnlyList<Tool> tools, ProviderToolCall call,
-        BuiltinToolContext builtinContext, string mode, CancellationToken ct)
+        BuiltinToolContext builtinContext, string mode, string? preset,
+        CancellationToken ct)
     {
         if (mode != PermissionRuleset.PlanMode)
         {
@@ -651,22 +654,31 @@ public sealed class ChatRunExecutor(
             return new ToolGateDecision(true, Output: write.Text);
         }
 
-        // 2. Pergunta ao dono pelo mesmo mecanismo do ask_user.
-        broadcaster.Publish(run.Id,
-            $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
-        broadcaster.Publish(run.Id,
-            $"event: question_asked\ndata: {JsonSerializer.Serialize(new RunQuestionAskedEvent(call.Id, "Executar este plano?", ["Executar o plano", "Continuar planejando"], false), JsonOptions)}");
-        var result = await approvals.WaitAsync(
-            run.Id, run.ChatId, call.Id, call.Name, ct);
-
-        if (!result.Approved)
+        // 2. Pergunta ao dono pelo mesmo mecanismo do ask_user — exceto
+        //    nos presets autônomos (SPEC-15 RF-003), que aprovam direto e
+        //    auditam a escolha via decision_auto.
+        if (!IsAutoPickPreset(preset))
         {
-            var note = string.IsNullOrWhiteSpace(result.Message)
-                ? string.Empty
-                : $" (nota: {Scrub(Truncate(result.Message!, PreviewChars))})";
-            return new ToolGateDecision(true, Output:
-                $"{write.Text}\n\nPlano não aprovado{note} — ajuste o plano "
-                + "com as tools de leitura e chame plan_exit de novo.");
+            broadcaster.Publish(run.Id,
+                $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
+            broadcaster.Publish(run.Id,
+                $"event: question_asked\ndata: {JsonSerializer.Serialize(new RunQuestionAskedEvent(call.Id, "Executar este plano?", ["Executar o plano", "Continuar planejando"], false), JsonOptions)}");
+            var result = await approvals.WaitAsync(
+                run.Id, run.ChatId, call.Id, call.Name, ct);
+
+            if (!result.Approved)
+            {
+                var note = string.IsNullOrWhiteSpace(result.Message)
+                    ? string.Empty
+                    : $" (nota: {Scrub(Truncate(result.Message!, PreviewChars))})";
+                return new ToolGateDecision(true, Output:
+                    $"{write.Text}\n\nPlano não aprovado{note} — ajuste o plano "
+                    + "com as tools de leitura e chame plan_exit de novo.");
+            }
+        }
+        else
+        {
+            PublishDecisionAuto(run, call.Id, "plan_exit", "Executar o plano");
         }
 
         // 3. Promoção plan → build: persiste no chat, publica o evento
@@ -691,7 +703,7 @@ public sealed class ChatRunExecutor(
     /// segue; o modelo decide o próximo passo).
     /// </summary>
     private async Task<ToolGateDecision> AskUserAsync(
-        ChatRun run, ProviderToolCall call, CancellationToken ct)
+        ChatRun run, ProviderToolCall call, string? preset, CancellationToken ct)
     {
         var question = "?";
         string[] options = [];
@@ -719,6 +731,16 @@ public sealed class ChatRunExecutor(
             return new ToolGateDecision(true, Output: "Pergunta malformada (args inválidos).");
         }
 
+        // SPEC-15 RF-003: preset autônomo + opções → responde sozinho com a
+        // recomendada (marcada) ou a primeira, sem pausar a run. Pergunta
+        // de resposta livre (sem opções) segue aguardando o dono.
+        if (IsAutoPickPreset(preset) && options.Length > 0)
+        {
+            var pick = PickRecommended(options);
+            PublishDecisionAuto(run, call.Id, "ask_user", pick);
+            return new ToolGateDecision(true, Output: pick);
+        }
+
         broadcaster.Publish(run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
         broadcaster.Publish(run.Id,
@@ -730,6 +752,29 @@ public sealed class ChatRunExecutor(
             : "O usuário não respondeu.";
         return new ToolGateDecision(true, Output: answer);
     }
+
+    /// <summary>
+    /// Presets que respondem perguntas com opções sozinhos (SPEC-15 RF-003).
+    /// <c>approve-mutations</c>/<c>allow-readonly</c> seguem perguntando.
+    /// </summary>
+    private static bool IsAutoPickPreset(string? preset) =>
+        preset is "smart" or "always-allow" or "auto";
+
+    /// <summary>
+    /// Opção recomendada = a que o modelo marcou com "(recomendado)" /
+    /// "(recommended)"; senão a primeira (SPEC-15 RF-003 — determinístico).
+    /// </summary>
+    private static string PickRecommended(string[] options) =>
+        options.FirstOrDefault(o =>
+            o.Contains("recomendad", StringComparison.OrdinalIgnoreCase)
+            || o.Contains("recommended", StringComparison.OrdinalIgnoreCase))
+        ?? options[0];
+
+    /// <summary>Audita a escolha automática no SSE (SPEC-15 RF-003).</summary>
+    private void PublishDecisionAuto(
+        ChatRun run, string callId, string source, string chosen) =>
+        broadcaster.Publish(run.Id,
+            $"event: decision_auto\ndata: {JsonSerializer.Serialize(new RunDecisionAutoEvent(callId, source, Scrub(Truncate(chosen, PreviewChars)), "recommended_option"), JsonOptions)}");
 
     /// <summary>Esconde padrões óbvios de secret antes de publicar no SSE.</summary>
     private static string Scrub(string value)

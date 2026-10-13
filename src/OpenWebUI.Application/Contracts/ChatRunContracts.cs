@@ -110,6 +110,16 @@ public sealed record RunQuestionAskedEvent(
     string CallId, string Question, string[] Options, bool Multiple);
 
 /// <summary>
+/// Evento SSE <c>decision_auto</c> (SPEC-15 RF-003): nos presets autônomos
+/// (<c>smart</c>/<c>auto</c>/<c>always-allow</c>) o executor respondeu sozinho
+/// uma pergunta com opções — <paramref name="Chosen"/> é a opção recomendada
+/// (marcada) ou a primeira; <paramref name="Source"/> indica a origem
+/// (<c>ask_user</c> | <c>plan_exit</c>). Auditável no feed de atividade.
+/// </summary>
+public sealed record RunDecisionAutoEvent(
+    string CallId, string Source, string Chosen, string Reason);
+
+/// <summary>
 /// Item da lista de tarefas da run (SPEC-20261007-chat-agent-parity
 /// RF-010): snapshot emitido pela builtin <c>todo_write</c>.
 /// </summary>
