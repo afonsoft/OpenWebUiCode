@@ -47,30 +47,37 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         config.SetAsync(ChatBindingKey(chatId), binding, ct);
 
     /// <summary>
-    /// Binding efetivo com a origem: <c>chat</c> → <c>user</c> → <c>none</c>.
+    /// Binding efetivo com a origem. Com <paramref name="chatId"/> a
+    /// resolução é estrita — só o binding explícito do chat conta
+    /// (<c>chat</c> | <c>none</c>): SPEC-15, conversa sem repo selecionado
+    /// não herda o repo global. Sem chatId devolve o binding global do
+    /// usuário (<c>user</c> | <c>none</c>).
     /// </summary>
     public async Task<(WorkspaceRepoBinding? Binding, string Source)> ResolveBindingAsync(
         string userId, string? chatId, CancellationToken ct)
     {
-        if (chatId is not null
-            && await GetChatBindingAsync(chatId, ct) is { } chatBinding)
+        if (chatId is not null)
         {
-            return (chatBinding, "chat");
+            var chatBinding = await GetChatBindingAsync(chatId, ct);
+            return (chatBinding, chatBinding is not null ? "chat" : "none");
         }
         var userBinding = await GetBindingAsync(userId, ct);
         return (userBinding, userBinding is not null ? "user" : "none");
     }
 
     /// <summary>
-    /// Diretório de trabalho efetivo: o checkout do repo vinculado quando
-    /// existe, senão a raiz do workspace.
+    /// Diretório de trabalho efetivo: o checkout/worktree do repo vinculado
+    /// quando existe, senão a raiz do workspace.
     /// </summary>
     public Task<string> ResolveWorkdirAsync(string userId, CancellationToken ct) =>
         ResolveWorkdirAsync(userId, null, ct);
 
     /// <summary>
     /// Igual a <see cref="ResolveWorkdirAsync(string, CancellationToken)"/>
-    /// resolvendo primeiro o binding por chat (SPEC-20261010-chat-repo-binding).
+    /// resolvendo o binding por chat (SPEC-20261010-chat-repo-binding).
+    /// Quando o binding aponta um worktree por conversa que ainda não
+    /// existe em disco (ex.: chat desarquivado, binding herdado), ele é
+    /// recriado sob demanda a partir do checkout base.
     /// </summary>
     public async Task<string> ResolveWorkdirAsync(
         string userId, string? chatId, CancellationToken ct)
@@ -82,7 +89,20 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         }
 
         var dir = Path.Join(WorkspaceRoot(userId), binding.Dir);
-        return Directory.Exists(Path.Join(dir, ".git")) ? dir : WorkspaceRoot(userId);
+        if (IsGitDir(dir))
+        {
+            return dir;
+        }
+
+        // Worktree por conversa (SPEC-15): binding sobrevive a archive —
+        // recria o worktree na primeira utilização após unarchive.
+        if (binding.Dir.StartsWith("worktrees/", StringComparison.Ordinal)
+            && await EnsureChatWorktreeAsync(userId, chatId!, binding, ct) is { } recreated)
+        {
+            return recreated;
+        }
+
+        return WorkspaceRoot(userId);
     }
 
     /// <summary>
@@ -122,10 +142,13 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
     }
 
     /// <summary>
-    /// Igual a <see cref="OpenAsync"/> gravando o binding por chat
-    /// (SPEC-20261010-chat-repo-binding). O checkout é compartilhado —
-    /// diretório determinístico por slug, então vários chats (e o binding
-    /// global) apontam para a mesma pasta sem clonar de novo.
+    /// Vincula o chat a <paramref name="slug"/>/<paramref name="branch"/>
+    /// criando um <b>worktree exclusivo da conversa</b> (SPEC-15):
+    /// <c>workspaces/{user}/worktrees/{owner}__{repo}/{chatId}</c> na branch
+    /// <c>chat/{chatId}</c> a partir de <c>origin/{branch}</c>. O checkout
+    /// base em <c>repos/{owner}__{repo}</c> é compartilhado por slug; o
+    /// worktree é removido no archive/delete do chat e o base só sai de
+    /// disco quando nenhuma conversa (nem o global) referencia o repo.
     /// </summary>
     public async Task<(WorkspaceRepoBinding? Binding, string? Error)> OpenChatAsync(
         string userId, string chatId, string slug, string branch,
@@ -141,11 +164,18 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
             return (null, "Branch inválida.");
         }
 
-        var (dir, absDir, error) = await EnsureCheckoutAsync(
+        var (_, absDir, error) = await EnsureCheckoutAsync(
             userId, slug, branch, cloneUrl, token, ct);
         if (error is not null)
         {
             return (null, error);
+        }
+
+        var (dir, absWt, wtError) = await CreateChatWorktreeAsync(
+            userId, chatId, slug, branch, absDir, ct);
+        if (wtError is not null)
+        {
+            return (null, wtError);
         }
 
         // Comandos customizados: herda do binding de chat anterior, caindo
@@ -155,8 +185,149 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         var binding = new WorkspaceRepoBinding(
             slug, branch, dir, previous?.TestCommand, previous?.FormatCommand);
         await config.SetAsync(ChatBindingKey(chatId), binding, ct);
-        SkillDiscoveryService.Invalidate(absDir);
+        SkillDiscoveryService.Invalidate(absWt);
         return (binding, null);
+    }
+
+    /// <summary>
+    /// Binding por chat para uma sub-conversa (SPEC-15): mesmo repo/branch
+    /// do pai, mas worktree próprio em <c>worktrees/…/{childChatId}</c> —
+    /// materializado sob demanda na primeira resolução de workdir.
+    /// </summary>
+    public WorkspaceRepoBinding InheritChatBinding(string childChatId, WorkspaceRepoBinding parent)
+    {
+        var repoDir = RepoDirName(parent.Repo);
+        return parent with { Dir = $"worktrees/{repoDir}/{childChatId}" };
+    }
+
+    /// <summary>
+    /// Libera o workspace do chat (SPEC-15): remove o worktree exclusivo;
+    /// <paramref name="keepBinding"/> preserva o binding kv (archive — o
+    /// worktree é recriado sob demanda no unarchive). Se nenhuma conversa
+    /// (nem o binding global) referencia mais o repo, o checkout base em
+    /// <c>repos/</c> também sai de disco para liberar espaço.
+    /// </summary>
+    public async Task ReleaseChatWorkspaceAsync(
+        string userId, string chatId, bool keepBinding, CancellationToken ct)
+    {
+        var binding = await GetChatBindingAsync(chatId, ct);
+        if (!keepBinding)
+        {
+            await SetChatBindingAsync(chatId, null, ct);
+        }
+        if (binding is null)
+        {
+            return;
+        }
+
+        var root = WorkspaceRoot(userId);
+        var repoDir = RepoDirName(binding.Repo);
+        var baseAbs = Path.Join(root, "repos", repoDir);
+
+        if (binding.Dir.StartsWith("worktrees/", StringComparison.Ordinal))
+        {
+            var wtAbs = Path.Join(root, binding.Dir);
+            var error = await RunGitLoggedAsync(
+                baseAbs, ct, null, "worktree", "remove", "--force", wtAbs);
+            if (error is not null && Directory.Exists(wtAbs))
+            {
+                TryDeleteDir(wtAbs);
+            }
+            _ = await RunGitAsync(baseAbs, ct, "worktree", "prune");
+            // Pasta worktrees/{owner}__{repo} vazia → sai junto.
+            var wtParent = Path.Join(root, "worktrees", repoDir);
+            if (Directory.Exists(wtParent) && !Directory.EnumerateFileSystemEntries(wtParent).Any())
+            {
+                TryDeleteDir(wtParent);
+            }
+        }
+
+        // O repo base sai de disco só quando nenhuma conversa (incl.
+        // arquivadas — o binding sobrevive) nem o binding global o usam.
+        if (!keepBinding && !await IsRepoReferencedAsync(userId, binding.Repo, ct)
+            && Directory.Exists(baseAbs))
+        {
+            TryDeleteDir(baseAbs);
+            TryDeleteDir(Path.Join(root, "worktrees", repoDir));
+            SkillDiscoveryService.Invalidate(baseAbs);
+        }
+    }
+
+    /// <summary>True quando algum binding (chat:* ou global) usa o slug.</summary>
+    private async Task<bool> IsRepoReferencedAsync(
+        string userId, string slug, CancellationToken ct)
+    {
+        if (await GetBindingAsync(userId, ct) is { } global
+            && string.Equals(global.Repo, slug, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        var chatBindings = await config.ListByPrefixAsync<WorkspaceRepoBinding>(
+            "chat:", ct);
+        return chatBindings.Any(kv =>
+            kv.Key.EndsWith(":workspace.repo", StringComparison.Ordinal)
+            && kv.Value is { } b
+            && string.Equals(b.Repo, slug, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Cria (ou recria) o worktree da conversa em
+    /// <c>worktrees/{owner}__{repo}/{chatId}</c> com a branch exclusiva
+    /// <c>chat/{chatId}</c> a partir de <c>origin/{branch}</c>. Devolve o
+    /// dir relativo ao workspace root e o caminho absoluto.
+    /// </summary>
+    private async Task<(string Dir, string AbsDir, string? Error)> CreateChatWorktreeAsync(
+        string userId, string chatId, string slug, string branch,
+        string baseAbs, CancellationToken ct)
+    {
+        var repoDir = RepoDirName(slug);
+        var dir = $"worktrees/{repoDir}/{Sanitize(chatId)}";
+        var absWt = Path.Join(WorkspaceRoot(userId), dir);
+        var chatBranch = $"chat/{chatId}";
+
+        if (Directory.Exists(absWt))
+        {
+            // Rebind/recriação: remove o worktree anterior antes de re-criar.
+            _ = await RunGitLoggedAsync(
+                baseAbs, ct, null, "worktree", "remove", "--force", absWt);
+            if (Directory.Exists(absWt))
+            {
+                TryDeleteDir(absWt);
+            }
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(absWt)!);
+
+        // Start point: ref remota atualizada no fetch; fallback na local.
+        var startRef = await RunGitAsync(
+            baseAbs, ct, "rev-parse", "--verify", $"refs/remotes/origin/{branch}") is not null
+            ? $"origin/{branch}"
+            : branch;
+        var error = await RunGitLoggedAsync(
+            baseAbs, ct, null, "worktree", "add", "-b", chatBranch, absWt, startRef);
+        if (error is not null)
+        {
+            // Branch chat/{id} ficou de uma tentativa anterior — recria.
+            _ = await RunGitAsync(baseAbs, ct, "branch", "-D", chatBranch);
+            error = await RunGitLoggedAsync(
+                baseAbs, ct, null, "worktree", "add", "-b", chatBranch, absWt, startRef);
+        }
+        return error is not null
+            ? (dir, absWt, $"git worktree add: {error}")
+            : (dir, absWt, null);
+    }
+
+    /// <summary>Recria sob demanda o worktree de um binding por chat.</summary>
+    private async Task<string?> EnsureChatWorktreeAsync(
+        string userId, string chatId, WorkspaceRepoBinding binding, CancellationToken ct)
+    {
+        var baseAbs = Path.Join(WorkspaceRoot(userId), "repos", RepoDirName(binding.Repo));
+        if (!Directory.Exists(Path.Join(baseAbs, ".git")))
+        {
+            return null;
+        }
+        var (_, absWt, error) = await CreateChatWorktreeAsync(
+            userId, chatId, binding.Repo, binding.Branch, baseAbs, ct);
+        return error is null ? absWt : null;
     }
 
     /// <summary>
@@ -168,8 +339,7 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         string userId, string slug, string branch,
         string cloneUrl, string? token, CancellationToken ct)
     {
-        var name = slug[(slug.IndexOf('/') + 1)..];
-        var dir = $"repos/{Sanitize(slug[..slug.IndexOf('/')])}__{Sanitize(name)}";
+        var dir = $"repos/{RepoDirName(slug)}";
         var root = WorkspaceRoot(userId);
         var absDir = Path.Join(root, dir);
 
@@ -352,6 +522,33 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         catch (InvalidOperationException ex) { return (-1, string.Empty, ex.Message); }
         catch (IOException ex) { return (-1, string.Empty, ex.Message); }
         catch (TimeoutException ex) { return (-1, string.Empty, ex.Message); }
+    }
+
+    /// <summary>Nome determinístico do diretório do repo (<c>{owner}__{repo}</c> sanitizado).</summary>
+    private static string RepoDirName(string slug)
+    {
+        var idx = slug.IndexOf('/');
+        return $"{Sanitize(slug[..idx])}__{Sanitize(slug[(idx + 1)..])}";
+    }
+
+    /// <summary>
+    /// <c>.git</c> presente — diretório (checkout normal) ou arquivo
+    /// (worktree, cujo .git aponta para o gitdir do repo base).
+    /// </summary>
+    private static bool IsGitDir(string dir) =>
+        Directory.Exists(Path.Join(dir, ".git")) || File.Exists(Path.Join(dir, ".git"));
+
+    private static void TryDeleteDir(string dir)
+    {
+        try
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"WorkspaceRepoService: falha ao remover '{dir}': {ex.Message}");
+        }
     }
 
     private static bool IsValidSlug(string slug)

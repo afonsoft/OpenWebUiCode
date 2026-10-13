@@ -1,25 +1,77 @@
 @inject LocalizationService L
 
-@* Toggle plan↔build no composer (SPEC-20261009 RF-004): botão pill com
-   ícone + rótulo, <c>aria-pressed</c> espelhando plan ativo e keyboard
-   nativo de button (Enter/Espaço). *@
-<button class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[0.6875rem] font-medium transition cursor-pointer disabled:opacity-40 @AgentModeVisuals.ChipClass(Mode)"
-        title="@AgentModeVisuals.ToggleTitle(L, Mode)"
-        aria-label="@AgentModeVisuals.ToggleTitle(L, Mode)"
-        aria-pressed="@(AgentModeVisuals.Normalize(Mode) == "plan" ? "true" : "false")"
-        disabled="@Disabled"
-        @onclick="OnToggle">
-    @AgentModeVisuals.Icon(Mode)
-    <span class="hidden sm:inline">@AgentModeVisuals.Label(L, Mode)</span>
-</button>
+@* Seletor do modo do agente no composer (SPEC-20261009 RF-004 + SPEC-15):
+   pill com ícone + rótulo abre menu chat/plan/build — build fica travado
+   sem repositório vinculado; Escape/backdrop fecham. *@
+<div class="relative">
+    <button type="button"
+            class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[0.6875rem] font-medium transition cursor-pointer disabled:opacity-40 @AgentModeVisuals.ChipClass(Mode)"
+            title="@AgentModeVisuals.ToggleTitle(L, Mode)"
+            aria-label="@AgentModeVisuals.ToggleTitle(L, Mode)"
+            aria-haspopup="menu" aria-expanded="@(_open ? "true" : "false")"
+            disabled="@Disabled"
+            @onclick="() => _open = !_open">
+        @AgentModeVisuals.Icon(Mode)
+        <span class="hidden sm:inline">@AgentModeVisuals.Label(L, Mode)</span>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-2.5 flex-none" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" /></svg>
+    </button>
+    @if (_open)
+    {
+        <div class="fixed inset-0 z-30" aria-hidden="true" @onclick="() => _open = false"></div>
+        <div class="absolute bottom-9 right-0 z-40 w-64 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-lg dark:border-gray-800/50 dark:bg-gray-900"
+             role="menu" aria-label="@L["chat.mode_agent"]"
+             @onkeydown="OnMenuKeyDown">
+            @foreach (var option in s_options)
+            {
+                var locked = option == "build" && !HasRepo;
+                var active = AgentModeVisuals.Normalize(Mode) == option;
+                <button type="button" role="menuitemradio" aria-checked="@(active ? "true" : "false")"
+                        class="w-full flex items-center gap-2.5 px-3 py-2 text-left transition enabled:cursor-pointer enabled:hover:bg-gray-50 disabled:opacity-50 enabled:dark:hover:bg-gray-850 @(active ? "text-blue-600 dark:text-blue-400" : "text-gray-700 dark:text-gray-300")"
+                        disabled="@locked"
+                        title="@(locked ? L["chat.mode_build_locked"] : null)"
+                        @onclick="() => SelectAsync(option)">
+                    @AgentModeVisuals.Icon(option)
+                    <span class="min-w-0 flex-1">
+                        <span class="block truncate text-sm">@L["chat.mode_" + option]</span>
+                        <span class="block truncate text-[0.6875rem] text-gray-400 dark:text-gray-500">@(locked ? L["chat.mode_build_locked"] : L["chat.mode_" + option + "_hint"])</span>
+                    </span>
+                    @if (active)
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-3.5 flex-none" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                    }
+                </button>
+            }
+        </div>
+    }
+</div>
 
 @code {
-    /// <summary>Modo atual do agente (<c>build</c> | <c>plan</c>).</summary>
-    [Parameter] public string Mode { get; set; } = "build";
+    private static readonly string[] s_options = ["chat", "plan", "build"];
+    private bool _open;
 
-    /// <summary>Desabilita o toggle (chat carregando).</summary>
+    /// <summary>Modo atual do agente (<c>chat</c> | <c>plan</c> | <c>build</c>).</summary>
+    [Parameter] public string Mode { get; set; } = "chat";
+
+    /// <summary>Desabilita o seletor (chat carregando).</summary>
     [Parameter] public bool Disabled { get; set; }
 
-    /// <summary>Callback do clique — o pai decide o novo modo.</summary>
-    [Parameter] public EventCallback OnToggle { get; set; }
+    /// <summary>Há repositório vinculado (ou pendente) — libera o build.</summary>
+    [Parameter] public bool HasRepo { get; set; }
+
+    /// <summary>Callback com o modo escolhido — o pai aplica e persiste.</summary>
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    private void OnMenuKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            _open = false;
+        }
+    }
+
+    private async Task SelectAsync(string option)
+    {
+        _open = false;
+        await OnSelect.InvokeAsync(option);
+    }
 }

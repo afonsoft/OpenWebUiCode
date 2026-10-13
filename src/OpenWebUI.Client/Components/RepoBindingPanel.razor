@@ -128,6 +128,13 @@ else
     /// </summary>
     [Parameter] public string? ChatId { get; set; }
 
+    /// <summary>
+    /// SPEC-15: true = o painel nunca toca o binding global — sem
+    /// <see cref="ChatId"/> a escolha volta ao pai como seleção pendente
+    /// (sintética) e vira binding por chat quando o chat existir.
+    /// </summary>
+    [Parameter] public bool ChatScopedOnly { get; set; }
+
     /// <summary>Disparado após abrir um repo com sucesso (o modal fecha).</summary>
     [Parameter] public EventCallback Opened { get; set; }
 
@@ -162,7 +169,7 @@ else
                 _bound = resp?.Binding;
                 _source = resp?.Source;
             }
-            else
+            else if (!ChatScopedOnly)
             {
                 _bound = await Api.GetWorkspaceRepoAsync();
                 _source = null;
@@ -232,6 +239,14 @@ else
             _source = resp?.Source;
             await SourceChanged.InvokeAsync(_source);
         }
+        else if (ChatScopedOnly)
+        {
+            // Chat ainda não persistido: devolve a seleção pendente — o pai
+            // cria o binding por chat no primeiro envio (SPEC-15).
+            opened = new WorkspaceRepoResponse(_slug.Trim(), _branch.Trim(), null);
+            _source = "pending";
+            await SourceChanged.InvokeAsync(_source);
+        }
         else
         {
             opened = await Api.OpenWorkspaceRepoAsync(_slug.Trim(), _branch.Trim());
@@ -250,10 +265,20 @@ else
 
     private async Task UnbindAsync()
     {
+        if (ChatId is null && ChatScopedOnly)
+        {
+            // Só havia seleção pendente (sem chat) — limpa localmente.
+            _bound = null;
+            _source = null;
+            await BoundChanged.InvokeAsync(null);
+            await SourceChanged.InvokeAsync(null);
+            await Unbound.InvokeAsync();
+            return;
+        }
         if (ChatId is { } cid)
         {
-            // Desvincula o binding POR CHAT — a resposta já traz o
-            // fallback global (source "user") quando existir.
+            // Desvincula o binding POR CHAT — SPEC-15: a resposta volta
+            // "none" (o global não vaza mais para dentro do chat).
             var resp = await Api.PutChatWorkspaceRepoAsync(cid, null, null);
             if (resp is not null)
             {

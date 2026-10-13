@@ -34,9 +34,18 @@ public static class PermissionRuleset
     /// <summary>Modo somente-leitura — produz plano e pede aprovação.</summary>
     public const string PlanMode = "plan";
 
+    /// <summary>
+    /// Conversa comum sem workspace (SPEC-15): tools de arquivo/shell/jobs/
+    /// worktree não são anunciadas e uma call que escape devolve erro —
+    /// é o modo disponível em chats sem repositório vinculado.
+    /// </summary>
+    public const string ChatMode = "chat";
+
     /// <summary>Normaliza o modo persistido; desconhecido → <see cref="BuildMode"/>.</summary>
     public static string Normalize(string? mode) =>
-        string.Equals(mode, PlanMode, StringComparison.OrdinalIgnoreCase) ? PlanMode : BuildMode;
+        string.Equals(mode, PlanMode, StringComparison.OrdinalIgnoreCase) ? PlanMode
+        : string.Equals(mode, ChatMode, StringComparison.OrdinalIgnoreCase) ? ChatMode
+        : BuildMode;
 
     /// <summary>
     /// Built-ins permitidas no modo plan (somente leitura + a saída do
@@ -60,10 +69,35 @@ public static class PermissionRuleset
     /// reserva-se para regras por padrão de argumento (ex.: whitelist de
     /// comandos read-only no futuro).
     /// </summary>
+    /// <summary>
+    /// Built-ins que tocam o workspace (SPEC-15, modo <c>chat</c>): sistema
+    /// de arquivos, shell/exec, jobs, worktrees e delegação de subtarefas
+    /// (que herdariam o binding do chat) — negadas e nem anunciadas quando
+    /// a conversa não tem repositório vinculado.
+    /// </summary>
+    private static readonly HashSet<string> WorkspaceTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "file_list", "file_read", "file_grep", "file_glob",
+        "file_write", "file_edit", "apply_patch", "shell_exec",
+        "code_interpreter", "job_list", "job_output", "job_kill",
+        "worktree_diff", "worktree_merge", "plan_exit", "delegate_task",
+        "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
+        "lsp_definition", "lsp_references", "lsp_hover", "skill",
+    };
+
     public static PermissionDecision Evaluate(
         string? mode, string toolName, bool isBuiltin = true, string? argsSummary = null)
     {
-        if (Normalize(mode) != PlanMode)
+        var normalized = Normalize(mode);
+        if (normalized == ChatMode)
+        {
+            // chat: nega só as tools de workspace — o resto (web, memória,
+            // ask_user, MCP/HTTP) segue o gate normal do preset.
+            return isBuiltin && WorkspaceTools.Contains(BuiltinName(toolName))
+                ? PermissionDecision.Deny
+                : PermissionDecision.Ask;
+        }
+        if (normalized != PlanMode)
         {
             // build: o ruleset não restringe — o preset decide por call.
             return PermissionDecision.Ask;
@@ -94,8 +128,12 @@ public static class PermissionRuleset
         var name = isBuiltin ? tool.Url![BuiltinToolRegistry.UrlPrefix.Length..] : null;
         if (string.Equals(name, "plan_exit", StringComparison.OrdinalIgnoreCase))
         {
-            // plan_exit só é anunciado no modo plan — em build nem existe.
+            // plan_exit só é anunciado no modo plan — fora dele nem existe.
             return Normalize(mode) == PlanMode;
+        }
+        if (Normalize(mode) == ChatMode)
+        {
+            return !(isBuiltin && WorkspaceTools.Contains(name!));
         }
         return Normalize(mode) != PlanMode
             || Evaluate(mode, tool) != PermissionDecision.Deny;

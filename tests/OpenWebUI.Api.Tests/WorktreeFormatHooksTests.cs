@@ -602,6 +602,31 @@ public class WorktreeFormatHooksTests
     }
 
     [Test]
+    public async Task FormatHook_ChatBinding_SobrepoeGlobalEBindingUsuario()
+    {
+        var dir = Directory.CreateDirectory(Path.Join(_root, "ws")).FullName;
+        // Binding de usuário + global configurados — o binding POR CHAT
+        // (SPEC-15) tem precedência quando a run tem chatId.
+        await _config.SetAsync("u:u1:workspace.repo",
+            new OpenWebUI.Application.Contracts.WorkspaceRepoBinding(
+                "a/b", "main", "repos/a__b", null, "echo usuario > _who.txt"), default);
+        await _config.SetAsync("chat:c1:workspace.repo",
+            new OpenWebUI.Application.Contracts.WorkspaceRepoBinding(
+                "a/b", "main", "worktrees/a__b/c1", null, "echo chat > _who.txt"), default);
+        var hook = FormatHook(new() { ["Format:Command"] = "echo global > _who.txt" });
+
+        _ = await hook.RunForUserAsync("u1", dir, ["a.txt"], default, chatId: "c1");
+        Assert.That(File.ReadAllText(Path.Join(dir, "_who.txt")).Trim(),
+            Does.StartWith("chat"));
+
+        // Sem chatId cai no binding de usuário (comportamento legado).
+        File.Delete(Path.Join(dir, "_who.txt"));
+        _ = await hook.RunForUserAsync("u1", dir, ["a.txt"], default);
+        Assert.That(File.ReadAllText(Path.Join(dir, "_who.txt")).Trim(),
+            Does.StartWith("usuario"));
+    }
+
+    [Test]
     public async Task FormatHook_Falha_ViraWarning()
     {
         var dir = Directory.CreateDirectory(Path.Join(_root, "ws")).FullName;

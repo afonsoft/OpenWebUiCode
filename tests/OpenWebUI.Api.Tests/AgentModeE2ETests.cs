@@ -5,7 +5,9 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using OpenWebUI.Application.Contracts;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -264,7 +266,8 @@ public class AgentModeE2ETests
     public async Task Patch_Mode_PersisteEValida()
     {
         var chat = await CriarChatAsync();
-        Assert.That(chat.Mode, Is.EqualTo("build"));
+        // SPEC-15: chat novo nasce em "chat" (sem repo → sem workspace).
+        Assert.That(chat.Mode, Is.EqualTo("chat"));
 
         var plan = await _client.PatchAsJsonAsync(
             $"/api/v1/chats/{chat.Id}", new ChatPatchRequest(null, Mode: "plan"));
@@ -288,6 +291,17 @@ public class AgentModeE2ETests
     {
         _emit = "plan_exit";
         var chat = await CriarChatAsync("plan");
+
+        // SPEC-15: build exige repo vinculado — seed do binding por chat no
+        // kv para a promoção plan→build resolver (clone é nível de serviço).
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+            await config.SetAsync(
+                $"chat:{chat.Id}:workspace.repo",
+                new WorkspaceRepoBinding("a/b", "main", "repos/a__b", null, null),
+                default);
+        }
         var run = await EnfileirarAsync(chat.Id, ["builtin:file_read", "builtin:file_write"]);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));

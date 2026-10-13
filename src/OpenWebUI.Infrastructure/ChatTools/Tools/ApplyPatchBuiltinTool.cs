@@ -73,7 +73,7 @@ public sealed class ApplyPatchBuiltinTool(FormatHookService? formatHook = null) 
         // Format hook uma vez com todos os arquivos tocados (RF-004).
         var formatWarning = formatHook is null ? null : await formatHook.RunForUserAsync(
             context.UserId, context.WorkspacePath,
-            results.Select(r => r.Path).ToList(), ct);
+            results.Select(r => r.Path).ToList(), ct, context.ChatId);
 
         return BuildResult(results, formatWarning);
     }

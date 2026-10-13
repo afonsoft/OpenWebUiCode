@@ -190,6 +190,9 @@ public sealed class DelegateTaskBuiltinTool(
             ModelsJson = JsonSerializer.Serialize(new[] { parentRun.Model }),
             ToolIdsJson = JsonSerializer.Serialize(childToolIds ?? []),
             ApprovalPreset = preset,
+            // Subtarefa é workspace-capable por natureza — o modo efetivo
+            // cai para chat se o filho ficar sem binding (SPEC-15).
+            Mode = PermissionRuleset.BuildMode,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -237,15 +240,14 @@ public sealed class DelegateTaskBuiltinTool(
         await db.SaveChangesAsync(ct);
 
         // SPEC-20261010-chat-repo-binding: o filho herda o binding POR CHAT
-        // do pai (não o global) — subtarefa roda no mesmo checkout.
+        // do pai (não o global). SPEC-15: herda repo/branch mas com
+        // worktree próprio — subtarefa não escreve no worktree do pai.
+        var repos = scope.ServiceProvider.GetRequiredService<WorkspaceRepoService>();
         if (context.ChatId is { } boundParent
-            && await scope.ServiceProvider
-                .GetRequiredService<WorkspaceRepoService>()
-                .GetChatBindingAsync(boundParent, ct) is { } parentBinding)
+            && await repos.GetChatBindingAsync(boundParent, ct) is { } parentBinding)
         {
-            await scope.ServiceProvider
-                .GetRequiredService<WorkspaceRepoService>()
-                .SetChatBindingAsync(childChat.Id, parentBinding, ct);
+            await repos.SetChatBindingAsync(
+                childChat.Id, repos.InheritChatBinding(childChat.Id, parentBinding), ct);
         }
 
         var repoError = await BindTargetRepoAsync(scope, context, args, childChat, ct);

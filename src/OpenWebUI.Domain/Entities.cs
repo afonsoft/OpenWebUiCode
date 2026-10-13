@@ -151,12 +151,15 @@ public class Chat
 
     /// <summary>
     /// Modo do agente da conversa (SPEC-20261009-agent-modes-plan-build
-    /// RF-001): <c>build</c> (default — toolset completo, gate pelo preset)
-    /// ou <c>plan</c> (somente leitura — tools de escrita/execução não são
-    /// anunciadas e calls delas devolvem erro estruturado; o agente encerra
-    /// pelo <c>plan_exit</c>, que promove a build após aprovação do dono).
+    /// RF-001 + SPEC-15): <c>chat</c> (default — conversa comum, tools de
+    /// workspace fora do spec anunciado), <c>plan</c> (somente leitura —
+    /// tools de escrita/execução não são anunciadas e calls delas devolvem
+    /// erro estruturado; o agente encerra pelo <c>plan_exit</c>, que
+    /// promove a build após aprovação do dono) ou <c>build</c> (toolset
+    /// completo, gate pelo preset — exige repositório vinculado; sem
+    /// binding o modo efetivo resolve como <c>chat</c>).
     /// </summary>
-    public string Mode { get; set; } = "build";
+    public string Mode { get; set; } = "chat";
 
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }

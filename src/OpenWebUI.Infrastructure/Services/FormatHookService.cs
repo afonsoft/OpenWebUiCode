@@ -26,9 +26,20 @@ public sealed class FormatHookService(
     /// <summary>Timeout do hook em segundos (default 60, configurável para testes).</summary>
     private int TimeoutSeconds => Math.Max(1, configuration.GetValue("Format:TimeoutSeconds", 60));
 
-    /// <summary>Comando configurado (binding.FormatCommand → Format:Command), ou null.</summary>
-    public async Task<string?> ResolveCommandAsync(string userId, CancellationToken ct)
+    /// <summary>
+    /// Comando configurado (chat binding → global binding → Format:Command),
+    /// ou null. SPEC-15: o binding por chat tem prioridade.
+    /// </summary>
+    public async Task<string?> ResolveCommandAsync(
+        string userId, string? chatId = null, CancellationToken ct = default)
     {
+        if (chatId is not null
+            && await repos.GetChatBindingAsync(chatId, ct) is { } chatBinding
+            && !string.IsNullOrWhiteSpace(chatBinding.FormatCommand))
+        {
+            return chatBinding.FormatCommand;
+        }
+
         var binding = await repos.GetBindingAsync(userId, ct);
         if (!string.IsNullOrWhiteSpace(binding?.FormatCommand))
         {
@@ -45,14 +56,15 @@ public sealed class FormatHookService(
     /// sucesso/ausência de comando.
     /// </summary>
     public async Task<string?> RunForUserAsync(
-        string userId, string workdir, IReadOnlyList<string> jailedPaths, CancellationToken ct)
+        string userId, string workdir, IReadOnlyList<string> jailedPaths,
+        CancellationToken ct, string? chatId = null)
     {
         if (jailedPaths.Count == 0)
         {
             return null;
         }
 
-        var command = await ResolveCommandAsync(userId, ct);
+        var command = await ResolveCommandAsync(userId, chatId, ct);
         if (string.IsNullOrWhiteSpace(command))
         {
             return null;

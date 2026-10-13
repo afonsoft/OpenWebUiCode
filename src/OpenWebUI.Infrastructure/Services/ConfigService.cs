@@ -103,6 +103,34 @@ public class ConfigService(AppDbContext db, HybridCache cache)
         }
     }
 
+    /// <summary>
+    /// Entradas kv cujas chaves começam com <paramref name="prefix"/> —
+    /// leitura administrativa sem cache (usado pelo refcount de bindings
+    /// repo↔chat do SPEC-15).
+    /// </summary>
+    public async Task<IReadOnlyList<KeyValuePair<string, T?>>> ListByPrefixAsync<T>(
+        string prefix, CancellationToken ct = default)
+    {
+        var rows = await db.ConfigEntries.AsNoTracking()
+            .Where(e => e.Key.StartsWith(prefix))
+            .Select(e => new { e.Key, e.ValueJson })
+            .ToListAsync(ct);
+        return rows
+            .Select(r =>
+            {
+                try
+                {
+                    return new KeyValuePair<string, T?>(
+                        r.Key, JsonSerializer.Deserialize<T>(r.ValueJson, JsonOptions));
+                }
+                catch (JsonException)
+                {
+                    return new KeyValuePair<string, T?>(r.Key, default);
+                }
+            })
+            .ToList();
+    }
+
     /// <summary>Obtém a configuração de conexões com provedores de IA.</summary>
     /// <param name="ct">Token de cancelamento.</param>
     public Task<ConnectionsConfig> GetConnectionsAsync(CancellationToken ct = default) =>

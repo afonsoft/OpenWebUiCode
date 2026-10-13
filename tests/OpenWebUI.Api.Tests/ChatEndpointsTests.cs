@@ -650,4 +650,69 @@ public class ChatEndpointsTests
         var body = await resp.Content.ReadFromJsonAsync<ChatWorkspaceRepoResponse>();
         Assert.That(body!.Source, Is.EqualTo("none"));
     }
+
+    // ---- SPEC-15: modo do agente — chat default; build exige binding ----
+
+    [Test]
+    public async Task Patch_Mode_ChatNovoDefaultChat_EBuildSemRepo_400()
+    {
+        var auth = await SignUpAsync("ModeNB", "modenb@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("modo", Mensagens("oi"));
+        Assert.That(chat.Mode, Is.EqualTo("chat"));
+
+        // Build sem repositório vinculado → 400.
+        var build = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}",
+            new ChatPatchRequest(null, null, "build"));
+        Assert.That(build.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // chat e plan são válidos sem repo.
+        var plan = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}",
+            new ChatPatchRequest(null, null, "plan"));
+        Assert.That(plan.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(
+            (await plan.Content.ReadFromJsonAsync<ChatResponse>())!.Mode,
+            Is.EqualTo("plan"));
+    }
+
+    [Test]
+    public async Task Patch_ModeBuild_ComBinding_200_EUnbind_VoltaChat()
+    {
+        var auth = await SignUpAsync("ModeWB", "modewb@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("build com repo", Mensagens("oi"));
+
+        // Binding por chat seedado no kv (o clone em si é nível de serviço).
+        using var scope = _factory.Services.CreateScope();
+        var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+        await config.SetAsync(
+            $"chat:{chat.Id}:workspace.repo",
+            new WorkspaceRepoBinding("a/b", "main", "repos/a__b", null, null),
+            default);
+
+        var build = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}",
+            new ChatPatchRequest(null, null, "build"));
+        Assert.That(build.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(
+            (await build.Content.ReadFromJsonAsync<ChatResponse>())!.Mode,
+            Is.EqualTo("build"));
+
+        // Desvincular derruba o modo persistido: build → chat (SPEC-15).
+        var unbind = await _client.PutAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/workspace-repo",
+            new WorkspaceRepoOpenRequest(null, null));
+        Assert.That(unbind.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var depois = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        Assert.That(depois!.Mode, Is.EqualTo("chat"));
+
+        // Sem binding o PATCH de build volta a ser recusado.
+        var again = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}",
+            new ChatPatchRequest(null, null, "build"));
+        Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
 }

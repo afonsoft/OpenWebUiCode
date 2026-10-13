@@ -126,10 +126,9 @@ public sealed class ChatRunExecutor(
             }
 
             // Modo do agente do chat (SPEC-20261009 RF-001): plan/build
-            // guia o prompt e o spec de tools anunciado.
-            var chatMode = await db.Chats.AsNoTracking()
-                .Where(c => c.Id == run.ChatId)
-                .Select(c => c.Mode).FirstOrDefaultAsync(ct) ?? "build";
+            // guia o prompt e o spec de tools anunciado. SPEC-15: build
+            // sem repositório vinculado cai para chat.
+            var chatMode = await EffectiveModeAsync(run.ChatId, ct);
 
             var effective = await ChatPipeline.EnrichRequestAsync(
                 request, user, db, config, rag, webSearch, repos, ct, chatMode,
@@ -186,9 +185,7 @@ public sealed class ChatRunExecutor(
                     // promove a build já na próxima chamada do modelo.
                     AnnounceToolsAsync: async t =>
                     {
-                        var mode = await db.Chats.AsNoTracking()
-                            .Where(c => c.Id == run.ChatId)
-                            .Select(c => c.Mode).FirstOrDefaultAsync(t) ?? "build";
+                        var mode = await EffectiveModeAsync(run.ChatId, t);
                         return tools
                             .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool))
                             .Select(tool => JsonSerializer.Deserialize<JsonElement>(tool.SpecJson))
@@ -395,6 +392,22 @@ public sealed class ChatRunExecutor(
             Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id));
     }
 
+    /// <summary>
+    /// Modo efetivo do chat (SPEC-15): o <c>build</c> exige repositório
+    /// vinculado à conversa — sem binding o modo resolve como
+    /// <see cref="PermissionRuleset.ChatMode"/> (tools de workspace nem
+    /// entram no spec anunciado ao provider).
+    /// </summary>
+    private async Task<string> EffectiveModeAsync(string chatId, CancellationToken ct)
+    {
+        var mode = PermissionRuleset.Normalize(await db.Chats.AsNoTracking()
+            .Where(c => c.Id == chatId)
+            .Select(c => c.Mode).FirstOrDefaultAsync(ct));
+        return mode == PermissionRuleset.BuildMode
+            && await repos.GetChatBindingAsync(chatId, ct) is null
+                ? PermissionRuleset.ChatMode : mode;
+    }
+
     /// <summary>apply_patch pode chegar como builtin por nome legado — cobre o nome cru.</summary>
     private static bool IsApplyPatch(string name) =>
         name.EndsWith("apply_patch", StringComparison.OrdinalIgnoreCase);
@@ -531,6 +544,12 @@ public sealed class ChatRunExecutor(
             .Select(c => new { c.ApprovalPreset, c.Mode })
             .FirstOrDefaultAsync(ct);
         var mode = PermissionRuleset.Normalize(gateInfo?.Mode);
+        // SPEC-15: build sem repo vinculado não executa tools de workspace.
+        if (mode == PermissionRuleset.BuildMode
+            && await repos.GetChatBindingAsync(run.ChatId, ct) is null)
+        {
+            mode = PermissionRuleset.ChatMode;
+        }
 
         // ask_user (RF-005): a pergunta é o próprio gate; a resposta volta
         // como ToolGateDecision.Output e vira o resultado da tool. SPEC-15
@@ -683,15 +702,24 @@ public sealed class ChatRunExecutor(
 
         // 3. Promoção plan → build: persiste no chat, publica o evento
         //    (o chip do cliente atualiza ao vivo) e instrui o modelo.
+        //    SPEC-15: build exige repo vinculado — sem binding o plano
+        //    aprovado sai do plan para chat (conversa, sem workspace).
+        var target = await repos.GetChatBindingAsync(run.ChatId, ct) is not null
+            ? PermissionRuleset.BuildMode
+            : PermissionRuleset.ChatMode;
         await db.Chats.Where(c => c.Id == run.ChatId)
-            .ExecuteUpdateAsync(s => s.SetProperty(
-                c => c.Mode, PermissionRuleset.BuildMode), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.Mode, target), ct);
         broadcaster.Publish(run.Id,
-            $"event: mode\ndata: {JsonSerializer.Serialize(new RunModeEvent("build"), JsonOptions)}");
+            $"event: mode\ndata: {JsonSerializer.Serialize(new RunModeEvent(target), JsonOptions)}");
         return new ToolGateDecision(true, Output:
-            $"{write.Text}\n\nPlano aprovado — execute o plano agora. "
-            + "O modo build está ativo: tools de escrita/execução liberadas "
-            + "nesta run (o gate de aprovação do preset segue valendo).");
+            target == PermissionRuleset.BuildMode
+                ? $"{write.Text}\n\nPlano aprovado — execute o plano agora. "
+                    + "O modo build está ativo: tools de escrita/execução liberadas "
+                    + "nesta run (o gate de aprovação do preset segue valendo)."
+                : $"{write.Text}\n\nPlano aprovado — mas a conversa não tem "
+                    + "repositório vinculado, então ela segue no modo chat "
+                    + "(sem tools de workspace). Vincule um repositório para "
+                    + "executar o plano.");
     }
 
     /// <summary>

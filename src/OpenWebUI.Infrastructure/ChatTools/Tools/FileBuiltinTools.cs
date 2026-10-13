@@ -504,7 +504,7 @@ public sealed class FileWriteBuiltinTool(
 
         // Format hook (RF-004): falha → warning, nunca erro da tool.
         var formatWarning = formatHook is null ? null : await formatHook.RunForUserAsync(
-            context.UserId, context.WorkspacePath, [rel], ct);
+            context.UserId, context.WorkspacePath, [rel], ct, context.ChatId);
         if (formatWarning is not null)
         {
             text += $"\n[format] {formatWarning}";
@@ -644,7 +644,7 @@ public sealed class FileEditBuiltinTool(
 
         // Format hook (RF-004): falha → warning, nunca erro da tool.
         var formatWarning = formatHook is null ? null : await formatHook.RunForUserAsync(
-            context.UserId, context.WorkspacePath, [rel], ct);
+            context.UserId, context.WorkspacePath, [rel], ct, context.ChatId);
         if (formatWarning is not null)
         {
             text += $"\n[format] {formatWarning}";

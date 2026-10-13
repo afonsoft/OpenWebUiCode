@@ -19,6 +19,7 @@
                 <RepoBindingPanel BoundChanged="OnBoundChangedAsync"
                                   SourceChanged="OnSourceChangedAsync"
                                   ChatId="@ChatId"
+                                  ChatScopedOnly="@ChatScopedOnly"
                                   Opened="CloseAsync" Unbound="OnUnboundAsync" />
             </div>
         </div>
@@ -40,6 +41,12 @@
 
     /// <summary>Escopo do binding por chat (null = global do usuário).</summary>
     [Parameter] public string? ChatId { get; set; }
+
+    /// <summary>
+    /// SPEC-15: true = nunca opera no global — sem <see cref="ChatId"/> a
+    /// seleção volta pendente ao pai e vira binding por chat no 1º envio.
+    /// </summary>
+    [Parameter] public bool ChatScopedOnly { get; set; }
 
     private bool _wasActive;
     private bool _focusPending;

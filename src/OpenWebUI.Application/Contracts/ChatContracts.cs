@@ -92,7 +92,7 @@ public sealed record ChatResponse(
     long CreatedAt,
     long UpdatedAt,
     string ApprovalPreset = "approve-mutations",
-    string Mode = "build",
+    string Mode = "chat",
     string? ParentChatId = null,
     string? ParentTitle = null);
 
