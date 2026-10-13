@@ -31,3 +31,4 @@ TestResults/
 TestResultsGate/
 # a11y audit deps
 node_modules/
+.sonar_devin_auto_fix/**

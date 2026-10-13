@@ -1106,32 +1106,7 @@
         }
         if (ChatId is null)
         {
-            _loadedChatId = null;
-            _chatTitle = "New Chat";
-            _parentChatId = null;
-            _parentTitle = null;
-            _messages.Clear();
-            // SPEC-15: conversa nova nasce sem repo — qualquer seleção
-            // feita depois fica pendente até o primeiro envio.
-            _repo = null;
-            _repoSource = null;
-            _pendingRepo = null;
-            _repoSkills = [];
-            _repoCommands = [];
-            // Chat novo: só as tools genéricas vêm selecionadas por padrão.
-            _toolIds = DefaultToolIds();
-            // Modo de permissão volta ao padrão do composer (última escolha).
-            try
-            {
-                _approvalPreset = await StoredPresetAsync();
-                _agentMode = await StoredAgentModeAsync();
-                await LoadComposerStateAsync(null);
-            }
-            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
-            {
-                // Interop indisponível: segue com defaults (lifecycle nunca propaga).
-                await Console.Error.WriteLineAsync($"[ChatView] composer state falhou: {ex.Message}");
-            }
+            await ResetForNewChatAsync();
             return;
         }
 
@@ -1162,40 +1137,7 @@
             await Realtime.JoinChatAsync(chat.Id);
             _chatTitle = chat.Title;
             _parentChatId = chat.ParentChatId;
-
-        // Binding por chat (SPEC-15 estrito): só o repo vinculado a ESTA
-        // conversa — seleção pendente de chat novo não atravessa.
-        _pendingRepo = null;
-        try
-        {
-            var chatRepo = await Api.GetChatWorkspaceRepoAsync(chat.Id);
-            _repo = chatRepo?.Binding;
-            _repoSource = chatRepo?.Source;
-        }
-        catch (Exception ex) when (ClientErrors.IsTransient(ex))
-        {
-            // Sem o binding o chat abre sem contexto de repo — degradado, não crash.
-            await Console.Error.WriteLineAsync($"[ChatView] repo binding falhou: {ex.Message}");
-        }
-        if (_repo?.Repo is not null)
-        {
-            try
-            {
-                _repoSkills = await Api.GetRepoSkillsAsync(chat.Id);
-                _repoCommands = await Api.GetRepoCommandsAsync(chat.Id);
-            }
-            catch (Exception ex) when (ClientErrors.IsTransient(ex))
-            {
-                _repoSkills = [];
-                _repoCommands = [];
-                await Console.Error.WriteLineAsync($"[ChatView] repo skills falhou: {ex.Message}");
-            }
-        }
-        else
-        {
-            _repoSkills = [];
-            _repoCommands = [];
-        }
+            await LoadChatRepoContextAsync(chat.Id);
             _parentTitle = chat.ParentTitle;
             // Chat sem ToolIds persistidos (legado/nunca tocado): default genérico.
             _toolIds = chat.ToolIds.Count > 0
@@ -1229,6 +1171,75 @@
         finally
         {
             _loading = false;
+        }
+    }
+
+    /// <summary>
+    /// Reset de conversa nova (SPEC-15): nasce sem repo — seleções ficam
+    /// pendentes até o primeiro envio; modo volta ao padrão do composer.
+    /// </summary>
+    private async Task ResetForNewChatAsync()
+    {
+        _loadedChatId = null;
+        _chatTitle = "New Chat";
+        _parentChatId = null;
+        _parentTitle = null;
+        _messages.Clear();
+        _repo = null;
+        _repoSource = null;
+        _pendingRepo = null;
+        _repoSkills = [];
+        _repoCommands = [];
+        // Chat novo: só as tools genéricas vêm selecionadas por padrão.
+        _toolIds = DefaultToolIds();
+        // Modo de permissão volta ao padrão do composer (última escolha).
+        try
+        {
+            _approvalPreset = await StoredPresetAsync();
+            _agentMode = await StoredAgentModeAsync();
+            await LoadComposerStateAsync(null);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+        {
+            // Interop indisponível: segue com defaults (lifecycle nunca propaga).
+            await Console.Error.WriteLineAsync($"[ChatView] composer state falhou: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Binding por chat (SPEC-15 estrito): só o repo vinculado a ESTA
+    /// conversa — seleção pendente de chat novo não atravessa. Sem binding
+    /// o chat abre sem contexto de repo (degradado, não crash).
+    /// </summary>
+    private async Task LoadChatRepoContextAsync(string chatId)
+    {
+        _pendingRepo = null;
+        try
+        {
+            var chatRepo = await Api.GetChatWorkspaceRepoAsync(chatId);
+            _repo = chatRepo?.Binding;
+            _repoSource = chatRepo?.Source;
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] repo binding falhou: {ex.Message}");
+        }
+        if (_repo?.Repo is null)
+        {
+            _repoSkills = [];
+            _repoCommands = [];
+            return;
+        }
+        try
+        {
+            _repoSkills = await Api.GetRepoSkillsAsync(chatId);
+            _repoCommands = await Api.GetRepoCommandsAsync(chatId);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _repoSkills = [];
+            _repoCommands = [];
+            await Console.Error.WriteLineAsync($"[ChatView] repo skills falhou: {ex.Message}");
         }
     }
 

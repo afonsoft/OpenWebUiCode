@@ -42,10 +42,16 @@ public static class PermissionRuleset
     public const string ChatMode = "chat";
 
     /// <summary>Normaliza o modo persistido; desconhecido → <see cref="BuildMode"/>.</summary>
-    public static string Normalize(string? mode) =>
-        string.Equals(mode, PlanMode, StringComparison.OrdinalIgnoreCase) ? PlanMode
-        : string.Equals(mode, ChatMode, StringComparison.OrdinalIgnoreCase) ? ChatMode
-        : BuildMode;
+    public static string Normalize(string? mode)
+    {
+        if (string.Equals(mode, PlanMode, StringComparison.OrdinalIgnoreCase))
+        {
+            return PlanMode;
+        }
+        return string.Equals(mode, ChatMode, StringComparison.OrdinalIgnoreCase)
+            ? ChatMode
+            : BuildMode;
+    }
 
     /// <summary>
     /// Built-ins permitidas no modo plan (somente leitura + a saída do

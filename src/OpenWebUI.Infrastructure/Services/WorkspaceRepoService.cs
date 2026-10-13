@@ -19,6 +19,9 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
 {
     private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(3);
 
+    /// <summary>Subcomando git de worktrees (S1192 — literal repetido).</summary>
+    private const string GitWorktreeCmd = "worktree";
+
     private static string BindingKey(string userId) => $"u:{userId}:workspace.repo";
 
     /// <summary>
@@ -228,12 +231,12 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         {
             var wtAbs = Path.Join(root, binding.Dir);
             var error = await RunGitLoggedAsync(
-                baseAbs, ct, null, "worktree", "remove", "--force", wtAbs);
+                baseAbs, ct, null, GitWorktreeCmd, "remove", "--force", wtAbs);
             if (error is not null && Directory.Exists(wtAbs))
             {
                 TryDeleteDir(wtAbs);
             }
-            _ = await RunGitAsync(baseAbs, ct, "worktree", "prune");
+            _ = await RunGitAsync(baseAbs, ct, GitWorktreeCmd, "prune");
             // Pasta worktrees/{owner}__{repo} vazia → sai junto.
             var wtParent = Path.Join(root, "worktrees", repoDir);
             if (Directory.Exists(wtParent) && !Directory.EnumerateFileSystemEntries(wtParent).Any())
@@ -289,7 +292,7 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         {
             // Rebind/recriação: remove o worktree anterior antes de re-criar.
             _ = await RunGitLoggedAsync(
-                baseAbs, ct, null, "worktree", "remove", "--force", absWt);
+                baseAbs, ct, null, GitWorktreeCmd, "remove", "--force", absWt);
             if (Directory.Exists(absWt))
             {
                 TryDeleteDir(absWt);
@@ -303,13 +306,13 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
             ? $"origin/{branch}"
             : branch;
         var error = await RunGitLoggedAsync(
-            baseAbs, ct, null, "worktree", "add", "-b", chatBranch, absWt, startRef);
+            baseAbs, ct, null, GitWorktreeCmd, "add", "-b", chatBranch, absWt, startRef);
         if (error is not null)
         {
             // Branch chat/{id} ficou de uma tentativa anterior — recria.
             _ = await RunGitAsync(baseAbs, ct, "branch", "-D", chatBranch);
             error = await RunGitLoggedAsync(
-                baseAbs, ct, null, "worktree", "add", "-b", chatBranch, absWt, startRef);
+                baseAbs, ct, null, GitWorktreeCmd, "add", "-b", chatBranch, absWt, startRef);
         }
         return error is not null
             ? (dir, absWt, $"git worktree add: {error}")
