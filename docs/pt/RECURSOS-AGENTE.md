@@ -21,9 +21,9 @@ Cria um **chat** filho mais uma **run** server-side.
 
 - `wait:false` → assíncrono: o resultado é colhido depois via `builtin:run_result`.
 - Profundidade limitada a **3** (`MaxDepth`), medida pela cadeia `ParentRunId`.
-- Cada sub-run executa na sua própria **git worktree**
-  (`{DATA_ROOT}/worktrees/{uid}/{runId}`) — workers paralelos nunca escrevem no
-  mesmo checkout.
+- O filho herda repo/branch do pai mas ganha a **própria worktree de chat**
+  (`workspaces/{user}/worktrees/{owner}__{repo}/{childChatId}`, materializada
+  sob demanda) — workers paralelos nunca escrevem no mesmo checkout.
 - O filho herda o **binding de repo por chat** do pai, a menos que `repo` sobrescreva.
 
 ![delegate_task criando duas filhas em paralelo](../screenshots/delegate-parallel.png)
@@ -118,16 +118,60 @@ faz a próxima run reprocessar `[resumo] + cauda` em vez do histórico inteiro.
   `checkpoint(TRUNCATE)` e `VACUUM` semanal guardado por kv `sys:vacuum.last`.
 - Nunca toca em chats, mensagens, arquivos ou memórias.
 
-## 10. Binding de repo por chat
+## 10. Worktrees de repo por chat
 
-- kv `chat:{id}:workspace.repo` resolve **chat → global do usuário → nenhum**
-  (`Source` informado na resposta).
-- `GET`/`PUT /api/v1/chats/{id}/workspace-repo` (owner-only; `PUT null` volta
-  ao global). Todas as superfícies de workspace — tools da run, `/ide`, árvore
-  de arquivos, barra git, test-run, skills/commands — aceitam `?chatId=`.
-- `delegate_task` herda o binding do pai (ou `repo` sobrescreve).
+- kv `chat:{id}:workspace.repo` resolve **estrito por chat** — `chat` ou
+  `none`. Conversa nova nunca herda o binding global do usuário
+  (`Source` informado na resposta); sem `chatId`, a resolução cai no
+  binding global (`user` | `none`).
+- Vincular um chat a `owner/repo` cria uma **worktree git exclusiva** em
+  `workspaces/{user}/worktrees/{owner}__{repo}/{chatId}` na branch
+  `chat/{chatId}`, a partir do checkout base compartilhado em
+  `repos/{owner}__{repo}`.
+- `GET`/`PUT /api/v1/chats/{id}/workspace-repo` (owner-only). `PUT` com
+  repo vazio/nulo **desvincula**: a worktree é removida, o chat sai de
+  `build` (→ `chat`) e o checkout base sai de disco quando nenhuma
+  conversa nem o binding global referenciam o repo.
+- Arquivar preserva o kv do binding e recria a worktree sob demanda no
+  primeiro uso após desarquivar; deletar libera tudo.
+- Se o checkout base divergir do `origin` (commits locais velhos), o
+  próximo bind se recupera sozinho: o HEAD divergente vira
+  `backup/{branch}-{ts}` e o base é resetado para o ref buscado — tree
+  suja continua reportando o erro honesto do pull.
+- Todas as superfícies de workspace — tools da run, `/ide`, árvore de
+  arquivos, barra git, test-run, skills/commands — aceitam `?chatId=`.
+- `delegate_task` herda repo/branch do pai numa worktree própria do filho
+  (ou `repo` sobrescreve).
 
 ![seletor de repositório](../screenshots/repo-binding-picker.png)
+
+## 11. Três modos de agente (chat / plan / build)
+
+- O composer expõe um seletor de modo persistido por chat (`PATCH
+  /api/v1/chats/{id}` com `mode`).
+- **`chat`** (padrão) — conversa sem repo: tools de workspace
+  (`file_*`, `shell_exec`, `delegate_task`, `lsp_*`, `skill`, …) são
+  negadas e nem anunciadas ao modelo.
+- **`plan`** — planejamento somente-leitura: só rodam os builtins
+  read/list/grep/glob, web/fetch, `ask_user`, `todo_write` e `plan_exit`
+  (tools externas HTTP/MCP negadas); `plan_exit` só é anunciado nesse modo.
+- **`build`** — acesso completo ao workspace mediado pelo preset de
+  aprovação, **exige repo vinculado**: `PATCH` devolve `400` sem binding;
+  `plan_exit` só promove a `build` quando há binding; desvincular derruba
+  um `build` persistido de volta a `chat`.
+- Seleção pendente de repo: escolher um repo numa conversa nova fica
+  pendente até o primeiro envio e materializa como **binding de chat** —
+  nunca escreve o binding global do usuário.
+- `TestCommand`/`FormatCommand` customizados são herdados do binding de
+  chat anterior (ou do global) no primeiro bind da conversa.
+
+## 12. Escolha autônoma de decisão
+
+- Presets de aprovação `smart` / `auto` / `always-allow` respondem sozinhos
+  a prompts `ask_user` que trazem opções — a opção recomendada (marcada),
+  senão a primeira — sem pausar a run.
+- Toda escolha automática emite evento SSE auditável `decision_auto`
+  renderizado no feed de atividade da run.
 
 ## Referência rápida de API
 

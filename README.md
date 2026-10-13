@@ -1,11 +1,12 @@
-# Open WebUI — .NET (Coding Agent Edition)
+# Open-WebUI+Code — .NET (Coding Agent Edition)
 
 A migration of [Open WebUI](https://github.com/open-webui/open-webui) to
 **.NET 10 · C# 14 · Blazor WebAssembly** (SvelteKit + FastAPI → ASP.NET Core + Blazor),
 faithful to the original layout and configuration — **extended into a full coding-agent
 platform** in the spirit of [opencode](https://github.com/sst/opencode): repo-bound
-sessions, sub-agents in parallel worktrees, mid-run steering, durable memory,
-scheduled routines and a worktree review pipeline.
+chats running on dedicated git worktrees, sub-agents in parallel, mid-run steering,
+durable memory, scheduled routines, a VS Code-style IDE and a worktree review
+pipeline.
 
 [![CI Build & Test](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml)
 [![Code Quality](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml)
@@ -20,7 +21,7 @@ scheduled routines and a worktree review pipeline.
 | Capability | Open WebUI (FastAPI/Svelte) | opencode | **This fork (.NET/Blazor)** |
 |---|---|---|---|
 | Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ any LLM via gateway | ✅ parity + OmniRoute-friendly |
-| Repo/workspace bound to a session | ❌ single workspace | ✅ per-project | ✅ **per-chat binding** (chat → user → none) |
+| Repo/workspace bound to a session | ❌ single workspace | ✅ per-project | ✅ **per-chat git worktree** — strict scope, global never leaks |
 | Sub-agents / parallel sessions | ❌ | ✅ task tool + sessions | ✅ `delegate_task` async, depth ≤3, worktree-isolated |
 | Review before merge | ❌ | ✅ orchestrator reviews diffs | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
 | Steer/queue mid-run input | ❌ | ✅ durable steer/queue | ✅ `POST …/runs/{id}/steer` (steer + queue modes) |
@@ -55,7 +56,23 @@ scheduled routines and a worktree review pipeline.
 - **`delegate_task`** — spawns a child chat + server-side run: `wait:false` returns
   `childRunId` immediately, `wait:true` (default) blocks up to 300s; `repo` and
   `persona` (a workspace Skill as system prompt) params; depth ≤ 3; each sub-agent
-  runs in its own **git worktree** so parallel workers never collide.
+  inherits the parent repo but works in its **own chat-scoped worktree**.
+- **Per-chat repo worktrees** — binding a chat to `owner/repo` creates an exclusive
+  worktree (`workspaces/{user}/worktrees/{owner}__{repo}/{chatId}`, branch
+  `chat/{chatId}`) over a shared base checkout; resolution is strict per chat —
+  a new conversation never inherits your global binding. Unbind/archive/delete
+  releases the worktree; the base checkout leaves disk when unreferenced, and a
+  diverged base self-heals (diverged HEAD preserved as `backup/*`).
+- **Three agent modes** — composer selector `chat` / `plan` / `build`: `chat` is
+  repo-free (workspace tools denied), `build` requires a bound repo (`PATCH` 400
+  otherwise; unbind drops `build`→`chat`; `plan_exit` only promotes with binding).
+  Workspace gate covers `delegate_task`, `lsp_*` and `skill`; the format hook
+  honors the chat binding's `FormatCommand`.
+- **Autonomous decisions** — `smart`/`auto`/`always-allow` presets auto-answer
+  `ask_user` prompts that carry options (recommended option, else first) without
+  pausing the run; every auto choice emits an auditable `decision_auto` event.
+- **Mobile workspace** — touch targets and collapsing chips keep the workspace
+  panel, repo picker and IDE reachable on small screens.
 - **`run_result` / `worktree_diff` / `worktree_merge`** — collect async results,
   review the child diff, merge explicitly (or `auto_merge` opt-in).
 - **Steer & queue** — `POST /api/v1/chats/{id}/runs/{runId}/steer` injects a user
@@ -91,7 +108,7 @@ Full details per feature (with screenshots): [docs/en/AGENT-FEATURES.md](docs/en
   `n8n_list_workflows`/`n8n_trigger`, `todo_write`, `skill`, `lsp_*`, `plan_exit`
 - **Workspace panel** — Tasks, Changes (git diff), Jobs, MCPs, Terminal (PTY) and
   run Info; draggable resizer; `/ide` full-screen view
-- **Plan/Build agent modes** + permission modes; **checkpoints & revert**;
+- **Chat/Plan/Build agent modes** + permission modes; **checkpoints & revert**;
   **pause/resume** runs; slash commands from repo skills
 - **RAG, Knowledge, Arena, Channels/Notes/Calendar, Admin (users, connections,
   MCP servers, integrations), i18n in 8 locales, PWA offline shell**

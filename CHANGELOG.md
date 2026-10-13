@@ -8,6 +8,13 @@ Todas as mudanças notáveis deste projeto são documentadas aqui, seguindo
 
 ### Added
 
+- **Plataforma de agente** (SPEC-15 e leva anterior): binding de repo por chat
+  com **worktree git exclusiva** (`worktrees/{owner}__{repo}/{chatId}`, branch
+  `chat/{chatId}`) sobre checkout base compartilhado — resolução estrita por
+  chat, sem vazamento do binding global; seletor de três modos
+  **chat/plan/build** no composer com `build` barrado sem repo vinculado;
+  escolha autônoma de opções nos presets `smart`/`auto`/`always-allow`
+  (evento auditável `decision_auto`); workspace acessível em telas mobile.
 - `UseForwardedHeaders` (`X-Forwarded-For/Proto/Host`) — `redirect_uri` do
   OAuth e cookies corretos atrás de reverse proxy (padrão do agent-harness).
 - Documentação de arquitetura: 5 ADRs (`docs/architecture/AD-0001`–`AD-0005`),
@@ -23,6 +30,9 @@ Todas as mudanças notáveis deste projeto são documentadas aqui, seguindo
 
 ### Fixed
 
+- Checkout base divergente não trava mais o bind de repos: com tree limpa o
+  HEAD divergente vira `backup/{branch}-{ts}` e o base é resetado para o ref
+  do `origin` (#346).
 - `AutomationScheduler` não derruba mais o host no shutdown
   (`OperationCanceledException` tratada como parada graciosa) — PR #43.
 - Warning CS8602 em `AutomationEndpointsTests`.

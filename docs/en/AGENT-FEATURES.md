@@ -21,9 +21,9 @@ Spawns a child **chat** plus a server-side **run**.
 
 - `wait:false` → async: the child run is collected later with `builtin:run_result`.
 - Depth is capped at **3** (`MaxDepth`), walked up the `ParentRunId` chain.
-- Every sub-run executes inside its own **git worktree**
-  (`{DATA_ROOT}/worktrees/{uid}/{runId}`) — parallel workers never write to the
-  same checkout.
+- The child inherits the parent's repo/branch but gets its **own chat-scoped
+  worktree** (`workspaces/{user}/worktrees/{owner}__{repo}/{childChatId}`,
+  materialized lazily) — parallel workers never write to the same checkout.
 - The child inherits the parent's **per-chat repo binding** unless `repo` overrides.
 
 ![delegate_task spawning two parallel children](../screenshots/delegate-parallel.png)
@@ -118,16 +118,60 @@ next run to replay `[summary] + tail` instead of the full history.
   `checkpoint(TRUNCATE)`, and a weekly `VACUUM` guarded by kv `sys:vacuum.last`.
 - Never touches chats, messages, files or memories.
 
-## 10. Per-chat repo binding
+## 10. Per-chat repo worktrees
 
-- kv `chat:{id}:workspace.repo` resolves **chat → user-global → none**
-  (`Source` reported back).
-- `GET`/`PUT /api/v1/chats/{id}/workspace-repo` (owner-only; `PUT null` reverts
-  to global). All workspace surfaces — tools in a run, `/ide`, file tree, git
-  bar, test-run, skills/commands — honor `?chatId=`.
-- `delegate_task` inherits the parent's binding (or `repo` overrides).
+- kv `chat:{id}:workspace.repo` resolves **strictly per chat** — `chat` or
+  `none`. A new conversation never inherits the user-global binding
+  (`Source` reported back); without a `chatId`, resolution falls to the
+  user-global binding (`user` | `none`).
+- Binding a chat to `owner/repo` creates an **exclusive git worktree** at
+  `workspaces/{user}/worktrees/{owner}__{repo}/{chatId}` on branch
+  `chat/{chatId}`, checked out from a shared base clone in
+  `repos/{owner}__{repo}`.
+- `GET`/`PUT /api/v1/chats/{id}/workspace-repo` (owner-only). `PUT` with an
+  empty/null repo **unbinds**: the worktree is removed, the chat drops out of
+  `build` (→ `chat`), and the base checkout leaves disk once no chat or the
+  global binding references it.
+- Archiving keeps the binding kv and recreates the worktree lazily on first
+  use after unarchive; deleting releases everything.
+- If the shared base checkout diverges from `origin` (stale local commits),
+  the next bind self-heals: the diverged HEAD is preserved as
+  `backup/{branch}-{ts}` and the base is reset to the fetched ref — a dirty
+  tree still reports the honest pull error.
+- All workspace surfaces — tools in a run, `/ide`, file tree, git bar,
+  test-run, skills/commands — honor `?chatId=`.
+- `delegate_task` inherits the parent's repo/branch into a fresh child
+  worktree (or `repo` overrides).
 
 ![repo picker](../screenshots/repo-binding-picker.png)
+
+## 11. Three agent modes (chat / plan / build)
+
+- The composer exposes a mode selector persisted per chat (`PATCH
+  /api/v1/chats/{id}` with `mode`).
+- **`chat`** (default) — repo-free conversation: workspace tools
+  (`file_*`, `shell_exec`, `delegate_task`, `lsp_*`, `skill`, …) are denied
+  and not advertised to the model.
+- **`plan`** — read-only planning: only read/list/grep/glob, web/fetch,
+  `ask_user`, `todo_write` and `plan_exit` builtins run (external HTTP/MCP
+  tools denied); `plan_exit` is advertised only in this mode.
+- **`build`** — full workspace access gated by the approval preset,
+  **requires a bound repo**: `PATCH` returns `400` without one; `plan_exit`
+  only auto-promotes to `build` when a binding exists; unbinding a repo
+  drops a persisted `build` back to `chat`.
+- Pending repo selection: picking a repo in a brand-new chat stays pending
+  until the first send, then materializes as a **chat binding** — it never
+  writes the user-global binding.
+- Custom `TestCommand`/`FormatCommand` are inherited from the previous chat
+  binding (or the global one) when the chat first binds.
+
+## 12. Autonomous decision pick
+
+- Approval presets `smart` / `auto` / `always-allow` auto-answer `ask_user`
+  prompts that carry options — the recommended (marked) option, else the
+  first — without pausing the run.
+- Every auto choice emits an auditable `decision_auto` SSE event rendered in
+  the run activity feed.
 
 ## API quick reference
 
