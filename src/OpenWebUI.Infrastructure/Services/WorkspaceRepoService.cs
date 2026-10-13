@@ -454,6 +454,23 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
                 "switch", "-c", branch, $"refs/remotes/origin/{branch}");
         error ??= await RunGitLoggedAsync(absDir, ct, token,
             "pull", "--ff-only", "origin", branch);
+        if (error is not null)
+        {
+            // Checkout base divergiu do remoto (commits locais/espelho
+            // stale) — ele é cache compartilhado do sistema; o trabalho
+            // real vive nos worktrees por chat. Preserva o HEAD em branch
+            // de backup e alinha o base a origin/{branch}. Se houver
+            // mudança não commitada, não toca — devolve o erro do pull.
+            var dirty = await RunGitAsync(absDir, ct, "status", "--porcelain");
+            if (!string.IsNullOrEmpty(dirty))
+            {
+                return error;
+            }
+            var backup = $"backup/{Sanitize(branch)}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+            _ = await RunGitAsync(absDir, ct, "branch", backup);
+            return await RunGitLoggedAsync(absDir, ct, null,
+                "reset", "--hard", $"refs/remotes/origin/{branch}");
+        }
         return error;
     }
 
