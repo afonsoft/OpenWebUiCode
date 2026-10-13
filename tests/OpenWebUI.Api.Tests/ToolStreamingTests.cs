@@ -181,7 +181,21 @@ public class ToolStreamingTests
             "/api/v1/chats/", new ChatUpsertRequest("Chat tools", ["fake:1"], []));
         Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await created.Content.ReadAsStringAsync());
-        return (await created.Content.ReadFromJsonAsync<ChatResponse>())!;
+        var chat = (await created.Content.ReadFromJsonAsync<ChatResponse>())!;
+
+        // SPEC-15: chats nascem em "chat" (sem workspace) — estes testes
+        // exercitam tools de workspace, então o chat ganha binding + build.
+        using var scope = _factory.Services.CreateScope();
+        var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+        await config.SetAsync(
+            $"chat:{chat.Id}:workspace.repo",
+            new WorkspaceRepoBinding("a/b", "main", "repos/a__b", null, null),
+            default);
+        var patch = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}", new ChatPatchRequest(null, Mode: "build"));
+        Assert.That(patch.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await patch.Content.ReadAsStringAsync());
+        return chat;
     }
 
     private async Task<string> CriarToolAsync(bool requiresApproval = false)
@@ -1028,8 +1042,9 @@ public class ToolStreamingTests
         var filho = chats!.SingleOrDefault(c => c.ParentChatId == chat.Id);
         Assert.That(filho, Is.Not.Null, "chat filho não foi criado");
 
-        // Herança de binding (SPEC-20261010-chat-repo-binding): o kv do
-        // filho aponta para o mesmo repo/dir do pai.
+        // Herança de binding (SPEC-20261010-chat-repo-binding + SPEC-15):
+        // o kv do filho aponta para o mesmo repo/branch do pai, mas com
+        // worktree PRÓPRIO por conversa — não escreve no worktree do pai.
         using (var scope = _factory.Services.CreateScope())
         {
             var cfg = scope.ServiceProvider.GetRequiredService<ConfigService>();
@@ -1039,7 +1054,8 @@ public class ToolStreamingTests
             {
                 Assert.That(herdado, Is.Not.Null, "filho não herdou o binding do chat pai");
                 Assert.That(herdado!.Repo, Is.EqualTo("a/pai"));
-                Assert.That(herdado.Dir, Is.EqualTo("repos/a__pai"));
+                Assert.That(herdado.Dir,
+                    Is.EqualTo($"worktrees/a__pai/{filho.Id}"));
             });
         }
 

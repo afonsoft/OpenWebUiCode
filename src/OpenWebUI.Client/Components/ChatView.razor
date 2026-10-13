@@ -23,9 +23,9 @@
                         </div>
                     </div>
                     <div class="lg:mr-1 flex flex-none items-center gap-2 self-center">
-                        @if (_streaming || _agentMode == "plan")
+                        @if (_streaming || EffectiveAgentMode == "plan")
                         {
-                            <AgentModeBadge Mode="@_agentMode" />
+                            <AgentModeBadge Mode="@EffectiveAgentMode" />
                         }
                         @if (_streaming && !string.IsNullOrEmpty(_statusLabel))
                         {
@@ -602,8 +602,8 @@
                     </div>
 
                     <div class="self-end flex items-center gap-1 mr-1">
-                        <AgentModeToggle Mode="@_agentMode" Disabled="@_loading"
-                                         OnToggle="ToggleAgentModeAsync" />
+                        <AgentModeToggle Mode="@EffectiveAgentMode" HasRepo="@(_repo?.Repo is not null)"
+                                         Disabled="@_loading" OnSelect="SetAgentModeAsync" />
                         @if (_streaming)
                         {
                             if (_paused)
@@ -644,7 +644,8 @@
     </div>
 
     <RepoPickerModal @bind-Active="_repoPicker" Bound="OnRepoBoundAsync"
-                     Source="OnRepoSourceChanged" ChatId="@_loadedChatId" />
+                     Source="OnRepoSourceChanged" ChatId="@_loadedChatId"
+                     ChatScopedOnly="true" />
     <CallOverlay Active="_callActive" Lang="@SttLang"
                  OnTurn="ExecuteVoiceTurnAsync"
                  OnClose="() => _callActive = false" />
@@ -793,7 +794,15 @@
     private bool _paused;
     private string _approvalPreset = "approve-mutations";
     // SPEC-20261009-agent-modes-plan-build: build (default) | plan.
-    private string _agentMode = "build";
+    private string _agentMode = "chat";
+    private WorkspaceRepoResponse? _pendingRepo;
+
+    /// <summary>
+    /// Modo efetivo do composer (SPEC-15): o intent "build" só vale com
+    /// repo vinculado (ou pendente de bind) — sem ele roda em chat.
+    /// </summary>
+    private string EffectiveAgentMode =>
+        _agentMode == "build" && _repo?.Repo is null ? "chat" : _agentMode;
     private bool _showModeMenu;
     private ElementReference _toolsTrigger;
     private ElementReference _toolsMenu;
@@ -843,20 +852,16 @@
             var modelsTask = Api.GetModelsConfigAsync();
             var configTask = Api.GetAppConfigCachedAsync();
             var storedTask = StoredWebSearchAsync();
-            var repoTask = Api.GetWorkspaceRepoAsync();
-            // Por chat (SPEC-20261010-chat-repo-binding): depois que o chat
-            // carrega, o binding efetivo + origem vem do endpoint por chat.
-            await Task.WhenAll(promptsTask, toolsTask, modelsTask, configTask, storedTask, repoTask);
+            await Task.WhenAll(promptsTask, toolsTask, modelsTask, configTask, storedTask);
 
             _prompts = promptsTask.Result;
             _tools = toolsTask.Result;
             _suggestions = modelsTask.Result?.PromptSuggestions ?? [];
-            _repo = repoTask.Result;
-            if (_repo?.Repo is not null)
-            {
-                _repoSkills = await Api.GetRepoSkillsAsync();
-                _repoCommands = await Api.GetRepoCommandsAsync();
-            }
+            // SPEC-15: repo é por chat — o binding global não aparece em
+            // conversa nova; o do chat carrega junto no load abaixo.
+            _repo = null;
+            _repoSkills = [];
+            _repoCommands = [];
             var features = configTask.Result?.Features;
             _webSearchAvailable = features?.EnableWebSearch ?? false;
             _imageGenEnabled = features?.EnableImageGeneration ?? false;
@@ -1106,6 +1111,13 @@
             _parentChatId = null;
             _parentTitle = null;
             _messages.Clear();
+            // SPEC-15: conversa nova nasce sem repo — qualquer seleção
+            // feita depois fica pendente até o primeiro envio.
+            _repo = null;
+            _repoSource = null;
+            _pendingRepo = null;
+            _repoSkills = [];
+            _repoCommands = [];
             // Chat novo: só as tools genéricas vêm selecionadas por padrão.
             _toolIds = DefaultToolIds();
             // Modo de permissão volta ao padrão do composer (última escolha).
@@ -1151,7 +1163,9 @@
             _chatTitle = chat.Title;
             _parentChatId = chat.ParentChatId;
 
-        // Binding por chat: substitui o global carregado no init.
+        // Binding por chat (SPEC-15 estrito): só o repo vinculado a ESTA
+        // conversa — seleção pendente de chat novo não atravessa.
+        _pendingRepo = null;
         try
         {
             var chatRepo = await Api.GetChatWorkspaceRepoAsync(chat.Id);
@@ -1163,13 +1177,32 @@
             // Sem o binding o chat abre sem contexto de repo — degradado, não crash.
             await Console.Error.WriteLineAsync($"[ChatView] repo binding falhou: {ex.Message}");
         }
+        if (_repo?.Repo is not null)
+        {
+            try
+            {
+                _repoSkills = await Api.GetRepoSkillsAsync(chat.Id);
+                _repoCommands = await Api.GetRepoCommandsAsync(chat.Id);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
+            {
+                _repoSkills = [];
+                _repoCommands = [];
+                await Console.Error.WriteLineAsync($"[ChatView] repo skills falhou: {ex.Message}");
+            }
+        }
+        else
+        {
+            _repoSkills = [];
+            _repoCommands = [];
+        }
             _parentTitle = chat.ParentTitle;
             // Chat sem ToolIds persistidos (legado/nunca tocado): default genérico.
             _toolIds = chat.ToolIds.Count > 0
                 ? chat.ToolIds.ToHashSet()
                 : DefaultToolIds();
             _approvalPreset = chat.ApprovalPreset;
-            _agentMode = chat.Mode is "plan" ? "plan" : "build";
+            _agentMode = AgentModeVisuals.Normalize(chat.Mode);
             _messages.Clear();
             _messages.AddRange(chat.Messages);
             await LoadComposerStateAsync(chat.Id);
@@ -1687,11 +1720,30 @@
             _chatTitle = created.Title;
             _pendingNavigateId = created.Id;
             ChatList.NotifyChanged();
+            // Repo escolhido antes do primeiro envio (SPEC-15): materializa
+            // o binding por chat — build só é válido depois dele.
+            if (_pendingRepo is { Repo: { } pendingSlug })
+            {
+                var bound = await Api.PutChatWorkspaceRepoAsync(
+                    created.Id, pendingSlug, _pendingRepo.Branch ?? "main");
+                if (bound?.Binding is null)
+                {
+                    _repo = null;
+                    _repoSource = null;
+                    _error = L["chat.repo_open_error"];
+                }
+                else
+                {
+                    _repo = bound.Binding;
+                    _repoSource = bound.Source;
+                }
+                _pendingRepo = null;
+            }
             // Modo escolhido antes do primeiro envio: aplica no chat criado
             // (o gate relê o preset por call — vale já na primeira tool).
-            if (_approvalPreset != "approve-mutations" || _agentMode != "build")
+            if (_approvalPreset != "approve-mutations" || EffectiveAgentMode != "chat")
             {
-                _ = Api.PatchChatAsync(created.Id, _approvalPreset, mode: _agentMode);
+                _ = Api.PatchChatAsync(created.Id, _approvalPreset, mode: EffectiveAgentMode);
             }
         }
 
@@ -2258,7 +2310,7 @@
                     break;
                 case ChatStreamService.ChatStreamEvent.Mode modeEvt:
                     // plan_exit aprovado promoveu o chat a build mid-run.
-                    _agentMode = modeEvt.Info.Mode is "plan" ? "plan" : "build";
+                    _agentMode = AgentModeVisuals.Normalize(modeEvt.Info.Mode);
                     break;
             }
         return false;
@@ -2327,20 +2379,18 @@
     }
 
     /// <summary>
-    /// Alterna o modo do agente plan↔build (SPEC-20261009 RF-004): persiste
-    /// como padrão do composer (localStorage) e aplica no chat carregado
-    /// via PATCH — o executor relê o modo por call.
+    /// Aplica o modo escolhido no seletor do composer (SPEC-15): persiste o
+    /// intent como padrão do composer (localStorage) e aplica no chat
+    /// carregado via PATCH — o servidor valida (build exige binding) e o
+    /// executor relê o modo por call. Um build recusado por falta de repo
+    /// fica só como intent e materializa quando o repo for vinculado.
     /// </summary>
-    private async Task ToggleAgentModeAsync() =>
-        await SetAgentModeAsync(_agentMode == "plan" ? "build" : "plan");
-
-    /// <summary>Aplica o modo do agente (composer + chat carregado).</summary>
     private async Task SetAgentModeAsync(string mode)
     {
-        _agentMode = mode;
+        _agentMode = AgentModeVisuals.Normalize(mode);
         try
         {
-            await JS.InvokeVoidAsync("localStorage.setItem", "webui.chat.agentmode", mode);
+            await JS.InvokeVoidAsync("localStorage.setItem", "webui.chat.agentmode", _agentMode);
         }
         catch (JSException)
         {
@@ -2353,7 +2403,7 @@
         var updated = await Api.PatchChatAsync(_loadedChatId, mode: mode);
         if (updated is not null)
         {
-            _agentMode = updated.Mode is "plan" ? "plan" : "build";
+            _agentMode = AgentModeVisuals.Normalize(updated.Mode);
         }
     }
 
@@ -2364,11 +2414,13 @@
         {
             var stored = await JS.InvokeAsync<string?>(
                 "localStorage.getItem", "webui.chat.agentmode");
-            return stored is "plan" ? "plan" : "build";
+            // SPEC-15: chat é o default — "build" salvo vale como intent e
+            // materializa quando um repo for vinculado ao chat.
+            return stored is "chat" or "plan" or "build" ? stored : "chat";
         }
         catch (JSException)
         {
-            return "build";
+            return "chat";
         }
     }
 
@@ -2548,17 +2600,33 @@
     /// <summary>Binding repo↔workspace mudou: atualiza o pill e o snapshot git.</summary>
     private async Task OnRepoBoundAsync(WorkspaceRepoResponse? binding)
     {
+        // SPEC-15: chat novo ainda não persistido — a seleção fica pendente
+        // e vira binding por chat no primeiro envio (nunca cai no global).
+        _pendingRepo = binding?.Repo is not null && _loadedChatId is null ? binding : null;
         _repo = binding?.Repo is null ? null : binding;
         _repoSource ??= "chat";
-        if (_repo?.Repo is not null)
+        if (_loadedChatId is not null)
         {
-            _repoSkills = await Api.GetRepoSkillsAsync(_loadedChatId);
-            _repoCommands = await Api.GetRepoCommandsAsync(_loadedChatId);
-        }
-        else
-        {
-            _repoSkills = [];
-            _repoCommands = [];
+            if (_repo?.Repo is not null)
+            {
+                _repoSkills = await Api.GetRepoSkillsAsync(_loadedChatId);
+                _repoCommands = await Api.GetRepoCommandsAsync(_loadedChatId);
+            }
+            else
+            {
+                _repoSkills = [];
+                _repoCommands = [];
+            }
+            // SPEC-15: intent "build" materializa ao vincular; ao desvincular
+            // o servidor já derrubou o modo persistido — o intent cai a chat.
+            if (_repo is not null && _agentMode == "build")
+            {
+                await SetAgentModeAsync("build");
+            }
+            else if (_repo is null && _agentMode == "build")
+            {
+                _agentMode = "chat";
+            }
         }
         _git = null;
         await RefreshGitAsync();

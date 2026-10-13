@@ -828,28 +828,29 @@ public class GitHubWorkspaceTests
     }
 
     [Test]
-    public async Task ChatBinding_SemChatBinding_CaiNoGlobal_EClearVolta()
+    public async Task ChatBinding_SemChatBinding_NaoHerdaGlobal_EClearFicaNone()
     {
         var origin = CriarOrigem("main");
         await _repos.OpenAsync("u1", "a/ra", "main", origin, null, default);
 
-        // Sem binding por chat → fallback global.
+        // SPEC-15: binding por chat é estrito — sem binding próprio o
+        // resolve devolve "none"; o global NÃO vaza para dentro do chat.
         var (fallback, source) = await _repos.ResolveBindingAsync("u1", "c9", default);
         Assert.Multiple(() =>
         {
-            Assert.That(source, Is.EqualTo("user"));
-            Assert.That(fallback!.Repo, Is.EqualTo("a/ra"));
+            Assert.That(source, Is.EqualTo("none"));
+            Assert.That(fallback, Is.Null);
         });
 
-        // Binding por chat → depois de limpar volta ao global.
+        // Binding por chat → depois de limpar segue "none" (sem global).
         var originB = CriarOrigem("main");
         await _repos.OpenChatAsync("u1", "c9", "b/rb", "main", originB, null, default);
         await _repos.SetChatBindingAsync("c9", null, default);
         var (back, backSource) = await _repos.ResolveBindingAsync("u1", "c9", default);
         Assert.Multiple(() =>
         {
-            Assert.That(backSource, Is.EqualTo("user"));
-            Assert.That(back!.Repo, Is.EqualTo("a/ra"));
+            Assert.That(backSource, Is.EqualTo("none"));
+            Assert.That(back, Is.Null);
         });
     }
 
@@ -877,8 +878,9 @@ public class GitHubWorkspaceTests
         var wdA = await _repos.ResolveWorkdirAsync("u1", "cA", default);
         var wdB = await _repos.ResolveWorkdirAsync("u1", "cB", default);
         Assert.That(wdA, Is.Not.EqualTo(wdB));
-        Assert.That(Directory.Exists(Path.Join(wdA, ".git")), Is.True);
-        Assert.That(Directory.Exists(Path.Join(wdB, ".git")), Is.True);
+        // Worktree por conversa (SPEC-15): .git é arquivo, não pasta.
+        Assert.That(File.Exists(Path.Join(wdA, ".git")), Is.True);
+        Assert.That(File.Exists(Path.Join(wdB, ".git")), Is.True);
     }
 
     [Test]
@@ -956,9 +958,64 @@ public class GitHubWorkspaceTests
             Assert.That(err, Is.Null);
             Assert.That(b2!.Branch, Is.EqualTo("dev"));
         });
-        // c1 e c2 compartilham o mesmo Dir (mesmo slug).
+        // SPEC-15: worktree por conversa — c1 e c2 têm dirs próprios sob
+        // o mesmo slug (checkout base compartilhado).
         var (b1, _) = await _repos.ResolveBindingAsync("u1", "c1", default);
-        Assert.That(b1!.Dir, Is.EqualTo(b2.Dir));
+        Assert.Multiple(() =>
+        {
+            Assert.That(b1!.Dir, Is.Not.EqualTo(b2!.Dir));
+            Assert.That(b1.Dir, Does.StartWith("worktrees/"));
+            Assert.That(b2.Dir, Does.StartWith("worktrees/"));
+        });
+    }
+
+    [Test]
+    public async Task ChatBinding_Worktree_ReleaseRemove_EResolveRecria()
+    {
+        var origin = CriarOrigem("main");
+        var (binding, err) = await _repos.OpenChatAsync(
+            "u1", "c1", "a/ra", "main", origin, null, default);
+        Assert.That(err, Is.Null);
+        var root = _repos.WorkspaceRoot("u1");
+        var wtAbs = Path.Join(root, binding!.Dir);
+        var baseAbs = Path.Join(root, "repos", "a__ra");
+
+        // Worktree por conversa existe em disco (.git é arquivo).
+        Assert.Multiple(() =>
+        {
+            Assert.That(binding.Dir, Does.StartWith("worktrees/"));
+            Assert.That(File.Exists(Path.Join(wtAbs, ".git")), Is.True);
+        });
+
+        // Archive (keepBinding): worktree sai de disco; binding e checkout
+        // base sobrevivem (o chat ainda referencia o repo).
+        await _repos.ReleaseChatWorkspaceAsync("u1", "c1", keepBinding: true, default);
+        var kept = await _repos.GetChatBindingAsync("c1", default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(Directory.Exists(wtAbs), Is.False);
+            Assert.That(kept, Is.Not.Null);
+            Assert.That(Directory.Exists(baseAbs), Is.True);
+        });
+
+        // Unarchive: a primeira resolução recria o worktree sob demanda.
+        var wd = await _repos.ResolveWorkdirAsync("u1", "c1", default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(wd, Is.EqualTo(wtAbs));
+            Assert.That(File.Exists(Path.Join(wtAbs, ".git")), Is.True);
+        });
+
+        // Unbind (sem keepBinding): worktree + binding saem; sem mais
+        // referências o checkout base sai de disco junto.
+        await _repos.ReleaseChatWorkspaceAsync("u1", "c1", keepBinding: false, default);
+        var cleared = await _repos.GetChatBindingAsync("c1", default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(Directory.Exists(wtAbs), Is.False);
+            Assert.That(cleared, Is.Null);
+            Assert.That(Directory.Exists(baseAbs), Is.False);
+        });
     }
 
     [Test]

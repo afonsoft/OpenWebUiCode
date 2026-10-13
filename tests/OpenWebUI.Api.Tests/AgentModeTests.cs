@@ -93,6 +93,63 @@ public class AgentModeTests
         });
     }
 
+    // ---- PermissionRuleset — modo chat (SPEC-15): workspace negado ----
+
+    [TestCase("file_read")]
+    [TestCase("file_list")]
+    [TestCase("file_grep")]
+    [TestCase("file_glob")]
+    [TestCase("file_write")]
+    [TestCase("file_edit")]
+    [TestCase("apply_patch")]
+    [TestCase("shell_exec")]
+    [TestCase("code_interpreter")]
+    [TestCase("job_list")]
+    [TestCase("job_output")]
+    [TestCase("job_kill")]
+    [TestCase("worktree_diff")]
+    [TestCase("worktree_merge")]
+    [TestCase("plan_exit")]
+    [TestCase("delegate_task")]
+    [TestCase("lsp_diagnostics")]
+    [TestCase("lsp_symbols")]
+    [TestCase("lsp_workspace_symbols")]
+    [TestCase("lsp_definition")]
+    [TestCase("lsp_references")]
+    [TestCase("lsp_hover")]
+    [TestCase("skill")]
+    public void Evaluate_Chat_WorkspaceTools_Deny(string name) =>
+        Assert.That(PermissionRuleset.Evaluate("chat", name),
+            Is.EqualTo(PermissionDecision.Deny));
+
+    [TestCase("web_search")]
+    [TestCase("fetch_url")]
+    [TestCase("ask_user")]
+    [TestCase("todo_write")]
+    [TestCase("generate_image")]
+    public void Evaluate_Chat_NaoWorkspace_SeguePreset(string name) =>
+        // chat nega só workspace — o resto segue o gate do preset (Ask).
+        Assert.That(PermissionRuleset.Evaluate("chat", name),
+            Is.EqualTo(PermissionDecision.Ask));
+
+    [Test]
+    public void Evaluate_Chat_ToolNaoBuiltin_SeguePreset() =>
+        Assert.That(PermissionRuleset.Evaluate("chat", "mcp_tool", isBuiltin: false),
+            Is.EqualTo(PermissionDecision.Ask));
+
+    [Test]
+    public void Normalize_Chat_Reconhecido_LegadoViraBuild()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PermissionRuleset.Normalize("chat"), Is.EqualTo("chat"));
+            Assert.That(PermissionRuleset.Normalize("CHAT"), Is.EqualTo("chat"));
+            Assert.That(PermissionRuleset.Normalize("plan"), Is.EqualTo("plan"));
+            Assert.That(PermissionRuleset.Normalize("legado"), Is.EqualTo("build"));
+            Assert.That(PermissionRuleset.Normalize(null), Is.EqualTo("build"));
+        });
+    }
+
     // ---- ArgPattern — assinatura da allowlist por classe de ação (RF-005) ----
 
     [Test]

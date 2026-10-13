@@ -260,8 +260,7 @@ public static class ChatPipeline
         // RF-002/RF-004): instrução de somente-leitura + encerramento via
         // plan_exit — o spec de tools anunciado já reflete o ruleset, mas
         // o prompt reforça o contrato para modelos teimosos.
-        if (OpenWebUI.Infrastructure.ChatTools.PermissionRuleset.Normalize(agentMode)
-            == OpenWebUI.Infrastructure.ChatTools.PermissionRuleset.PlanMode)
+        if (PermissionRuleset.Normalize(agentMode) == PermissionRuleset.PlanMode)
         {
             systemParts.Add(
                 "Modo PLAN ativo: você está em modo de planejamento somente-leitura. "
@@ -271,6 +270,18 @@ public static class ChatPipeline
                 + "em markdown e chame a tool builtin_plan_exit passando o plano "
                 + "completo no argumento `plan`; o usuário decide se executa "
                 + "(modo build).");
+        }
+        else if (PermissionRuleset.Normalize(agentMode) == PermissionRuleset.ChatMode)
+        {
+            // SPEC-15: chat sem workspace — o spec de tools já vem filtrado,
+            // mas o prompt deixa claro que não há acesso a arquivos/shell.
+            systemParts.Add(
+                "Modo CHAT ativo: conversa comum sem workspace — NÃO existem "
+                + "tools de arquivo, shell, jobs ou worktree nesta conversa e "
+                + "nenhuma call desse tipo será aceita. Responda com texto "
+                + "(web_search/fetch_url seguem disponíveis se anunciadas). "
+                + "Para trabalhar num repositório o usuário precisa vincular "
+                + "um repo ao chat e mudar para o modo build.");
         }
 
         // 4. Mescla partes de sistema numa única mensagem inicial.

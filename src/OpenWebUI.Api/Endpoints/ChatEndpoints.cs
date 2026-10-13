@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Hubs;
 using OpenWebUI.Api.Runs;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 using OpenWebUI.Application.Contracts;
@@ -513,7 +514,14 @@ public static class ChatEndpoints
         {
             // SPEC-15: desvincular libera o worktree da conversa e, se o
             // repo ficar sem referências, o checkout base sai de disco.
+            // Sem repo o build não resolve — um chat em build cai a chat.
             await repos.ReleaseChatWorkspaceAsync(user.Id, id, keepBinding: false, ct);
+            var chat = await LoadChatAsync(id, user.Id, db, ct, tracking: true);
+            if (chat is { Mode: "build" })
+            {
+                chat.Mode = PermissionRuleset.ChatMode;
+                await db.SaveChangesAsync(ct);
+            }
             return Results.Ok(new ChatWorkspaceRepoResponse(null, "none"));
         }
 

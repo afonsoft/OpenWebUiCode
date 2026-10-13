@@ -71,15 +71,18 @@ public static class PermissionRuleset
     /// </summary>
     /// <summary>
     /// Built-ins que tocam o workspace (SPEC-15, modo <c>chat</c>): sistema
-    /// de arquivos, shell/exec, jobs e worktrees — negadas e nem anunciadas
-    /// quando a conversa não tem repositório vinculado.
+    /// de arquivos, shell/exec, jobs, worktrees e delegação de subtarefas
+    /// (que herdariam o binding do chat) — negadas e nem anunciadas quando
+    /// a conversa não tem repositório vinculado.
     /// </summary>
     private static readonly HashSet<string> WorkspaceTools = new(StringComparer.OrdinalIgnoreCase)
     {
         "file_list", "file_read", "file_grep", "file_glob",
         "file_write", "file_edit", "apply_patch", "shell_exec",
         "code_interpreter", "job_list", "job_output", "job_kill",
-        "worktree_diff", "worktree_merge", "plan_exit",
+        "worktree_diff", "worktree_merge", "plan_exit", "delegate_task",
+        "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
+        "lsp_definition", "lsp_references", "lsp_hover", "skill",
     };
 
     public static PermissionDecision Evaluate(
