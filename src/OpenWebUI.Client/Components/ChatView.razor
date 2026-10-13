@@ -642,7 +642,7 @@
     </div>
 
     <RepoPickerModal @bind-Active="_repoPicker" Bound="OnRepoBoundAsync"
-                     Source="OnRepoSourceChanged" ChatId="_loadedChatId" />
+                     Source="OnRepoSourceChanged" ChatId="@_loadedChatId" />
     <CallOverlay Active="_callActive" Lang="@SttLang"
                  OnTurn="ExecuteVoiceTurnAsync"
                  OnClose="() => _callActive = false" />
@@ -660,7 +660,7 @@
                             Model="@_model" RunId="@_activeRunId" Git="_git"
                             IsAdmin="@(Auth.CurrentUser?.Role == UserRoles.Admin)"
                             RequestedTab="@_requestedPanelTab"
-                            Checkpoints="_runCheckpoints" ChatId="_loadedChatId"
+                            Checkpoints="_runCheckpoints" ChatId="@_loadedChatId"
                             OnReverted="OnCheckpointRevertedAsync"
                             OnClose="() => _showPanel = false"
                             OnKillJob="KillJobAsync" />
@@ -674,7 +674,7 @@
                                 Model="@_model" RunId="@_activeRunId" Git="_git"
                                 IsAdmin="@(Auth.CurrentUser?.Role == UserRoles.Admin)"
                                 RequestedTab="@_requestedPanelTab"
-                                Checkpoints="_runCheckpoints" ChatId="_loadedChatId"
+                                Checkpoints="_runCheckpoints" ChatId="@_loadedChatId"
                                 OnReverted="OnCheckpointRevertedAsync"
                                 OnClose="() => _showPanel = false"
                                 OnKillJob="KillJobAsync" />

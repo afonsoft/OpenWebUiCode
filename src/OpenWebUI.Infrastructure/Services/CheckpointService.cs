@@ -717,6 +717,7 @@ public sealed class CheckpointService(
             .Select(d => (id: Path.GetFileName(d), m: ReadManifest(root, Path.GetFileName(d))))
             .Where(x => x.m is not null)
             .OrderByDescending(x => x.m!.CreatedAt)
+            .ThenByDescending(x => SeqOf(x.id))
             .Take(take)
             .Select(x => new CheckpointSummary(x.id!, x.m!.Turn, x.m.CreatedAt))
             .ToList();
@@ -734,6 +735,7 @@ public sealed class CheckpointService(
             .Select(d => (dir: d, m: ReadManifest(root, Path.GetFileName(d))))
             .Where(x => x.m is not null)
             .OrderBy(x => x.m!.CreatedAt)
+            .ThenBy(x => SeqOf(Path.GetFileName(x.dir)))
             .ToList();
         var remaining = dirs.Where(x => x.m!.CreatedAt >= cutoff).ToList();
         foreach (var stale in dirs.Where(x => x.m!.CreatedAt < cutoff))
@@ -780,6 +782,10 @@ public sealed class CheckpointService(
         }
         catch (IOException) { return null; }
     }
+
+    /// <summary>Seq numérico do id <c>m{seq}</c>; 0 quando o nome não casa o formato.</summary>
+    private static int SeqOf(string? id) =>
+        id is { Length: > 1 } && id[0] == 'm' && int.TryParse(id[1..], out var n) ? n : 0;
 
     private static int NextSeq(string root)
     {
