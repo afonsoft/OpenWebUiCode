@@ -306,10 +306,11 @@ public class ModelRolesTests
     {
         public string? LastModel { get; private set; }
 
-        public Task<string?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
         {
             LastModel = model;
-            return Task.FromResult(result);
+            return Task.FromResult(result is null ? null
+            : new ContextSummary(result, [], [], []));
         }
     }
 }

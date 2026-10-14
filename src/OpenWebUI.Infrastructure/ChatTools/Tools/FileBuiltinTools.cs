@@ -130,21 +130,24 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
 /// linhas e paginação (<paramref>offset</paramref>/<paramref>limit</paramref>).
 /// Somente leitura.
 /// </summary>
-public sealed class FileReadBuiltinTool : IBuiltinChatTool
+public sealed class FileReadBuiltinTool(HistoryResourceService history) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_read";
 
     /// <inheritdoc />
     public string Description =>
-        "Read a file (numbered, paged) — call to inspect code/text.";
+        "Read a file (numbered, paged) — call to inspect code/text. "
+        + "Also accepts history://{chatId|current}[/tail:{n}|/msg:{id}|/call:{id}] "
+        + "to read the persisted chat transcript (including messages compacted "
+        + "out of the context window).";
 
     /// <inheritdoc />
     public string ParametersJson => """
         {
           "type": "object",
           "properties": {
-            "path": { "type": "string", "description": "Path relative to the workspace." },
+            "path": { "type": "string", "description": "Path relative to the workspace, or a history:// URI." },
             "offset": { "type": "integer", "description": "First line (1-based, default 1).", "default": 1 },
             "limit": { "type": "integer", "description": "Lines to read (default 400, max 2000).", "default": 400 }
           },
@@ -221,14 +224,15 @@ public sealed class FileReadBuiltinTool : IBuiltinChatTool
 /// <c>builtin:file_grep</c> — busca regex no workspace retornando
 /// <c>path:linha: conteúdo</c>. Somente leitura.
 /// </summary>
-public sealed class FileGrepBuiltinTool : IBuiltinChatTool
+public sealed class FileGrepBuiltinTool(HistoryResourceService history) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_grep";
 
     /// <inheritdoc />
     public string Description =>
-        "Regex-search file contents — call to find text/code.";
+        "Regex-search file contents — call to find text/code. "
+        + "path also accepts a history:// URI to grep the persisted chat transcript.";
 
     /// <inheritdoc />
     public string ParametersJson => """
@@ -271,7 +275,26 @@ public sealed class FileGrepBuiltinTool : IBuiltinChatTool
             return new BuiltinToolResult($"Regex inválida: {ex.Message}");
         }
 
+        var max = args.TryGetProperty("max_results", out var m) && m.TryGetInt32(out var mx)
+            ? Math.Clamp(mx, 1, 500) : 100;
+
         var path = args.TryGetProperty("path", out var pEl) ? pEl.GetString() : null;
+        if (HistoryResourceService.IsHistoryUri(path))
+        {
+            var (transcript, histError) = await history.ResolveAsync(
+                path!, context.UserId, context.ChatId, ct);
+            if (transcript is null)
+            {
+                return new BuiltinToolResult(histError ?? "histórico vazio.");
+            }
+            var hits = transcript.Split('\n')
+                .Where(line => regex.IsMatch(line))
+                .Take(max)
+                .ToList();
+            return new BuiltinToolResult(hits.Count == 0
+                ? "Sem matches no histórico."
+                : string.Join('\n', hits.Select(h => $"history: {h}")));
+        }
         var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
         if (full is null)
         {
@@ -284,8 +307,6 @@ public sealed class FileGrepBuiltinTool : IBuiltinChatTool
             : null;
         // Sem '/' o glob casa o basename (convenção rg/gitignore); com '/', o relativo inteiro.
         var globOnBasename = globPattern?.Contains('/') == false;
-        var max = args.TryGetProperty("max_results", out var m) && m.TryGetInt32(out var mx)
-            ? Math.Clamp(mx, 1, 500) : 100;
 
         IEnumerable<string> files = File.Exists(full)
             ? [full]

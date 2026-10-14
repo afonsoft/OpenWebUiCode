@@ -907,7 +907,7 @@ public class BuiltinToolsTests
         var path = Path.Join(_workspace, "num.txt");
         File.WriteAllLines(path, Enumerable.Range(1, 20).Select(i => $"l{i}"));
 
-        var tool = new FileReadBuiltinTool();
+        var tool = new FileReadBuiltinTool(new HistoryResourceService(NewDb()));
         var r = await tool.ExecuteAsync(
             Args("{\"path\":\"num.txt\",\"offset\":10,\"limit\":5}"), Ctx(), default);
 
@@ -969,7 +969,7 @@ public class BuiltinToolsTests
         File.WriteAllText(Path.Join(_workspace, "sub", "um.cs"), "class Foo {}\n// TODO: x\n");
         File.WriteAllText(Path.Join(_workspace, "dois.md"), "sem match\n");
 
-        var grep = new FileGrepBuiltinTool();
+        var grep = new FileGrepBuiltinTool(new HistoryResourceService(NewDb()));
         var g = await grep.ExecuteAsync(
             Args("{\"pattern\":\"todo\",\"glob\":\"*.cs\"}"), Ctx(), default);
         Assert.That(g.Text, Does.Contain("sub/um.cs:2:").And.Contain("TODO"));

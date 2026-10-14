@@ -1,7 +1,10 @@
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.ChatTools.Tools;
+using OpenWebUI.Infrastructure.Data;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -792,7 +795,8 @@ public class ChatToolsEdgeTests
     [Test]
     public async Task FileRead_PaginacaoEErros()
     {
-        var tool = new FileReadBuiltinTool();
+        var tool = new FileReadBuiltinTool(new HistoryResourceService(new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite("Data Source=:memory:").Options)));
         var content = string.Join('\n', Enumerable.Range(1, 10).Select(i => $"linha {i}"));
         File.WriteAllText(Path.Join(_workspace, "f.txt"), content);
 
@@ -836,7 +840,8 @@ public class ChatToolsEdgeTests
     [Test]
     public async Task FileGrep_Matriz()
     {
-        var tool = new FileGrepBuiltinTool();
+        var tool = new FileGrepBuiltinTool(new HistoryResourceService(new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite("Data Source=:memory:").Options)));
         File.WriteAllText(Path.Join(_workspace, "a.cs"), "public class Foo {}\n// TODO x");
         File.WriteAllText(Path.Join(_workspace, "b.md"), "# título\nTODO aqui");
         File.WriteAllText(Path.Join(_workspace, "c.cs"), "sem match");
