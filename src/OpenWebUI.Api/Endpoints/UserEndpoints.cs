@@ -243,7 +243,7 @@ public static class UserEndpoints
         }
         var invalid = request.Overrides
             .Where(kv => kv.Value is { Length: > 0 } v
-                && !ToolApprovalOverrideService.ValidActions.Contains(v))
+                && !ToolApprovalOverrideService.IsValidAction(v))
             .Select(kv => kv.Key).ToList();
         if (invalid.Count > 0)
         {

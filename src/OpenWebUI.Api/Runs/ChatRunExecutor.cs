@@ -617,8 +617,9 @@ public sealed class ChatRunExecutor(
 
         var preset = gateInfo?.ApprovalPreset ?? "approve-mutations";
         if (!forcePrompt)
-        switch (preset)
         {
+            switch (preset)
+            {
             case "always-allow":
                 return ToolGateDecision.Allow;
             case "allow-readonly":
@@ -652,6 +653,7 @@ public sealed class ChatRunExecutor(
                 }
 
                 break;
+            }
             }
         }
 

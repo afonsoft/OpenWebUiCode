@@ -2330,8 +2330,9 @@
             return;
         }
         await ChatStream.DecideApprovalAsync(
-            _loadedChatId, _activeRunId, callId, decision, remember, message,
-            rememberPersist);
+            _loadedChatId, _activeRunId, callId,
+            new RunApprovalDecisionRequest(
+                decision, remember, message, rememberPersist));
         _ = Attention.RefreshAsync();
     }
 
@@ -2349,7 +2350,8 @@
         }
         await ChatStream.DecideApprovalAsync(
             _loadedChatId, _activeRunId, callId,
-            answer is null ? "deny" : "approve", false, answer);
+            new RunApprovalDecisionRequest(
+                answer is null ? "deny" : "approve", false, answer));
         _ = Attention.RefreshAsync();
     }
 

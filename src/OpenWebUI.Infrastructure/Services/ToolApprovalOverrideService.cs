@@ -9,9 +9,12 @@ namespace OpenWebUI.Infrastructure.Services;
 /// </summary>
 public sealed class ToolApprovalOverrideService(ConfigService config)
 {
-    /// <summary>Valores válidos de override.</summary>
-    public static readonly HashSet<string> ValidActions =
+    private static readonly HashSet<string> s_validActions =
         new(StringComparer.OrdinalIgnoreCase) { "allow", "deny", "prompt" };
+
+    /// <summary>Se <paramref name="action"/> é um valor válido de override.</summary>
+    public static bool IsValidAction(string action) =>
+        s_validActions.Contains(action);
 
     private static string Key(string userId) => $"user:{userId}:tool-approvals";
 
@@ -43,7 +46,7 @@ public sealed class ToolApprovalOverrideService(ConfigService config)
             {
                 current.Remove(name);
             }
-            else if (ValidActions.Contains(action))
+            else if (s_validActions.Contains(action))
             {
                 current[name] = action.Trim().ToLowerInvariant();
             }
