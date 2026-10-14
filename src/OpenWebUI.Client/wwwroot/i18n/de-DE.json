@@ -66,6 +66,7 @@
   "chat.send": "Senden",
   "chat.tools_in_chat": "Tools in this chat",
   "chat.upload_failed": "Failed to upload {{file}}.",
+  "chat.vision_warning": "Das gewählte Modell kann Bilder evtl. nicht analysieren — keine Bildfähigkeit.",
   "chat.create_failed": "Could not create the chat.",
   "chat.files_attached": "(files attached)",
   "chat.copy": "Kopieren",
@@ -742,6 +743,7 @@
   "settings.models_search": "Modelle suchen…",
   "settings.models_load_error": "Modelle konnten nicht geladen werden.",
   "settings.models_save_error": "Modellsichtbarkeit konnte nicht gespeichert werden.",
+  "settings.model_roles_section": "Modellrollen",
   "settings.audio_unavailable": "Audio nicht verfügbar — Provider im Admin konfigurieren oder Web Speech verwenden",
   "settings.media_moved_to_integrations": "Bild und Video werden jetzt unter Admin → Integrationen konfiguriert.",
   "settings.notifications": "Benachrichtigungen",
@@ -940,5 +942,11 @@
   "ide.cmd_split": "Editor teilen",
   "ide.cmd_minimap": "Minimap umschalten",
   "ide.cmd_diff_head": "Mit HEAD vergleichen",
-  "ide.diff_close": "Diff schließen"
+  "ide.diff_close": "Diff schließen",
+  "settings.model_roles_hint": "Hilfsaufgaben an günstigere Modelle leiten; leer = Chat-Modell.",
+  "settings.model_role_tasks": "Hilfsaufgaben (Titel, Folgefragen, Tags)",
+  "settings.model_role_memory": "Gedächtnis- & Komprimierungs-Zusammenfassungen",
+  "settings.model_role_advisor": "Run-Berater",
+  "settings.model_role_default": "Standard (Chat-Modell)",
+  "settings.model_roles_error": "Modellrollen konnten nicht gespeichert werden."
 }

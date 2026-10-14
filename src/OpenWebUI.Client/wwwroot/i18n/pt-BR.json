@@ -67,6 +67,7 @@
   "chat.send": "Enviar",
   "chat.tools_in_chat": "Tools nesta conversa",
   "chat.upload_failed": "Falha ao enviar {{file}}.",
+  "chat.vision_warning": "O modelo selecionado pode não analisar imagens — não há capacidade de visão.",
   "chat.create_failed": "Não foi possível criar o chat.",
   "chat.files_attached": "(arquivos anexados)",
   "chat.copy": "Copiar",
@@ -535,6 +536,7 @@
   "settings.models_search": "Buscar modelos…",
   "settings.models_load_error": "Não foi possível carregar os modelos.",
   "settings.models_save_error": "Não foi possível salvar a visibilidade dos modelos.",
+  "settings.model_roles_section": "Papéis de modelo",
   "admin.default_models_empty": "Nenhum modelo selecionado",
   "admin.engine_provider": "provider (conexão cadastrada)",
   "admin.select_provider": "Selecionar conexão…",
@@ -940,5 +942,11 @@
   "ide.cmd_split": "Dividir Editor",
   "ide.cmd_minimap": "Alternar Minimap",
   "ide.cmd_diff_head": "Comparar com HEAD",
-  "ide.diff_close": "Fechar diff"
+  "ide.diff_close": "Fechar diff",
+  "settings.model_roles_hint": "Direciona tarefas auxiliares a modelos mais baratos; vazio = modelo do chat.",
+  "settings.model_role_tasks": "Tarefas auxiliares (título, follow-ups, tags)",
+  "settings.model_role_memory": "Resumos de memória e compactação",
+  "settings.model_role_advisor": "Advisor de runs",
+  "settings.model_role_default": "Padrão (modelo do chat)",
+  "settings.model_roles_error": "Não foi possível salvar os papéis de modelo."
 }

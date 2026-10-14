@@ -153,10 +153,16 @@ public sealed class ModelVisibilityTests
         cut.WaitForAssertion(() =>
             Assert.That(cut.FindAll("button[role='switch']"), Has.Count.EqualTo(1)));
 
+        // A seção de papéis (SPEC-20261013-model-roles) lista todos os
+        // modelos em <option> sem filtro — "fake:1" segue no markup dos
+        // selects de papel. A asserção de filtro mira a lista de
+        // visibilidade (switches), não o markup inteiro.
         Assert.Multiple(() =>
         {
             Assert.That(cut.Markup, Does.Contain("OpenAI"));
-            Assert.That(cut.Markup, Does.Not.Contain("fake:1"));
+            Assert.That(cut.FindAll("button[role='switch']")
+                .Select(b => b.GetAttribute("aria-label")),
+                Is.All.Not.EqualTo("fake:1").And.Not.Empty);
         });
     }
 

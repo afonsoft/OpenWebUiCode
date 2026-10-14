@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-run-advisor` |
 | Ticket | [#352](https://github.com/afonsoft/open-webui/issues/352) |
-| Status | `Draft` |
+| Status | `Approved` |
 | Depends on | `SPEC-20261013-model-roles` (papel `advisor`; sem ele usa o modelo do chat) |
 
 ## 1. User Story

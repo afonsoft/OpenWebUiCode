@@ -221,6 +221,21 @@ public class ApiService(HttpClient http, AuthService auth)
         return result?.Data.ToList() ?? [];
     }
 
+    /// <summary>Papéis de modelo do usuário (SPEC-20261013-model-roles):
+    /// papel → cadeia de ids em ordem de fallback.</summary>
+    public async Task<Dictionary<string, List<string>>> GetModelRolesAsync()
+    {
+        var result = await SendAsync<ModelRolesResponse>(
+            HttpMethod.Get, "/api/v1/configs/user/model-roles");
+        return result?.Roles.ToDictionary(kv => kv.Key, kv => kv.Value) ?? [];
+    }
+
+    /// <summary>Grava os papéis de modelo do usuário (mapa completo;
+    /// cadeia vazia remove o papel — validado no servidor).</summary>
+    public async Task<bool> UpdateModelRolesAsync(Dictionary<string, List<string>> roles) =>
+        await SendStatusAsync(HttpMethod.Put, "/api/v1/configs/user/model-roles",
+            new UpdateModelRolesRequest(roles));
+
     /// <summary>Cria um modelo personalizado.</summary>
     public Task<ModelEntryResponse?> CreateCustomModelAsync(ModelEntryUpsertRequest request) =>
         SendAsync<ModelEntryResponse>(HttpMethod.Post, "/api/v1/models/create", request);

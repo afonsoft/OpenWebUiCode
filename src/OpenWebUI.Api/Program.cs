@@ -73,6 +73,12 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<ChatRunDispatcher>
 builder.Services.AddScoped<ChatRunExecutor>();
 builder.Services.AddScoped<ContextCompactionService>();
 builder.Services.AddScoped<IContextSummarizer, LlmContextSummarizer>();
+// Papéis/capacidades de modelo (SPEC-20261013-model-roles).
+builder.Services.AddScoped<ModelCapabilityResolver>();
+builder.Services.AddScoped(sp => new ModelRoleResolver(
+    sp.GetRequiredService<AppDbContext>(),
+    ct => sp.GetRequiredService<ProviderService>().ListModelsAsync(ct),
+    sp.GetRequiredService<ILogger<ModelRoleResolver>>()));
 
 // Notificações de run (SPEC-20261007-chat-notifications): SignalR para abas
 // conectadas + Web Push quando nenhuma aba está conectada.

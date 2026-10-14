@@ -49,6 +49,7 @@ public sealed class ContextCompactionService(
     AppDbContext db,
     ConfigService config,
     IContextSummarizer summarizer,
+    ModelRoleResolver roles,
     ILogger<ContextCompactionService> logger)
 {
     /// <summary>Prefixo da mensagem sintética que injeta o resumo no histórico.</summary>
@@ -90,7 +91,7 @@ public sealed class ContextCompactionService(
     /// </summary>
     public async Task<bool> MaybeCompactAsync(
         string chatId, IReadOnlyList<ChatCompletionMessage> history,
-        string model, CancellationToken ct)
+        string model, CancellationToken ct, string? userId = null)
     {
         try
         {
@@ -115,7 +116,12 @@ public sealed class ContextCompactionService(
                 + string.Join("\n\n", history.Skip(newHeadStart).Take(headEnd - newHeadStart)
                     .Select(m => $"{m.Role}: {m.Content}"));
 
-            var summary = await summarizer.SummarizeAsync(model, transcript, ct);
+            // Papel "memory" (SPEC-20261013-model-roles): resumo roda no
+            // modelo do papel quando configurado; senão no modelo da run.
+            var summaryModel = userId is null
+                ? model
+                : await roles.ResolveAsync("memory", userId, model, ct);
+            var summary = await summarizer.SummarizeAsync(summaryModel, transcript, ct);
             if (summary is null)
             {
                 return false;

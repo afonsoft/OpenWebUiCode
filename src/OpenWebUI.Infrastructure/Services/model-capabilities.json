@@ -1,0 +1,44 @@
+{
+  "rules": [
+    { "provider": "ollama", "pattern": "*llava*", "capabilities": ["vision"] },
+    { "provider": "ollama", "pattern": "*bakllava*", "capabilities": ["vision"] },
+    { "provider": "ollama", "pattern": "*moondream*", "capabilities": ["vision"] },
+    { "provider": "ollama", "pattern": "*minicpm-v*", "capabilities": ["vision"] },
+    { "provider": "ollama", "pattern": "*vision*", "capabilities": ["vision"] },
+    { "provider": "ollama", "pattern": "qwen*vl*", "capabilities": ["vision", "tools"] },
+    { "provider": "ollama", "pattern": "gemma3*", "capabilities": ["vision", "tools"] },
+    { "provider": "ollama", "pattern": "*pixtral*", "capabilities": ["vision", "tools"] },
+    { "provider": "ollama", "pattern": "mistral-small3*", "capabilities": ["vision", "tools"] },
+    { "provider": "ollama", "pattern": "*granite*vision*", "capabilities": ["vision"] },
+    { "provider": "ollama", "pattern": "llama3.1*", "capabilities": ["tools"] },
+    { "provider": "ollama", "pattern": "llama3.2*", "capabilities": ["tools"] },
+    { "provider": "ollama", "pattern": "llama3.3*", "capabilities": ["tools"] },
+    { "provider": "ollama", "pattern": "qwen2.5*", "capabilities": ["tools"] },
+    { "provider": "ollama", "pattern": "qwen3*", "capabilities": ["tools", "thinking"] },
+    { "provider": "ollama", "pattern": "mistral-nemo*", "capabilities": ["tools"] },
+    { "provider": "ollama", "pattern": "deepseek-r1*", "capabilities": ["thinking"] },
+
+    { "provider": "openai", "pattern": "gpt-4o*", "capabilities": ["vision", "tools"] },
+    { "provider": "openai", "pattern": "chatgpt-4o*", "capabilities": ["vision", "tools"] },
+    { "provider": "openai", "pattern": "gpt-4.1*", "capabilities": ["vision", "tools"] },
+    { "provider": "openai", "pattern": "gpt-4-vision*", "capabilities": ["vision", "tools"] },
+    { "provider": "openai", "pattern": "gpt-4-turbo*", "capabilities": ["vision", "tools"] },
+    { "provider": "openai", "pattern": "gpt-5*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "openai", "pattern": "o1*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "openai", "pattern": "o3*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "openai", "pattern": "o4*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "openai", "pattern": "gpt-4*", "capabilities": ["tools"] },
+    { "provider": "openai", "pattern": "gpt-3.5-turbo*", "capabilities": ["tools"] },
+    { "provider": "openai", "pattern": "computer-use*", "capabilities": ["vision", "tools"] },
+
+    { "provider": "anthropic", "pattern": "claude-3*", "capabilities": ["vision", "tools"] },
+    { "provider": "anthropic", "pattern": "claude-sonnet-4*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "anthropic", "pattern": "claude-opus-4*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "anthropic", "pattern": "claude-haiku-4*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "anthropic", "pattern": "claude-3-7-sonnet*", "capabilities": ["vision", "tools", "thinking"] },
+
+    { "provider": "google", "pattern": "gemini*", "capabilities": ["vision", "tools"] },
+    { "provider": "google", "pattern": "gemini-2*", "capabilities": ["vision", "tools", "thinking"] },
+    { "provider": "google", "pattern": "gemini-1.5*", "capabilities": ["vision", "tools"] }
+  ]
+}

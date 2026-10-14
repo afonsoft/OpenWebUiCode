@@ -148,7 +148,14 @@ public class ProviderService(
                     ?? model?["name"]?.GetValue<string>();
                 if (!string.IsNullOrEmpty(id))
                 {
-                    models.Add(new ModelInfo(id, model!["name"]?.GetValue<string>() ?? id, "ollama", "ollama"));
+                    // Ollama recente reporta capabilities no /api/tags (SPEC-20261013-model-roles).
+                    var caps = model!["capabilities"]?.AsArray()
+                        .Select(c => c?.GetValue<string>())
+                        .OfType<string>()
+                        .Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
+                    models.Add(new ModelInfo(
+                        id, model!["name"]?.GetValue<string>() ?? id, "ollama", "ollama",
+                        caps is { Count: > 0 } ? caps : null));
                 }
             }
         }

@@ -5,7 +5,11 @@ namespace OpenWebUI.Application.Contracts;
 /// <param name="Name">Nome amigável exibido na UI.</param>
 /// <param name="Provider">Provedor de origem: "ollama" ou "openai".</param>
 /// <param name="OwnedBy">Dono reportado pelo provedor, quando disponível.</param>
-public sealed record ModelInfo(string Id, string Name, string Provider, string? OwnedBy);
+/// <param name="Capabilities">Capacidades resolvidas (SPEC-20261013-model-roles):
+/// <c>"vision"</c>, <c>"tools"</c>, <c>"thinking"</c>; null quando desconhecidas.</param>
+public sealed record ModelInfo(
+    string Id, string Name, string Provider, string? OwnedBy,
+    IReadOnlyList<string>? Capabilities = null);
 
 /// <summary>Lista agregada de modelos, no formato OpenAI (<c>{ data: [...] }</c>).</summary>
 /// <param name="Data">Modelos de todos os provedores configurados.</param>
@@ -15,11 +19,22 @@ public sealed record ModelListResponse(IReadOnlyList<ModelInfo> Data);
 /// usuário chamador (GET /api/v1/models/all — aba Models das settings).</summary>
 /// <param name="Enabled">False quando o usuário desabilitou <c>{provider}:{id}</c>.</param>
 public sealed record CatalogModel(
-    string Id, string Name, string Provider, string? OwnedBy, bool Enabled);
+    string Id, string Name, string Provider, string? OwnedBy, bool Enabled,
+    IReadOnlyList<string>? Capabilities = null);
 
 /// <summary>Resposta de GET /api/v1/models/all.</summary>
 /// <param name="Data">Todos os modelos conhecidos, com flag por usuário.</param>
 public sealed record CatalogModelListResponse(IReadOnlyList<CatalogModel> Data);
+
+/// <summary>Papéis de modelo do usuário (SPEC-20261013-model-roles):
+/// papel → cadeia de ids em ordem de fallback.</summary>
+/// <param name="Roles">Mapa <c>{tasks|memory|advisor: [id,...]}</c>.</param>
+public sealed record ModelRolesResponse(IReadOnlyDictionary<string, List<string>> Roles);
+
+/// <summary>Escrita dos papéis (PUT /api/v1/configs/user/model-roles):
+/// substitui o mapa inteiro; cadeia vazia remove o papel.</summary>
+/// <param name="Roles">Mapa papel → ids; null = limpa tudo.</param>
+public sealed record UpdateModelRolesRequest(Dictionary<string, List<string>>? Roles);
 
 /// <summary>Mensagem enviada ao endpoint de chat completion.</summary>
 /// <param name="Role">Papel: system, user ou assistant.</param>

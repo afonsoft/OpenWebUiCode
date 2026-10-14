@@ -149,7 +149,8 @@ public static class ApiEndpoints
 
     private static async Task<IResult> ListAllModelsAsync(
         HttpContext http, ProviderService providers, AppDbContext db,
-        PipelineClientService pipelines, HybridCache cache, CancellationToken ct)
+        PipelineClientService pipelines, HybridCache cache,
+        ModelCapabilityResolver capabilities, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -157,7 +158,8 @@ public static class ApiEndpoints
             return Results.Unauthorized();
         }
 
-        var response = await GetCachedModelListAsync(user, providers, db, pipelines, cache, ct);
+        var response = await GetCachedModelListAsync(
+            user, providers, db, pipelines, cache, capabilities, ct);
         var disabled = ParseDisabledModels(user.SettingsJson);
         var models = disabled.Count == 0
             ? response.Data
@@ -170,10 +172,12 @@ public static class ApiEndpoints
     /// (sem o filtro de visibilidade — aplicado por request).</summary>
     internal static async Task<ModelListResponse> GetCachedModelListAsync(
         User user, ProviderService providers, AppDbContext db,
-        PipelineClientService pipelines, HybridCache cache, CancellationToken ct)
+        PipelineClientService pipelines, HybridCache cache,
+        ModelCapabilityResolver capabilities, CancellationToken ct)
         => await cache.GetOrCreateAsync(
             $"models:list:{user.Id}",
-            async _ => await BuildModelListAsync(user, providers, db, pipelines, ct),
+            async _ => await BuildModelListAsync(
+                user, providers, db, pipelines, capabilities, ct),
             new HybridCacheEntryOptions
             {
                 Expiration = TimeSpan.FromSeconds(60),
@@ -217,7 +221,8 @@ public static class ApiEndpoints
 
     internal static async Task<ModelListResponse> BuildModelListAsync(
         User user, ProviderService providers, AppDbContext db,
-        PipelineClientService pipelines, CancellationToken ct)
+        PipelineClientService pipelines, ModelCapabilityResolver capabilities,
+        CancellationToken ct)
     {
         var models = await providers.ListModelsAsync(ct);
 
@@ -246,6 +251,8 @@ public static class ApiEndpoints
             }
         }
 
+        // Capacidades: override admin → reportado pelo provider → catálogo.
+        models = await capabilities.EnrichAsync(models, ct);
         return new ModelListResponse(models);
     }
 

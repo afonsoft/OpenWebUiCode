@@ -43,6 +43,10 @@ public static class ConfigEndpoints
         group.MapGet("/jwt", GetJwtExpiryAsync);
         group.MapPost("/jwt", UpdateJwtExpiryAsync);
 
+        // Papéis de modelo do próprio usuário (SPEC-20261013-model-roles).
+        group.MapGet("/user/model-roles", GetUserModelRolesAsync);
+        group.MapPut("/user/model-roles", UpdateUserModelRolesAsync);
+
         group.MapGet("/ratelimit", GetRateLimitAsync);
         group.MapPost("/ratelimit", UpdateRateLimitAsync);
         group.MapPost("/ratelimit/reset", ResetLoginLockoutAsync);
@@ -270,6 +274,60 @@ public static class ConfigEndpoints
         }
         await config.SetAsync("webui.jwt.expires_in", request.ExpiresIn.Trim(), ct);
         return Results.Ok(request);
+    }
+
+    // ---------------- Papéis de modelo (por usuário) ----------------
+
+    /// <summary>GET /api/v1/configs/user/model-roles — cadeias por papel do usuário.</summary>
+    private static async Task<IResult> GetUserModelRolesAsync(
+        HttpContext http, AppDbContext db, ModelRoleResolver roles, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        return Results.Ok(new ModelRolesResponse(await roles.GetRolesAsync(user.Id, ct)));
+    }
+
+    /// <summary>PUT /api/v1/configs/user/model-roles — substitui o mapa;
+    /// ids validados contra o catálogo de providers (400 em id/role inválido).</summary>
+    private static async Task<IResult> UpdateUserModelRolesAsync(
+        UpdateModelRolesRequest request, HttpContext http, AppDbContext db,
+        ModelRoleResolver roles, ProviderService providers, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var payload = request.Roles ?? [];
+        var unknownRole = payload.Keys
+            .FirstOrDefault(k => !ModelRoleResolver.IsKnownRole(k));
+        if (unknownRole is not null)
+        {
+            return Results.BadRequest(new { detail = $"Papel desconhecido: '{unknownRole}'." });
+        }
+
+        var ids = payload.Values.SelectMany(v => v ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        if (ids.Count > 0)
+        {
+            var known = (await providers.ListModelsAsync(ct))
+                .Select(m => m.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var invalid = ids.Where(id => !known.Contains(id)).ToList();
+            if (invalid.Count > 0)
+            {
+                return Results.BadRequest(new
+                {
+                    detail = $"Modelo(s) não encontrado(s) no catálogo: {string.Join(", ", invalid)}.",
+                });
+            }
+        }
+
+        await roles.SetRolesAsync(user.Id, payload, ct);
+        return Results.Ok(new ModelRolesResponse(await roles.GetRolesAsync(user.Id, ct)));
     }
 
     // ---------------- Rate limiting ----------------

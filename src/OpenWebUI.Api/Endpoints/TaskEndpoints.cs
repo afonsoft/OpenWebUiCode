@@ -1,4 +1,5 @@
 using System.Text.Json;
+using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 using OpenWebUI.Application.Contracts;
 
@@ -21,9 +22,15 @@ public static class TaskEndpoints
     }
 
     private static async Task<IResult> GenerateTitleAsync(
-        TaskGenerationRequest request, ProviderService providers, CancellationToken ct)
+        TaskGenerationRequest request, HttpContext http, AppDbContext db,
+        ProviderService providers, ModelRoleResolver roles, CancellationToken ct)
     {
-        var title = await RunTaskAsync(providers, request, ct, """
+        var model = await ResolveTaskModelAsync(request, http, db, roles, ct);
+        if (model is null)
+        {
+            return Results.Unauthorized();
+        }
+        var title = await RunTaskAsync(providers, model, request, ct, """
             ### Task:
             Generate a concise, 3-5 word title with an emoji summarizing the chat history.
             ### Guidelines:
@@ -46,9 +53,15 @@ public static class TaskEndpoints
     }
 
     private static async Task<IResult> GenerateFollowUpsAsync(
-        TaskGenerationRequest request, ProviderService providers, CancellationToken ct)
+        TaskGenerationRequest request, HttpContext http, AppDbContext db,
+        ProviderService providers, ModelRoleResolver roles, CancellationToken ct)
     {
-        var text = await RunTaskAsync(providers, request, ct, """
+        var model = await ResolveTaskModelAsync(request, http, db, roles, ct);
+        if (model is null)
+        {
+            return Results.Unauthorized();
+        }
+        var text = await RunTaskAsync(providers, model, request, ct, """
             ### Task:
             Propose 2-3 relevant follow-up questions or prompts that the user might naturally ask next in this conversation as a **user**, based on the chat history, to help continue or deepen the discussion.
             ### Guidelines:
@@ -62,9 +75,15 @@ public static class TaskEndpoints
     }
 
     private static async Task<IResult> GenerateTagsAsync(
-        TaskGenerationRequest request, ProviderService providers, CancellationToken ct)
+        TaskGenerationRequest request, HttpContext http, AppDbContext db,
+        ProviderService providers, ModelRoleResolver roles, CancellationToken ct)
     {
-        var text = await RunTaskAsync(providers, request, ct, """
+        var model = await ResolveTaskModelAsync(request, http, db, roles, ct);
+        if (model is null)
+        {
+            return Results.Unauthorized();
+        }
+        var text = await RunTaskAsync(providers, model, request, ct, """
             ### Task:
             Generate 1-3 broad tags categorizing the main themes of the chat history.
             ### Guidelines:
@@ -84,9 +103,15 @@ public static class TaskEndpoints
     }
 
     private static async Task<IResult> GenerateQueriesAsync(
-        TaskGenerationRequest request, ProviderService providers, CancellationToken ct)
+        TaskGenerationRequest request, HttpContext http, AppDbContext db,
+        ProviderService providers, ModelRoleResolver roles, CancellationToken ct)
     {
-        var text = await RunTaskAsync(providers, request, ct, """
+        var model = await ResolveTaskModelAsync(request, http, db, roles, ct);
+        if (model is null)
+        {
+            return Results.Unauthorized();
+        }
+        var text = await RunTaskAsync(providers, model, request, ct, """
             ### Task:
             Generate 1-3 precise web search queries to retrieve additional context relevant to the conversation.
             Respond ONLY with a JSON array of strings.
@@ -96,8 +121,26 @@ public static class TaskEndpoints
         return Results.Ok(new { queries = ParseJsonStringList(text) });
     }
 
+    /// <summary>
+    /// Resolve o modelo efetivo das tasks auxiliares (SPEC-20261013-model-roles
+    /// RF-002): papel <c>tasks</c> do usuário com fallback para o modelo do
+    /// chat (<c>request.Model</c>). Null quando o usuário não autentica.
+    /// </summary>
+    private static async Task<string?> ResolveTaskModelAsync(
+        TaskGenerationRequest request, HttpContext http, AppDbContext db,
+        ModelRoleResolver roles, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return null;
+        }
+        return await roles.ResolveAsync("tasks", user.Id, request.Model, ct);
+    }
+
     private static async Task<string?> RunTaskAsync(
         ProviderService providers,
+        string model,
         TaskGenerationRequest request,
         CancellationToken ct,
         string template)
@@ -108,7 +151,7 @@ public static class TaskEndpoints
             var prompt = $"{template}\n{history}";
 
             var taskRequest = new ChatCompletionRequest(
-                request.Model,
+                model,
                 [new ChatCompletionMessage("user", prompt)],
                 Stream: false);
 
