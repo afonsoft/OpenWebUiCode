@@ -35,7 +35,7 @@ public sealed class GenerateImageBuiltinTool(ImageGenerationService images) : IB
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

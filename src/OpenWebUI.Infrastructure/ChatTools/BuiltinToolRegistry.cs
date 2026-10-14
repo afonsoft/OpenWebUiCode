@@ -48,6 +48,10 @@ public sealed class BuiltinToolRegistry(IEnumerable<IBuiltinChatTool> tools, ICo
     /// <summary>Todas as tools ativas (para o picker de tools).</summary>
     public IReadOnlyCollection<IBuiltinChatTool> All => _byName.Values;
 
+    /// <summary>Tier declarado da built-in <paramref name="name"/>; null se desconhecida/desabilitada.</summary>
+    public ApprovalTier? TierOfName(string name) =>
+        _byName.TryGetValue(name, out var tool) ? tool.Tier : null;
+
     /// <summary>
     /// Traduz os ToolIds do request: ids <c>builtin:{name}</c> viram
     /// <see cref="Tool"/> sintéticos; demais ids retornam para lookup no DB.

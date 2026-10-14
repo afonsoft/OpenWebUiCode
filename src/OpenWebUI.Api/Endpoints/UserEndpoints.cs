@@ -22,6 +22,8 @@ public static class UserEndpoints
         group.MapGet("/user/settings", GetUserSettingsAsync);
         group.MapPost("/user/settings", UpdateUserSettingsAsync);
         group.MapPost("/user/settings/update", UpdateUserSettingsAsync);
+        group.MapGet("/user/tool-approvals", GetToolApprovalsAsync);
+        group.MapPut("/user/tool-approvals", UpdateToolApprovalsAsync);
         group.MapGet("/{id}", GetUserAsync);
         group.MapPost("/{id}/update", UpdateUserAsync);
         group.MapPost("/{id}/update/role", UpdateUserRoleAsync);
@@ -188,6 +190,72 @@ public static class UserEndpoints
         await db.SaveChangesAsync(ct);
 
         return Results.Ok(request);
+    }
+
+    /// <summary>
+    /// Catálogo de aprovações por tool (SPEC-20261013-approval-tiers):
+    /// cada built-in com o tier declarado e o override vigente do usuário.
+    /// </summary>
+    private static async Task<IResult> GetToolApprovalsAsync(
+        HttpContext http, AppDbContext db,
+        OpenWebUI.Infrastructure.ChatTools.BuiltinToolRegistry builtins,
+        ToolApprovalOverrideService overrides,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var map = await overrides.GetAsync(user.Id, ct);
+        var tools = builtins.All
+            .OrderBy(t => t.Name, StringComparer.Ordinal)
+            .Select(t => new ToolApprovalEntry(
+                t.Name,
+                t.Tier.ToString().ToLowerInvariant(),
+                map.TryGetValue(t.Name, out var action) ? action : null))
+            .ToList();
+        return Results.Ok(new ToolApprovalsResponse(tools));
+    }
+
+    /// <summary>
+    /// Mescla overrides de aprovação por tool
+    /// (<c>allow|deny|prompt</c>; null/"" remove). Devolve o catálogo
+    /// resultante, idêntico ao GET.
+    /// </summary>
+    private static async Task<IResult> UpdateToolApprovalsAsync(
+        UpdateToolApprovalsRequest request,
+        HttpContext http, AppDbContext db,
+        OpenWebUI.Infrastructure.ChatTools.BuiltinToolRegistry builtins,
+        ToolApprovalOverrideService overrides,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (request.Overrides is null || request.Overrides.Count > 200)
+        {
+            return Results.BadRequest(
+                new { detail = "overrides deve ter até 200 entradas." });
+        }
+        var invalid = request.Overrides
+            .Where(kv => kv.Value is { Length: > 0 } v
+                && !ToolApprovalOverrideService.ValidActions.Contains(v))
+            .Select(kv => kv.Key).ToList();
+        if (invalid.Count > 0)
+        {
+            return Results.BadRequest(new
+            {
+                detail = $"ação inválida em: {string.Join(", ", invalid)} "
+                    + "(válidas: allow, deny, prompt).",
+            });
+        }
+
+        await overrides.MergeAsync(user.Id, request.Overrides, ct);
+        return await GetToolApprovalsAsync(http, db, builtins, overrides, ct);
     }
 
     private static async Task<IResult> GetUserAsync(

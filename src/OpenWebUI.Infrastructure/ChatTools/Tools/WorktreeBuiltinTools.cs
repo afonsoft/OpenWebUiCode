@@ -46,7 +46,7 @@ public sealed class WorktreeDiffBuiltinTool(AppDbContext db, WorktreeService wor
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -147,7 +147,7 @@ public sealed class WorktreeMergeBuiltinTool(
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Exec;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

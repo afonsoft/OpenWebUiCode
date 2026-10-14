@@ -31,7 +31,7 @@ public sealed class WebSearchBuiltinTool(WebSearchService search) : IBuiltinChat
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

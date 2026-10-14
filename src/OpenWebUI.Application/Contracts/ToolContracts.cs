@@ -36,3 +36,17 @@ public sealed record ToolUpsertRequest(
     string? Code = null,
     bool Enabled = true,
     bool RequiresApproval = false);
+
+/// <summary>Linha da política de aprovação por tool do usuário
+/// (SPEC-20261013-approval-tiers): nome da função, tier declarado e
+/// override vigente (<c>allow|deny|prompt</c>, null = segue o preset).</summary>
+public sealed record ToolApprovalEntry(
+    string Name, string Tier, string? Override);
+
+/// <summary>Resposta do catálogo de aprovações por tool.</summary>
+public sealed record ToolApprovalsResponse(List<ToolApprovalEntry> Tools);
+
+/// <summary>Patch de overrides: tool → <c>allow|deny|prompt</c>;
+/// null/"" remove o override da tool.</summary>
+public sealed record UpdateToolApprovalsRequest(
+    Dictionary<string, string?> Overrides);

@@ -20,6 +20,25 @@ public sealed record BuiltinToolResult(
     string? RefuseReason = null);
 
 /// <summary>
+/// Tier de aprovação declarado por tool (SPEC-20261013-approval-tiers
+/// RF-001): <see cref="Read"/> executa livre em qualquer preset;
+/// <see cref="Write"/> altera estado confinado; <see cref="Exec"/>
+/// executa código/ação arbitrária. Tools novas devem declarar o tier
+/// correto — quando em dúvida, <see cref="Exec"/> (fail-closed).
+/// </summary>
+public enum ApprovalTier
+{
+    /// <summary>Somente leitura — nunca passa pelo gate.</summary>
+    Read = 0,
+
+    /// <summary>Mutação confinada (workspace, dados do app).</summary>
+    Write = 1,
+
+    /// <summary>Código/comando/ação externa arbitrária.</summary>
+    Exec = 2,
+}
+
+/// <summary>
 /// Tool built-in do chat (SPEC-20261007-chat-agent-tools): implementação em
 /// processo registrada com id <c>builtin:{name}</c>, despatched pelo
 /// <see cref="Services.ToolExecutor"/> quando a URL do Tool é
@@ -38,8 +57,14 @@ public interface IBuiltinChatTool
     /// <summary>JSON Schema dos parâmetros (campo <c>parameters</c> do spec).</summary>
     string ParametersJson { get; }
 
-    /// <summary>Se a execução tem efeitos colaterais e exige aprovação.</summary>
-    bool RequiresApproval { get; }
+    /// <summary>Tier de aprovação declarado (SPEC-20261013-approval-tiers).</summary>
+    ApprovalTier Tier { get; }
+
+    /// <summary>
+    /// Se a execução tem efeitos colaterais e exige aprovação —
+    /// derivado do <see cref="Tier"/> (mutável = tier != <see cref="ApprovalTier.Read"/>).
+    /// </summary>
+    bool RequiresApproval => Tier != ApprovalTier.Read;
 
     /// <summary>
     /// Executa a tool com os argumentos do modelo no contexto da run.

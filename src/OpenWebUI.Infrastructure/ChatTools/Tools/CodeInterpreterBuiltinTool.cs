@@ -40,7 +40,7 @@ public sealed class CodeInterpreterBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Exec;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

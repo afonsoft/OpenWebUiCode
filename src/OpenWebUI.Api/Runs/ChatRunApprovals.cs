@@ -53,6 +53,15 @@ public sealed class ChatRunApprovals
         _pending.ContainsKey(Key(runId, callId));
 
     /// <summary>
+    /// Nome da tool da call pendente (para persistir override no
+    /// "aprova sempre"), null quando não há pendência.
+    /// </summary>
+    public Task<string?> PendingToolNameAsync(string runId, string callId) =>
+        Task.FromResult(_pending.TryGetValue(Key(runId, callId), out var p)
+            ? p.ToolName
+            : null);
+
+    /// <summary>
     /// Chats com ao menos uma call bloqueada esperando decisão do dono
     /// (aprovação, pergunta ask_user ou plan_exit) — snapshot usado pelo
     /// filtro <c>attention</c> da lista de chats (SPEC-20261009-attention-inbox).

@@ -263,7 +263,7 @@
                         ToolName="@pendingApproval.ToolName"
                         Kind="@pendingApproval.Kind"
                         ArgsPreview="@pendingApproval.ArgsPreview"
-                        OnDecide="d => DecideApprovalAsync(pendingApproval.CallId, d.Decision, d.Remember, d.Message)" />
+                        OnDecide="d => DecideApprovalAsync(pendingApproval.CallId, d.Decision, d.Remember, d.Message, d.RememberPersist)" />
                 </div>
             }
             else if (_pendingQuestion is { } pendingQuestion)
@@ -2321,7 +2321,8 @@
     /// prompt — a tool_result chega depois pelo stream.
     /// </summary>
     private async Task DecideApprovalAsync(
-        string callId, string decision, bool remember, string? message = null)
+        string callId, string decision, bool remember, string? message = null,
+        bool rememberPersist = false)
     {
         _pendingApproval = null;
         if (_loadedChatId is null || _activeRunId is null)
@@ -2329,7 +2330,8 @@
             return;
         }
         await ChatStream.DecideApprovalAsync(
-            _loadedChatId, _activeRunId, callId, decision, remember, message);
+            _loadedChatId, _activeRunId, callId, decision, remember, message,
+            rememberPersist);
         _ = Attention.RefreshAsync();
     }
 

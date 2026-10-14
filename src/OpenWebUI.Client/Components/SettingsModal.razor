@@ -23,6 +23,7 @@
                     <button class="modal-tab @(_tab == "notifications" ? "active" : "")" role="tab" aria-selected="@(_tab == "notifications")" @onclick='() => SelectTab("notifications")'>@L["settings.notifications"]</button>
                     <button class="modal-tab @(_tab == "github" ? "active" : "")" role="tab" aria-selected="@(_tab == "github")" @onclick='() => SelectTab("github")'>@L["settings.github"]</button>
                     <button class="modal-tab @(_tab == "models" ? "active" : "")" role="tab" aria-selected="@(_tab == "models")" @onclick='() => SelectTab("models")'>@L["settings.models"]</button>
+                    <button class="modal-tab @(_tab == "tools" ? "active" : "")" role="tab" aria-selected="@(_tab == "tools")" @onclick='() => SelectTab("tools")'>@L["settings.tools"]</button>
                     @if (Auth.CurrentUser?.Role == "admin")
                     {
                         <button class="modal-tab @(_tab == "connections" ? "active" : "")" role="tab" aria-selected="@(_tab == "connections")" @onclick='() => _tab = "connections"'>@L["settings.connections"]</button>
@@ -396,6 +397,40 @@
                         }
                     }
                 }
+                else if (_tab == "tools")
+                {
+                    <div class="field-label">@L["settings.tool_approvals_title"]</div>
+                    <div class="field-note">@L["settings.tool_approvals_hint"]</div>
+                    @if (_toolApprovals is null)
+                    {
+                        <div>@L["common.loading"]</div>
+                    }
+                    else
+                    {
+                        @if (_toolsMessage is not null)
+                        {
+                            <div class="field-note">@_toolsMessage</div>
+                        }
+                        @foreach (var tool in _toolApprovals)
+                        {
+                            <div class="flex items-center justify-between gap-2 min-h-11">
+                                <div class="min-w-0">
+                                    <div class="text-sm truncate font-mono">@tool.Name</div>
+                                    <div class="text-xs text-gray-400">@L[$"settings.tier_{tool.Tier}"]</div>
+                                </div>
+                                <select class="input flex-none" style="max-width: 9rem"
+                                        aria-label="@tool.Name" disabled="@_toolsSaving"
+                                        value="@(tool.Override ?? "")"
+                                        @onchange="e => SetToolOverrideAsync(tool.Name, e.Value?.ToString())">
+                                    <option value="">@L["settings.tool_override_default"]</option>
+                                    <option value="allow">@L["settings.tool_override_allow"]</option>
+                                    <option value="prompt">@L["settings.tool_override_prompt"]</option>
+                                    <option value="deny">@L["settings.tool_override_deny"]</option>
+                                </select>
+                            </div>
+                        }
+                    }
+                }
                 else if (_tab == "admin")
                 {
                     @if (!_adminLoaded)
@@ -604,6 +639,10 @@
         {
             await LoadModelCatalogAsync();
         }
+        if (tab == "tools")
+        {
+            await LoadToolApprovalsAsync();
+        }
         if (tab == "notifications")
         {
             _notifyChatDone = await ChatNotify.GetPrefAsync(
@@ -695,6 +734,52 @@
     private string _modelSearch = string.Empty;
     private string? _modelsMessage;
     private bool _modelsSaving;
+
+    // ── Tools tab (overrides de aprovação por tool,
+    //    SPEC-20261013-approval-tiers) ──
+    private List<ToolApprovalEntry>? _toolApprovals;
+    private string? _toolsMessage;
+    private bool _toolsSaving;
+
+    /// <summary>Carrega o catálogo de tools + overrides do usuário.</summary>
+    private async Task LoadToolApprovalsAsync()
+    {
+        _toolsMessage = null;
+        try
+        {
+            _toolApprovals =
+                (await Api.GetToolApprovalsAsync())?.Tools ?? [];
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _toolApprovals = [];
+            _toolsMessage = L["settings.tools_load_error"];
+        }
+    }
+
+    /// <summary>Grava (ou remove, com "") o override de uma tool.</summary>
+    private async Task SetToolOverrideAsync(string tool, string? action)
+    {
+        _toolsSaving = true;
+        try
+        {
+            var result = await Api.UpdateToolApprovalsAsync(
+                new Dictionary<string, string?> { [tool] = action });
+            if (result is not null)
+            {
+                _toolApprovals = result.Tools;
+                _toolsMessage = null;
+            }
+            else
+            {
+                _toolsMessage = L["settings.tools_save_error"];
+            }
+        }
+        finally
+        {
+            _toolsSaving = false;
+        }
+    }
 
     /// <summary>Modelo habilitado quando a chave provider:id não está no
     /// conjunto de desabilitados (default = habilitado).</summary>

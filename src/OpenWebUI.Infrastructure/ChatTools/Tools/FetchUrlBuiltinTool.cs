@@ -38,7 +38,7 @@ public sealed partial class FetchUrlBuiltinTool(IHttpClientFactory httpFactory) 
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

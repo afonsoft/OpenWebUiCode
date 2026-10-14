@@ -36,7 +36,7 @@ public sealed class JobListBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -97,7 +97,7 @@ public sealed class JobOutputBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -158,7 +158,7 @@ public sealed class JobKillBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Exec;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

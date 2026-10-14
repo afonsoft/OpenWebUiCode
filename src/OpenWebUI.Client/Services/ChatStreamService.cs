@@ -287,13 +287,14 @@ public class ChatStreamService(HttpClient http, AuthService auth)
     public async Task<bool> DecideApprovalAsync(
         string chatId, string runId, string callId,
         string decision, bool remember = false, string? message = null,
-        CancellationToken ct = default)
+        bool rememberPersist = false, CancellationToken ct = default)
     {
         using var httpRequest = auth.CreateRequest(
             HttpMethod.Post,
             $"/api/v1/chats/{chatId}/runs/{runId}/approvals/{callId}");
         httpRequest.Content = JsonContent.Create(
-            new RunApprovalDecisionRequest(decision, remember, message));
+            new RunApprovalDecisionRequest(
+                decision, remember, message, rememberPersist));
         using var response = await http.SendAsync(httpRequest, ct);
         return response.IsSuccessStatusCode;
     }
