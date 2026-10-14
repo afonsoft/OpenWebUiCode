@@ -135,6 +135,7 @@ builder.Services.AddScoped<IBuiltinChatTool, WorktreeMergeBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemorySaveBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemorySearchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemoryLearnBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, AgentCatalogBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RoutineBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReminderBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, BrowserScreenshotBuiltinTool>();
@@ -162,6 +163,7 @@ builder.Services.AddSingleton<WorktreeService>();
 builder.Services.AddScoped<FormatHookService>();
 builder.Services.AddSingleton<CheckpointService>();
 builder.Services.AddSingleton<SkillDiscoveryService>();
+builder.Services.AddScoped<AgentDefinitionService>();
 builder.Services.AddScoped<GitHubService>();
 builder.Services.AddHttpClient(GitHubService.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(30));
@@ -500,6 +502,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapCheckpointEndpoints();
     app.MapWorkspaceTestRunEndpoints();
     app.MapRepoSkillEndpoints();
+    app.MapAgentEndpoints();
     app.MapIdeEndpoints();
     app.MapPreviewEndpoints();
     app.MapLspEndpoints();
