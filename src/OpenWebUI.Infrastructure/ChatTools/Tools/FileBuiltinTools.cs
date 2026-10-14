@@ -163,6 +163,35 @@ public sealed class FileReadBuiltinTool(HistoryResourceService history) : IBuilt
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
         var path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
+        if (HistoryResourceService.IsHistoryUri(path))
+        {
+            var (transcript, histError) = await history.ResolveAsync(
+                path!, context.UserId, context.ChatId, ct);
+            if (transcript is null)
+            {
+                return new BuiltinToolResult(histError ?? "histórico vazio.");
+            }
+
+            var histLines = transcript.Split('\n');
+            var hOffset = args.TryGetProperty("offset", out var ho)
+                && ho.TryGetInt32(out var hoff)
+                ? Math.Max(1, hoff) : 1;
+            var hLimit = args.TryGetProperty("limit", out var hl)
+                && hl.TryGetInt32(out var hlim)
+                ? Math.Clamp(hlim, 1, 2000) : 400;
+            var hsb = new StringBuilder($"{path} ({histLines.Length} linhas)\n");
+            for (var i = hOffset - 1; i < histLines.Length && i < hOffset - 1 + hLimit; i++)
+            {
+                hsb.Append($"{i + 1,6}: {histLines[i]}\n");
+            }
+            if (hOffset - 1 + hLimit < histLines.Length)
+            {
+                hsb.Append($"[truncado — restam {histLines.Length - (hOffset - 1 + hLimit)} linhas; "
+                    + "use offset para continuar]");
+            }
+            return new BuiltinToolResult(hsb.ToString().TrimEnd());
+        }
+
         var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
         if (full is null)
         {

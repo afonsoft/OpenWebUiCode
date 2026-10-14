@@ -180,6 +180,37 @@
                     </div>
                     <button class="auth-submit" disabled="@string.IsNullOrWhiteSpace(_newMemory)"
                             @onclick="AddMemoryAsync">@L["settings.add"]</button>
+
+                    <div class="field">
+                        <div class="field-label">@L["settings.memory_sync_label"]</div>
+                        <label class="check">
+                            <input type="checkbox" checked="@(_memSync?.Enabled == true)"
+                                   disabled="@(_memSync?.AdminDisabled == true)"
+                                   @onchange="OnMemSyncEnabledChanged" id="fld-memsync" />
+                            @L["settings.memory_sync_enabled"]
+                        </label>
+                        @if (_memSync?.AdminDisabled == true)
+                        {
+                            <div class="field-note">@L["settings.memory_sync_admin_locked"]</div>
+                        }
+                        @if (_memSync is not null)
+                        {
+                            <div class="flex gap-2 mb-2">
+                                <div class="field flex-1">
+                                    <label for="fld-memsync-int">@L["settings.memory_sync_interval"]</label>
+                                    <input class="input" type="number" min="1" max="168"
+                                           @bind="_memSyncInterval" id="fld-memsync-int" />
+                                </div>
+                                <div class="field flex-1">
+                                    <label for="fld-memsync-age">@L["settings.memory_sync_max_age"]</label>
+                                    <input class="input" type="number" min="1" max="365"
+                                           @bind="_memSyncMaxAge" id="fld-memsync-age" />
+                                </div>
+                            </div>
+                            <button class="auth-submit" @onclick="SaveMemSyncAsync">@L["common.save"]</button>
+                            <div class="field-note">@L["settings.memory_sync_hint"]</div>
+                        }
+                    </div>
                 }
                 else if (_tab == "notifications")
                 {
@@ -1320,6 +1351,10 @@
 
     private List<MemoryResponse> _memories = [];
     private string _newMemory = string.Empty;
+    // Auto-sync de memória do agente (SPEC-20261014-memory-pipeline).
+    private MemorySyncResponse? _memSync;
+    private int _memSyncInterval = 6;
+    private int _memSyncMaxAge = 30;
 
     private bool _adminLoaded;
     private string _adminWebUiName = "Open WebUI";
@@ -1431,13 +1466,21 @@
             var apiKeyTask = Api.GetApiKeyAsync();
             var memoriesTask = Api.GetMemoriesAsync();
             var webhookTask = Api.GetWebhookAsync();
-            await Task.WhenAll(versionTask, apiKeyTask, memoriesTask, webhookTask);
+            var memSyncTask = Api.GetMemorySyncAsync();
+            await Task.WhenAll(
+                versionTask, apiKeyTask, memoriesTask, webhookTask, memSyncTask);
 
             _version = versionTask.Result?.Version;
             _name = Auth.CurrentUser?.Name ?? string.Empty;
             _profileImage = Auth.CurrentUser?.ProfileImageUrl ?? string.Empty;
             _apiKeyInfo = apiKeyTask.Result;
             _memories = memoriesTask.Result;
+            _memSync = memSyncTask.Result;
+            if (_memSync is not null)
+            {
+                _memSyncInterval = _memSync.IntervalHours;
+                _memSyncMaxAge = _memSync.MaxAgeDays;
+            }
 
             _webhook = webhookTask.Result;
             if (_webhook is not null)
@@ -1712,6 +1755,35 @@
         {
             _memories.Add(added);
             _newMemory = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Toggle do auto-sync de memória — persiste só o override de
+    /// <c>enabled</c>, preservando os overrides numéricos já existentes
+    /// (null no PUT removeria o override e o campo voltaria a herdar).
+    /// </summary>
+    private async Task OnMemSyncEnabledChanged(ChangeEventArgs e)
+    {
+        var enabled = e.Value is true;
+        var updated = await Api.SetMemorySyncAsync(new MemorySyncPrefs(
+            enabled, _memSync?.User?.IntervalHours, _memSync?.User?.MaxAgeDays));
+        if (updated is not null)
+        {
+            _memSync = updated;
+        }
+    }
+
+    /// <summary>Salva intervalo/janela do auto-sync (override do usuário).</summary>
+    private async Task SaveMemSyncAsync()
+    {
+        var updated = await Api.SetMemorySyncAsync(
+            new MemorySyncPrefs(null, _memSyncInterval, _memSyncMaxAge));
+        if (updated is not null)
+        {
+            _memSync = updated;
+            _memSyncInterval = updated.IntervalHours;
+            _memSyncMaxAge = updated.MaxAgeDays;
         }
     }
 

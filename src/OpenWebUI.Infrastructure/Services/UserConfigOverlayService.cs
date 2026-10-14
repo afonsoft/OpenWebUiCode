@@ -62,18 +62,34 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
     public async Task<LayeredValue<T>> GetAsync<T>(
         string userId, string key, T? fallback = default, CancellationToken ct = default)
     {
-        var userValue = await config.GetAsync<T?>(UserKey(userId, key), default, ct);
-        if (userValue is not null)
+        // A camada é decidida por PRESENÇA da chave, não pelo valor — para
+        // value types (bool/int) `default(T)` é indistinguível de "ausente"
+        // e `x is not null` é sempre verdade, o que fingiria um override
+        // inexistente (ex.: memsync.enabled ausente lendo como user=false).
+        if (await ExistsAsync(UserKey(userId, key), ct))
         {
-            return new LayeredValue<T>(userValue, ConfigSource.User);
+            return new LayeredValue<T>(
+                await config.GetAsync(UserKey(userId, key), default(T)!, ct),
+                ConfigSource.User);
         }
-        var globalValue = await config.GetAsync<T?>(key, default, ct);
-        if (globalValue is not null)
+        if (await ExistsAsync(key, ct))
         {
-            return new LayeredValue<T>(globalValue, ConfigSource.Global);
+            return new LayeredValue<T>(
+                await config.GetAsync(key, default(T)!, ct),
+                ConfigSource.Global);
         }
         return new LayeredValue<T>(fallback, ConfigSource.Default);
     }
+
+    /// <summary>
+    /// Presença da chave kv (sem cache — probes são baratos e raros).
+    /// Payload <c>null</c> conta como ausente: <c>SetAsync(key, null)</c>
+    /// persiste <c>"null"</c> na linha e o contrato do overlay é "null remove
+    /// o override".
+    /// </summary>
+    private Task<bool> ExistsAsync(string key, CancellationToken ct) =>
+        db.ConfigEntries.AsNoTracking()
+            .AnyAsync(e => e.Key == key && e.ValueJson != "null", ct);
 
     /// <summary>Grava o override do usuário (null remove → volta a herdar).</summary>
     public Task SetUserAsync<T>(string userId, string key, T? value, CancellationToken ct) =>

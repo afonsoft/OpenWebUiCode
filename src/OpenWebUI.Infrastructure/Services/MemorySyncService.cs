@@ -18,6 +18,7 @@ namespace OpenWebUI.Infrastructure.Services;
 /// </summary>
 public class MemorySyncService(
     AppDbContext db, ConfigService config, ProviderService providers,
+    UserConfigOverlayService overlay, ModelRoleResolver roles,
     ILogger<MemorySyncService> logger)
 {
     /// <summary>Chats processados por usuário a cada sync.</summary>
@@ -37,6 +38,12 @@ public class MemorySyncService(
 
     /// <summary>Cap de caracteres do título derivado do chat.</summary>
     private const int MaxTitleChars = 45;
+
+    /// <summary>Intervalo default entre syncs por usuário (horas).</summary>
+    public const int DefaultIntervalHours = 6;
+
+    /// <summary>Janela default de chats elegíveis (dias).</summary>
+    public const int DefaultMaxAgeDays = 30;
 
     /// <summary>Executa um ciclo de sync para todos os usuários com chats.</summary>
     public async Task RunOnceAsync(CancellationToken ct)
@@ -61,26 +68,61 @@ public class MemorySyncService(
 
     private async Task SyncUserAsync(string userId, CancellationToken ct)
     {
-        var enabled = await config.GetAsync($"u:{userId}:memsync.enabled", true, ct);
-        if (!enabled)
+        // SPEC-20261014-memory-pipeline RF-004: config em camadas — o
+        // global do admin `memsync.enabled=false` é negativa absoluta
+        // (custo de provider); senão o usuário decide (default on, opt-out).
+        if (await config.GetAsync<bool?>("memsync.enabled", null, ct) == false)
         {
+            logger.LogDebug("memsync: global admin desligou — skip {UserId}", userId);
+            return;
+        }
+        var enabled = await overlay.GetAsync(
+            userId, "memsync.enabled", true, ct);
+        logger.LogDebug(
+            "memsync: {UserId} enabled={V} src={S}",
+            userId, enabled.Value, enabled.Source);
+        if (!enabled.Value)
+        {
+            logger.LogDebug("memsync: usuário {UserId} optou por desligar", userId);
             return;
         }
 
+        var intervalHours = Math.Clamp(
+            (await overlay.GetAsync(userId, "memsync.intervalHours",
+                DefaultIntervalHours, ct)).Value, 1, 168);
+        var maxAgeDays = Math.Clamp(
+            (await overlay.GetAsync(userId, "memsync.maxAgeDays",
+                DefaultMaxAgeDays, ct)).Value, 1, 365);
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var last = await config.GetAsync($"u:{userId}:memsync.last", 0L, ct);
+        if (last > 0 && now - last < intervalHours * 3600L)
+        {
+            logger.LogDebug(
+                "memsync: {UserId} dentro do intervalo ({H}h) — skip",
+                userId, intervalHours);
+            return;
+        }
+        var cutoff = now - maxAgeDays * 86400L;
         var chats = await db.Chats
             .Include(c => c.Messages)
-            .Where(c => c.UserId == userId && c.UpdatedAt > last)
+            .Where(c => c.UserId == userId
+                && c.UpdatedAt > last
+                && c.UpdatedAt >= cutoff)
             .OrderByDescending(c => c.UpdatedAt)
             .Take(MaxChatsPerUser)
             .ToListAsync(ct);
+        logger.LogDebug("memsync: {UserId} com {Count} chats elegíveis", userId, chats.Count);
 
         var complete = true;
         foreach (var chat in chats)
         {
-            var model = FirstModel(chat.ModelsJson);
+            // RF-001/AC: papel `memory` (SPEC-20261013-model-roles) primeiro;
+            // sem papel configurado cai no primeiro modelo do chat.
+            var model = await roles.ResolveAsync(
+                "memory", userId, FirstModel(chat.ModelsJson) ?? string.Empty, ct);
             var transcript = BuildTranscript(chat);
-            if (model is null || transcript is null)
+            if (string.IsNullOrWhiteSpace(model) || transcript is null)
             {
                 continue;
             }
@@ -111,8 +153,7 @@ public class MemorySyncService(
 
         if (complete)
         {
-            await config.SetAsync($"u:{userId}:memsync.last",
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(), ct);
+            await config.SetAsync($"u:{userId}:memsync.last", now, ct);
         }
 
         // Poda: só as MaxAutoMemories mais recentes sobrevivem.
@@ -218,12 +259,16 @@ public class MemorySyncService(
     }
 }
 
-/// <summary>BackgroundService que roda o auto-sync de memória a cada 6h.</summary>
+/// <summary>
+/// BackgroundService que acorda a cada hora; a cadência efetiva por usuário
+/// é o kv em camadas <c>memsync.intervalHours</c> (SPEC-20261014
+/// memory-pipeline RF-004 — default 6h, range 1–168).
+/// </summary>
 public class MemorySyncScheduler(
     IServiceScopeFactory scopeFactory, ILogger<MemorySyncScheduler> logger)
     : BackgroundService
 {
-    private static readonly TimeSpan Tick = TimeSpan.FromHours(6);
+    private static readonly TimeSpan Tick = TimeSpan.FromHours(1);
     private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(10);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

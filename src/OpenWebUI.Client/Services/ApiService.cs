@@ -352,6 +352,18 @@ public class ApiService(HttpClient http, AuthService auth)
         await SendStatusAsync(HttpMethod.Delete,
             $"/api/v1/configs/user/provider-keys/{provider}");
 
+    /// <summary>Auto-sync de memória: valores efetivos do usuário + camada global.</summary>
+    public Task<MemorySyncResponse?> GetMemorySyncAsync() =>
+        SendAsync<MemorySyncResponse>(HttpMethod.Get, "/api/v1/configs/user/memory-sync");
+
+    /// <summary>Override do usuário do auto-sync (null num campo = herda do global).</summary>
+    public Task<MemorySyncResponse?> SetMemorySyncAsync(MemorySyncPrefs prefs) =>
+        SendAsync<MemorySyncResponse>(HttpMethod.Put, "/api/v1/configs/user/memory-sync", prefs);
+
+    /// <summary>Camada global do auto-sync de memória (admin).</summary>
+    public async Task<bool> SetGlobalMemorySyncAsync(MemorySyncPrefs prefs) =>
+        await SendStatusAsync(HttpMethod.Put, "/api/v1/configs/memory-sync", prefs);
+
     /// <summary>Catálogo efetivo de MCP do usuário (globais + próprios, com provenance).</summary>
     public async Task<List<UserMcpServerEntry>> GetUserMcpServersAsync() =>
         await SendAsync<List<UserMcpServerEntry>>(

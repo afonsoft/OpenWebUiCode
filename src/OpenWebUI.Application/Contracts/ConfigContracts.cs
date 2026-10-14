@@ -230,6 +230,26 @@ public sealed record UserProviderKeysResponse(bool Enabled, IReadOnlyList<string
 /// <param name="Key">Chave de API (obrigatória; nunca volta em GET).</param>
 public sealed record UserProviderKeyRequest(string? Key);
 
+/// <summary>
+/// Preferências de auto-sync de memória (SPEC-20261014-memory-pipeline
+/// RF-004). Null em PUT remove o override da camada (volta a herdar).
+/// </summary>
+/// <param name="Enabled">Liga/desliga consolidação e injeção do usuário.</param>
+/// <param name="IntervalHours">Cadência entre syncs (1–168h).</param>
+/// <param name="MaxAgeDays">Janela de chats elegíveis (1–365d).</param>
+public sealed record MemorySyncPrefs(bool? Enabled, int? IntervalHours, int? MaxAgeDays);
+
+/// <summary>GET /configs/user/memory-sync — valores efetivos + camadas cruas.</summary>
+/// <param name="Enabled">Efetivo (já dobra a negativa absoluta do admin).</param>
+/// <param name="IntervalHours">Cadência efetiva em horas.</param>
+/// <param name="MaxAgeDays">Janela efetiva em dias.</param>
+/// <param name="AdminDisabled">Admin desligou globalmente — override do usuário não reabilita.</param>
+/// <param name="Global">Valores crus da camada global (null = sem override admin).</param>
+/// <param name="User">Valores crus do override do usuário (null = herda).</param>
+public sealed record MemorySyncResponse(
+    bool Enabled, int IntervalHours, int MaxAgeDays,
+    bool AdminDisabled, MemorySyncPrefs Global, MemorySyncPrefs User);
+
 /// <summary>Configuração de cadastro.</summary>
 /// <param name="EnableSignup">Cadastro aberto.</param>
 /// <param name="DefaultUserRole">Papel de novos usuários (pending/user/admin).</param>

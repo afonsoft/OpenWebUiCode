@@ -59,6 +59,12 @@ public static class ConfigEndpoints
         group.MapGet("/user/provider-keys", GetUserProviderKeysAsync);
         group.MapPut("/user/provider-keys/{provider}", SetUserProviderKeyAsync);
         group.MapDelete("/user/provider-keys/{provider}", ClearUserProviderKeyAsync);
+        // Auto-sync de memória (SPEC-20261014-memory-pipeline RF-004):
+        // usuário ajusta seus overrides; admin fixa a camada global
+        // (`memsync.enabled=false` global é negativa absoluta de custo).
+        group.MapGet("/user/memory-sync", GetUserMemorySyncAsync);
+        group.MapPut("/user/memory-sync", UpdateUserMemorySyncAsync);
+        group.MapPut("/memory-sync", UpdateGlobalMemorySyncAsync);
 
         group.MapGet("/ratelimit", GetRateLimitAsync);
         group.MapPost("/ratelimit", UpdateRateLimitAsync);
@@ -535,6 +541,106 @@ public static class ConfigEndpoints
         }
         return Results.Ok(new StatusResponse(true));
     }
+
+    // ---------------- Auto-sync de memória (SPEC-20261014-memory-pipeline) ----------------
+
+    /// <summary>GET /api/v1/configs/user/memory-sync — efetivo + camada global.</summary>
+    private static async Task<IResult> GetUserMemorySyncAsync(
+        HttpContext http, AppDbContext db, UserConfigOverlayService overlay,
+        ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        return Results.Ok(await BuildMemorySyncResponseAsync(user.Id, overlay, config, ct));
+    }
+
+    /// <summary>PUT /api/v1/configs/user/memory-sync — override do usuário (null = herda).</summary>
+    private static async Task<IResult> UpdateUserMemorySyncAsync(
+        MemorySyncPrefs request, HttpContext http, AppDbContext db,
+        UserConfigOverlayService overlay, ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (request.IntervalHours is < 1 or > 168
+            || request.MaxAgeDays is < 1 or > 365)
+        {
+            return Results.BadRequest(new
+            {
+                detail = "intervalHours ∈ [1,168] e maxAgeDays ∈ [1,365].",
+            });
+        }
+
+        await overlay.SetUserAsync(user.Id, "memsync.enabled", request.Enabled, ct);
+        await overlay.SetUserAsync(
+            user.Id, "memsync.intervalHours", request.IntervalHours, ct);
+        await overlay.SetUserAsync(
+            user.Id, "memsync.maxAgeDays", request.MaxAgeDays, ct);
+        return Results.Ok(await BuildMemorySyncResponseAsync(user.Id, overlay, config, ct));
+    }
+
+    /// <summary>PUT /api/v1/configs/memory-sync — camada global do admin.</summary>
+    private static async Task<IResult> UpdateGlobalMemorySyncAsync(
+        MemorySyncPrefs request, HttpContext http, ConfigService config,
+        CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        if (request.IntervalHours is < 1 or > 168
+            || request.MaxAgeDays is < 1 or > 365)
+        {
+            return Results.BadRequest(new
+            {
+                detail = "intervalHours ∈ [1,168] e maxAgeDays ∈ [1,365].",
+            });
+        }
+        await config.SetAsync("memsync.enabled", request.Enabled, ct);
+        await config.SetAsync("memsync.intervalHours", request.IntervalHours, ct);
+        await config.SetAsync("memsync.maxAgeDays", request.MaxAgeDays, ct);
+        return Results.Ok(await ReadGlobalMemorySyncAsync(config, ct));
+    }
+
+    /// <summary>Monta o efetivo do usuário dobrando a negativa global do admin.</summary>
+    private static async Task<MemorySyncResponse> BuildMemorySyncResponseAsync(
+        string userId, UserConfigOverlayService overlay,
+        ConfigService config, CancellationToken ct)
+    {
+        var global = await ReadGlobalMemorySyncAsync(config, ct);
+        var adminDisabled = global.Enabled == false;
+        var enabled = adminDisabled
+            || (await overlay.GetAsync(userId, "memsync.enabled", true, ct)).Value;
+        // enabled efetivo: admin-deny é absoluto — quando desligado, false.
+        var effEnabled = adminDisabled ? false : enabled;
+        var interval = Math.Clamp(
+            (await overlay.GetAsync(
+                userId, "memsync.intervalHours",
+                MemorySyncService.DefaultIntervalHours, ct)).Value, 1, 168);
+        var maxAge = Math.Clamp(
+            (await overlay.GetAsync(
+                userId, "memsync.maxAgeDays",
+                MemorySyncService.DefaultMaxAgeDays, ct)).Value, 1, 365);
+        var userLayer = new MemorySyncPrefs(
+            await config.GetAsync<bool?>($"u:{userId}:memsync.enabled", null, ct),
+            await config.GetAsync<int?>($"u:{userId}:memsync.intervalHours", null, ct),
+            await config.GetAsync<int?>($"u:{userId}:memsync.maxAgeDays", null, ct));
+        return new MemorySyncResponse(
+            effEnabled, interval, maxAge, adminDisabled, global, userLayer);
+    }
+
+    /// <summary>Lê os valores crus da camada global (null = sem override).</summary>
+    private static async Task<MemorySyncPrefs> ReadGlobalMemorySyncAsync(
+        ConfigService config, CancellationToken ct) =>
+        new(
+            await config.GetAsync<bool?>("memsync.enabled", null, ct),
+            await config.GetAsync<int?>("memsync.intervalHours", null, ct),
+            await config.GetAsync<int?>("memsync.maxAgeDays", null, ct));
 
     // ---------------- Rate limiting ----------------
 

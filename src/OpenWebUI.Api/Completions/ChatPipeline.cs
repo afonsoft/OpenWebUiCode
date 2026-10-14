@@ -219,7 +219,21 @@ public static class ChatPipeline
         // 3.5a. Memórias duráveis do agente (SPEC-20261010-agent-memory):
         // globais + as do repo bound deste chat — as 12 mais recentes, cap
         // ~1800 chars, num bloco marcado. O agente grava/edita via
-        // builtin_memory_save; a busca completa é builtin_memory_search.
+        // builtin_memory_save/builtin_memory_learn; a busca completa é
+        // builtin_memory_search.
+        // SPEC-20261014-memory-pipeline RF-004: o mesmo kv em camadas do
+        // auto-sync controla a injeção — off é silenciador (não purge).
+        // Leitura em camadas manual: `u:` ausente (ou override removido —
+        // ValueJson="null" desserializa como null em bool?) herda o global;
+        // global unset assume o default true. `memAdminOff` mantém a
+        // negativa absoluta do admin mesmo com opt-in do usuário.
+        var memAdminOff = await config.GetAsync<bool?>(
+            "memsync.enabled", null, ct) == false;
+        var memEnabled = !memAdminOff
+            && (await config.GetAsync<bool?>(
+                    $"u:{user.Id}:memsync.enabled", null, ct)
+                ?? await config.GetAsync("memsync.enabled", true, ct));
+        if (memEnabled)
         {
             var memories = await db.AgentMemories.AsNoTracking()
                 .Where(m => m.UserId == user.Id
@@ -234,8 +248,12 @@ public static class ChatPipeline
                 var lines = memories.Select(m =>
                     $"- [{m.Scope}{(m.RepoSlug is not null ? $" {m.RepoSlug}" : "")}] "
                     + $"{m.Title}: {m.Content}");
-                var block = "<agent_memory>\n" + string.Join("\n", lines)
-                    + "\n</agent_memory>";
+                // SPEC-20261014-memory-pipeline RF-002: ressalva
+                // não-autoritativa — memória é heurística e pode estar
+                // desatualizada; o modelo deve validar antes de confiar.
+                var block = "<agent_memory>\n(memórias derivadas de sessões "
+                    + "anteriores — heurísticas, podem estar desatualizadas)\n"
+                    + string.Join("\n", lines) + "\n</agent_memory>";
                 systemParts.Add(block.Length <= 1800
                     ? block
                     : block[..1800] + "\n…\n</agent_memory>");

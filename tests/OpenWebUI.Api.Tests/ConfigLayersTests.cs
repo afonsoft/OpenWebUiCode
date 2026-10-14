@@ -485,6 +485,70 @@ public class ConfigLayersE2ETests
         Assert.That(notAdmin.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
     }
 
+    [Test]
+    public async Task MemorySync_OverrideEAdminDeny()
+    {
+        var user = await SignUpAsync("B3", "b3@cfg.local");
+
+        // Default: ligado, 6h/30d, sem negativa do admin.
+        UseToken(user.Token);
+        var initial = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/user/memory-sync");
+        Assert.Multiple(() =>
+        {
+            Assert.That(initial!.GetProperty("enabled").GetBoolean(), Is.True);
+            Assert.That(initial.GetProperty("intervalHours").GetInt32(), Is.EqualTo(6));
+            Assert.That(initial.GetProperty("maxAgeDays").GetInt32(), Is.EqualTo(30));
+            Assert.That(initial.GetProperty("adminDisabled").GetBoolean(), Is.False);
+        });
+
+        // Override do usuário persiste.
+        var put = await _client.PutAsJsonAsync("/api/v1/configs/user/memory-sync",
+            new { enabled = false, intervalHours = 12 });
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var after = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/user/memory-sync");
+        Assert.Multiple(() =>
+        {
+            Assert.That(after!.GetProperty("enabled").GetBoolean(), Is.False);
+            Assert.That(after.GetProperty("intervalHours").GetInt32(), Is.EqualTo(12));
+        });
+
+        // Faixa inválida rejeitada.
+        var bad = await _client.PutAsJsonAsync("/api/v1/configs/user/memory-sync",
+            new { intervalHours = 0 });
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // Admin desliga globalmente — negativa absoluta: nem reopt-in vale.
+        UseToken(_adminToken);
+        var adminOff = await _client.PutAsJsonAsync("/api/v1/configs/memory-sync",
+            new { enabled = false });
+        Assert.That(adminOff.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        UseToken(user.Token);
+        var locked = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/user/memory-sync");
+        Assert.Multiple(() =>
+        {
+            Assert.That(locked!.GetProperty("enabled").GetBoolean(), Is.False);
+            Assert.That(locked.GetProperty("adminDisabled").GetBoolean(), Is.True);
+        });
+        var reoptin = await _client.PutAsJsonAsync("/api/v1/configs/user/memory-sync",
+            new { enabled = true });
+        Assert.That(reoptin.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var locked2 = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/user/memory-sync");
+        Assert.That(locked2!.GetProperty("enabled").GetBoolean(), Is.False);
+
+        // Usuário não escreve a camada global; admin limpa a negativa.
+        var notAdmin = await _client.PutAsJsonAsync("/api/v1/configs/memory-sync",
+            new { enabled = true });
+        Assert.That(notAdmin.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+        UseToken(_adminToken);
+        await _client.PutAsJsonAsync("/api/v1/configs/memory-sync",
+            new { enabled = (bool?)null });
+    }
+
     /// <summary>Envelope flexível para serialização camelCase arbitrária.</summary>
     private sealed class JsonElementDict : Dictionary<string, System.Text.Json.JsonElement>
     {
