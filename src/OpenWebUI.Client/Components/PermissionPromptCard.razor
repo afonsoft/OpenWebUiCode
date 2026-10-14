@@ -57,10 +57,14 @@
             <input type="checkbox" @bind="_remember" />
             @L["chat.tool_approval_remember"]
         </label>
+        <label class="mt-1 flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+            <input type="checkbox" @bind="_rememberPersist" />
+            @L["chat.tool_approval_remember_persist"]
+        </label>
 
         <div class="mt-2 flex gap-2">
             <button class="rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-3 py-1 text-xs font-medium transition hover:opacity-85 cursor-pointer"
-                    @onclick='() => OnDecide.InvokeAsync(("approve", _remember, null))'>
+                    @onclick='() => OnDecide.InvokeAsync(("approve", _remember || _rememberPersist, null, _rememberPersist))'>
                 @L["chat.tool_approve"]
             </button>
             <button class="rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 px-3 py-1 text-xs font-medium transition hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer"
@@ -81,10 +85,15 @@
     /// <summary>Preview dos argumentos (truncado, scrubbed).</summary>
     [Parameter] public string? ArgsPreview { get; set; }
 
-    /// <summary>Callback com (decision, remember, message).</summary>
-    [Parameter] public EventCallback<(string Decision, bool Remember, string? Message)> OnDecide { get; set; }
+    /// <summary>
+    /// Callback com (decision, remember, message, rememberPersist) —
+    /// <c>rememberPersist</c> pede override <c>allow</c> persistente da
+    /// tool (SPEC-20261013-approval-tiers RF-004).
+    /// </summary>
+    [Parameter] public EventCallback<(string Decision, bool Remember, string? Message, bool RememberPersist)> OnDecide { get; set; }
 
     private bool _remember;
+    private bool _rememberPersist;
     private bool _rejecting;
     private string? _denyMessage;
 
@@ -114,5 +123,6 @@
 
     private Task ConfirmDenyAsync() =>
         OnDecide.InvokeAsync(("deny", _remember,
-            string.IsNullOrWhiteSpace(_denyMessage) ? null : _denyMessage.Trim()));
+            string.IsNullOrWhiteSpace(_denyMessage) ? null : _denyMessage.Trim(),
+            false));
 }

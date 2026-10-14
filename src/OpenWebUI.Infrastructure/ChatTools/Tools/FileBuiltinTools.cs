@@ -31,7 +31,7 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(
@@ -153,7 +153,7 @@ public sealed class FileReadBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -246,7 +246,7 @@ public sealed class FileGrepBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -375,7 +375,7 @@ public sealed class FileGlobBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(
@@ -451,7 +451,7 @@ public sealed class FileWriteBuiltinTool(
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Write;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -560,7 +560,7 @@ public sealed class FileEditBuiltinTool(
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Write;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

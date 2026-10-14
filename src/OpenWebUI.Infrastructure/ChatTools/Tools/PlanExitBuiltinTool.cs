@@ -45,7 +45,7 @@ public sealed class PlanExitBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Exec;
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(

@@ -190,8 +190,14 @@ public sealed record ChatJobResponse(
 /// Instrução opcional numa negação (SPEC-20261007-chat-agent-ux RF-002):
 /// vai como resultado da tool para o modelo corrigir a rota.
 /// </param>
+/// <param name="RememberPersist">
+/// Quando true numa aprovação, grava override persistente
+/// <c>allow</c> da tool para o usuário (SPEC-20261013-approval-tiers),
+/// além do remember da sessão.
+/// </param>
 public sealed record RunApprovalDecisionRequest(
-    string Decision, bool Remember = false, string? Message = null);
+    string Decision, bool Remember = false, string? Message = null,
+    bool RememberPersist = false);
 
 /// <summary>
 /// Decisão do gate de tools (SPEC-20261007-chat-agent-ux): aprovado, ou

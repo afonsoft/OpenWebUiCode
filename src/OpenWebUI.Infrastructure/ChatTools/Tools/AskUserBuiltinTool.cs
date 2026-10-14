@@ -43,7 +43,7 @@ public sealed class AskUserBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(

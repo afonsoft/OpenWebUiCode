@@ -511,6 +511,21 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<bool> UpdateUserSettingsAsync(object settings) =>
         await SendStatusAsync(HttpMethod.Post, "/api/v1/users/user/settings/update", settings);
 
+    /// <summary>
+    /// Catálogo de aprovações por tool: tier declarado + override vigente
+    /// do usuário (SPEC-20261013-approval-tiers).
+    /// </summary>
+    public async Task<ToolApprovalsResponse?> GetToolApprovalsAsync() =>
+        await SendAsync<ToolApprovalsResponse>(
+            HttpMethod.Get, "/api/v1/users/user/tool-approvals");
+
+    /// <summary>Mescla overrides de aprovação por tool (null/"" remove).</summary>
+    public async Task<ToolApprovalsResponse?> UpdateToolApprovalsAsync(
+        Dictionary<string, string?> overrides) =>
+        await SendAsync<ToolApprovalsResponse>(
+            HttpMethod.Put, "/api/v1/users/user/tool-approvals",
+            new UpdateToolApprovalsRequest(overrides));
+
     /// <summary>Chave pública VAPID para pushManager.subscribe (null quando push desligado).</summary>
     public async Task<string?> GetVapidPublicKeyAsync()
     {

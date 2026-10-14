@@ -79,7 +79,7 @@ public sealed class RoutineBuiltinTool(AppDbContext db, AutomationService automa
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -439,7 +439,7 @@ public sealed class ReminderBuiltinTool(AppDbContext db) : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

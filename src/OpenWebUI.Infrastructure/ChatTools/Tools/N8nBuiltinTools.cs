@@ -21,7 +21,7 @@ public sealed class N8nListWorkflowsBuiltinTool(N8nService n8n) : IBuiltinChatTo
     public string ParametersJson => """{"type":"object","properties":{}}""";
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -91,7 +91,7 @@ public sealed class N8nTriggerBuiltinTool(N8nService n8n) : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Exec;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

@@ -59,7 +59,7 @@ public sealed class MemorySaveBuiltinTool(AppDbContext db, WorkspaceRepoService 
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -173,7 +173,7 @@ public sealed class MemorySearchBuiltinTool(AppDbContext db, WorkspaceRepoServic
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

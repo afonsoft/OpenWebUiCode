@@ -32,7 +32,7 @@ public sealed class SkillBuiltinTool(SkillDiscoveryService skills) : IBuiltinCha
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(

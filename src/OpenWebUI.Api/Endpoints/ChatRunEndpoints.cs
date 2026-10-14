@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Runs;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
@@ -517,6 +518,7 @@ public static class ChatRunEndpoints
         HttpContext http,
         AppDbContext db,
         ChatRunApprovals approvals,
+        ToolApprovalOverrideService toolOverrides,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -550,6 +552,19 @@ public static class ChatRunEndpoints
         }
 
         var approved = request.Decision == "approve";
+        // "Sempre para esta tool" (SPEC-20261013-approval-tiers RF-004):
+        // grava override persistente allow para o usuário, além do
+        // remember da sessão resolvido abaixo.
+        if (approved && request.RememberPersist)
+        {
+            var pendingTool = await approvals.PendingToolNameAsync(run.Id, callId);
+            if (pendingTool is not null)
+            {
+                await toolOverrides.MergeAsync(user.Id,
+                    new Dictionary<string, string?>
+                    { [PermissionRuleset.BuiltinName(pendingTool)] = "allow" }, ct);
+            }
+        }
         // A mensagem vai mesmo em approve: no ask_user a resposta do dono
         // é justamente decision=approve + message (RF-005); numa aprovação
         // comum, message em approve é ignorada pelo gate.

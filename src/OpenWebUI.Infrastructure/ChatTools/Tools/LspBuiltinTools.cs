@@ -28,7 +28,7 @@ public abstract class LspBuiltinToolBase(LspService lsp, WorkspaceRepoService re
         JsonElement args, BuiltinToolContext context, CancellationToken ct);
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     protected LspService Lsp { get; } = lsp;
 

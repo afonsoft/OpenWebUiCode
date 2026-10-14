@@ -41,7 +41,7 @@ public sealed class ShellExecBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Exec;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

@@ -146,6 +146,7 @@ builder.Services.AddScoped<N8nService>();
 builder.Services.AddHttpClient(N8nService.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(30));
 builder.Services.AddScoped<BuiltinToolRegistry>();
+builder.Services.AddScoped<ToolApprovalOverrideService>();
 builder.Services.AddSingleton<ChatJobService>();
 builder.Services.AddHttpClient(nameof(FetchUrlBuiltinTool));
 

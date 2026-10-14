@@ -29,6 +29,7 @@ public sealed class ChatRunExecutor(
     WorkspaceRepoService repos,
     WorktreeService worktrees,
     BuiltinToolRegistry builtins,
+    ToolApprovalOverrideService toolOverrides,
     ChatRunBroadcaster broadcaster,
     ChatRunApprovals approvals,
     ChatRunPauses pauses,
@@ -583,16 +584,42 @@ public sealed class ChatRunExecutor(
                 + "disponíveis e chame builtin_plan_exit quando terminar.");
         }
 
-        if (tool is null || !ToolExecutor.IsMutable(tool)
-            || approvals.IsRemembered(run.ChatId, call.Name,
-                PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson)))
+        // Overrides persistentes do dono (SPEC-20261013-approval-tiers
+        // RF-002): deny → erro estruturado; allow → executa (o deny do
+        // modo já foi avaliado acima e continua absoluto); prompt →
+        // sempre pergunta, inclusive em always-allow.
+        var userOverrides = await toolOverrides.GetAsync(run.UserId, ct);
+        var forcePrompt = false;
+        if (tool is not null)
+        {
+            switch (ToolApprovalPolicy.OverrideFor(userOverrides, call.Name))
+            {
+                case ToolOverride.Deny:
+                    return new ToolGateDecision(true, Output:
+                        $"Erro: a tool '{call.Name}' está bloqueada pelo dono "
+                        + "(override deny nas aprovações por ferramenta). "
+                        + "Escolha outra tool ou peça para o dono ajustar o override.");
+                case ToolOverride.Allow:
+                    return ToolGateDecision.Allow;
+                case ToolOverride.Prompt:
+                    forcePrompt = true;
+                    break;
+            }
+        }
+
+        if (tool is null || (!forcePrompt
+            && (!ToolExecutor.IsMutable(tool)
+                || approvals.IsRemembered(run.ChatId, call.Name,
+                    PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson)))))
         {
             return ToolGateDecision.Allow;
         }
 
         var preset = gateInfo?.ApprovalPreset ?? "approve-mutations";
-        switch (preset)
+        if (!forcePrompt)
         {
+            switch (preset)
+            {
             case "always-allow":
                 return ToolGateDecision.Allow;
             case "allow-readonly":
@@ -626,6 +653,7 @@ public sealed class ChatRunExecutor(
                 }
 
                 break;
+            }
             }
         }
 

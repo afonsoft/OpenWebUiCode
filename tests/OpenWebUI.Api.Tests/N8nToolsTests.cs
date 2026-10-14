@@ -270,7 +270,7 @@ public class N8nToolsTests
     public async Task Tool_Trigger_ValidacaoEExecucao()
     {
         var tool = new N8nTriggerBuiltinTool(_svc);
-        Assert.That(tool.RequiresApproval, Is.True);
+        Assert.That(tool.Tier, Is.EqualTo(ApprovalTier.Exec));
 
         // Ambos ou nenhum alvo → erro de validação.
         var r = await tool.ExecuteAsync(Args("{}"), Ctx(), default);

@@ -41,7 +41,7 @@ public sealed class ApplyPatchBuiltinTool(FormatHookService? formatHook = null) 
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => true;
+    public ApprovalTier Tier => ApprovalTier.Write;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

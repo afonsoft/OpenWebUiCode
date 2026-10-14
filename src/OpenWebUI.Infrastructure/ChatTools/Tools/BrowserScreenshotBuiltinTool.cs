@@ -46,7 +46,7 @@ public sealed class BrowserScreenshotBuiltinTool(
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

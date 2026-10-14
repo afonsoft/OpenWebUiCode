@@ -566,7 +566,7 @@ public class BuiltinToolsTests
     public async Task CodeInterpreter_PythonExecutaEMarcaMutavel()
     {
         var tool = new CodeInterpreterBuiltinTool();
-        Assert.That(tool.RequiresApproval, Is.True);
+        Assert.That(tool.Tier, Is.EqualTo(ApprovalTier.Exec));
 
         var r = await tool.ExecuteAsync(
             Args("{\"language\":\"python3\",\"code\":\"print(40+2)\"}"), Ctx(), default);
@@ -878,7 +878,7 @@ public class BuiltinToolsTests
             Assert.That(File.ReadAllText(Path.Join(_workspace, "src", "a.txt")),
                 Is.EqualTo("linha1\nlinha2\n"));
             Assert.That(r.Text, Does.Contain("a.txt").And.Contain("+linha1"));
-            Assert.That(tool.RequiresApproval, Is.True);
+            Assert.That(tool.Tier, Is.EqualTo(ApprovalTier.Write));
         });
     }
 

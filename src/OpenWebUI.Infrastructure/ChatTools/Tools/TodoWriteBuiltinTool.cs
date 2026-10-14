@@ -54,7 +54,7 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
         """;
 
     /// <inheritdoc />
-    public bool RequiresApproval => false;
+    public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(
