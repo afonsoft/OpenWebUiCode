@@ -183,6 +183,18 @@
                             i = lastTool;
                             continue;
                         }
+                        if (message.Role == "compaction")
+                        {
+                            @* Marcador de contexto colapsado (resumo automático ou
+                               rewind do agente): linha divisória sutil — o
+                               relatório/resumo completo fica no tooltip. *@
+                            <div class="flex items-center gap-3 py-1 px-2 text-[11px] text-gray-400 dark:text-gray-500 select-none" title="@message.Content">
+                                <span class="flex-1 border-t border-gray-200 dark:border-gray-800"></span>
+                                <span class="truncate max-w-[60%]">@L["chat.context_collapsed"]</span>
+                                <span class="flex-1 border-t border-gray-200 dark:border-gray-800"></span>
+                            </div>
+                            continue;
+                        }
                         var isLastAssistant = message.Role == "assistant" && i == _messages.Count - 1;
                         var msgKey = message.Id ?? $"m{index}";
                         @if (isLastAssistant && _liveToolCalls.Count > 0)
@@ -2813,6 +2825,7 @@
         ("code",         ["shell_exec", "code_interpreter"]),
         ("jobs",         ["job_list", "job_output", "job_kill"]),
         ("tasks",        ["todo_write", "ask_user", "delegate_task"]),
+        ("context",      ["checkpoint", "rewind", "context_notes", "new_context"]),
         ("integrations", ["n8n_list_workflows", "n8n_trigger"]),
         ("custom",       []),
     ];

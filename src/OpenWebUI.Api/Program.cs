@@ -72,6 +72,9 @@ builder.Services.AddSingleton<IChatRunDispatcher>(
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ChatRunDispatcher>());
 builder.Services.AddScoped<ChatRunExecutor>();
 builder.Services.AddScoped<ContextCompactionService>();
+// Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
+// context-management): boundaries + notebook + flag new_context via kv.
+builder.Services.AddScoped<ContextBoundaryService>();
 builder.Services.AddScoped<IContextSummarizer, LlmContextSummarizer>();
 // Papéis/capacidades de modelo (SPEC-20261013-model-roles).
 builder.Services.AddScoped<ModelCapabilityResolver>();
@@ -116,6 +119,10 @@ builder.Services.AddScoped<IBuiltinChatTool, FileWriteBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, FileEditBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ApplyPatchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TodoWriteBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, RewindBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ContextNotesBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, NewContextBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, DelegateTaskBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RunResultBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, WorktreeDiffBuiltinTool>();

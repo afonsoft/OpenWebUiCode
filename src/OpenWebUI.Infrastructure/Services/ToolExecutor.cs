@@ -25,7 +25,8 @@ public class ToolExecutor(
     IHttpClientFactory httpClientFactory,
     PythonToolExecutor pythonExecutor,
     McpClientService mcp,
-    BuiltinToolRegistry builtins)
+    BuiltinToolRegistry builtins,
+    ConfigService config)
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
     private const int MaxOutputChars = 4000;
@@ -44,6 +45,21 @@ public class ToolExecutor(
         if (toolIds.Count == 0)
         {
             return [];
+        }
+
+        // Gate admin das tools de contexto (SPEC-20261013-agent-context-
+        // management RF-005): com contexttools.enabled=false os ids nem
+        // chegam ao anúncio — o modelo nunca vê checkpoint/rewind & cia.
+        if (await config.GetAsync<bool?>("contexttools.enabled", null, ct) == false)
+        {
+            toolIds = toolIds
+                .Where(id => !id.StartsWith("builtin:", StringComparison.OrdinalIgnoreCase)
+                    || !ContextBoundaryService.IsContextTool(id["builtin:".Length..]))
+                .ToList();
+            if (toolIds.Count == 0)
+            {
+                return [];
+            }
         }
 
         var dbIds = new List<string>();

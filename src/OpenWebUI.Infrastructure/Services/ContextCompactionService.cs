@@ -89,15 +89,19 @@ public sealed class ContextCompactionService(
     /// anexa um marcador <c>Role="compaction"</c> no chat. Retorna true quando
     /// compactou. Nunca lança — falha vira log e a run segue sem compactar.
     /// </summary>
+    /// <param name="force">Quando true, ignora o limiar de tamanho — usado
+    /// pelo pedido de nova janela do agente (<c>new_context</c>,
+    /// SPEC-20261013-agent-context-management RF-004).</param>
     public async Task<bool> MaybeCompactAsync(
         string chatId, IReadOnlyList<ChatCompletionMessage> history,
-        string model, CancellationToken ct, string? userId = null)
+        string model, CancellationToken ct, string? userId = null,
+        bool force = false)
     {
         try
         {
             var t = await ThresholdsAsync(ct);
             var total = history.Sum(m => (m.Content?.Length ?? 0) + (m.ToolCallsJson?.Length ?? 0));
-            if (total <= t.TotalChars)
+            if (!force && total <= t.TotalChars)
             {
                 return false;
             }

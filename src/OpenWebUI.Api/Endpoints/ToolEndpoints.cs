@@ -25,7 +25,7 @@ public static class ToolEndpoints
 
     private static async Task<IResult> ListAsync(
         HttpContext http, AppDbContext db, BuiltinToolRegistry builtins,
-        CancellationToken ct)
+        ConfigService config, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -43,8 +43,15 @@ public static class ToolEndpoints
                 || (t.Url.StartsWith(McpClientService.VirtualUrlPrefix) && t.Enabled))
             .OrderBy(t => t.Name)
             .ToListAsync(ct);
+        // Gate admin (SPEC-20261013-agent-context-management RF-005): com
+        // contexttools.enabled=false as tools de contexto nem aparecem no picker.
+        var builtinList = builtins.All.AsEnumerable();
+        if (await config.GetAsync<bool?>("contexttools.enabled", null, ct) == false)
+        {
+            builtinList = builtinList.Where(t => !ContextBoundaryService.IsContextTool(t.Name));
+        }
         return Results.Ok(
-            tools.Select(ToResponse).Concat(builtins.All.Select(ToBuiltinResponse)));
+            tools.Select(ToResponse).Concat(builtinList.Select(ToBuiltinResponse)));
     }
 
     private static async Task<IResult> CreateAsync(

@@ -35,6 +35,7 @@ public sealed class ChatRunExecutor(
     ChatRunPauses pauses,
     CheckpointService checkpoints,
     ContextCompactionService compaction,
+    ContextBoundaryService boundaries,
     RunAdvisorService advisor,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
@@ -55,8 +56,11 @@ public sealed class ChatRunExecutor(
     /// </summary>
     private readonly Dictionary<string, RunChangeItem> _changes = new();
 
-    /// <summary>Conselhos pendentes do advisor → notas system no próximo round.</summary>
-    private readonly Queue<ChatCompletionMessage> _advisorNotes = new();
+    /// <summary>
+    /// Notas system pendentes → próximo round (conselhos do advisor +
+    /// confirmação de compactação forçada por <c>new_context</c>).
+    /// </summary>
+    private readonly Queue<ChatCompletionMessage> _contextNotes = new();
 
     /// <summary>"nome → preview" das últimas tool calls (contexto do advisor).</summary>
     private readonly Queue<string> _recentTools = new();
@@ -155,6 +159,19 @@ public sealed class ChatRunExecutor(
                 request, user, db, config, rag, webSearch, repos, ct, chatMode,
                 run.ChatId);
 
+            // Notebook persistente do chat (SPEC-20261013-agent-context-
+            // management RF-003): injetado como system na entrada de toda
+            // run — sobrevive a compactação, reload e troca de provider.
+            var contextNotebook = await boundaries.GetNotesAsync(run.ChatId, ct);
+            if (!string.IsNullOrWhiteSpace(contextNotebook))
+            {
+                effective = effective with
+                {
+                    Messages = [new ChatCompletionMessage(
+                        "system", $"[context notes]\n{contextNotebook}"), .. effective.Messages],
+                };
+            }
+
             var outletRules = ModelFilterService.OutletRules(
                 ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()
                     .Where(m => m.IsActive && (m.Id == request.Model || m.Name == request.Model)
@@ -222,7 +239,7 @@ public sealed class ChatRunExecutor(
                         PollSteerAsync(run, queuedOnly, t),
                     // Conselhos do advisor viram notas system no round
                     // seguinte — sem zerar o teto de iterações.
-                    OnContextNotesAsync: _ => DrainAdvisorNotesAsync(),
+                    OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
                     OnResultAsync: async (call, output, result, denied, t) =>
                     {
                         await PublishToolResultAsync(run, call, output, result, denied);
@@ -467,9 +484,9 @@ public sealed class ChatRunExecutor(
                 }
                 broadcaster.Publish(runId,
                     $"event: advisor\ndata: {JsonSerializer.Serialize(new RunAdvisorEvent(advice, trigger), JsonOptions)}");
-                lock (_advisorNotes)
+                lock (_contextNotes)
                 {
-                    _advisorNotes.Enqueue(new ChatCompletionMessage(
+                    _contextNotes.Enqueue(new ChatCompletionMessage(
                         "system", $"[advisor] {advice}"));
                 }
             }
@@ -486,16 +503,55 @@ public sealed class ChatRunExecutor(
         });
     }
 
-    /// <summary>Esvazia a fila de conselhos → notas system do próximo round.</summary>
-    private Task<IReadOnlyList<ChatCompletionMessage>> DrainAdvisorNotesAsync()
+    /// <summary>
+    /// Fronteira de rodada (SPEC-20261013-agent-context-management RF-004):
+    /// consome o pedido <c>new_context</c> uma vez — compacta o histórico
+    /// persistido já (sem esperar o próximo enqueue) e devolve a fila de
+    /// notas system (advisor + confirmação) para o próximo round.
+    /// </summary>
+    private async Task<IReadOnlyList<ChatCompletionMessage>> DrainContextNotesAsync(
+        ChatRun run, CancellationToken ct)
     {
-        List<ChatCompletionMessage> notes;
-        lock (_advisorNotes)
+        if (await boundaries.ConsumeNewContextAsync(run.Id, ct))
         {
-            notes = [.. _advisorNotes];
-            _advisorNotes.Clear();
+            try
+            {
+                var persisted = await db.ChatMessages.AsNoTracking()
+                    .Where(m => m.ChatId == run.ChatId)
+                    .OrderBy(m => m.Position)
+                    .ToListAsync(ct);
+                var visible = ContextBoundaryService.FilterMessages(
+                    persisted, await boundaries.ListAsync(run.ChatId, ct));
+                var history = visible
+                    .Select(m => new ChatCompletionMessage(
+                        m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
+                    .ToList();
+                if (await compaction.MaybeCompactAsync(
+                        run.ChatId, history, run.Model, ct, run.UserId, force: true))
+                {
+                    lock (_contextNotes)
+                    {
+                        _contextNotes.Enqueue(new ChatCompletionMessage(
+                            "system",
+                            "[contexto] Nova janela aplicada — o histórico anterior foi "
+                            + "resumido; o que deve persistir pertence ao notebook."));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "new_context falhou na run {RunId} — segue sem compactar.", run.Id);
+            }
         }
-        return Task.FromResult<IReadOnlyList<ChatCompletionMessage>>(notes);
+
+        List<ChatCompletionMessage> notes;
+        lock (_contextNotes)
+        {
+            notes = [.. _contextNotes];
+            _contextNotes.Clear();
+        }
+        return notes;
     }
 
     /// <summary>Publica o evento <c>tool_call</c> com preview higienizado dos args.</summary>

@@ -46,6 +46,7 @@ public static class ChatRunEndpoints
         HttpContext http,
         AppDbContext db,
         ChatRunDispatcher dispatcher,
+        ContextBoundaryService boundaries,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -90,8 +91,12 @@ public static class ChatRunEndpoints
         }
 
         // Histórico reconstruído no servidor — a fonte da verdade é o banco.
-        var history = chat.Messages
-            .OrderBy(m => m.Position)
+        // Boundaries fechadas (SPEC-20261013-agent-context-management RF-002)
+        // filtram o contexto: mensagens cobertas permanecem persistidas, mas
+        // não voltam ao modelo — o marcador "compaction" carrega o report.
+        var visible = await boundaries.FilterAsync(
+            chat.Id, chat.Messages.OrderBy(m => m.Position), ct);
+        var history = visible
             .Select(m => new ChatCompletionMessage(
                 m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
             .ToList();

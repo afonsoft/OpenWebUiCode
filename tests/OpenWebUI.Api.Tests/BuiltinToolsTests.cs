@@ -519,7 +519,7 @@ public class BuiltinToolsTests
         var executor = new ToolExecutor(db, new StubHttpClientFactory(),
             new PythonToolExecutor(new ConfigurationBuilder().Build()),
             new McpClientService(db, mc3),
-            registry);
+            registry, new ConfigService(db, TestCache.Create()));
 
         var tools = await executor.LoadEnabledAsync("u1", ["builtin:fetch_url"]);
         Assert.That(tools, Has.Count.EqualTo(1));
@@ -549,7 +549,7 @@ public class BuiltinToolsTests
         var executor = new ToolExecutor(db, new StubHttpClientFactory(),
             new PythonToolExecutor(new ConfigurationBuilder().Build()),
             new McpClientService(db, mc2),
-            registry);
+            registry, new ConfigService(db, TestCache.Create()));
 
         var tools = await executor.LoadEnabledAsync("u1", ["builtin:fetch_url"]);
         Assert.That(ToolExecutor.FunctionName(tools[0]), Is.EqualTo("builtin_fetch_url"));
