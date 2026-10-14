@@ -31,3 +31,6 @@ TestResults/
 TestResultsGate/
 # a11y audit deps
 node_modules/
+
+# SonarQube autofix working artifacts (skill sonarqube-autofix)
+.sonar_devin_auto_fix/
