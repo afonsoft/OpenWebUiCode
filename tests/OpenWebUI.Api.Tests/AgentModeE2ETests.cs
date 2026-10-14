@@ -238,7 +238,8 @@ public class AgentModeE2ETests
             {
                 var payload = linha["data:".Length..].Trim();
                 eventos.Add((evento, payload));
-                if (evento == "question_asked" && aprovarPergunta)
+                if ((evento == "question_asked" || evento == "approval_asked")
+                    && aprovarPergunta)
                 {
                     var callId = JsonDocument.Parse(payload).RootElement
                         .GetProperty("callId").GetString()!;
@@ -374,6 +375,136 @@ public class AgentModeE2ETests
         }
         finally
         {
+            _emit = "plan_exit";
+        }
+    }
+
+    // ---- Overrides persistentes do dono (SPEC-20261013-approval-tiers RF-002) ----
+
+    /// <summary>Chat em modo build (binding semeado) com preset opcional.</summary>
+    private async Task<ChatResponse> CriarChatBuildAsync(string? preset = null)
+    {
+        var chat = await CriarChatAsync();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+            await config.SetAsync(
+                $"chat:{chat.Id}:workspace.repo",
+                new WorkspaceRepoBinding("a/b", "main", "repos/a__b", null, null),
+                default);
+        }
+        var patched = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}",
+            new ChatPatchRequest(preset, Mode: "build"));
+        Assert.That(patched.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await patched.Content.ReadAsStringAsync());
+        return (await patched.Content.ReadFromJsonAsync<ChatResponse>())!;
+    }
+
+    private async Task SetOverrideAsync(string tool, string? action)
+    {
+        var response = await _client.PutAsJsonAsync(
+            "/api/v1/users/user/tool-approvals",
+            new UpdateToolApprovalsRequest(
+                new Dictionary<string, string?> { [tool] = action }));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await response.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task OverrideDeny_FileWriteCall_ErroSemPrompt()
+    {
+        _emit = "file_write";
+        try
+        {
+            var chat = await CriarChatBuildAsync();
+            await SetOverrideAsync("file_write", "deny");
+
+            var run = await EnfileirarAsync(chat.Id, ["builtin:file_write"]);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var eventos = await LerStreamAteFecharAsync(chat.Id, run.Id, false, cts.Token);
+
+            Assert.Multiple(() =>
+            {
+                // O override deny vira tool_result estruturado, sem prompt.
+                Assert.That(eventos.Any(e => e.Event == "tool_result"
+                    && e.Data.Contains("bloqueada pelo dono")), Is.True,
+                    "esperava erro estruturado do override deny");
+                Assert.That(eventos.Any(e => e.Event == "approval_asked"), Is.False);
+                Assert.That(eventos.Any(e => e.Event == "question_asked"), Is.False);
+            });
+        }
+        finally
+        {
+            await SetOverrideAsync("file_write", null);
+            _emit = "plan_exit";
+        }
+    }
+
+    [Test]
+    public async Task OverrideAllow_FileWriteCall_ExecutaSemPrompt()
+    {
+        _emit = "file_write";
+        try
+        {
+            // Preset padrão approve-mutations pediria aprovação para
+            // file_write — o override allow tem de curto-circuitar o gate.
+            var chat = await CriarChatBuildAsync();
+            await SetOverrideAsync("file_write", "allow");
+
+            var run = await EnfileirarAsync(chat.Id, ["builtin:file_write"]);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var eventos = await LerStreamAteFecharAsync(chat.Id, run.Id, false, cts.Token);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(eventos.Any(e => e.Event == "approval_asked"), Is.False,
+                    "override allow não pode pedir aprovação");
+                Assert.That(eventos.Any(e => e.Event == "question_asked"), Is.False);
+                // A tool rodou: resultado voltou ao provider (2ª /api/chat
+                // com tool_call_id) e a run fechou completed.
+                Assert.That(eventos.Any(e => e.Event == "tool_result"), Is.True);
+                Assert.That(_chatBodies.Any(b => b.Contains("\"tool_call_id\"")),
+                    Is.True, "tool_result não voltou ao provider");
+                Assert.That(eventos.Any(e => e.Event == "status"
+                    && e.Data.Contains("\"completed\"")), Is.True);
+            });
+        }
+        finally
+        {
+            await SetOverrideAsync("file_write", null);
+            _emit = "plan_exit";
+        }
+    }
+
+    [Test]
+    public async Task OverridePrompt_EmAlwaysAllow_PerguntaMesmoAssim()
+    {
+        _emit = "file_write";
+        try
+        {
+            // always-allow liberaria direto — o override prompt força a
+            // pergunta mesmo assim (RF-002: prompt vence preset).
+            var chat = await CriarChatBuildAsync("always-allow");
+            await SetOverrideAsync("file_write", "prompt");
+
+            var run = await EnfileirarAsync(chat.Id, ["builtin:file_write"]);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var eventos = await LerStreamAteFecharAsync(chat.Id, run.Id, true, cts.Token);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(eventos.Any(e => e.Event == "approval_asked"
+                    && e.Data.Contains("builtin:file_write")), Is.True,
+                    "override prompt tinha de emitir approval_asked");
+                // Aprovada → executou e a run completou.
+                Assert.That(eventos.Any(e => e.Event == "status"
+                    && e.Data.Contains("\"completed\"")), Is.True);
+            });
+        }
+        finally
+        {
+            await SetOverrideAsync("file_write", null);
             _emit = "plan_exit";
         }
     }
