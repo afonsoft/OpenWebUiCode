@@ -66,6 +66,7 @@
   "chat.send": "发送",
   "chat.tools_in_chat": "Tools in this chat",
   "chat.upload_failed": "Failed to upload {{file}}.",
+  "chat.vision_warning": "所选模型可能无法分析图片——不具备视觉能力。",
   "chat.create_failed": "Could not create the chat.",
   "chat.files_attached": "(files attached)",
   "chat.copy": "复制",
@@ -742,6 +743,7 @@
   "settings.models_search": "搜索模型…",
   "settings.models_load_error": "无法加载模型。",
   "settings.models_save_error": "无法保存模型可见性设置。",
+  "settings.model_roles_section": "模型角色",
   "settings.audio_unavailable": "音频不可用 — 请在 Admin 中配置提供商或使用 Web Speech",
   "settings.media_moved_to_integrations": "图像和视频现已在 Admin → 集成 中配置。",
   "settings.notifications": "通知",
@@ -940,5 +942,11 @@
   "ide.cmd_split": "拆分编辑器",
   "ide.cmd_minimap": "切换小地图",
   "ide.cmd_diff_head": "与 HEAD 比较",
-  "ide.diff_close": "关闭差异"
+  "ide.diff_close": "关闭差异",
+  "settings.model_roles_hint": "将辅助任务路由到更便宜的模型；留空 = 聊天模型。",
+  "settings.model_role_tasks": "辅助任务（标题、追问、标签）",
+  "settings.model_role_memory": "记忆与压缩摘要",
+  "settings.model_role_advisor": "运行顾问",
+  "settings.model_role_default": "默认（聊天模型）",
+  "settings.model_roles_error": "无法保存模型角色。"
 }

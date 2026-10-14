@@ -67,6 +67,7 @@
   "chat.send": "Send",
   "chat.tools_in_chat": "Tools in this chat",
   "chat.upload_failed": "Failed to upload {{file}}.",
+  "chat.vision_warning": "The selected model may not analyze images — it has no vision capability.",
   "chat.create_failed": "Could not create the chat.",
   "chat.files_attached": "(files attached)",
   "chat.copy": "Copy",
@@ -535,6 +536,7 @@
   "settings.models_search": "Search models…",
   "settings.models_load_error": "Couldn't load models.",
   "settings.models_save_error": "Couldn't save model visibility.",
+  "settings.model_roles_section": "Model roles",
   "admin.default_models_empty": "No models selected",
   "admin.engine_provider": "provider (registered connection)",
   "admin.select_provider": "Select connection…",
@@ -940,5 +942,11 @@
   "ide.cmd_split": "Split Editor",
   "ide.cmd_minimap": "Toggle Minimap",
   "ide.cmd_diff_head": "Compare with HEAD",
-  "ide.diff_close": "Close diff"
+  "ide.diff_close": "Close diff",
+  "settings.model_roles_hint": "Route auxiliary tasks to cheaper models; empty = chat model.",
+  "settings.model_role_tasks": "Auxiliary tasks (title, follow-ups, tags)",
+  "settings.model_role_memory": "Memory & compaction summaries",
+  "settings.model_role_advisor": "Run advisor",
+  "settings.model_role_default": "Default (chat model)",
+  "settings.model_roles_error": "Couldn't save model roles."
 }

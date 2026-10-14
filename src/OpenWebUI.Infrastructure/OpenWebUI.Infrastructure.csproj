@@ -23,4 +23,9 @@
     <InternalsVisibleTo Include="OpenWebUI.Api.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Catálogo estático de capacidades por modelo (SPEC-20261013-model-roles). -->
+    <EmbeddedResource Include="Services\model-capabilities.json" />
+  </ItemGroup>
+
 </Project>

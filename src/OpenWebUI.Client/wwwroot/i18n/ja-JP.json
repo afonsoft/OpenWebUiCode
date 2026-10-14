@@ -66,6 +66,7 @@
   "chat.send": "送信",
   "chat.tools_in_chat": "Tools in this chat",
   "chat.upload_failed": "Failed to upload {{file}}.",
+  "chat.vision_warning": "選択中のモデルは画像を解析できない可能性があります（ビジョン非対応）。",
   "chat.create_failed": "Could not create the chat.",
   "chat.files_attached": "(files attached)",
   "chat.copy": "コピー",
@@ -742,6 +743,7 @@
   "settings.models_search": "モデルを検索…",
   "settings.models_load_error": "モデルを読み込めませんでした。",
   "settings.models_save_error": "モデルの表示設定を保存できませんでした。",
+  "settings.model_roles_section": "モデルロール",
   "settings.audio_unavailable": "オーディオが利用できません — Admin でプロバイダーを設定するか Web Speech を使用",
   "settings.media_moved_to_integrations": "画像と動画は Admin → 連携 で設定するようになりました。",
   "settings.notifications": "通知",
@@ -940,5 +942,11 @@
   "ide.cmd_split": "エディタを分割",
   "ide.cmd_minimap": "ミニマップの切り替え",
   "ide.cmd_diff_head": "HEAD と比較",
-  "ide.diff_close": "差分を閉じる"
+  "ide.diff_close": "差分を閉じる",
+  "settings.model_roles_hint": "補助タスクを安価なモデルに振り分けます。空欄 = チャットモデル。",
+  "settings.model_role_tasks": "補助タスク（タイトル・フォローアップ・タグ）",
+  "settings.model_role_memory": "メモリ・要約の生成",
+  "settings.model_role_advisor": "ランアドバイザー",
+  "settings.model_role_default": "デフォルト（チャットモデル）",
+  "settings.model_roles_error": "モデルロールを保存できませんでした。"
 }

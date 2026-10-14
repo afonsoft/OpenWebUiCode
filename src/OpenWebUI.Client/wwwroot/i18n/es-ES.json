@@ -66,6 +66,7 @@
   "chat.send": "Enviar",
   "chat.tools_in_chat": "Tools in this chat",
   "chat.upload_failed": "Failed to upload {{file}}.",
+  "chat.vision_warning": "El modelo seleccionado puede no analizar imágenes — no tiene capacidad de visión.",
   "chat.create_failed": "Could not create the chat.",
   "chat.files_attached": "(files attached)",
   "chat.copy": "Copiar",
@@ -742,6 +743,7 @@
   "settings.models_search": "Buscar modelos…",
   "settings.models_load_error": "No se pudieron cargar los modelos.",
   "settings.models_save_error": "No se pudo guardar la visibilidad de los modelos.",
+  "settings.model_roles_section": "Roles de modelo",
   "settings.audio_unavailable": "Audio no disponible — configura un proveedor en Admin o usa Web Speech",
   "settings.media_moved_to_integrations": "Imagen y vídeo ahora se configuran en Admin → Integraciones.",
   "settings.notifications": "Notificaciones",
@@ -940,5 +942,11 @@
   "ide.cmd_split": "Dividir editor",
   "ide.cmd_minimap": "Alternar minimapa",
   "ide.cmd_diff_head": "Comparar con HEAD",
-  "ide.diff_close": "Cerrar diff"
+  "ide.diff_close": "Cerrar diff",
+  "settings.model_roles_hint": "Dirige tareas auxiliares a modelos más baratos; vacío = modelo del chat.",
+  "settings.model_role_tasks": "Tareas auxiliares (título, follow-ups, etiquetas)",
+  "settings.model_role_memory": "Resúmenes de memoria y compactación",
+  "settings.model_role_advisor": "Asesor de ejecuciones",
+  "settings.model_role_default": "Predeterminado (modelo del chat)",
+  "settings.model_roles_error": "No se pudieron guardar los roles de modelo."
 }

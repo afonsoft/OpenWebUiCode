@@ -180,7 +180,10 @@ public class ContextCompactionTests
         AppDbContext db, IContextSummarizer summarizer, ConfigService? config = null) =>
         new(db,
             config ?? new ConfigService(db, TestCache.Create()),
-            summarizer, NullLogger<ContextCompactionService>.Instance);
+            summarizer,
+            new ModelRoleResolver(db, _ => Task.FromResult(new List<ModelInfo>()),
+                NullLogger<ModelRoleResolver>.Instance),
+            NullLogger<ContextCompactionService>.Instance);
 
     private sealed class FakeSummarizer(string? result) : IContextSummarizer
     {

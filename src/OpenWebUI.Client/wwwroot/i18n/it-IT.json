@@ -66,6 +66,7 @@
   "chat.send": "Invia",
   "chat.tools_in_chat": "Tools in this chat",
   "chat.upload_failed": "Failed to upload {{file}}.",
+  "chat.vision_warning": "Il modello selezionato potrebbe non analizzare le immagini — nessuna capacità di visione.",
   "chat.create_failed": "Could not create the chat.",
   "chat.files_attached": "(files attached)",
   "chat.copy": "Copia",
@@ -742,6 +743,7 @@
   "settings.models_search": "Cerca modelli…",
   "settings.models_load_error": "Impossibile caricare i modelli.",
   "settings.models_save_error": "Impossibile salvare la visibilità dei modelli.",
+  "settings.model_roles_section": "Ruoli del modello",
   "settings.audio_unavailable": "Audio non disponibile — configura un provider in Admin o usa Web Speech",
   "settings.media_moved_to_integrations": "Immagini e video ora si configurano in Admin → Integrazioni.",
   "settings.notifications": "Notifiche",
@@ -940,5 +942,11 @@
   "ide.cmd_split": "Dividi editor",
   "ide.cmd_minimap": "Attiva/disattiva minimappa",
   "ide.cmd_diff_head": "Confronta con HEAD",
-  "ide.diff_close": "Chiudi diff"
+  "ide.diff_close": "Chiudi diff",
+  "settings.model_roles_hint": "Instrada le attività ausiliarie a modelli più economici; vuoto = modello della chat.",
+  "settings.model_role_tasks": "Attività ausiliarie (titolo, follow-up, tag)",
+  "settings.model_role_memory": "Riassunti di memoria e compattazione",
+  "settings.model_role_advisor": "Advisor delle run",
+  "settings.model_role_default": "Predefinito (modello della chat)",
+  "settings.model_roles_error": "Impossibile salvare i ruoli del modello."
 }

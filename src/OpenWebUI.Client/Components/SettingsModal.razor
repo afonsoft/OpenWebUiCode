@@ -341,6 +341,26 @@
                     }
                     else
                     {
+                        <div class="field">
+                            <div class="field-label">@L["settings.model_roles_section"]</div>
+                            <div class="field-note mb-2">@L["settings.model_roles_hint"]</div>
+                            @foreach (var role in RoleKeys)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="text-sm">@L[$"settings.model_role_{role}"]</div>
+                                    <select class="input max-w-64" disabled="@_modelsSaving"
+                                            value="@RoleValue(role)"
+                                            @onchange="e => SetRoleAsync(role, e.Value?.ToString())"
+                                            aria-label="@L[$"settings.model_role_{role}"]">
+                                        <option value="">@L["settings.model_role_default"]</option>
+                                        @foreach (var m in _modelCatalog.OrderBy(m => m.Provider).ThenBy(m => m.Name))
+                                        {
+                                            <option value="@m.Id">@m.Provider: @m.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                            }
+                        </div>
                         <div class="flex gap-2 mb-3">
                             <input class="input flex-1" @bind="_modelSearch" @bind:event="oninput"
                                    placeholder="@L["settings.models_search"]" aria-label="@L["settings.models_search"]" />
@@ -721,11 +741,44 @@
                 .Where(m => !m.Enabled)
                 .Select(m => $"{m.Provider}:{m.Id}")
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _modelRoles = await Api.GetModelRolesAsync();
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _modelCatalog = [];
             _modelsMessage = L["settings.models_load_error"];
+        }
+    }
+
+    // ── Papéis de modelo (SPEC-20261013-model-roles RF-005) ──
+    private static readonly string[] RoleKeys = ["tasks", "memory", "advisor"];
+    private Dictionary<string, List<string>> _modelRoles = [];
+
+    /// <summary>Primeiro id da cadeia do papel (UI v1 = um modelo por papel;
+    /// o resolver já suporta cadeias para uso futuro).</summary>
+    private string RoleValue(string role) =>
+        _modelRoles.TryGetValue(role, out var chain) && chain.Count > 0
+            ? chain[0] : string.Empty;
+
+    /// <summary>Define/remove o modelo de um papel e persiste no servidor.</summary>
+    private async Task SetRoleAsync(string role, string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+        {
+            _modelRoles.Remove(role);
+        }
+        else
+        {
+            _modelRoles[role] = [modelId];
+        }
+        _modelsSaving = true;
+        _modelsMessage = null;
+        var saved = await Api.UpdateModelRolesAsync(
+            _modelRoles.ToDictionary(kv => kv.Key, kv => kv.Value));
+        _modelsSaving = false;
+        if (!saved)
+        {
+            _modelsMessage = L["settings.model_roles_error"];
         }
     }
 

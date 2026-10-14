@@ -360,6 +360,16 @@
                     }
                 </div>
             }
+            @if (_visionWarning && !_visionWarningDismissed)
+            {
+                @* SPEC-20261013-model-roles RF-004: modelo sem "vision" no
+                   catálogo → aviso inline descartável; envio segue liberado. *@
+                <div class="mb-1 mx-1 flex items-center gap-2 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 px-2.5 py-1.5 text-xs text-yellow-800 dark:text-yellow-200">
+                    <span class="flex-1">@L["chat.vision_warning"]</span>
+                    <button class="flex-none text-yellow-600 dark:text-yellow-300 hover:opacity-70 cursor-pointer"
+                            aria-label="@L["common.dismiss"]" @onclick="() => _visionWarningDismissed = true">×</button>
+                </div>
+            }
             @if (_mentionPaths.Count > 0)
             {
                 @* Chips de menção @path (RF-001): unidade atômica — × ou Backspace remove inteiro. *@
@@ -1639,6 +1649,7 @@
         _uploading = true;
         try
         {
+            var hasImage = false;
             foreach (var file in e.GetMultipleFiles(10))
             {
                 await using var stream = file.OpenReadStream(100 * 1024 * 1024);
@@ -1646,16 +1657,49 @@
                 if (uploaded is not null)
                 {
                     _attachedFiles.Add(uploaded);
+                    hasImage |= file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
                 }
                 else
                 {
                     _error = L.T("chat.upload_failed", ("file", file.Name));
                 }
             }
+            if (hasImage)
+            {
+                await CheckVisionWarningAsync();
+            }
         }
         finally
         {
             _uploading = false;
+        }
+    }
+
+    private bool _visionWarning;
+    private bool _visionWarningDismissed;
+    private List<ModelInfo>? _chatModels;
+
+    /// <summary>
+    /// Aviso de visão (SPEC-20261013-model-roles RF-004): quando o modelo
+    /// atual está no catálogo e não declara <c>vision</c>, mostra o aviso
+    /// inline — sem bloquear o envio; modelo ausente do catálogo = não avisa.
+    /// </summary>
+    private async Task CheckVisionWarningAsync()
+    {
+        try
+        {
+            _chatModels ??= await Api.GetModelsAsync();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            return; // catálogo indisponível: sem aviso (fail-open).
+        }
+        var current = _chatModels?.FirstOrDefault(
+            m => string.Equals(m.Id, _model, StringComparison.OrdinalIgnoreCase));
+        if (current is not null)
+        {
+            _visionWarning = current.Capabilities is not { } caps
+                || !caps.Contains("vision", StringComparer.OrdinalIgnoreCase);
         }
     }
 

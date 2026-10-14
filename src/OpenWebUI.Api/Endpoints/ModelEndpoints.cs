@@ -48,7 +48,8 @@ public static class ModelEndpoints
     /// usuário chamador — alimenta a aba Models das settings (qualquer role).</summary>
     private static async Task<IResult> ListCatalogAsync(
         HttpContext http, ProviderService providers, AppDbContext db,
-        PipelineClientService pipelines, HybridCache cache, CancellationToken ct)
+        PipelineClientService pipelines, HybridCache cache,
+        ModelCapabilityResolver capabilities, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -57,11 +58,11 @@ public static class ModelEndpoints
         }
 
         var response = await ApiEndpoints.GetCachedModelListAsync(
-            user, providers, db, pipelines, cache, ct);
+            user, providers, db, pipelines, cache, capabilities, ct);
         var disabled = ApiEndpoints.ParseDisabledModels(user.SettingsJson);
         var data = response.Data.Select(m => new CatalogModel(
             m.Id, m.Name, m.Provider, m.OwnedBy,
-            !disabled.Contains($"{m.Provider}:{m.Id}"))).ToList();
+            !disabled.Contains($"{m.Provider}:{m.Id}"), m.Capabilities)).ToList();
         return Results.Ok(new CatalogModelListResponse(data));
     }
 

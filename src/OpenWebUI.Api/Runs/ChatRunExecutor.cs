@@ -117,7 +117,7 @@ public sealed class ChatRunExecutor(
             // o resumo persistido, compacta o head se o histórico estourou o
             // limiar e re-aplica — a janela ao modelo sai [resumo] + tail.
             await compaction.MaybeCompactAsync(
-                run.ChatId, request.Messages, request.Model, ct);
+                run.ChatId, request.Messages, request.Model, ct, run.UserId);
             var compacted = await compaction.ApplyAsync(
                 run.ChatId, request.Messages, ct);
             if (compacted.Count != request.Messages.Count)
