@@ -151,8 +151,8 @@ public class ProviderService(
                     // Ollama recente reporta capabilities no /api/tags (SPEC-20261013-model-roles).
                     var caps = model!["capabilities"]?.AsArray()
                         .Select(c => c?.GetValue<string>())
-                        .Where(c => !string.IsNullOrWhiteSpace(c))
-                        .Select(c => c!).ToList();
+                        .OfType<string>()
+                        .Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
                     models.Add(new ModelInfo(
                         id, model!["name"]?.GetValue<string>() ?? id, "ollama", "ollama",
                         caps is { Count: > 0 } ? caps : null));

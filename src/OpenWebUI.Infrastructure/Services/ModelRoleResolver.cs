@@ -17,11 +17,13 @@ public sealed class ModelRoleResolver(
     Func<CancellationToken, Task<List<Application.Contracts.ModelInfo>>> listModels,
     ILogger<ModelRoleResolver> logger)
 {
-    /// <summary>Papéis reconhecidos (papel desconhecido no payload é rejeitado no PUT).</summary>
-    public static readonly HashSet<string> KnownRoles = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> s_knownRoles = new(StringComparer.OrdinalIgnoreCase)
     {
         "tasks", "memory", "advisor",
     };
+
+    /// <summary>Se <paramref name="role"/> é um papel reconhecido (desconhecido é rejeitado no PUT).</summary>
+    public static bool IsKnownRole(string role) => s_knownRoles.Contains(role);
 
     /// <summary>Resolve o modelo efetivo de um papel para o usuário.</summary>
     /// <param name="role">Papel (<c>tasks</c>, <c>memory</c>, <c>advisor</c>).</param>
@@ -50,14 +52,7 @@ public sealed class ModelRoleResolver(
         }
         var known = catalog.Select(m => m.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var id in chain)
-        {
-            if (known.Contains(id))
-            {
-                return id;
-            }
-        }
-        return fallbackModel;
+        return chain.FirstOrDefault(known.Contains) ?? fallbackModel;
     }
 
     /// <summary>Lê <c>modelRoles</c> do <c>SettingsJson</c> do usuário.</summary>
@@ -86,7 +81,7 @@ public sealed class ModelRoleResolver(
             : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(user.SettingsJson) ?? [];
 
         var cleaned = roles
-            .Where(kv => KnownRoles.Contains(kv.Key))
+            .Where(kv => IsKnownRole(kv.Key))
             .ToDictionary(
                 kv => kv.Key.ToLowerInvariant(),
                 kv => (kv.Value ?? [])
@@ -127,19 +122,11 @@ public sealed class ModelRoleResolver(
             }
             foreach (var prop in el.EnumerateObject())
             {
-                if (!KnownRoles.Contains(prop.Name))
+                if (!IsKnownRole(prop.Name))
                 {
                     continue;
                 }
-                var chain = prop.Value.ValueKind == JsonValueKind.Array
-                    ? prop.Value.EnumerateArray()
-                        .Where(i => i.ValueKind == JsonValueKind.String)
-                        .Select(i => i.GetString()!)
-                        .Where(s => !string.IsNullOrWhiteSpace(s)).ToList()
-                    : prop.Value.ValueKind == JsonValueKind.String
-                        && !string.IsNullOrWhiteSpace(prop.Value.GetString())
-                        ? [prop.Value.GetString()!]
-                        : [];
+                var chain = ReadChain(prop.Value);
                 if (chain.Count > 0)
                 {
                     roles[prop.Name.ToLowerInvariant()] = chain;
@@ -151,5 +138,21 @@ public sealed class ModelRoleResolver(
             // Settings corrompido: sem papéis — cai no modelo do chat.
         }
         return roles;
+    }
+
+    /// <summary>Lê uma chain de fallback: array de strings ou string única.</summary>
+    private static List<string> ReadChain(JsonElement el)
+    {
+        if (el.ValueKind == JsonValueKind.Array)
+        {
+            return el.EnumerateArray()
+                .Where(i => i.ValueKind == JsonValueKind.String)
+                .Select(i => i.GetString()!)
+                .Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+        }
+        return el.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(el.GetString())
+            ? [el.GetString()!]
+            : [];
     }
 }

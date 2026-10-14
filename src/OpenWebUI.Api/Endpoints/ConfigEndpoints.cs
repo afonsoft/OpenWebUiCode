@@ -304,7 +304,7 @@ public static class ConfigEndpoints
 
         var payload = request.Roles ?? [];
         var unknownRole = payload.Keys
-            .FirstOrDefault(k => !ModelRoleResolver.KnownRoles.Contains(k));
+            .FirstOrDefault(k => !ModelRoleResolver.IsKnownRole(k));
         if (unknownRole is not null)
         {
             return Results.BadRequest(new { detail = $"Papel desconhecido: '{unknownRole}'." });

@@ -81,7 +81,8 @@ public sealed class ModelCapabilityResolver(
     {
         var regex = "^" + Regex.Escape(pattern)
             .Replace("\\*", ".*").Replace("\\?", ".") + "$";
-        return Regex.IsMatch(modelId, regex, RegexOptions.IgnoreCase);
+        return Regex.IsMatch(modelId, regex, RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
     }
 
     private static List<CatalogRule> LoadCatalog(ILogger log)
