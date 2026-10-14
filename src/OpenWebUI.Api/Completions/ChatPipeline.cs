@@ -400,7 +400,13 @@ public static class ChatPipeline
         /// queued). Mensagens retornadas são injetadas no histórico e zeram o
         /// teto de rounds — o turno recomeça a contagem.
         /// </summary>
-        Func<bool, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnRoundBoundaryAsync = null);
+        Func<bool, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnRoundBoundaryAsync = null,
+        /// <summary>
+        /// Notas de contexto (SPEC-20261013-run-advisor RF-003): drenadas no
+        /// topo de cada round e anexadas ao histórico <em>sem</em> zerar o
+        /// teto — são avisos (ex.: conselho do advisor), não input do usuário.
+        /// </summary>
+        Func<CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnContextNotesAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -432,6 +438,16 @@ public static class ChatPipeline
                     // Steer zera o teto: o turno recomeça do input novo.
                     round = -1;
                     continue;
+                }
+            }
+            // Notas de contexto (advisor): entram sem zerar o teto — o
+            // conselho guia a rodada atual, não recomeça o turno.
+            if (callbacks?.OnContextNotesAsync is not null)
+            {
+                var notes = await callbacks.OnContextNotesAsync(ct);
+                if (notes.Count > 0)
+                {
+                    messages.AddRange(notes);
                 }
             }
             if (callbacks?.OnPhaseAsync is not null)

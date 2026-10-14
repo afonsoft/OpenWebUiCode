@@ -35,6 +35,8 @@ public sealed class ChatRunExecutor(
     ChatRunPauses pauses,
     CheckpointService checkpoints,
     ContextCompactionService compaction,
+    RunAdvisorService advisor,
+    IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
 {
@@ -52,6 +54,24 @@ public sealed class ChatRunExecutor(
     /// file_write/file_edit — alimenta a aba Changes do painel.
     /// </summary>
     private readonly Dictionary<string, RunChangeItem> _changes = new();
+
+    /// <summary>Conselhos pendentes do advisor → notas system no próximo round.</summary>
+    private readonly Queue<ChatCompletionMessage> _advisorNotes = new();
+
+    /// <summary>"nome → preview" das últimas tool calls (contexto do advisor).</summary>
+    private readonly Queue<string> _recentTools = new();
+
+    /// <summary>Conselhos já disparados nesta run (cap do RF-001).</summary>
+    private int _advisorCount;
+
+    /// <summary>Tool results desde o último burst de revisão (gatilho N=5).</summary>
+    private int _toolResultsSinceAdvise;
+
+    /// <summary>Revisão em voo — no máx. uma por vez (RF-001).</summary>
+    private volatile bool _advisorInFlight;
+
+    /// <summary>Último disparo (cooldown do RF-001).</summary>
+    private DateTimeOffset _advisorLastAt = DateTimeOffset.MinValue;
 
     /// <summary>Roda a run até o fim e atualiza o registro com o resultado.</summary>
     public async Task ExecuteAsync(ChatRun run, CancellationToken ct)
@@ -147,6 +167,10 @@ public sealed class ChatRunExecutor(
             if (tools is { Count: > 0 })
             {
                 var builtinContext = await BuildToolContextAsync(run, user, ct);
+                // Advisor (SPEC-20261013-run-advisor): a entrada da mensagem
+                // do usuário dispara a primeira revisão — em background,
+                // com o subset read-only do workspace disponível.
+                await KickAdvisorAsync(run, "user_message", builtinContext, ct);
 
                 // Checkpoints do workdir (SPEC-20261009-checkpoints-revert):
                 // turn 0 = estado pré-run; cada tool mutável depois — o
@@ -196,9 +220,28 @@ public sealed class ChatRunExecutor(
                     // rodada; queued só quando a run ficaria ociosa.
                     OnRoundBoundaryAsync: (queuedOnly, t) =>
                         PollSteerAsync(run, queuedOnly, t),
+                    // Conselhos do advisor viram notas system no round
+                    // seguinte — sem zerar o teto de iterações.
+                    OnContextNotesAsync: _ => DrainAdvisorNotesAsync(),
                     OnResultAsync: async (call, output, result, denied, t) =>
                     {
                         await PublishToolResultAsync(run, call, output, result, denied);
+                        lock (_recentTools)
+                        {
+                            _recentTools.Enqueue(
+                                $"{call.Name} → {Scrub(Truncate(output, 120)).ReplaceLineEndings(" ")}");
+                            while (_recentTools.Count > 8)
+                            {
+                                _recentTools.Dequeue();
+                            }
+                        }
+                        // Burst de tools (RF-001): a cada 5 resultados uma
+                        // revisão — no máx. 1 por burst, cap/cooldown no kick.
+                        if (++_toolResultsSinceAdvise >= 5)
+                        {
+                            _toolResultsSinceAdvise = 0;
+                            await KickAdvisorAsync(run, "tool_burst", builtinContext, t);
+                        }
                         if (!denied && ToolExecutor.FindTool(tools, call.Name) is { } tool
                             && (ToolCallRiskClassifier.IsFileMutation(
                                     tool, call.ArgumentsJson, builtinContext.WorkspacePath)
@@ -243,6 +286,9 @@ public sealed class ChatRunExecutor(
             }
             else
             {
+                // Sem tool loop o conselho só sai como evento — não há
+                // fronteira de rodada para a nota de contexto.
+                await KickAdvisorAsync(run, "user_message", null, ct);
                 await foreach (var line in providers.StreamCompletionAsync(effective, ct))
                 {
                     await pauses.WaitIfPausedAsync(run.Id, ct);
@@ -352,6 +398,104 @@ public sealed class ChatRunExecutor(
         }
         await db.SaveChangesAsync(CancellationToken.None);
         return promoted;
+    }
+
+    /// <summary>
+    /// Gatilhos do revisor de run (SPEC-20261013-run-advisor RF-001): checa
+    /// o flag do chat + cadência (cap por run, cooldown, uma revisão por
+    /// vez) e dispara a revisão em task própria com timeout de 20s — o
+    /// turno nunca espera pelo advisor (RF-004). Um conselho produzido vira
+    /// evento SSE <c>advisor</c> e entra na fila drenada como nota system
+    /// na próxima fronteira de rodada (RF-003).
+    /// </summary>
+    private async Task KickAdvisorAsync(
+        ChatRun run, string trigger, BuiltinToolContext? builtinContext,
+        CancellationToken ct)
+    {
+        if (_advisorInFlight
+            || _advisorCount >= RunAdvisorService.MaxAdvicesPerRun
+            || DateTimeOffset.UtcNow - _advisorLastAt < RunAdvisorService.Cooldown)
+        {
+            return;
+        }
+        // Flag relido por gatilho — desligar mid-run vale já aqui (RF-004).
+        if (!await advisor.IsEnabledAsync(run.ChatId, ct))
+        {
+            return;
+        }
+        _advisorCount++;
+        _advisorLastAt = DateTimeOffset.UtcNow;
+        _advisorInFlight = true;
+
+        string[] snapshot;
+        lock (_recentTools)
+        {
+            snapshot = [.. _recentTools];
+        }
+        var (runId, chatId, userId, model) =
+            (run.Id, run.ChatId, run.UserId, run.Model);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(
+                    TimeSpan.FromSeconds(20));
+                // Escopo próprio: a revisão roda em paralelo ao DbContext do
+                // executor (EF Core não é thread-safe).
+                using var scope = scopes.CreateScope();
+                var scoped = scope.ServiceProvider;
+                var review = scoped.GetRequiredService<RunAdvisorService>();
+                var advice = await review.AdviseAsync(
+                    new ChatRun
+                    {
+                        Id = runId, ChatId = chatId, UserId = userId, Model = model,
+                    },
+                    trigger, snapshot, builtinContext, timeout.Token);
+                if (advice is null)
+                {
+                    return;
+                }
+                // Run terminada durante a revisão → conselho descartado.
+                var status = await scoped.GetRequiredService<AppDbContext>()
+                    .ChatRuns.AsNoTracking()
+                    .Where(r => r.Id == runId)
+                    .Select(r => r.Status)
+                    .FirstOrDefaultAsync(timeout.Token);
+                if (status is not (ChatRunStatus.Running or ChatRunStatus.Paused))
+                {
+                    return;
+                }
+                broadcaster.Publish(runId,
+                    $"event: advisor\ndata: {JsonSerializer.Serialize(new RunAdvisorEvent(advice, trigger), JsonOptions)}");
+                lock (_advisorNotes)
+                {
+                    _advisorNotes.Enqueue(new ChatCompletionMessage(
+                        "system", $"[advisor] {advice}"));
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex,
+                    "Advisor falhou no gatilho {Trigger} da run {RunId} — segue sem conselho.",
+                    trigger, runId);
+            }
+            finally
+            {
+                _advisorInFlight = false;
+            }
+        });
+    }
+
+    /// <summary>Esvazia a fila de conselhos → notas system do próximo round.</summary>
+    private Task<IReadOnlyList<ChatCompletionMessage>> DrainAdvisorNotesAsync()
+    {
+        List<ChatCompletionMessage> notes;
+        lock (_advisorNotes)
+        {
+            notes = [.. _advisorNotes];
+            _advisorNotes.Clear();
+        }
+        return Task.FromResult<IReadOnlyList<ChatCompletionMessage>>(notes);
     }
 
     /// <summary>Publica o evento <c>tool_call</c> com preview higienizado dos args.</summary>
@@ -666,6 +810,8 @@ public sealed class ChatRunExecutor(
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
         broadcaster.Publish(run.Id,
             $"event: approval_asked\ndata: {JsonSerializer.Serialize(new RunApprovalAskedEvent(call.Id, call.Name, kind, argsPreview), JsonOptions)}");
+        // Pausa por aprovação (RF-001): o advisor revisa enquanto o dono decide.
+        await KickAdvisorAsync(run, "pause", builtinContext, ct);
         var result = await approvals.WaitAsync(run.Id, run.ChatId, call.Id,
             call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson));
         var message = string.IsNullOrWhiteSpace(result.Message)

@@ -475,6 +475,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("AdvisorEnabled")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ApprovalPreset")
                         .IsRequired()
                         .HasColumnType("TEXT");

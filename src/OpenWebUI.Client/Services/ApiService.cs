@@ -88,9 +88,10 @@ public class ApiService(HttpClient http, AuthService auth)
     /// </summary>
     public Task<ChatResponse?> PatchChatAsync(
         string id, string? approvalPreset = null, string? title = null,
-        string? mode = null) =>
+        string? mode = null, bool? advisorEnabled = null) =>
         SendAsync<ChatResponse>(HttpMethod.Patch,
-            $"/api/v1/chats/{id}", new ChatPatchRequest(approvalPreset, title, mode));
+            $"/api/v1/chats/{id}",
+            new ChatPatchRequest(approvalPreset, title, mode, advisorEnabled));
 
     /// <summary>Alterna o estado de fixado de um chat.</summary>
     public Task<ChatResponse?> TogglePinChatAsync(string id) =>

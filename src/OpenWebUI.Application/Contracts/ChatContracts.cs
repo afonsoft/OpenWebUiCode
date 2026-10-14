@@ -94,7 +94,8 @@ public sealed record ChatResponse(
     string ApprovalPreset = "approve-mutations",
     string Mode = "chat",
     string? ParentChatId = null,
-    string? ParentTitle = null);
+    string? ParentTitle = null,
+    bool AdvisorEnabled = false);
 
 /// <summary>Requisição para criar ou atualizar um chat.</summary>
 /// <param name="Title">Título do chat.</param>

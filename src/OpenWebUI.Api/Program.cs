@@ -79,6 +79,16 @@ builder.Services.AddScoped(sp => new ModelRoleResolver(
     sp.GetRequiredService<AppDbContext>(),
     ct => sp.GetRequiredService<ProviderService>().ListModelsAsync(ct),
     sp.GetRequiredService<ILogger<ModelRoleResolver>>()));
+// Revisor de run (SPEC-20261013-run-advisor): delegates encapsulam as
+// chamadas externas para a sessão isolada read-only do advisor.
+builder.Services.AddScoped(sp => new RunAdvisorService(
+    sp.GetRequiredService<AppDbContext>(),
+    sp.GetRequiredService<BuiltinToolRegistry>(),
+    sp.GetRequiredService<ModelRoleResolver>(),
+    sp.GetRequiredService<ConfigService>(),
+    (req, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, ct),
+    (tools, name, args, bctx, ct) => sp.GetRequiredService<ToolExecutor>()
+        .ExecuteAsync(tools, name, args, bctx, ct)));
 
 // Notificações de run (SPEC-20261007-chat-notifications): SignalR para abas
 // conectadas + Web Push quando nenhuma aba está conectada.

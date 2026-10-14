@@ -161,6 +161,14 @@ public class Chat
     /// </summary>
     public string Mode { get; set; } = "chat";
 
+    /// <summary>
+    /// Revisor de run (SPEC-20261013-run-advisor RF-005): quando ligado, um
+    /// modelo secundário (papel <c>advisor</c>) observa a run e injeta
+    /// conselhos curtos no feed/contexto. Default do admin em
+    /// <c>advisor.default</c>; gate global em <c>advisor.enabled</c>.
+    /// </summary>
+    public bool AdvisorEnabled { get; set; }
+
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 

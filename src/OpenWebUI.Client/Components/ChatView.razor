@@ -512,6 +512,15 @@
                                                     <span class="truncate">@L["chat.preset_" + preset]</span>
                                                 </label>
                                             }
+                                            <div class="border-t border-gray-100 dark:border-gray-800 px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                                                @L["chat.advisor_section"]
+                                            </div>
+                                            <label class="flex items-center gap-2 px-3 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer"
+                                                   title="@L["chat.advisor_hint"]">
+                                                <input type="checkbox" checked="@_advisorEnabled"
+                                                       @onchange="e => SetAdvisorEnabledAsync(e.Value is true)" />
+                                                <span class="truncate">@L["chat.advisor_toggle"]</span>
+                                            </label>
                                         }
                                     </div>
                                 }
@@ -803,6 +812,9 @@
     private RunQuestionAskedEvent? _pendingQuestion;
     private bool _paused;
     private string _approvalPreset = "approve-mutations";
+    // Revisor de run (SPEC-20261013-run-advisor): flag por chat, relida
+    // pelo servidor a cada gatilho.
+    private bool _advisorEnabled;
     // SPEC-20261009-agent-modes-plan-build: build (default) | plan.
     private string _agentMode = "chat";
     private WorkspaceRepoResponse? _pendingRepo;
@@ -1213,6 +1225,7 @@
                 : DefaultToolIds();
             _approvalPreset = chat.ApprovalPreset;
             _agentMode = AgentModeVisuals.Normalize(chat.Mode);
+            _advisorEnabled = chat.AdvisorEnabled;
             _messages.Clear();
             _messages.AddRange(chat.Messages);
             await LoadComposerStateAsync(chat.Id);
@@ -2356,6 +2369,18 @@
                     // plan_exit aprovado promoveu o chat a build mid-run.
                     _agentMode = AgentModeVisuals.Normalize(modeEvt.Info.Mode);
                     break;
+                case ChatStreamService.ChatStreamEvent.Advisor advice:
+                    // Conselho do revisor (SPEC-20261013-run-advisor): linha
+                    // de atividade já resolvida — clique abre o texto cheio.
+                    _liveToolCalls.Add(new ToolCallView
+                    {
+                        Call = new RunToolCallEvent(
+                            $"advisor-{_liveToolCalls.Count}", "advisor", null),
+                        Result = new RunToolResultEvent(
+                            $"advisor-{_liveToolCalls.Count}", "advisor", true,
+                            advice.Event.Text),
+                    });
+                    break;
             }
         return false;
     }
@@ -2423,6 +2448,25 @@
         if (updated is not null)
         {
             _approvalPreset = updated.ApprovalPreset;
+        }
+    }
+
+    /// <summary>
+    /// Liga/desliga o revisor de run no chat carregado (SPEC-20261013-
+    /// run-advisor RF-005) — PATCH leve; a run em voo relê o flag no
+    /// próximo gatilho.
+    /// </summary>
+    private async Task SetAdvisorEnabledAsync(bool enabled)
+    {
+        _advisorEnabled = enabled;
+        if (_loadedChatId is null)
+        {
+            return;
+        }
+        var updated = await Api.PatchChatAsync(_loadedChatId, advisorEnabled: enabled);
+        if (updated is not null)
+        {
+            _advisorEnabled = updated.AdvisorEnabled;
         }
     }
 

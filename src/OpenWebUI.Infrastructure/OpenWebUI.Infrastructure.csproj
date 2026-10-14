@@ -26,6 +26,8 @@
   <ItemGroup>
     <!-- Catálogo estático de capacidades por modelo (SPEC-20261013-model-roles). -->
     <EmbeddedResource Include="Services\model-capabilities.json" />
+    <!-- Prompt do revisor de run (SPEC-20261013-run-advisor). -->
+    <EmbeddedResource Include="prompts\advisor-system.md" />
   </ItemGroup>
 
 </Project>

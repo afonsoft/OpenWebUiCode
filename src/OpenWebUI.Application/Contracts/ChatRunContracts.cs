@@ -222,8 +222,21 @@ public sealed record ToolGateDecision(
 /// <c>always-allow</c> | <c>auto</c> (RF-004). Null não altera.
 /// </param>
 /// <param name="Title">Novo título do chat. Null não altera; vazio é ignorado.</param>
+/// <param name="Mode">Modo do agente (<c>chat|plan|build</c>). Null não altera.</param>
+/// <param name="AdvisorEnabled">
+/// Revisor de run (SPEC-20261013-run-advisor RF-005). Null não altera.
+/// </param>
 public sealed record ChatPatchRequest(
-    string? ApprovalPreset, string? Title = null, string? Mode = null);
+    string? ApprovalPreset, string? Title = null, string? Mode = null,
+    bool? AdvisorEnabled = null);
+
+/// <summary>
+/// Conselho do revisor de run (SPEC-20261013-run-advisor RF-003): evento
+/// SSE <c>advisor</c> com o texto curto e o gatilho que o produziu.
+/// </summary>
+/// <param name="Text">Conselho (capado a ~500 chars).</param>
+/// <param name="Trigger"><c>user_message</c> | <c>tool_burst</c> | <c>pause</c>.</param>
+public sealed record RunAdvisorEvent(string Text, string Trigger);
 
 /// <summary>Arquivo alterado num workdir git (numstat + status M/A).</summary>
 public sealed record WorkspaceGitFileResponse(

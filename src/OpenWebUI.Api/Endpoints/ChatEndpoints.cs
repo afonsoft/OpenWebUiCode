@@ -366,6 +366,7 @@ public static class ChatEndpoints
         ChatUpsertRequest request,
         HttpContext http,
         AppDbContext db,
+        ConfigService config,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -381,6 +382,9 @@ public static class ChatEndpoints
             Title = string.IsNullOrWhiteSpace(request.Title) ? "New Chat" : request.Title.Trim(),
             ModelsJson = JsonSerializer.Serialize(request.Models ?? [], JsonOptions),
             ToolIdsJson = JsonSerializer.Serialize(request.ToolIds ?? [], JsonOptions),
+            // SPEC-20261013-run-advisor RF-005: default admin do revisor.
+            AdvisorEnabled = await config.GetAsync<bool?>(
+                "advisor.default", null, ct) ?? false,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -633,6 +637,13 @@ public static class ChatEndpoints
                     new { detail = "modo build exige repositório vinculado ao chat." });
             }
             chat.Mode = request.Mode;
+            changed = true;
+        }
+        if (request.AdvisorEnabled is { } advisor)
+        {
+            // Revisor de run (SPEC-20261013-run-advisor RF-005) — relido
+            // por gatilho; desligar mid-run vale já na próxima fronteira.
+            chat.AdvisorEnabled = advisor;
             changed = true;
         }
         if (request.Title is { } rawTitle && !string.IsNullOrWhiteSpace(rawTitle))
@@ -1158,7 +1169,8 @@ public static class ChatEndpoints
         chat.ApprovalPreset,
         chat.Mode,
         chat.ParentChatId,
-        parentTitle);
+        parentTitle,
+        chat.AdvisorEnabled);
 
     /// <summary>Filtro por tags.</summary>
     public sealed record TagQueryRequest(IReadOnlyList<string> Tags);
