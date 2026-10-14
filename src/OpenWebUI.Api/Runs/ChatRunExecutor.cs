@@ -133,7 +133,7 @@ public sealed class ChatRunExecutor(
 
             var effective = await ChatPipeline.EnrichRequestAsync(
                 request, user, db, config, rag, webSearch, repos, ct, chatMode,
-                run.ChatId);
+                run.ChatId, logger);
 
             var outletRules = ModelFilterService.OutletRules(
                 ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()

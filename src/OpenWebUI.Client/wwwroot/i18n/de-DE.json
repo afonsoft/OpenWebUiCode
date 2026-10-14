@@ -961,5 +961,9 @@
   "settings.model_role_memory": "Gedächtnis- & Komprimierungs-Zusammenfassungen",
   "settings.model_role_advisor": "Run-Berater",
   "settings.model_role_default": "Standard (Chat-Modell)",
-  "settings.model_roles_error": "Modellrollen konnten nicht gespeichert werden."
+  "settings.model_roles_error": "Modellrollen konnten nicht gespeichert werden.",
+  "chat.attachment_remove": "Anhang entfernen",
+  "chat.open_attachment": "Anhang öffnen",
+  "chat.close_preview": "Vorschau schließen",
+  "chat.attachment_unavailable": "Anhang nicht verfügbar"
 }

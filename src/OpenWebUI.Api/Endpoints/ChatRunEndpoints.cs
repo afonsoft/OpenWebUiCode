@@ -67,6 +67,30 @@ public static class ChatRunEndpoints
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
+        // SPEC-20261013-chat-media-attachments RF-003: metadados dos anexos
+        // do envio (somente arquivos do dono) viram FilesJson da mensagem.
+        List<ChatMessageFileModel>? attached = null;
+        if (request.FileIds is { Count: > 0 })
+        {
+            var owned = await db.Files.AsNoTracking()
+                .Where(f => request.FileIds.Contains(f.Id) && f.UserId == user.Id)
+                .ToListAsync(ct);
+            var byId = owned.ToDictionary(f => f.Id);
+            attached = request.FileIds
+                .Where(byId.ContainsKey)
+                .Select(fid =>
+                {
+                    var f = byId[fid];
+                    return ChatMessageFileModel.Of(
+                        f.Id, f.Filename, f.ContentType, f.Size);
+                })
+                .ToList();
+            if (attached.Count == 0)
+            {
+                attached = null;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(request.Content))
         {
             // Persiste a mensagem do usuário já no servidor (o cliente não precisa reenviar o chat inteiro).
@@ -80,6 +104,9 @@ public static class ChatRunEndpoints
                 Content = request.Content,
                 Position = nextPosition,
                 Timestamp = now,
+                FilesJson = attached is null
+                    ? null
+                    : JsonSerializer.Serialize(attached, JsonOptions),
             });
             chat.UpdatedAt = now;
         }
@@ -90,10 +117,13 @@ public static class ChatRunEndpoints
         }
 
         // Histórico reconstruído no servidor — a fonte da verdade é o banco.
+        // FileIds por mensagem (do FilesJson) alimentam a resolução
+        // preguiçosa de imagens na pipeline (RF-006).
         var history = chat.Messages
             .OrderBy(m => m.Position)
             .Select(m => new ChatCompletionMessage(
-                m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
+                m.Role, m.Content, m.ToolCallId, m.ToolCallsJson,
+                FileIds: ParseFileIds(m.FilesJson)))
             .ToList();
         var completionRequest = new ChatCompletionRequest(
             request.Model, history, Stream: true,
@@ -623,6 +653,25 @@ public static class ChatRunEndpoints
         run.Id, run.ChatId, run.Status, run.Model,
         run.PartialContent, run.Error,
         run.CreatedAt, run.StartedAt, run.CompletedAt, run.ParentRunId);
+
+    /// <summary>Ids de anexo persistidos na mensagem (FilesJson → FileIds; null/ausente → null).</summary>
+    private static List<string>? ParseFileIds(string? filesJson)
+    {
+        if (string.IsNullOrEmpty(filesJson))
+        {
+            return null;
+        }
+        try
+        {
+            var files = JsonSerializer.Deserialize<List<ChatMessageFileModel>>(
+                filesJson, JsonOptions);
+            return files is { Count: > 0 } ? files.Select(f => f.Id).ToList() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 }

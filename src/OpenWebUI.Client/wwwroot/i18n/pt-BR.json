@@ -961,5 +961,9 @@
   "settings.model_role_memory": "Resumos de memória e compactação",
   "settings.model_role_advisor": "Advisor de runs",
   "settings.model_role_default": "Padrão (modelo do chat)",
-  "settings.model_roles_error": "Não foi possível salvar os papéis de modelo."
+  "settings.model_roles_error": "Não foi possível salvar os papéis de modelo.",
+  "chat.open_attachment": "Abrir anexo",
+  "chat.close_preview": "Fechar pré-visualização",
+  "chat.attachment_unavailable": "Anexo indisponível",
+  "chat.attachment_remove": "Remover anexo"
 }

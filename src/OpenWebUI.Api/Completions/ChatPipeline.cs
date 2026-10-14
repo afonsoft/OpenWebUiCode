@@ -57,7 +57,8 @@ public static class ChatPipeline
         WorkspaceRepoService repos,
         CancellationToken ct,
         string? agentMode = null,
-        string? chatId = null)
+        string? chatId = null,
+        Microsoft.Extensions.Logging.ILogger? log = null)
     {
         var model = request.Model;
         var messages = request.Messages.ToList();
@@ -296,6 +297,73 @@ public static class ChatPipeline
             else
             {
                 messages.Insert(0, new ChatCompletionMessage("system", merged));
+            }
+        }
+
+        // 4.6. Mídia anexada → conteúdo multimodal (SPEC-20261013-chat-media-
+        // attachments RF-006): imagens dos anexos entram na mensagem dona —
+        // FileIds por mensagem (do FilesJson persistido) + FileIds do
+        // request (última msg do usuário). Só image/* e só arquivos do dono;
+        // arquivo apagado/não legível é omitido (não derruba a run).
+        var imageIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var m in messages)
+        {
+            if (m.FileIds is { } mids)
+            {
+                imageIds.UnionWith(mids);
+            }
+        }
+        if (request.FileIds is { } topFileIds)
+        {
+            imageIds.UnionWith(topFileIds);
+        }
+        if (imageIds.Count > 0)
+        {
+            var entries = await db.Files.AsNoTracking()
+                .Where(f => imageIds.Contains(f.Id) && f.UserId == user.Id
+                    && f.ContentType != null && f.ContentType.StartsWith("image/"))
+                .ToListAsync(ct);
+            if (entries.Count > 0)
+            {
+                var byId = entries.ToDictionary(f => f.Id);
+                var lastUserIdx = messages.FindLastIndex(m => m.Role == "user");
+                for (var i = 0; i < messages.Count; i++)
+                {
+                    var ids = messages[i].FileIds?.ToList() ?? [];
+                    if (i == lastUserIdx && request.FileIds is not null)
+                    {
+                        ids.AddRange(request.FileIds);
+                    }
+                    if (ids.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    var images = new List<ChatImageData>();
+                    foreach (var fid in ids.Distinct())
+                    {
+                        if (!byId.TryGetValue(fid, out var entry)
+                            || !File.Exists(entry.StoragePath))
+                        {
+                            continue;
+                        }
+                        try
+                        {
+                            var bytes = await File.ReadAllBytesAsync(entry.StoragePath, ct);
+                            images.Add(new ChatImageData(
+                                entry.ContentType!, Convert.ToBase64String(bytes)));
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            log?.LogDebug(
+                                "Anexo {FileId} ilegível — imagem omitida da mensagem.", fid);
+                        }
+                    }
+                    if (images.Count > 0)
+                    {
+                        messages[i] = messages[i] with { Images = images };
+                    }
+                }
             }
         }
 

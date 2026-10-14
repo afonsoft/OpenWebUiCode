@@ -961,5 +961,9 @@
   "settings.model_role_memory": "Memory & compaction summaries",
   "settings.model_role_advisor": "Run advisor",
   "settings.model_role_default": "Default (chat model)",
-  "settings.model_roles_error": "Couldn't save model roles."
+  "settings.model_roles_error": "Couldn't save model roles.",
+  "chat.attachment_remove": "Remove attachment",
+  "chat.open_attachment": "Open attachment",
+  "chat.close_preview": "Close preview",
+  "chat.attachment_unavailable": "Attachment unavailable"
 }

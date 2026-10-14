@@ -961,5 +961,9 @@
   "settings.model_role_memory": "Riassunti di memoria e compattazione",
   "settings.model_role_advisor": "Advisor delle run",
   "settings.model_role_default": "Predefinito (modello della chat)",
-  "settings.model_roles_error": "Impossibile salvare i ruoli del modello."
+  "settings.model_roles_error": "Impossibile salvare i ruoli del modello.",
+  "chat.attachment_remove": "Rimuovi allegato",
+  "chat.open_attachment": "Apri allegato",
+  "chat.close_preview": "Chiudi anteprima",
+  "chat.attachment_unavailable": "Allegato non disponibile"
 }

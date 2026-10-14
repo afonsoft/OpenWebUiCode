@@ -211,6 +211,13 @@ public class ChatMessage
     /// Id do tool call que originou esta mensagem (somente <c>tool</c>).
     /// </summary>
     public string? ToolCallId { get; set; }
+
+    /// <summary>
+    /// Anexos da mensagem (SPEC-20261013-chat-media-attachments RF-003):
+    /// JSON de <c>ChatMessageFileModel[]</c> — só metadados
+    /// (id/name/contentType/size/type), nunca path nem bytes.
+    /// </summary>
+    public string? FilesJson { get; set; }
 }
 
 /// <summary>Status possíveis de uma run desacoplada de chat.</summary>

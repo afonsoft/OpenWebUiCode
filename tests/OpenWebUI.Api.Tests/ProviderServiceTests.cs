@@ -972,4 +972,100 @@ public class ProviderServiceTests
             Assert.That(lines[2], Is.EqualTo("data: [DONE]"));
         });
     }
+
+    // ---- SPEC-20261013-chat-media-attachments RF-006: payload multimodal por provider ----
+
+    [Test]
+    public async Task CompleteOllama_MensagemComImagem_CampoImages()
+    {
+        _routes["/api/chat"] = (200, "{\"message\":{\"content\":\"ok\"},\"done\":true}", 0);
+        await SetConnectionsAsync([_mockUrl], [], []);
+        var b64 = Convert.ToBase64String([1, 2, 3, 4]);
+        var request = new ChatCompletionRequest(
+            "m1",
+            [new ChatCompletionMessage("user", "olha",
+                Images: [new ChatImageData("image/png", b64)])],
+            Stream: false,
+            Connection: "ollama");
+
+        await NewService().CompleteAsync(request);
+
+        var body = JsonNode.Parse(_requests.Single(r => r.Path == "/api/chat").Body)!;
+        var msg = body["messages"]!.AsArray()[0]!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(msg["content"]!.GetValue<string>(), Is.EqualTo("olha"));
+            Assert.That(msg["images"]!.AsArray()[0]!.GetValue<string>(), Is.EqualTo(b64));
+        });
+    }
+
+    [Test]
+    public async Task CompleteOpenAi_MensagemComImagem_ContentComImageUrl()
+    {
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+        var request = new ChatCompletionRequest(
+            "m1",
+            [new ChatCompletionMessage("user", "olha",
+                Images: [new ChatImageData("image/png", "QUJD")])],
+            Stream: false,
+            Connection: "openai");
+
+        await NewService().CompleteAsync(request);
+
+        var body = JsonNode.Parse(_requests.Single(r => r.Path == "/chat/completions").Body)!;
+        var content = body["messages"]!.AsArray()[0]!["content"]!.AsArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(content[0]!["type"]!.GetValue<string>(), Is.EqualTo("text"));
+            Assert.That(content[0]!["text"]!.GetValue<string>(), Is.EqualTo("olha"));
+            Assert.That(content[1]!["type"]!.GetValue<string>(), Is.EqualTo("image_url"));
+            Assert.That(content[1]!["image_url"]!["url"]!.GetValue<string>(),
+                Is.EqualTo("data:image/png;base64,QUJD"));
+        });
+    }
+
+    [Test]
+    public async Task CompleteAnthropic_MensagemComImagem_BlocoImageBase64()
+    {
+        _routes["/v1/messages"] = (200, "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}", 0);
+        await SetProvidersAsync(new ProviderConnection("anthropic", _mockUrl, "k"));
+        var request = new ChatCompletionRequest(
+            "claude",
+            [new ChatCompletionMessage("user", "olha",
+                Images: [new ChatImageData("image/png", "QUJD")])],
+            Stream: false,
+            Connection: "anthropic");
+
+        await NewService().CompleteAsync(request);
+
+        var body = JsonNode.Parse(_requests.Single(r => r.Path == "/v1/messages").Body)!;
+        var content = body["messages"]!.AsArray()[0]!["content"]!.AsArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(content[0]!["type"]!.GetValue<string>(), Is.EqualTo("text"));
+            Assert.That(content[1]!["type"]!.GetValue<string>(), Is.EqualTo("image"));
+            Assert.That(content[1]!["source"]!["type"]!.GetValue<string>(), Is.EqualTo("base64"));
+            Assert.That(content[1]!["source"]!["media_type"]!.GetValue<string>(), Is.EqualTo("image/png"));
+            Assert.That(content[1]!["source"]!["data"]!.GetValue<string>(), Is.EqualTo("QUJD"));
+        });
+    }
+
+    [Test]
+    public async Task CompleteOllama_MensagemSemImagem_ContentStringSemImages()
+    {
+        _routes["/api/chat"] = (200, "{\"message\":{\"content\":\"ok\"},\"done\":true}", 0);
+        await SetConnectionsAsync([_mockUrl], [], []);
+
+        await NewService().CompleteAsync(Req("m1"));
+
+        var body = JsonNode.Parse(_requests.Single(r => r.Path == "/api/chat").Body)!;
+        var msg = body["messages"]!.AsArray()[0]!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(msg["content"]!.GetValue<string>(), Is.EqualTo("oi"));
+            Assert.That(msg["images"], Is.Null);
+        });
+    }
 }

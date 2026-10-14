@@ -961,5 +961,9 @@
   "settings.model_role_memory": "Resúmenes de memoria y compactación",
   "settings.model_role_advisor": "Asesor de ejecuciones",
   "settings.model_role_default": "Predeterminado (modelo del chat)",
-  "settings.model_roles_error": "No se pudieron guardar los roles de modelo."
+  "settings.model_roles_error": "No se pudieron guardar los roles de modelo.",
+  "chat.attachment_remove": "Quitar adjunto",
+  "chat.open_attachment": "Abrir adjunto",
+  "chat.close_preview": "Cerrar vista previa",
+  "chat.attachment_unavailable": "Adjunto no disponible"
 }

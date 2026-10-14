@@ -961,5 +961,9 @@
   "settings.model_role_memory": "メモリ・要約の生成",
   "settings.model_role_advisor": "ランアドバイザー",
   "settings.model_role_default": "デフォルト（チャットモデル）",
-  "settings.model_roles_error": "モデルロールを保存できませんでした。"
+  "settings.model_roles_error": "モデルロールを保存できませんでした。",
+  "chat.attachment_remove": "添付を削除",
+  "chat.open_attachment": "添付を開く",
+  "chat.close_preview": "プレビューを閉じる",
+  "chat.attachment_unavailable": "添付ファイルを利用できません"
 }

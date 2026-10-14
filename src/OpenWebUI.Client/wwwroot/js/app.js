@@ -32,6 +32,53 @@ window.openwebui = {
 	copyText: function (text) {
 		return navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.resolve();
 	},
+	// SPEC-20261013-chat-media-attachments RF-002: entrega autenticada de
+	// mídia — a API é Bearer-only (sem cookie), então o JS busca os bytes
+	// com o token da sessão e cria um object URL cacheado por fileId.
+	// Falha (401/404/rede) devolve null → a UI cai no chip "indisponível".
+	media: {
+		_cache: {},
+		_pending: {},
+		_token: function () {
+			return localStorage.getItem('webui.token') || '';
+		},
+		resolve: async function (fileId) {
+			if (!fileId) return null;
+			if (this._cache[fileId]) return this._cache[fileId];
+			if (this._pending[fileId]) return this._pending[fileId];
+			var self = this;
+			this._pending[fileId] = (async function () {
+				try {
+					var res = await fetch('/api/v1/files/' + encodeURIComponent(fileId) + '/content', {
+						headers: { 'Authorization': 'Bearer ' + self._token() }
+					});
+					if (!res.ok) return null;
+					var blob = await res.blob();
+					var url = URL.createObjectURL(blob);
+					self._cache[fileId] = url;
+					return url;
+				} catch (e) {
+					return null;
+				} finally {
+					delete self._pending[fileId];
+				}
+			})();
+			return this._pending[fileId];
+		},
+		revoke: function (fileId) {
+			var url = this._cache[fileId];
+			if (url) {
+				URL.revokeObjectURL(url);
+				delete this._cache[fileId];
+			}
+		},
+		revokeAll: function () {
+			for (var id in this._cache) {
+				URL.revokeObjectURL(this._cache[id]);
+			}
+			this._cache = {};
+		}
+	},
 	// Navegação por setas em tablists e menus: Left/Up = anterior,
 	// Right/Down = próximo, Home/End = extremos. Foca o alvo sem ativá-lo.
 	rovingFocus: function (element, key) {

@@ -302,7 +302,8 @@ public static class ChatEndpoints
                 .Select(m => new ChatMessageModel(
                 m.Id, m.Role, m.Content, m.Model, m.Timestamp,
                 JsonSerializer.Deserialize<List<ChatMessageVersionModel>>(m.VersionsJson, JsonOptions),
-                m.ToolCallId, m.ToolCallsJson))
+                m.ToolCallId, m.ToolCallsJson,
+                ParseFiles(m.FilesJson)))
                 .ToList(),
             chat.CreatedAt,
             chat.UpdatedAt,
@@ -570,7 +571,7 @@ public static class ChatEndpoints
         chat.UpdatedAt = now;
 
         var previous = chat.Messages
-            .ToDictionary(m => m.Id, m => (m.Content, m.Model, m.VersionsJson));
+            .ToDictionary(m => m.Id, m => (m.Content, m.Model, m.VersionsJson, m.FilesJson));
         db.ChatMessages.RemoveRange(chat.Messages);
         chat.Messages = MapMessages(request.Messages, chat.Id, now);
         foreach (var m in chat.Messages.Where(m => previous.ContainsKey(m.Id)))
@@ -579,6 +580,9 @@ public static class ChatEndpoints
             m.VersionsJson = old.Content == m.Content
                 ? old.VersionsJson
                 : PushVersion(old.VersionsJson, old.Content, old.Model, now);
+            // Anexos (SPEC-20261013-chat-media-attachments): cliente que não
+            // conhece Files não apaga os anexos existentes num upsert.
+            m.FilesJson ??= old.FilesJson;
         }
 
         await db.SaveChangesAsync(ct);
@@ -860,6 +864,7 @@ public static class ChatEndpoints
                 Role = m.Role,
                 Content = m.Content,
                 Model = m.Model,
+                FilesJson = m.FilesJson,
                 Position = i,
                 Timestamp = m.Timestamp,
             })
@@ -1104,10 +1109,31 @@ public static class ChatEndpoints
                 Model = m.Model,
                 ToolCallId = m.ToolCallId,
                 ToolCallsJson = m.ToolCallsJson,
+                FilesJson = m.Files is null
+                    ? null
+                    : JsonSerializer.Serialize(m.Files, JsonOptions),
                 Position = i,
                 Timestamp = m.Timestamp > 0 ? m.Timestamp : now,
             })
             .ToList();
+
+    /// <summary>FilesJson → lista de anexos; null/malformado → null (SPEC-20261013-chat-media-attachments).</summary>
+    private static List<ChatMessageFileModel>? ParseFiles(string? filesJson)
+    {
+        if (string.IsNullOrEmpty(filesJson))
+        {
+            return null;
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<List<ChatMessageFileModel>>(
+                filesJson, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     private static Task<Chat?> LoadChatAsync(
         string id, string? userId, AppDbContext db, CancellationToken ct, bool tracking = false)
@@ -1145,7 +1171,8 @@ public static class ChatEndpoints
             .Select(m => new ChatMessageModel(
                 m.Id, m.Role, m.Content, m.Model, m.Timestamp,
                 JsonSerializer.Deserialize<List<ChatMessageVersionModel>>(m.VersionsJson, JsonOptions),
-                m.ToolCallId, m.ToolCallsJson))
+                m.ToolCallId, m.ToolCallsJson,
+                ParseFiles(m.FilesJson)))
             .ToList(),
         chat.Pinned,
         chat.Archived,

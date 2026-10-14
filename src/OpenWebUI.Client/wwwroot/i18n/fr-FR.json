@@ -961,5 +961,9 @@
   "settings.model_role_memory": "Résumés de mémoire et de compactage",
   "settings.model_role_advisor": "Conseiller de run",
   "settings.model_role_default": "Par défaut (modèle du chat)",
-  "settings.model_roles_error": "Impossible d'enregistrer les rôles de modèle."
+  "settings.model_roles_error": "Impossible d'enregistrer les rôles de modèle.",
+  "chat.attachment_remove": "Supprimer la pièce jointe",
+  "chat.open_attachment": "Ouvrir la pièce jointe",
+  "chat.close_preview": "Fermer l'aperçu",
+  "chat.attachment_unavailable": "Pièce jointe indisponible"
 }
