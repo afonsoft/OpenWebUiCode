@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `docs/Devin-20261014-comparative-specs` |
 | Ticket | — |
-| Status | `Draft` |
+| Status | `Approved` |
 
 ## 1. User Story
 
