@@ -14,7 +14,9 @@ namespace OpenWebUI.Infrastructure.Services;
 public interface IContextSummarizer
 {
     /// <summary>Resume o trecho de conversa (formatado "role: content") num texto único.</summary>
-    Task<string?> SummarizeAsync(string model, string transcript, CancellationToken ct);
+    /// <param name="userId">Usuário dono da conversa — resolve BYOK quando habilitado.</param>
+    Task<string?> SummarizeAsync(
+        string model, string transcript, string? userId, CancellationToken ct);
 }
 
 /// <summary>Sumarizador real: completion única não-streaming no modelo da própria run.</summary>
@@ -26,11 +28,12 @@ public sealed class LlmContextSummarizer(ProviderService providers) : IContextSu
         "tarefas pendentes e o objetivo atual. Responda só com o resumo, sem preâmbulo.\n\n";
 
     /// <inheritdoc />
-    public async Task<string?> SummarizeAsync(string model, string transcript, CancellationToken ct)
+    public async Task<string?> SummarizeAsync(
+        string model, string transcript, string? userId, CancellationToken ct)
     {
         var request = new ChatCompletionRequest(model,
             [new ChatCompletionMessage("user", Prompt + transcript)], Stream: false);
-        var result = await providers.CompleteAsync(request, ct);
+        var result = await providers.CompleteAsync(request, userId, ct);
         return string.IsNullOrWhiteSpace(result) ? null : result.Trim();
     }
 }
@@ -125,7 +128,7 @@ public sealed class ContextCompactionService(
             var summaryModel = userId is null
                 ? model
                 : await roles.ResolveAsync("memory", userId, model, ct);
-            var summary = await summarizer.SummarizeAsync(summaryModel, transcript, ct);
+            var summary = await summarizer.SummarizeAsync(summaryModel, transcript, userId, ct);
             if (summary is null)
             {
                 return false;

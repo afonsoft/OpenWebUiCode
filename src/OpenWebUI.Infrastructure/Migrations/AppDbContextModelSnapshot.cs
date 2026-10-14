@@ -1127,6 +1127,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Url")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.ToTable("McpServers");

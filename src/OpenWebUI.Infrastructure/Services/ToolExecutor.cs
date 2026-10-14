@@ -66,14 +66,33 @@ public class ToolExecutor(
         var tools = builtins.ResolveIds(toolIds, dbIds);
         if (dbIds.Count > 0)
         {
+            // Visibilidade MCP (SPEC-20261014-config-layers RF-002): tools
+            // virtuais globais têm UserId null; as de usuário só para o
+            // dono. Além disso o usuário pode ter desligado um servidor
+            // global — HiddenMcpServerIds cobre disable + sombra por nome.
+            var hidden = await new UserConfigOverlayService(db, config)
+                .HiddenMcpServerIdsAsync(userId, ct);
             tools.AddRange(await db.Tools.AsNoTracking()
                 .Where(t => dbIds.Contains(t.Id) && t.Enabled
-                    && (t.UserId == userId || t.Url.StartsWith(McpClientService.VirtualUrlPrefix)))
+                    && (t.UserId == userId
+                        || (t.UserId == null
+                            && t.Url.StartsWith(McpClientService.VirtualUrlPrefix))))
                 .ToListAsync(ct));
+            if (hidden.Count > 0)
+            {
+                tools.RemoveAll(t =>
+                    t.Url.StartsWith(McpClientService.VirtualUrlPrefix)
+                    && hidden.Contains(McpServerId(t.Url)));
+            }
         }
 
         return tools;
     }
+
+    /// <summary>Extrai o id do servidor de <c>mcp://{serverId}/{tool}</c>.</summary>
+    private static string McpServerId(string url) =>
+        url[McpClientService.VirtualUrlPrefix.Length..]
+            .Split('/', 2)[0];
 
     /// <summary>Atalho sem contexto built-in (tools do banco/HTTP/MCP apenas).</summary>
     public Task<ToolExecutionOutcome> ExecuteAsync(

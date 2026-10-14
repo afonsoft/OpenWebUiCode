@@ -26,7 +26,7 @@ public sealed class RunAdvisorService(
     BuiltinToolRegistry builtins,
     ModelRoleResolver roles,
     ConfigService config,
-    Func<ChatCompletionRequest, CancellationToken, Task<ProviderCompletion>> completeWithTools,
+    Func<ChatCompletionRequest, string?, CancellationToken, Task<ProviderCompletion>> completeWithTools,
     Func<IReadOnlyList<Tool>, string, string, BuiltinToolContext?, CancellationToken, Task<ToolExecutionOutcome>> executeTool)
 {
     /// <summary>Teto de conselhos publicados por run (RF-001).</summary>
@@ -129,7 +129,7 @@ public sealed class RunAdvisorService(
             var request = new ChatCompletionRequest(
                 model, messages, Stream: false,
                 Tools: advisorTools.Count > 0 ? specs : null);
-            var step = await completeWithTools(request, ct);
+            var step = await completeWithTools(request, run.UserId, ct);
             if (step.ToolCalls.Count == 0)
             {
                 return TruncateAdvice(step.Content);

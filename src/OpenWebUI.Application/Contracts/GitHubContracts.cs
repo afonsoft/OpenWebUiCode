@@ -3,7 +3,12 @@ namespace OpenWebUI.Application.Contracts;
 /// <summary>Status da integração GitHub do usuário (token nunca retorna).</summary>
 /// <param name="Configured">Se há um token salvo.</param>
 /// <param name="Login">Login do GitHub validado, quando configurado.</param>
-public sealed record GitHubConfigResponse(bool Configured, string? Login);
+/// <param name="Source">
+/// Camada que forneceu o token (SPEC-20261014-config-layers RF-003):
+/// <c>user</c> (PAT próprio) ou <c>global</c> (default do admin).
+/// </param>
+public sealed record GitHubConfigResponse(
+    bool Configured, string? Login, string? Source = null);
 
 /// <summary>Salva o token GitHub do usuário.</summary>
 /// <param name="Token">Personal access token (repo scope).</param>

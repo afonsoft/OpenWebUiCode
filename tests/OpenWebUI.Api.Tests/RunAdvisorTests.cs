@@ -80,16 +80,17 @@ public class RunAdvisorTests
 
     private RunAdvisorService Advisor(
         AppDbContext db,
-        Func<ChatCompletionRequest, CancellationToken, Task<ProviderCompletion>>? complete = null,
+        Func<ChatCompletionRequest, string?, CancellationToken, Task<ProviderCompletion>>? complete = null,
         Func<IReadOnlyList<Tool>, string, string, BuiltinToolContext?, CancellationToken, Task<ToolExecutionOutcome>>? exec = null,
         params IBuiltinChatTool[] tools) =>
         new(db,
             Registry(tools),
             new ModelRoleResolver(
-                db, _ => Task.FromResult(new List<ModelInfo>()),
+                db, new ConfigService(db, TestCache.Create()),
+                _ => Task.FromResult(new List<ModelInfo>()),
                 NullLogger<ModelRoleResolver>.Instance),
             new ConfigService(db, TestCache.Create()),
-            complete ?? ((_, _) => Task.FromResult(new ProviderCompletion("OK", [], "[]"))),
+            complete ?? ((_, _, _) => Task.FromResult(new ProviderCompletion("OK", [], "[]"))),
             exec ?? ((_, _, _, _, _) => Task.FromResult(new ToolExecutionOutcome("ran"))));
 
     // ---- allowlist read-only (RF-002) ----
@@ -181,7 +182,7 @@ public class RunAdvisorTests
         var chat = await SeedChatAsync(db, advisorEnabled: false);
         var called = false;
         var advice = await Advisor(db,
-            complete: (_, _) =>
+            complete: (_, _, _) =>
             {
                 called = true;
                 return Task.FromResult(new ProviderCompletion("dica", [], "[]"));
@@ -210,7 +211,7 @@ public class RunAdvisorTests
         var chat = await SeedChatAsync(db, advisorEnabled: true);
         var longo = new string('x', 600);
         var advice = await Advisor(db,
-            complete: (_, _) => Task.FromResult(
+            complete: (_, _, _) => Task.FromResult(
                 new ProviderCompletion(longo, [], "[]")))
             .AdviseAsync(RunFor(chat), "tool_burst", [], null, default);
         Assert.That(advice, Has.Length.EqualTo(RunAdvisorService.AdviceChars));
@@ -234,13 +235,14 @@ public class RunAdvisorTests
             Registry(),
             new ModelRoleResolver(
                 db,
+                new ConfigService(db, TestCache.Create()),
                 _ => Task.FromResult(new List<ModelInfo>
                 {
                     new("modelo-advisor", "adv", "ollama", null, null),
                 }),
                 NullLogger<ModelRoleResolver>.Instance),
             new ConfigService(db, TestCache.Create()),
-            (req, _) =>
+            (req, _, _) =>
             {
                 modeloUsado = req.Model;
                 return Task.FromResult(new ProviderCompletion("OK", [], "[]"));
@@ -259,7 +261,7 @@ public class RunAdvisorTests
         var calls = 0;
         var bctx = new BuiltinToolContext("u", chat.Id, "r", "/tmp", "/tmp");
         var advice = await Advisor(db,
-            complete: (req, _) =>
+            complete: (req, _, _) =>
             {
                 calls++;
                 // Primeira rodada pede uma tool mutável — deve ser negada
@@ -293,7 +295,7 @@ public class RunAdvisorTests
         var calls = 0;
         var bctx = new BuiltinToolContext("u", chat.Id, "r", "/tmp", "/tmp");
         var advice = await Advisor(db,
-            complete: (req, _) =>
+            complete: (req, _, _) =>
             {
                 calls++;
                 return Task.FromResult(calls == 1

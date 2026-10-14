@@ -421,7 +421,8 @@ public static class ChatPipeline
         ProviderService providers,
         CancellationToken ct,
         ToolLoopCallbacks? callbacks = null,
-        BuiltinToolContext? builtinContext = null)
+        BuiltinToolContext? builtinContext = null,
+        string? userId = null)
     {
         const int maxRounds = 5;
         var messages = effective.Messages.ToList();
@@ -455,7 +456,8 @@ public static class ChatPipeline
                 await callbacks.OnPhaseAsync("generating", null, ct);
             }
             var step = await CompleteRoundAsync(
-                providers, effective with { Messages = messages }, callbacks, ct);
+                providers, effective with { Messages = messages }, callbacks, ct,
+                userId ?? builtinContext?.UserId);
             if (step.ToolCalls.Count == 0)
             {
                 // Antes de ficar ociosa, promove mensagens queued (SPEC-20261010).
@@ -519,7 +521,8 @@ public static class ChatPipeline
 
         // Teto de iterações atingido: resposta final sem tools.
         var final = await CompleteRoundAsync(
-            providers, effective with { Messages = messages, Tools = null }, callbacks, ct);
+            providers, effective with { Messages = messages, Tools = null }, callbacks, ct,
+            userId ?? builtinContext?.UserId);
         return new ToolLoopOutcome(final.Content, toolMessages);
     }
 
@@ -533,7 +536,8 @@ public static class ChatPipeline
         ProviderService providers,
         ChatCompletionRequest request,
         ToolLoopCallbacks? callbacks,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? userId = null)
     {
         // Refiltra o spec anunciado por rodada (modo plan/build pode
         // mudar mid-run); Tools=null explícito (round final) respeitado.
@@ -542,13 +546,13 @@ public static class ChatPipeline
             request = request with { Tools = await announce(ct) };
         }
         var step = await providers.CompleteWithToolsStreamingAsync(
-            request, callbacks?.OnDeltaAsync, ct);
+            request, callbacks?.OnDeltaAsync, userId, ct);
         if (step is not null)
         {
             return step;
         }
 
-        var buffered = await providers.CompleteWithToolsAsync(request, ct);
+        var buffered = await providers.CompleteWithToolsAsync(request, userId, ct);
         if (buffered.Content.Length > 0 && callbacks?.OnDeltaAsync is not null)
         {
             await callbacks.OnDeltaAsync(buffered.Content, ct);
@@ -609,7 +613,7 @@ public static class ChatPipeline
                 var effective = await EnrichRequestAsync(
                     request with { Model = competitor, Stream = false },
                     user, db, config, rag, webSearch, repos, ct);
-                responses.Add(await providers.CompleteAsync(effective, ct));
+                responses.Add(await providers.CompleteAsync(effective, user.Id, ct));
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)

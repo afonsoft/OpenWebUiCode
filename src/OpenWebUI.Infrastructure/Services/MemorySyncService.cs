@@ -93,7 +93,7 @@ public class MemorySyncService(
                         model,
                         [new ChatCompletionMessage("user", DistillPrompt + transcript)],
                         Stream: false),
-                    ct);
+                    userId, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

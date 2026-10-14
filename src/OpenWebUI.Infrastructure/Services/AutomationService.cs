@@ -99,7 +99,7 @@ public class AutomationService(AppDbContext db, ProviderService providers, Notif
                     automation.ModelId,
                     [new ChatCompletionMessage("user", automation.Prompt)],
                     Stream: false),
-                ct);
+                automation.UserId, ct);
 
             chat.Messages.Add(new ChatMessage
             {

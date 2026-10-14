@@ -75,11 +75,14 @@ builder.Services.AddScoped<ContextCompactionService>();
 // Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
 // context-management): boundaries + notebook + flag new_context via kv.
 builder.Services.AddScoped<ContextBoundaryService>();
+// Camadas de configuração por usuário (SPEC-20261014-config-layers).
+builder.Services.AddScoped<UserConfigOverlayService>();
 builder.Services.AddScoped<IContextSummarizer, LlmContextSummarizer>();
 // Papéis/capacidades de modelo (SPEC-20261013-model-roles).
 builder.Services.AddScoped<ModelCapabilityResolver>();
 builder.Services.AddScoped(sp => new ModelRoleResolver(
     sp.GetRequiredService<AppDbContext>(),
+    sp.GetRequiredService<ConfigService>(),
     ct => sp.GetRequiredService<ProviderService>().ListModelsAsync(ct),
     sp.GetRequiredService<ILogger<ModelRoleResolver>>()));
 // Revisor de run (SPEC-20261013-run-advisor): delegates encapsulam as
@@ -89,7 +92,7 @@ builder.Services.AddScoped(sp => new RunAdvisorService(
     sp.GetRequiredService<BuiltinToolRegistry>(),
     sp.GetRequiredService<ModelRoleResolver>(),
     sp.GetRequiredService<ConfigService>(),
-    (req, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, ct),
+    (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct),
     (tools, name, args, bctx, ct) => sp.GetRequiredService<ToolExecutor>()
         .ExecuteAsync(tools, name, args, bctx, ct)));
 
@@ -476,6 +479,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapToolEndpoints();
     app.MapChatJobEndpoints();
     app.MapMcpEndpoints();
+    app.MapUserMcpEndpoints();
     app.MapChannelEndpoints();
 }
 

@@ -45,9 +45,13 @@ public static class McpEndpoints
 
         // 60s: lista de servidores muda raramente e é consultada por
         // painel + resolução de tools a cada mensagem de chat.
+        // O painel admin gerencia apenas os servidores globais (UserId null)
+        // — servidores de usuário (SPEC-20261014-config-layers) ficam no
+        // escopo de /users/user/mcp-servers.
         var servers = await cache.GetOrCreateAsync(
             "mcp-servers:list",
-            async cancel => await db.McpServers.AsNoTracking().OrderBy(s => s.Name).ToListAsync(cancel),
+            async cancel => await db.McpServers.AsNoTracking()
+                .Where(s => s.UserId == null).OrderBy(s => s.Name).ToListAsync(cancel),
             ListCacheOptions, tags: ["mcp"], cancellationToken: ct);
         return Results.Ok(servers.Select(ToResponse));
     }
@@ -97,7 +101,7 @@ public static class McpEndpoints
         {
             return Results.Forbid();
         }
-        var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id, ct);
+        var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
             return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
@@ -157,7 +161,7 @@ public static class McpEndpoints
         {
             return Results.Forbid();
         }
-        var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id, ct);
+        var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
             return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
@@ -182,7 +186,7 @@ public static class McpEndpoints
         {
             return Results.Forbid();
         }
-        var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id, ct);
+        var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
             return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
@@ -208,7 +212,7 @@ public static class McpEndpoints
         {
             return Results.Forbid();
         }
-        var server = await db.McpServers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, ct);
+        var server = await db.McpServers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
             return Results.NotFound(new { detail = "Servidor MCP não encontrado." });

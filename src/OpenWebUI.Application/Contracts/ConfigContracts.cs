@@ -221,6 +221,15 @@ public sealed record BannerRequest(string Type, string Title, string Content, bo
 /// <param name="Enabled">Se a feature está habilitada.</param>
 public sealed record FeatureToggle(bool Enabled);
 
+/// <summary>Visão das chaves de provider do usuário (BYOK, SPEC-20261014-config-layers RF-005).</summary>
+/// <param name="Enabled">Se o admin habilitou chaves por usuário (<c>features.userProviderKeys</c>).</param>
+/// <param name="Providers">Provedores com chave configurada — valores nunca retornam.</param>
+public sealed record UserProviderKeysResponse(bool Enabled, IReadOnlyList<string> Providers);
+
+/// <summary>Grava a chave BYOK do usuário para um provider.</summary>
+/// <param name="Key">Chave de API (obrigatória; nunca volta em GET).</param>
+public sealed record UserProviderKeyRequest(string? Key);
+
 /// <summary>Configuração de cadastro.</summary>
 /// <param name="EnableSignup">Cadastro aberto.</param>
 /// <param name="DefaultUserRole">Papel de novos usuários (pending/user/admin).</param>

@@ -1361,6 +1361,13 @@ public class McpServer
     /// <summary>Último erro de conexão/discovery (legível, nunca exception).</summary>
     public string? LastError { get; set; }
 
+    /// <summary>
+    /// Dono do servidor (SPEC-20261014-config-layers RF-002): null = global
+    /// provisionado pelo admin; preenchido = servidor do usuário (credenciais
+    /// e tools isoladas por dono).
+    /// </summary>
+    public string? UserId { get; set; }
+
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 

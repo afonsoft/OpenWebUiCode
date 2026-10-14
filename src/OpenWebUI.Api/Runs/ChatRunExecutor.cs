@@ -298,7 +298,8 @@ public sealed class ChatRunExecutor(
                         }
                     });
                 var outcome = await ChatPipeline.RunToolLoopAsync(
-                    effective, tools, toolExecutor, providers, ct, callbacks, builtinContext);
+                    effective, tools, toolExecutor, providers, ct, callbacks,
+                    builtinContext, run.UserId);
                 toolMessages = outcome?.ToolMessages;
             }
             else
@@ -306,7 +307,7 @@ public sealed class ChatRunExecutor(
                 // Sem tool loop o conselho só sai como evento — não há
                 // fronteira de rodada para a nota de contexto.
                 await KickAdvisorAsync(run, "user_message", null, ct);
-                await foreach (var line in providers.StreamCompletionAsync(effective, ct))
+                await foreach (var line in providers.StreamCompletionAsync(effective, run.UserId, ct))
                 {
                     await pauses.WaitIfPausedAsync(run.Id, ct);
                     var processed = ModelFilterService.ProcessSseLine(line, outletRules);

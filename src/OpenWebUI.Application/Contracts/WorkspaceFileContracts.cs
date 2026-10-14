@@ -120,8 +120,11 @@ public sealed record LspRenameResponse(
 /// <param name="Description">Descrição curta (frontmatter).</param>
 /// <param name="Source">Origem: <c>skill</c>.</param>
 /// <param name="Path">Caminho relativo ao workdir do arquivo SKILL.md.</param>
+/// <param name="Enabled">Se a skill está habilitada para o usuário atual.</param>
+/// <param name="DisabledByAdmin">Se o admin desligou a skill globalmente (deny absoluto).</param>
 public sealed record RepoSkillItemResponse(
-    string Name, string Description, string Source, string Path);
+    string Name, string Description, string Source, string Path,
+    bool Enabled = true, bool DisabledByAdmin = false);
 
 /// <summary>Skill do repositório com corpo markdown completo.</summary>
 public sealed record RepoSkillDetailResponse(

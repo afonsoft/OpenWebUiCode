@@ -181,7 +181,8 @@ public class ContextCompactionTests
         new(db,
             config ?? new ConfigService(db, TestCache.Create()),
             summarizer,
-            new ModelRoleResolver(db, _ => Task.FromResult(new List<ModelInfo>()),
+            new ModelRoleResolver(db, config ?? new ConfigService(db, TestCache.Create()),
+                _ => Task.FromResult(new List<ModelInfo>()),
                 NullLogger<ModelRoleResolver>.Instance),
             NullLogger<ContextCompactionService>.Instance);
 
@@ -189,7 +190,7 @@ public class ContextCompactionTests
     {
         public int Calls { get; private set; }
 
-        public Task<string?> SummarizeAsync(string model, string transcript, CancellationToken ct)
+        public Task<string?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
         {
             Calls++;
             return Task.FromResult(result);
@@ -198,7 +199,7 @@ public class ContextCompactionTests
 
     private sealed class ThrowingSummarizer : IContextSummarizer
     {
-        public Task<string?> SummarizeAsync(string model, string transcript, CancellationToken ct) =>
+        public Task<string?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct) =>
             throw new InvalidOperationException("boom");
     }
 }

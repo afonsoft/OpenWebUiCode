@@ -27,22 +27,56 @@ public sealed class GitHubService(
     private static string TokenKey(string userId) => $"u:{userId}:github.token";
     private static string LoginKey(string userId) => $"u:{userId}:github.login";
 
-    /// <summary>Status da integração do usuário (token mascarado).</summary>
+    /// <summary>Chaves do default global do admin (SPEC-20261014-config-layers RF-003).</summary>
+    public const string GlobalTokenKey = "github.token";
+    private const string GlobalLoginKey = "github.login";
+
+    /// <summary>Status da integração do usuário (token mascarado, com provenance).</summary>
     public async Task<GitHubConfigResponse> GetStatusAsync(string userId, CancellationToken ct)
     {
-        var token = await GetTokenAsync(userId, ct);
-        if (token is null)
+        if (await config.GetAsync<string?>(TokenKey(userId), null, ct) is { Length: > 0 })
         {
-            return new GitHubConfigResponse(false, null);
+            var login = await config.GetAsync<string?>(LoginKey(userId), null, ct);
+            return new GitHubConfigResponse(true, login, "user");
         }
-
-        var login = await config.GetAsync<string?>(LoginKey(userId), null, ct);
-        return new GitHubConfigResponse(true, login);
+        if (await config.GetAsync<string?>(GlobalTokenKey, null, ct) is { Length: > 0 })
+        {
+            var login = await config.GetAsync<string?>(GlobalLoginKey, null, ct);
+            return new GitHubConfigResponse(true, login, "global");
+        }
+        return new GitHubConfigResponse(false, null);
     }
 
-    /// <summary>Token salvo (uso interno — nunca exposto em resposta).</summary>
-    public Task<string?> GetTokenAsync(string userId, CancellationToken ct) =>
-        config.GetAsync<string?>(TokenKey(userId), null, ct);
+    /// <summary>
+    /// Token efetivo (uso interno — nunca exposto em resposta): PAT do
+    /// usuário → default global do admin (RF-003).
+    /// </summary>
+    public async Task<string?> GetTokenAsync(string userId, CancellationToken ct) =>
+        await config.GetAsync<string?>(TokenKey(userId), null, ct)
+        ?? await config.GetAsync<string?>(GlobalTokenKey, null, ct);
+
+    /// <summary>
+    /// Grava o token default global (admin). Devolve o login validado ou
+    /// null quando o GitHub recusa. O valor nunca volta pela API.
+    /// </summary>
+    public async Task<string?> SetGlobalTokenAsync(string token, CancellationToken ct)
+    {
+        var login = await ValidateTokenAsync(token, ct);
+        if (login is null)
+        {
+            return null;
+        }
+        await config.SetAsync(GlobalTokenKey, token, ct);
+        await config.SetAsync(GlobalLoginKey, login, ct);
+        return login;
+    }
+
+    /// <summary>Remove o token default global.</summary>
+    public async Task ClearGlobalTokenAsync(CancellationToken ct)
+    {
+        await config.SetAsync<string?>(GlobalTokenKey, null, ct);
+        await config.SetAsync<string?>(GlobalLoginKey, null, ct);
+    }
 
     /// <summary>
     /// Valida o token em <c>GET /user</c> e persiste; devolve o login ou
