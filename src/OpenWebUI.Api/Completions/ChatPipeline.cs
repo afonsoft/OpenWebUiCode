@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Endpoints;
@@ -516,7 +517,8 @@ public static class ChatPipeline
         CancellationToken ct,
         ToolLoopCallbacks? callbacks = null,
         BuiltinToolContext? builtinContext = null,
-        string? userId = null)
+        string? userId = null,
+        Microsoft.Extensions.Logging.ILogger? log = null)
     {
         const int maxRounds = 5;
         var messages = effective.Messages.ToList();
@@ -573,6 +575,11 @@ public static class ChatPipeline
             messages.Add(assistantMessage);
             toolMessages.Add(assistantMessage);
 
+            log?.LogInformation(
+                "Tool loop round {Round}/{Max}: {Count} call(s) ({Names}).",
+                round + 1, maxRounds, step.ToolCalls.Count,
+                string.Join(", ", step.ToolCalls.Select(c => c.Name)));
+
             foreach (var call in step.ToolCalls)
             {
                 if (callbacks?.OnPhaseAsync is not null)
@@ -588,6 +595,7 @@ public static class ChatPipeline
                     ? await callbacks.GateAsync(call, ct)
                     : ToolGateDecision.Allow;
                 var denied = !gate.Approved;
+                var callSw = Stopwatch.StartNew();
                 var outcome = denied
                     ? new ToolExecutionOutcome(
                         string.IsNullOrWhiteSpace(gate.DenyMessage)
@@ -600,6 +608,9 @@ public static class ChatPipeline
                         : await toolExecutor.ExecuteAsync(
                             tools, call.Name, call.ArgumentsJson, builtinContext, ct);
                 var output = outcome.Text;
+                log?.LogInformation(
+                    "Tool {Name}: {Elapsed}ms, denied={Denied}, output={Chars} chars.",
+                    call.Name, callSw.ElapsedMilliseconds, denied, output.Length);
 
                 if (callbacks?.OnResultAsync is not null)
                 {
@@ -614,6 +625,9 @@ public static class ChatPipeline
         }
 
         // Teto de iterações atingido: resposta final sem tools.
+        log?.LogWarning(
+            "Tool loop atingiu o teto de {Max} rounds — resposta final sem tools.",
+            maxRounds);
         var final = await CompleteRoundAsync(
             providers, effective with { Messages = messages, Tools = null }, callbacks, ct,
             userId ?? builtinContext?.UserId);

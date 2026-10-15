@@ -517,7 +517,7 @@ public class ProviderService(
     }
 
     /// <summary>Normaliza <c>choices[0].message</c> (OpenAI) ou <c>message</c> (Ollama).</summary>
-    private static ProviderCompletion ParseCompletionMessage(JsonNode? json, bool openAi)
+    private ProviderCompletion ParseCompletionMessage(JsonNode? json, bool openAi)
     {
         var firstChoice = json?["choices"] is JsonArray { Count: > 0 } arr ? arr[0] : null;
         var message = openAi ? firstChoice?["message"] : json?["message"];
@@ -554,7 +554,7 @@ public class ProviderService(
 
     /// <summary>Limpa markup DSML (DeepSeek) de content/reasoning de uma
     /// message OpenAI-compatível e devolve as calls extraídas.</summary>
-    private static (string Content, string? Reasoning, List<ProviderToolCall> DsmlCalls)
+    private (string Content, string? Reasoning, List<ProviderToolCall> DsmlCalls)
         ExtractDsmlFields(JsonNode? message, bool openAi)
     {
         var (content, dsmlCalls) = DsmlToolCallFilter.Extract(
@@ -563,13 +563,19 @@ public class ProviderService(
             ? ExtractOpenAiReasoning(message)
             : message?["thinking"] is JsonValue th && th.TryGetValue<string>(out var t)
                 ? t : null;
-        if (rawReasoning is null)
+        if (rawReasoning is not null)
         {
-            return (content, null, dsmlCalls);
+            var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
+            rawReasoning = clean.Length > 0 ? clean : null;
+            dsmlCalls.AddRange(moreCalls);
         }
-        var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
-        dsmlCalls.AddRange(moreCalls);
-        return (content, clean.Length > 0 ? clean : null, dsmlCalls);
+        if (dsmlCalls.Count > 0)
+        {
+            logger.LogInformation(
+                "{Count} tool call(s) extraídas de markup DSML na resposta buffered ({Names}) — o gateway não emitiu tool_calls estruturado.",
+                dsmlCalls.Count, string.Join(", ", dsmlCalls.Select(c => c.Name).Distinct()));
+        }
+        return (content, rawReasoning, dsmlCalls);
     }
 
     /// <summary>Serializa calls no shape <c>tool_calls</c> OpenAI (echo p/
@@ -797,6 +803,14 @@ public class ProviderService(
             .ToList();
         calls.AddRange(dsmlContent.Calls);
         calls.AddRange(dsmlReasoning.Calls);
+        if (dsmlContent.Calls.Count + dsmlReasoning.Calls.Count is > 0 and var dsmlCount)
+        {
+            logger.LogInformation(
+                "{Count} tool call(s) extraídas de markup DSML no texto do stream ({Names}) — o gateway não emitiu tool_calls estruturado.",
+                dsmlCount,
+                string.Join(", ", dsmlContent.Calls.Concat(dsmlReasoning.Calls)
+                    .Select(c => c.Name).Distinct()));
+        }
         var callsJson = SerializeToolCallsEcho(calls);
         return new ProviderCompletion(content.ToString(), calls, callsJson);
     }
@@ -2308,6 +2322,12 @@ public class ProviderService(
         if (orphanTail is not null)
         {
             yield return orphanTail;
+        }
+        if (dsmlContent.Calls.Count + dsmlReasoning.Calls.Count is > 0 and var dropped)
+        {
+            logger.LogWarning(
+                "{Count} tool call(s) DSML detectadas no caminho sem tools — markup sanitizado, mas as chamadas não são executáveis.",
+                dropped);
         }
     }
 

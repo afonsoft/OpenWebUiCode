@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -103,6 +104,7 @@ public sealed class ChatRunExecutor(
         var content = new StringBuilder();
         var sinceCheckpoint = 0;
         IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
+        var sw = Stopwatch.StartNew();
 
         try
         {
@@ -218,6 +220,10 @@ public sealed class ChatRunExecutor(
                 ? await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct)
                 : null;
             await PublishPhaseAsync(run, "connecting_model", null);
+            logger.LogInformation(
+                "Run {RunId}: model={Model}, tools={ToolCount}, mensagens={MessageCount}, chat={ChatId}.",
+                run.Id, effective.Model, tools?.Count ?? 0,
+                effective.Messages.Count, run.ChatId);
             if (tools is { Count: > 0 })
             {
                 var builtinContext = await BuildToolContextAsync(run, user, ct);
@@ -359,7 +365,7 @@ public sealed class ChatRunExecutor(
                     });
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct, callbacks,
-                    builtinContext, run.UserId);
+                    builtinContext, run.UserId, logger);
                 toolMessages = outcome?.ToolMessages;
             }
             else
@@ -398,12 +404,19 @@ public sealed class ChatRunExecutor(
             // marcador — a mensagem precisa já estar persistida.
             await FinishAsync(run, content.ToString(), ct, toolMessages: toolMessages);
             broadcaster.Publish(run.Id, "data: [DONE]");
+            logger.LogInformation(
+                "Run {RunId} concluída em {Elapsed}ms: {Chars} chars, {ToolMessages} msgs de tool.",
+                run.Id, sw.ElapsedMilliseconds, content.Length,
+                toolMessages?.Count ?? 0);
         }
         catch (OperationCanceledException)
         {
             approvals.Cancel(run.Id);
             await FinishAsync(run, content.ToString(), ct, ChatRunStatus.Stopped, toolMessages);
             broadcaster.Publish(run.Id, "data: [DONE]");
+            logger.LogWarning(
+                "Run {RunId} cancelada após {Elapsed}ms com {Chars} chars parciais.",
+                run.Id, sw.ElapsedMilliseconds, content.Length);
         }
         catch (Exception ex)
         {
@@ -414,7 +427,9 @@ public sealed class ChatRunExecutor(
             // invisível nos logs por dias.
             if (ex is not (HttpRequestException or TaskCanceledException))
             {
-                logger.LogError(ex, "Run {RunId} falhou com exceção inesperada.", run.Id);
+                logger.LogError(ex,
+                    "Run {RunId} falhou com exceção inesperada após {Elapsed}ms.",
+                    run.Id, sw.ElapsedMilliseconds);
             }
 
             var message = ex is HttpRequestException or TaskCanceledException
@@ -639,6 +654,9 @@ public sealed class ChatRunExecutor(
     /// <summary>Publica o evento <c>tool_call</c> com preview higienizado dos args.</summary>
     private Task PublishToolCallAsync(ChatRun run, ProviderToolCall call)
     {
+        logger.LogInformation(
+            "Run {RunId}: tool call {Name} ({Id}), args {Chars} chars.",
+            run.Id, call.Name, call.Id, call.ArgumentsJson.Length);
         broadcaster.Publish(run.Id,
             $"event: tool_call\ndata: {JsonSerializer.Serialize(new RunToolCallEvent(call.Id, call.Name, Scrub(Truncate(call.ArgumentsJson, PreviewChars))), JsonOptions)}");
         return Task.CompletedTask;
