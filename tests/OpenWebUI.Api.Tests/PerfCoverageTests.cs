@@ -75,7 +75,7 @@ public class PerfCoverageTests
         var banner = (await created.Content.ReadFromJsonAsync<BannerResponse>())!;
 
         var invalid = await _client.PostAsJsonAsync("/api/v1/configs/banners",
-            new BannerRequest("bogus", "", null, null));
+            new BannerRequest("bogus", "", null!, null));
         Assert.That(invalid.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
 
         var updated = await _client.PutAsJsonAsync($"/api/v1/configs/banners/{banner.Id}",
@@ -83,11 +83,11 @@ public class PerfCoverageTests
         Assert.That(updated.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
         var updatedInvalid = await _client.PutAsJsonAsync($"/api/v1/configs/banners/{banner.Id}",
-            new BannerRequest("bogus", "x", null, null));
+            new BannerRequest("bogus", "x", null!, null));
         Assert.That(updatedInvalid.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
 
         var updateMissing = await _client.PutAsJsonAsync("/api/v1/configs/banners/nao-existe",
-            new BannerRequest("info", "x", null, null));
+            new BannerRequest("info", "x", null!, null));
         Assert.That(updateMissing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
 
         var list = await _client.GetFromJsonAsync<List<BannerResponse>>("/api/v1/configs/banners");
@@ -105,7 +105,7 @@ public class PerfCoverageTests
     {
         UseToken(_userToken);
         var response = await _client.PostAsJsonAsync("/api/v1/configs/banners",
-            new BannerRequest("info", "x", null, null));
+            new BannerRequest("info", "x", null!, null));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
     }
 

@@ -204,6 +204,11 @@ public class SkillDiscoveryTests
     [Test]
     public void Scan_SkillSemPermissao_Ignorada()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("permissões POSIX não existem em Windows");
+            return;
+        }
         var path = WriteFile(".claude/skills/secret/SKILL.md", "nao pode ler");
         File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.Normal);
         File.SetUnixFileMode(path, UnixFileMode.None);
@@ -214,6 +219,11 @@ public class SkillDiscoveryTests
     [Test]
     public void Scan_SubdirSemPermissao_IgnoradoSemFalhar()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("permissões POSIX não existem em Windows");
+            return;
+        }
         WriteFile(".claude/skills/ok/SKILL.md", "skill boa");
         var locked = Path.Join(_dir, ".claude", "skills", "locked");
         Directory.CreateDirectory(locked);
@@ -226,8 +236,11 @@ public class SkillDiscoveryTests
         }
         finally
         {
-            File.SetUnixFileMode(locked,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(locked,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
         }
     }
 
@@ -284,6 +297,11 @@ public class SkillDiscoveryTests
     [Test]
     public void Instructions_ArquivoSemPermissao_Ignorado()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("permissões POSIX não existem em Windows");
+            return;
+        }
         var p = WriteFile("AGENTS.md", "instrucoes secretas");
         File.SetUnixFileMode(p, UnixFileMode.None);
         try
@@ -292,7 +310,10 @@ public class SkillDiscoveryTests
         }
         finally
         {
-            File.SetUnixFileMode(p, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(p, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
         }
     }
 

@@ -698,6 +698,11 @@ public class CheckpointServiceTests
     [Test]
     public async Task Fallback_WalkFiles_PulaSkipDirsSymlinkESemPermissao()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("trancar dir via UnixFileMode não existe em Windows");
+            return;
+        }
         var dir = NewWorkdir();
         var cpRoot = NewWorkdir();
         var locked = Path.Join(dir, "locked");
@@ -733,8 +738,14 @@ public class CheckpointServiceTests
         }
         finally
         {
-            try { File.SetUnixFileMode(locked, UnixFileMode.UserRead
-                | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+            try
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    File.SetUnixFileMode(locked, UnixFileMode.UserRead
+                        | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                }
+            }
             catch (IOException) { }
             Directory.Delete(dir, recursive: true);
             Directory.Delete(cpRoot, recursive: true);
