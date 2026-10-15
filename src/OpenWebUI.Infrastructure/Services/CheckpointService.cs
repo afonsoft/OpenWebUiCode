@@ -928,6 +928,10 @@ public sealed class CheckpointService(
         }
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add("core.autocrlf=false");
+        // Snapshots no volume DATA_ROOT podem ter outro dono —
+        // evita "detected dubious ownership" sem mexer em config global.
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("safe.directory=*");
         foreach (var arg in args)
         {
             psi.ArgumentList.Add(arg);
@@ -977,6 +981,8 @@ public sealed class CheckpointService(
         };
         psi.Environment[env1.Key] = env1.Value;
         psi.Environment[env2.Key] = env2.Value;
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("safe.directory=*");
         foreach (var arg in args)
         {
             psi.ArgumentList.Add(arg);

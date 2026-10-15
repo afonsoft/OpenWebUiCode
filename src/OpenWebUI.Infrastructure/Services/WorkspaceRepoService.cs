@@ -508,6 +508,11 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         {
             psi.WorkingDirectory = workdir;
         }
+        // Volume DATA_ROOT populado por outro UID (container root × bind-mount)
+        // faz o git recusar o repo ("detected dubious ownership") — a exceção
+        // por invocação evita depender de config global do ambiente.
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("safe.directory=*");
         // Credencial só no header dessa invocação — nada é gravado em .git/config.
         if (token is not null)
         {
