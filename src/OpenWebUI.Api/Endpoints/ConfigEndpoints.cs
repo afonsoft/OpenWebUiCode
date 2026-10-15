@@ -614,10 +614,9 @@ public static class ConfigEndpoints
     {
         var global = await ReadGlobalMemorySyncAsync(config, ct);
         var adminDisabled = global.Enabled == false;
-        var enabled = adminDisabled
-            || (await overlay.GetAsync(userId, "memsync.enabled", true, ct)).Value;
         // enabled efetivo: admin-deny é absoluto — quando desligado, false.
-        var effEnabled = adminDisabled ? false : enabled;
+        var effEnabled = !adminDisabled
+            && (await overlay.GetAsync(userId, "memsync.enabled", true, ct)).Value;
         var interval = Math.Clamp(
             (await overlay.GetAsync(
                 userId, "memsync.intervalHours",

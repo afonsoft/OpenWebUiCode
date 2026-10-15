@@ -132,7 +132,7 @@ public static class ModelFilterService
                         }
                         try
                         {
-                            _ = new Regex(pattern.GetString()!);
+                            _ = new Regex(pattern.GetString()!, RegexOptions.None, RegexDefaults.MatchTimeout);
                         }
                         catch (ArgumentException)
                         {
@@ -354,7 +354,7 @@ public static class ModelFilterService
                 ? r.GetString()! : "[redacted]";
         try
         {
-            rule = (new Regex(pattern.GetString()!), replacement);
+            rule = (new Regex(pattern.GetString()!, RegexOptions.None, RegexDefaults.MatchTimeout), replacement);
             return true;
         }
         catch (ArgumentException)

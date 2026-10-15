@@ -20,9 +20,9 @@ public class HistoryResourceTests
     [SetUp]
     public void SetUp()
     {
-        _dir = Path.Combine(Path.GetTempPath(), $"owui-hist-{Guid.NewGuid():N}");
+        _dir = Path.Join(Path.GetTempPath(), $"owui-hist-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dir);
-        _dbPath = Path.Combine(_dir, "t.db");
+        _dbPath = Path.Join(_dir, "t.db");
     }
 
     [TearDown]

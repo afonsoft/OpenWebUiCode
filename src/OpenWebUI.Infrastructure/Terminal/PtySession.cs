@@ -303,7 +303,7 @@ public sealed class PtySession : IPtySession
                     // O pump encerra no EOF do stdout, que pode chegar antes
                     // do processo registrar exit — espera um prazo curto.
                     await _process.WaitForExitAsync(CancellationToken.None)
-                        .WaitAsync(TimeSpan.FromSeconds(5))
+                        .WaitAsync(TimeSpan.FromSeconds(5), cancellationToken)
                         .ConfigureAwait(false);
                     exitCode = _process.ExitCode;
                 }

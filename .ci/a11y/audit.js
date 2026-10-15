@@ -102,4 +102,7 @@ async function analyze(page, context) {
     console.error(`::error::${critical.length} violação(ões) critical de acessibilidade`);
     process.exit(1);
   }
-})();
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

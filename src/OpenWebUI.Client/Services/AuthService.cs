@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net.Http.Json;
 using Microsoft.JSInterop;
 using OpenWebUI.Application.Contracts;
@@ -153,8 +154,19 @@ public class AuthService(
     }
 
     /// <summary>Cria uma requisição autenticada com o token da sessão.</summary>
+    /// <param name="method">Método HTTP.</param>
+    /// <param name="uri">Path relativo da API (deve começar com <c>/</c> e não <c>//</c>).</param>
+    /// <exception cref="ArgumentException">URI não é um path relativo de mesma origem.</exception>
     public HttpRequestMessage CreateRequest(HttpMethod method, string uri)
     {
+        ArgumentException.ThrowIfNullOrEmpty(uri);
+        var path = uri.Split('?', '#')[0];
+        if (!uri.StartsWith('/') || uri.StartsWith("//", StringComparison.Ordinal)
+            || path.Split('/').Any(static s => s is ".."))
+        {
+            throw new ArgumentException("URI deve ser um path relativo de mesma origem.", nameof(uri));
+        }
+
         var request = new HttpRequestMessage(method, uri);
         if (_token is not null)
         {

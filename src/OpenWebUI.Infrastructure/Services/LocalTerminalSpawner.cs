@@ -105,7 +105,7 @@ public sealed class LocalTerminalSpawner : IDisposable
         var process = new Process
         {
             StartInfo = OperatingSystem.IsWindows()
-                ? new ProcessStartInfo("cmd", $"/c {command}")
+                ? new ProcessStartInfo(ExecutableResolver.Resolve("cmd"), $"/c {command}")
                 : new ProcessStartInfo("/bin/sh", $"-c \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\""),
             EnableRaisingEvents = true,
         };

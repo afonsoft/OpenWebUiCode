@@ -178,7 +178,7 @@ public sealed class WorkspaceGitService
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = ExecutableResolver.Resolve("git"),
             WorkingDirectory = workdir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

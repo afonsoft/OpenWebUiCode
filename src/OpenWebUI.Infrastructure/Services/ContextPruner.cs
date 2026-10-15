@@ -30,7 +30,7 @@ public static class ContextPruner
     /// <summary>Acks curtos sem payload útil (cobertos por RF-001b).</summary>
     private static readonly Regex s_ack = new(
         "^(ok|done|success|sucesso|conclu[ií]do)[.!]?$|^\\{\\s*\"ok\"\\s*:\\s*true\\s*\\}$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexDefaults.MatchTimeout);
 
     /// <summary>
     /// Devolve a janela podada (nova lista — nunca muta a entrada): aplica

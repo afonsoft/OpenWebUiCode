@@ -315,7 +315,7 @@ public sealed class WorktreeService(
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = ExecutableResolver.Resolve("git"),
             WorkingDirectory = workdir,
             RedirectStandardInput = stdin is not null,
             RedirectStandardOutput = true,
@@ -344,8 +344,8 @@ public sealed class WorktreeService(
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(GitTimeout);
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
+            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
             await process.WaitForExitAsync(timeout.Token);
             return (process.ExitCode, await stdout, await stderr);
         }

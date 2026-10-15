@@ -290,6 +290,13 @@ static Task AcceptTokenFromQueryString(MessageReceivedContext context)
 /// </summary>
 static void UseContentSecurityPolicy(WebApplication app)
 {
+    // CSP mínima funcional (Sonar S7039 — revisado):
+    // - 'unsafe-inline' (script/style): index.html tem <script> inline de boot/tema.
+    // - 'unsafe-eval' + 'wasm-unsafe-eval': codeexec.js roda código do usuário via
+    //   eval() dentro de Web Worker; WASM exige wasm-unsafe-eval.
+    // - connect-src https:/wss:/data:/blob:: BYOK permite providers arbitrários
+    //   (Ollama/OpenAI customizados) — restringir quebraria deployments locais.
+    // - img-src https:/frame-src https:: markdown/artefatos embutem URLs externas.
     const string ContentSecurityPolicy =
         "default-src 'self'; " +
         "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdn.jsdelivr.net; " +

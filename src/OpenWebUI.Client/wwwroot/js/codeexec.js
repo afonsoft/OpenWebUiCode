@@ -44,7 +44,9 @@ window.openwebui.codeExec = (function () {
 				'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 ' +
 				'hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer';
 			button.addEventListener('click', function () {
-				run(codeEl.innerText, lang, button, pre);
+				run(codeEl.innerText, lang, button, pre).catch(function (err) {
+					pre.textContent += '\n(execução falhou: ' + (err && err.message ? err.message : err) + ')';
+				});
 			});
 			pre.appendChild(button);
 		});
@@ -290,8 +292,8 @@ window.openwebui.codeExec = (function () {
 
 	function executeOnKernel(ws, code) {
 		return new Promise(function (resolve, reject) {
-			const msgId = 'exec-' + Math.random().toString(36).slice(2);
-			const session = 'webui-' + Math.random().toString(36).slice(2);
+			const msgId = 'exec-' + crypto.randomUUID();
+			const session = 'webui-' + crypto.randomUUID();
 			const out = { stdout: '', stderr: '' };
 			const timer = setTimeout(function () {
 				ws.close();

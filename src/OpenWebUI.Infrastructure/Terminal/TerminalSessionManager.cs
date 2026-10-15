@@ -125,7 +125,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         _logger = logger;
         _sessionFactory = sessionFactory;
         _idleTimeout = idleTimeout;
-        _sweepTask = Task.Run(SweepLoopAsync);
+        _sweepTask = Task.Run(SweepLoopAsync, _sweepCts.Token);
     }
 
     /// <summary>

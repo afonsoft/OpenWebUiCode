@@ -144,7 +144,7 @@ window.openwebui = {
 		const handler = function (event) {
 			if (event.origin !== url) return;
 			if (event.data === 'loaded') {
-				tab.postMessage(payloadJson, '*');
+				tab.postMessage(payloadJson, url);
 				window.removeEventListener('message', handler);
 			}
 		};

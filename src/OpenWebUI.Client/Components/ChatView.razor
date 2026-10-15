@@ -782,7 +782,7 @@
     private string? _mentionTreeFor;
     private CancellationTokenSource? _mentionCts;
     private static readonly System.Text.RegularExpressions.Regex MentionTokenRegex =
-        new(@"(?:^|\s)@(?<q>[\w./-]+)$", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"(?:^|\s)@(?<q>[\w./-]+)$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private List<RepoSkillItemResponse> _repoSkills = [];
     private List<RepoCommandItemResponse> _repoCommands = [];
     private List<string> _followUps = [];
@@ -1423,6 +1423,8 @@
         Realtime.OnChatMessageDeleted -= HandleChatMessageDeleted;
         Realtime.OnRunCompleted -= HandleRunCompleted;
         _cts?.Dispose();
+        _mentionCts?.Dispose();
+        _draftCts?.Dispose();
         _ttsRef?.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -1745,6 +1747,9 @@
         await JS.InvokeVoidAsync("openwebui.openFilePicker", _fileInput?.Element);
     }
 
+    /// <summary>Limite explícito de upload por anexo (Sonar S5693): 100 MB.</summary>
+    private const long MaxUploadBytes = 100L * 1024 * 1024;
+
     private async Task OnFileSelected(InputFileChangeEventArgs e)
     {
         _uploading = true;
@@ -1753,7 +1758,7 @@
             var hasImage = false;
             foreach (var file in e.GetMultipleFiles(10))
             {
-                await using var stream = file.OpenReadStream(100 * 1024 * 1024);
+                await using var stream = file.OpenReadStream(MaxUploadBytes);
                 var uploaded = await Api.UploadFileAsync(stream, file.Name, file.ContentType);
                 if (uploaded is not null)
                 {

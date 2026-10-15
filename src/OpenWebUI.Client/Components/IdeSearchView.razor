@@ -1,3 +1,4 @@
+@implements IDisposable
 @inject ApiService Api
 @inject LocalizationService L
 
@@ -72,6 +73,14 @@
             _focused = true;
             await _input.FocusAsync();
         }
+    }
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        _debounce?.Cancel();
+        _debounce?.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>Debounce 400ms por digitação.</summary>

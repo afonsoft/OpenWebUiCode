@@ -298,7 +298,7 @@ public static class ApiEndpoints
                 http.Response.StatusCode = 404;
                 await writer.WriteLineAsync(
                     JsonSerializer.Serialize(new { error = $"Pipe '{pipeId}' não encontrado." }));
-                await writer.FlushAsync();
+                await writer.FlushAsync(http.RequestAborted);
                 return;
             }
 
@@ -308,7 +308,7 @@ public static class ApiEndpoints
                 http.Response.StatusCode = proxied.StatusCode;
                 await writer.WriteLineAsync(
                     JsonSerializer.Serialize(new { error = $"Falha no servidor de pipelines: {proxied.Error}" }));
-                await writer.FlushAsync();
+                await writer.FlushAsync(http.RequestAborted);
                 return;
             }
 
@@ -375,7 +375,7 @@ public static class ApiEndpoints
                     await writer.WriteLineAsync();
                     await writer.WriteLineAsync("data: [DONE]");
                     await writer.WriteLineAsync();
-                    await writer.FlushAsync();
+                    await writer.FlushAsync(http.RequestAborted);
                     return;
                 }
             }
@@ -385,27 +385,27 @@ public static class ApiEndpoints
                 await writer.WriteLineAsync(
                     ModelFilterService.ProcessSseLine(line, outletRules));
                 await writer.WriteLineAsync();
-                await writer.FlushAsync();
+                await writer.FlushAsync(http.RequestAborted);
             }
         }
         catch (InvalidOperationException ex)
         {
-            await WriteSseErrorAsync(writer, ex.Message);
+            await WriteSseErrorAsync(writer, ex.Message, http.RequestAborted);
         }
         catch (HttpRequestException ex)
         {
-            await WriteSseErrorAsync(writer, $"Falha ao contactar o provedor: {ex.Message}");
+            await WriteSseErrorAsync(writer, $"Falha ao contactar o provedor: {ex.Message}", http.RequestAborted);
         }
     }
 
-    private static async Task WriteSseErrorAsync(StreamWriter writer, string message)
+    private static async Task WriteSseErrorAsync(StreamWriter writer, string message, CancellationToken ct)
     {
         var error = JsonSerializer.Serialize(new { error = message });
         await writer.WriteLineAsync($"data: {error}");
         await writer.WriteLineAsync();
         await writer.WriteLineAsync("data: [DONE]");
         await writer.WriteLineAsync();
-        await writer.FlushAsync();
+        await writer.FlushAsync(ct);
     }
 
     private static async Task<IResult> GetConnectionsAsync(

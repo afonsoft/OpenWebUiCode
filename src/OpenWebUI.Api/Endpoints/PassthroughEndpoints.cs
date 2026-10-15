@@ -81,7 +81,7 @@ public static class PassthroughEndpoints
 
     /// <summary>Regex do digest de blob aceito pelo Ollama (sha256 + 64 hex).</summary>
     private static readonly System.Text.RegularExpressions.Regex BlobDigest =
-        new(@"^sha256:[0-9a-fA-F]{64}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"^sha256:[0-9a-fA-F]{64}$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
 
     /// <summary>Valida o digest e o limite de upload antes de proxear blobs.</summary>
     private static Task<IResult> ProxyBlob(

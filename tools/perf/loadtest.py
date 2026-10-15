@@ -398,7 +398,8 @@ async def scenario_rps(
     try:
         await monitor
     except asyncio.CancelledError:
-        pass
+        if not monitor.cancelled():
+            raise
 
 
 async def chat_session_loop(

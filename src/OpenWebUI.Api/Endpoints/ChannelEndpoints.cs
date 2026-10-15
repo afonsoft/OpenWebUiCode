@@ -669,7 +669,7 @@ public static class ChannelEndpoints
     /// <summary>Extrai o identificador de modelo da primeira menção @modelo.</summary>
     private static string? ExtractModelMention(string content)
     {
-        var match = Regex.Match(content, @"@([\w.:\-/]+)");
+        var match = Regex.Match(content, @"@([\w.:\-/]+)", RegexOptions.None, RegexDefaults.MatchTimeout);
         return match.Success ? match.Groups[1].Value : null;
     }
 
