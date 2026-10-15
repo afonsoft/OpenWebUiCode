@@ -315,7 +315,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
                          .Where(l => !string.IsNullOrEmpty(l)))
             {
                 var title = Uri.TryCreate(link, UriKind.Absolute, out var uri) ? uri.Host : link;
-                results.Add(new WebSearchResult(title, link!, string.Empty));
+                results.Add(new WebSearchResult(title ?? link!, link!, string.Empty));
             }
         }
         return results;

@@ -189,6 +189,11 @@ public class CatchNarrowingTests
     [Test]
     public async Task FileList_SemPermissao_RetornaErroTipado()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("trancar dir via UnixFileMode não existe em Windows");
+            return;
+        }
         var dir = Path.Join(Path.GetTempPath(), $"noperm-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         Directory.CreateDirectory(Path.Join(dir, "locked"));
@@ -207,7 +212,10 @@ public class CatchNarrowingTests
         }
         finally
         {
-            File.SetUnixFileMode(Path.Join(dir, "locked"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(Path.Join(dir, "locked"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
             try { Directory.Delete(dir, true); } catch (IOException) { /* cleanup best-effort */ }
         }
     }

@@ -275,6 +275,12 @@ public class PtySessionBackfillTests
         // "script" fake: um sh que imprime marcador e espelha stdin via cat —
         // cobre Start, PumpAsync, WriteAsync, ResizeAsync e DisposeAsync
         // sem precisar de um PTY de verdade.
+        if (OperatingSystem.IsWindows())
+        {
+            // PTY + bit de execução são Unix-only — sem equivalente no host Windows.
+            Assert.Ignore("PTY/Unix file mode não existe em Windows");
+            return;
+        }
         var dir = Path.Join(Path.GetTempPath(), $"ptybf-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
         var fake = Path.Join(dir, "fake-script.sh");

@@ -321,7 +321,8 @@ public static class ModelFilterService
                     {
                         var content = (JsonValue)segment["content"]!;
                         content.TryGetValue<string>(out var text);
-                        var redacted = text;
+                        // O Where acima garante TryGetValue — text é não-nulo aqui.
+                        var redacted = text!;
                         foreach (var (regex, replacement) in rules)
                         {
                             redacted = regex.Replace(redacted, replacement);

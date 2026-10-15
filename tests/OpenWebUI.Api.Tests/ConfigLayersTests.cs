@@ -398,7 +398,7 @@ public class ConfigLayersE2ETests
         Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await created.Content.ReadAsStringAsync());
         var globalId = (await created.Content
-            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+            .ReadFromJsonAsync<JsonElementDict>())!.GetProperty("id").GetString()!;
 
         // Usuário vê o global com provenance "global" e adiciona o seu.
         UseToken(user.Token);
@@ -417,7 +417,7 @@ public class ConfigLayersE2ETests
         Assert.That(mine.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await mine.Content.ReadAsStringAsync());
         var mineId = (await mine.Content
-            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+            .ReadFromJsonAsync<JsonElementDict>())!.GetProperty("id").GetString()!;
 
         // O servidor do usuário não aparece para o admin nem no catálogo global.
         UseToken(_adminToken);
@@ -464,7 +464,7 @@ public class ConfigLayersE2ETests
         Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await created.Content.ReadAsStringAsync());
         var id = (await created.Content
-            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+            .ReadFromJsonAsync<JsonElementDict>())!.GetProperty("id").GetString()!;
 
         // Update feliz: troca nome/url, mantém header mascarado, remove ausentes.
         var upd = await _client.PutAsJsonAsync($"/api/v1/users/user/mcp-servers/{id}",
@@ -788,7 +788,7 @@ public class ConfigLayersE2ETests
         Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await created.Content.ReadAsStringAsync());
         var channelId = (await created.Content
-            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+            .ReadFromJsonAsync<JsonElementDict>())!.GetProperty("id").GetString()!;
 
         // List + get do dono.
         var list = await _client.GetFromJsonAsync<JsonElementDict[]>("/api/v1/channels/");
@@ -811,7 +811,7 @@ public class ConfigLayersE2ETests
         Assert.That(msg.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await msg.Content.ReadAsStringAsync());
         var msgId = (await msg.Content
-            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+            .ReadFromJsonAsync<JsonElementDict>())!.GetProperty("id").GetString()!;
 
         // Não-membro não posta nem lê.
         UseToken(b.Token);

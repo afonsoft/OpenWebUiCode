@@ -90,7 +90,7 @@ public partial class McpClientService(
             await db.SaveChangesAsync(timeout.Token);
 
             await cache.SetAsync(ToolsCacheKey(server.Id),
-                virtualTools.Select(t => new McpToolDescriptor(t.Name, t.Description)).ToList(), CacheOptions,
+                virtualTools.Select(t => new McpToolDescriptor(t.Name, t.Description ?? "")).ToList(), CacheOptions,
                 tags: ["mcp"], cancellationToken: timeout.Token);
             return virtualTools.Count;
         }

@@ -148,7 +148,7 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
                 // Servidor do usuário com o mesmo nome substitui o global.
                 continue;
             }
-            result.Add((g, ConfigSource.Global, EnabledForMe: !disabled.Contains(g.Id)));
+            result.Add((g, ConfigSource.Global, !disabled.Contains(g.Id)));
         }
         result.AddRange(mine.Select(s => (s, ConfigSource.User, s.Enabled)));
         return result;
