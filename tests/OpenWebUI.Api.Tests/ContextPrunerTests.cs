@@ -128,6 +128,66 @@ public class ContextPrunerTests
     }
 
     [Test]
+    public void ArgumentsDoubleEncoded_NaoDerrubaRun()
+    {
+        // Regressão run.failed: modelos (Gemini/OmniRoute) emitem arguments
+        // "double-encoded" — uma string JSON contendo o objeto. O root
+        // String fazia TryGetProperty lançar InvalidOperationException,
+        // que escapava do catch (JsonException) e derrubava a run inteira.
+        var doubleEncoded = JsonSerializer.Serialize(
+            JsonSerializer.Serialize(new { path = "x.txt" }));
+        var history = new List<ChatCompletionMessage>
+        {
+            new("assistant", "", ToolCallsJson: JsonSerializer.Serialize(new[]
+            {
+                new { id = "c1", function = new { name = "file_write", arguments = doubleEncoded } },
+            })),
+            new("tool", "gravado", "c1"),
+            WriteCall("c2", "x.txt"),
+            new("tool", "reescrito", "c2"),
+        };
+
+        var pruned = ContextPruner.Prune(history, "c");
+
+        // Args desembrulhados → path recuperado → result superseded elidido.
+        Assert.That(pruned[1].Content, Does.Contain("elidido").And.Contain("x.txt"));
+    }
+
+    [Test]
+    public void ArgumentsComoObjeto_NaoDerrubaRun()
+    {
+        // Alguns providers serializam arguments como objeto JSON (não
+        // string): GetString() lançava InvalidOperationException ("requires
+        // an element of type 'String'...'Object'") e derrubava a run.
+        var history = new List<ChatCompletionMessage>
+        {
+            new("assistant", "", ToolCallsJson: """[{"id":"c1","function":{"name":"file_write","arguments":{"path":"x.txt"}}}]"""),
+            new("tool", "gravado", "c1"),
+            WriteCall("c2", "x.txt"),
+            new("tool", "reescrito", "c2"),
+        };
+
+        var pruned = ContextPruner.Prune(history, "c");
+
+        Assert.That(pruned[1].Content, Does.Contain("elidido").And.Contain("x.txt"));
+    }
+
+    [Test]
+    public void ArgumentsTextoSimples_NaoDerrubaRun()
+    {
+        // arguments não-JSON (texto puro) — malformado, ignora o alvo.
+        var history = new List<ChatCompletionMessage>
+        {
+            new("assistant", "", ToolCallsJson: """[{"id":"c1","function":{"name":"file_write","arguments":"escreve x"}}]"""),
+            new("tool", "gravado", "c1"),
+        };
+
+        var pruned = ContextPruner.Prune(history, "c");
+
+        Assert.That(pruned[1].Content, Is.EqualTo("gravado"));
+    }
+
+    [Test]
     public void Structured_ParseJsonOuDegradaProsa()
     {
         var json = """{"summary":"fez X","files":["a.cs"],"decisions":["usar DI"],"pending":["testes"]}""";

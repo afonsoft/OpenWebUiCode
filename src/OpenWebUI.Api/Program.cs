@@ -191,7 +191,11 @@ builder.Services.AddHttpClient(PreviewEndpoints.HttpClientName)
     });
 
 builder.Services.AddMemoryCache();
-builder.Services.AddHybridCache();
+builder.Services.AddHybridCache(options =>
+    // A lista agregada de /v1/models (gateways tipo OmniRoute) passa do
+    // default de 1MB — toda escrita falhava com "Max length exceeded" e
+    // o cache nunca servia (fail recorrente + refetch a cada request).
+    options.MaximumPayloadBytes = 16 * 1024 * 1024);
 builder.Services.AddHttpClient();
 builder.Services.AddOpenApi();
 

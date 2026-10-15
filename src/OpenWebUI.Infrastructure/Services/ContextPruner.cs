@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using OpenWebUI.Application.Contracts;
+using OpenWebUI.Infrastructure.ChatTools;
 
 namespace OpenWebUI.Infrastructure.Services;
 
@@ -114,17 +115,27 @@ public static class ContextPruner
                         && fn.TryGetProperty("name", out var n) ? n.GetString() : null;
                     string? path = null;
                     if (name is not null && s_writeTools.Contains(name)
-                        && fn.TryGetProperty("arguments", out var a)
-                        && a.GetString() is { } argsJson)
+                        && fn.TryGetProperty("arguments", out var a))
                     {
-                        try
+                        // arguments pode vir como string (padrão), objeto
+                        // embutido ou string "double-encoded" (Gemini) —
+                        // GetString()/TryGetProperty no kind errado lançava
+                        // InvalidOperationException e derrubava a run.
+                        var argsJson = a.ValueKind == JsonValueKind.String ? a.GetString()
+                            : a.ValueKind == JsonValueKind.Object ? a.GetRawText() : null;
+                        if (argsJson is not null)
                         {
-                            var args = JsonDocument.Parse(argsJson).RootElement;
-                            path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
-                        }
-                        catch (JsonException)
-                        {
-                            // arguments malformado — ignora o alvo.
+                            try
+                            {
+                                var args = BuiltinToolRegistry.NormalizeArgs(argsJson);
+                                path = args.ValueKind == JsonValueKind.Object
+                                    && args.TryGetProperty("path", out var p)
+                                        ? p.GetString() : null;
+                            }
+                            catch (JsonException)
+                            {
+                                // arguments malformado — ignora o alvo.
+                            }
                         }
                     }
                     calls.Add(new CallRef(id, path));
