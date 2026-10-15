@@ -521,6 +521,17 @@ public static class ChatPipeline
         Microsoft.Extensions.Logging.ILogger? log = null)
     {
         const int maxRounds = 5;
+        // Rodadas vazias (só reasoning, sem content nem tool_calls) não
+        // encerram a run em silêncio: o modelo leva um nudge e tenta de
+        // novo — autonomia para continuar o pensamento sem esperar o
+        // usuário. Limitado para não virar loop infinito de nudges.
+        const int maxEmptyRounds = 3;
+        // Gateways com teto baixo de completion (ex.: rotas Cloudflare do
+        // OmniRoute ~256 tokens) deixam o modelo de raciocínio sem orçamento
+        // para responder — o retry de round vazio sobe o teto.
+        const int retryMaxTokens = 8192;
+        var emptyRounds = 0;
+        var request = effective;
         var messages = effective.Messages.ToList();
         var toolMessages = new List<ChatCompletionMessage>();
 
@@ -552,7 +563,7 @@ public static class ChatPipeline
                 await callbacks.OnPhaseAsync("generating", null, ct);
             }
             var step = await CompleteRoundAsync(
-                providers, effective with { Messages = messages }, callbacks, ct,
+                providers, request with { Messages = messages }, callbacks, ct,
                 userId ?? builtinContext?.UserId);
             if (step.ToolCalls.Count == 0)
             {
@@ -566,6 +577,35 @@ public static class ChatPipeline
                         round = -1;
                         continue;
                     }
+                }
+                if (string.IsNullOrWhiteSpace(step.Content) && emptyRounds < maxEmptyRounds)
+                {
+                    // Round vazio (ex.: gateway emitiu só reasoning, ou o
+                    // markup DSML veio truncado e não rendeu call): a run
+                    // continuava "concluída" com 0 chars — a UI congelava
+                    // depois do pensamento. O nudge reabre o turno para o
+                    // modelo produzir a resposta ou a tool call — e o retry
+                    // sobe o teto de tokens para backends que travam o
+                    // pensamento num orçamento pequeno demais.
+                    emptyRounds++;
+                    var bumped = BumpMaxTokens(request.Params, retryMaxTokens);
+                    if (bumped is not null)
+                    {
+                        request = request with { Params = bumped };
+                        log?.LogInformation(
+                            "Round vazio: max_tokens elevado para {MaxTokens} no retry.",
+                            retryMaxTokens);
+                    }
+                    log?.LogWarning(
+                        "Round {Round} retornou vazio (sem content nem tool calls) — "
+                        + "auto-continue {Empty}/{Max} injetado.",
+                        round + 1, emptyRounds, maxEmptyRounds);
+                    messages.Add(new ChatCompletionMessage(
+                        "user",
+                        "Sua resposta anterior veio vazia (sem texto nem tool calls). "
+                        + "Responda agora de forma direta — ou chame a tool "
+                        + "apropriada — sem reiniciar o raciocínio."));
+                    continue;
                 }
                 return new ToolLoopOutcome(step.Content, toolMessages);
             }
@@ -629,9 +669,39 @@ public static class ChatPipeline
             "Tool loop atingiu o teto de {Max} rounds — resposta final sem tools.",
             maxRounds);
         var final = await CompleteRoundAsync(
-            providers, effective with { Messages = messages, Tools = null }, callbacks, ct,
+            providers, request with { Messages = messages, Tools = null }, callbacks, ct,
             userId ?? builtinContext?.UserId);
         return new ToolLoopOutcome(final.Content, toolMessages);
+    }
+
+    /// <summary>Sobe o teto de <c>max_tokens</c> no retry de round vazio —
+    /// backends com default baixo (ex.: Cloudflare ~256) deixam o modelo de
+    /// raciocínio sem orçamento para responder depois do pensamento.
+    /// Devolve null quando o usuário já pediu um teto igual ou maior.</summary>
+    private static IReadOnlyDictionary<string, object>? BumpMaxTokens(
+        IReadOnlyDictionary<string, object>? parameters, int target)
+    {
+        var merged = parameters is null
+            ? new Dictionary<string, object>()
+            : new Dictionary<string, object>(parameters);
+        var current = merged.TryGetValue("max_tokens", out var v)
+            || merged.TryGetValue("max_completion_tokens", out v)
+            ? v : null;
+        var currentInt = current switch
+        {
+            int i => i,
+            long l => (int)l,
+            double d => (int)d,
+            JsonElement { ValueKind: JsonValueKind.Number } e
+                when e.TryGetInt32(out var n) => n,
+            _ => (int?)null,
+        };
+        if (currentInt >= target)
+        {
+            return null;
+        }
+        merged["max_tokens"] = target;
+        return merged;
     }
 
     /// <summary>

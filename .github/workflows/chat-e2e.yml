@@ -79,6 +79,20 @@ jobs:
             --results-directory ./TestResults \
             --verbosity minimal
 
+      # Transcripts no log do job: o TestContext.Out dos testes vai para o
+      # <StdOut> do trx — extrai para quem abrir o run ver a conversa, os
+      # eventos SSE e os logs do app sem baixar o artifact.
+      - name: Show E2E Transcripts
+        if: always() && steps.gate.outputs.enabled == 'true'
+        run: |
+          python3 - <<'PY'
+          import glob, re, html
+          for f in sorted(glob.glob('TestResults/**/*.trx', recursive=True)):
+              data = open(f, encoding='utf-8', errors='replace').read()
+              for m in re.findall(r'<StdOut>(.*?)</StdOut>', data, re.S):
+                  print(html.unescape(m))
+          PY
+
       - name: Upload E2E Results
         if: always() && steps.gate.outputs.enabled == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7
