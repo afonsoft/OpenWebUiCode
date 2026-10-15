@@ -63,9 +63,10 @@ public static class LdapService
             var results = await connection.SearchAsync(
                 baseDn, LdapConnection.ScopeSub, "(objectClass=*)",
                 [mailAttribute, nameAttribute], false, ct);
-            await foreach (var entry in results.WithCancellation(ct))
+            await using var enumerator = results.WithCancellation(ct).GetAsyncEnumerator();
+            if (await enumerator.MoveNextAsync())
             {
-                var attributeSet = entry.GetAttributeSet();
+                var attributeSet = enumerator.Current.GetAttributeSet();
                 return new LdapIdentity(
                     attributeSet.GetAttribute(mailAttribute)?.StringValue,
                     attributeSet.GetAttribute(nameAttribute)?.StringValue);

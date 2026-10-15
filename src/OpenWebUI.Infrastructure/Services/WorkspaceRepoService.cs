@@ -498,7 +498,7 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = ExecutableResolver.Resolve("git"),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,

@@ -50,7 +50,7 @@ function cacheFirst(request) {
       return fetch(request).then((response) => {
         if (response.ok) {
           const copy = response.clone();
-          cache.put(request, copy).then(() => evictOldEntries(cache));
+          cache.put(request, copy).then(() => evictOldEntries(cache)).catch(() => { /* quota cheia */ });
         }
         return response;
       });
@@ -77,10 +77,11 @@ function networkFirst(request) {
         const copy = response.clone();
         const shellCopy = request.mode === 'navigate' ? response.clone() : null;
         caches.open(CACHE_SHELL).then((cache) => {
-          cache.put(request, copy);
           // Fallback offline da navegação: sempre aponta para o shell atual.
-          if (shellCopy) cache.put('/', shellCopy);
-        });
+          const puts = [cache.put(request, copy)];
+          if (shellCopy) puts.push(cache.put('/', shellCopy));
+          return Promise.all(puts);
+        }).catch(() => { /* quota cheia / cache fechado */ });
       }
       return response;
     })

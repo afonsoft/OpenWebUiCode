@@ -54,7 +54,7 @@ public class ApiService(HttpClient http, AuthService auth)
     /// <summary>Obtém um chat compartilhado publicamente (sem autenticação).</summary>
     public async Task<SharedChatResponse?> GetSharedChatAsync(string shareId)
     {
-        using var response = await http.GetAsync($"/api/v1/chats/share/{shareId}");
+        using var response = await http.GetAsync($"/api/v1/chats/share/{Uri.EscapeDataString(shareId)}");
         return response.IsSuccessStatusCode
             ? await response.Content.ReadFromJsonAsync<SharedChatResponse>(JsonOptions)
             : null;

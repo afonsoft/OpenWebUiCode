@@ -30,21 +30,21 @@ public class ProviderCapabilityService(
     // Heurísticas de id quando o catálogo não traz output_modalities.
     private static readonly Regex TtsHint = new(
         @"tts|speech|melotts|bark|xtts|kokoro|vibevoice|openvoice|eleven",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private static readonly Regex SttHint = new(
         @"whisper|distil-whisper|transcri|parakeet|canary|sensevoice|voxtral|stt|asr",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private static readonly Regex ImageHint = new(
         @"dall-e|gpt-image|flux|seedream|imagen|sdxl|stable-diffusion|banana|"
             + @"recraft|ideogram|kolors|qwen-image|wan-image|playground",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private static readonly Regex VideoHint = new(
         @"sora|veo|seedance|hailuo|minimax-h|wan[0-9]|ltx|kling|pika|runway|"
             + @"mochi|cogvideo|hunyuan-video|grok-imagine-video|p-video|-video\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private static readonly Regex EmbedHint = new(
         @"embed|bge-|e5-|gte-|nomic-embed|uae-",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexDefaults.MatchTimeout);
 
     private sealed record CatalogEntry(
         string Id, HashSet<string> Outputs, HashSet<string> Inputs);

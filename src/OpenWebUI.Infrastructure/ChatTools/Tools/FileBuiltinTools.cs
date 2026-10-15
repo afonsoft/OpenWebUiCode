@@ -297,7 +297,8 @@ public sealed class FileGrepBuiltinTool(HistoryResourceService history) : IBuilt
             var ic = !args.TryGetProperty("ignore_case", out var icEl)
                 || icEl.ValueKind is not JsonValueKind.False;
             regex = new Regex(pattern,
-                RegexOptions.Compiled | (ic ? RegexOptions.IgnoreCase : RegexOptions.None));
+                RegexOptions.Compiled | (ic ? RegexOptions.IgnoreCase : RegexOptions.None),
+                RegexDefaults.MatchTimeout);
         }
         catch (ArgumentException ex)
         {

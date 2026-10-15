@@ -113,7 +113,7 @@ public class WebLoaderService(IHttpClientFactory httpFactory)
             ?? throw new WebLoaderException("Vídeo sem transcrição disponível.");
 
         var xml = await client.GetStringAsync(baseUrl, ct);
-        var matches = Regex.Matches(xml, @"<text[^>]*>(.*?)</text>", RegexOptions.Singleline);
+        var matches = Regex.Matches(xml, @"<text[^>]*>(.*?)</text>", RegexOptions.Singleline, RegexDefaults.MatchTimeout);
         if (matches.Count == 0)
         {
             throw new WebLoaderException("Transcrição vazia.");
@@ -130,7 +130,8 @@ public class WebLoaderService(IHttpClientFactory httpFactory)
     private static string? ExtractVideoId(string url)
     {
         var m = Regex.Match(url,
-            @"(?:youtube\.com/(?:watch\?.*v=|shorts/)|youtu\.be/)([\w-]{6,})");
+            @"(?:youtube\.com/(?:watch\?.*v=|shorts/)|youtu\.be/)([\w-]{6,})",
+            RegexOptions.None, RegexDefaults.MatchTimeout);
         return m.Success ? m.Groups[1].Value : null;
     }
 
@@ -139,12 +140,12 @@ public class WebLoaderService(IHttpClientFactory httpFactory)
     {
         var noScripts = Regex.Replace(
             html, @"<(script|style|noscript|svg)[^>]*>.*?</\1>",
-            " ", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            " ", RegexOptions.IgnoreCase | RegexOptions.Singleline, RegexDefaults.MatchTimeout);
         var withBreaks = Regex.Replace(
-            noScripts, @"<(br|p|div|li|h[1-6]|tr)[^>]*>", "\n", RegexOptions.IgnoreCase);
-        var noTags = Regex.Replace(withBreaks, @"<[^>]+>", " ");
+            noScripts, @"<(br|p|div|li|h[1-6]|tr)[^>]*>", "\n", RegexOptions.IgnoreCase, RegexDefaults.MatchTimeout);
+        var noTags = Regex.Replace(withBreaks, @"<[^>]+>", " ", RegexOptions.None, RegexDefaults.MatchTimeout);
         var unescaped = WebUtility.HtmlDecode(noTags);
-        return Regex.Replace(unescaped, @"[ \t]*\n[ \t]*", "\n").Trim();
+        return Regex.Replace(unescaped, @"[ \t]*\n[ \t]*", "\n", RegexOptions.None, RegexDefaults.MatchTimeout).Trim();
     }
 }
 

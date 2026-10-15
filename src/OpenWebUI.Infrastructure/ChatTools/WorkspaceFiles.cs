@@ -214,7 +214,7 @@ public static class WorkspaceFiles
         }
 
         sb.Append('$');
-        return new Regex(sb.ToString(), RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        return new Regex(sb.ToString(), RegexOptions.Compiled | RegexOptions.IgnoreCase, RegexDefaults.MatchTimeout);
     }
 
     /// <summary>Caminho relativo (separador '/') de <paramref name="full"/> ao workspace.</summary>

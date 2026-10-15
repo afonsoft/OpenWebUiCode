@@ -97,7 +97,7 @@ public sealed class JsonRpcPeer : IAsyncDisposable
     }
 
     private void EnsureReader() =>
-        _reader ??= Task.Run(ReaderLoopAsync);
+        _reader ??= Task.Run(ReaderLoopAsync, _stop.Token);
 
     private async Task WriteAsync(object payload, CancellationToken ct)
     {
@@ -238,7 +238,7 @@ public sealed class JsonRpcPeer : IAsyncDisposable
             }
 
             var payload = $"{{\"jsonrpc\":\"2.0\",\"id\":{idJson},\"result\":{resultJson}}}";
-            await _writeLock.WaitAsync();
+            await _writeLock.WaitAsync(_stop.Token);
             try
             {
                 await LspFraming.WriteAsync(_output, Encoding.UTF8.GetBytes(payload), CancellationToken.None);
@@ -264,7 +264,7 @@ public sealed class JsonRpcPeer : IAsyncDisposable
         Fail(new IOException("Peer LSP descartado."));
         if (_reader is not null)
         {
-            try { await _reader.WaitAsync(TimeSpan.FromSeconds(2)); }
+            try { await _reader.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None); }
             catch (Exception ex) when (ex is IOException or InvalidOperationException
                 or OperationCanceledException or ObjectDisposedException)
             {

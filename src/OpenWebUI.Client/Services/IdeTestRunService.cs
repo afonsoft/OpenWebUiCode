@@ -8,7 +8,7 @@ namespace OpenWebUI.Client.Services;
 /// faz poll do status e avisa os painéis via <see cref="Changed"/>.
 /// <see cref="AttentionWanted"/> pede aos painéis para saltar à aba Tests.
 /// </summary>
-public sealed class IdeTestRunService(ApiService api)
+public sealed class IdeTestRunService(ApiService api) : IDisposable
 {
     private CancellationTokenSource? _pollCts;
 
@@ -105,6 +105,14 @@ public sealed class IdeTestRunService(ApiService api)
 
     /// <summary>Para o polling do run atual (não mata o job no servidor).</summary>
     public void StopPolling() => _pollCts?.Cancel();
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        _pollCts?.Cancel();
+        _pollCts?.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     private async Task PollAsync(string jobId, CancellationToken ct)
     {

@@ -411,7 +411,7 @@ public static class ChatPipeline
         }
 
         var tokens = System.Text.RegularExpressions.Regex
-            .Matches(text, @"#([\w.\-]+)")
+            .Matches(text, @"#([\w.\-]+)", System.Text.RegularExpressions.RegexOptions.None, RegexDefaults.MatchTimeout)
             .Select(m => m.Groups[1].Value)
             .Distinct()
             .ToList();

@@ -83,5 +83,5 @@ public static class ToolArgsPreview
 
     private static Regex FieldRegex(string field) =>
         new($"\"{Regex.Escape(field)}\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"",
-            RegexOptions.Compiled);
+            RegexOptions.Compiled, RegexDefaults.MatchTimeout);
 }

@@ -20,7 +20,7 @@ public class SubagentWorktreeTests
     [SetUp]
     public void SetUp()
     {
-        _dir = Path.Combine(Path.GetTempPath(), $"owui-wt-{Guid.NewGuid():N}");
+        _dir = Path.Join(Path.GetTempPath(), $"owui-wt-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dir);
     }
 
@@ -39,7 +39,7 @@ public class SubagentWorktreeTests
 
     private string NewGitRepo()
     {
-        var repo = Path.Combine(_dir, $"repo-{Guid.NewGuid():N}");
+        var repo = Path.Join(_dir, $"repo-{Guid.NewGuid():N}");
         Directory.CreateDirectory(repo);
         Run(repo, "init");
         Run(repo, "config", "user.email", "t@t.local");

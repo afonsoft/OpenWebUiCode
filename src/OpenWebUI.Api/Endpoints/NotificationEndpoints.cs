@@ -97,7 +97,7 @@ public static class NotificationEndpoints
         webhook.Events = string.Join(",", request.Events);
         webhook.Enabled = request.Enabled;
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(http.RequestAborted);
         return Results.Ok(Map(webhook));
     }
 
@@ -110,7 +110,7 @@ public static class NotificationEndpoints
         var webhook = await FindAsync(db, user, global, http.RequestAborted);
         if (webhook is null) return Results.NotFound();
         db.NotificationWebhooks.Remove(webhook);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(http.RequestAborted);
         return Results.Ok(new { ok = true });
     }
 
@@ -182,7 +182,7 @@ public static class NotificationEndpoints
             });
         }
 
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(http.RequestAborted);
         return Results.Ok(new { subscribed = true });
     }
 
@@ -201,7 +201,7 @@ public static class NotificationEndpoints
         db.ChatPushSubscriptions.Remove(existing);
         try
         {
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(http.RequestAborted);
         }
         catch (DbUpdateConcurrencyException)
         {

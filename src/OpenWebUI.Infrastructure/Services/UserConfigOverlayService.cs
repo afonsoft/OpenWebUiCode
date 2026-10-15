@@ -169,12 +169,14 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
         var myNames = all.Where(s => s.UserId == userId)
             .Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var disabled = await GetMcpDisabledAsync(userId, ct);
-        return all.Where(s =>
-                s.UserId is not null && s.UserId != userId          // de outro usuário
-                || (s.UserId is null && (!s.Enabled                 // admin desligou
-                    || disabled.Contains(s.Id)                       // eu desliguei
-                    || myNames.Contains(s.Name))))                   // sombreado por nome
-            .Select(s => s.Id)
+        var foreignIds = all.Where(s => s.UserId is not null && s.UserId != userId)
+            .Select(s => s.Id);
+        var globalHiddenIds = all.Where(s => s.UserId is null
+                && (!s.Enabled               // admin desligou
+                    || disabled.Contains(s.Id)   // eu desliguei
+                    || myNames.Contains(s.Name)))  // sombreado por nome
+            .Select(s => s.Id);
+        return foreignIds.Concat(globalHiddenIds)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 

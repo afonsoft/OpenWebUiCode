@@ -447,7 +447,7 @@ public sealed class LspClient : IAsyncDisposable
             new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
         try
         {
-            await waiter.Task.WaitAsync(timeout).WaitAsync(ct);
+            await waiter.Task.WaitAsync(timeout, ct);
             return true;
         }
         catch (TimeoutException)

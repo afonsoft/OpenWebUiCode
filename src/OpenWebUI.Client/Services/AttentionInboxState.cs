@@ -35,7 +35,7 @@ public sealed class AttentionInboxState(ApiService api) : IAsyncDisposable
     /// </summary>
     public async Task EnsureStartedAsync()
     {
-        await _gate.WaitAsync();
+        await _gate.WaitAsync(CancellationToken.None);
         try
         {
             if (_started)

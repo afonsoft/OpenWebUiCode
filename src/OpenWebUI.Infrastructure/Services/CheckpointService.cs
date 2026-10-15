@@ -911,7 +911,7 @@ public sealed class CheckpointService(
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = ExecutableResolver.Resolve("git"),
             WorkingDirectory = workdir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -968,7 +968,7 @@ public sealed class CheckpointService(
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = ExecutableResolver.Resolve("git"),
             WorkingDirectory = workdir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

@@ -504,7 +504,7 @@ public sealed class ChatRunExecutor(
             {
                 _advisorInFlight = false;
             }
-        });
+        }, CancellationToken.None);
     }
 
     /// <summary>
@@ -1054,7 +1054,7 @@ public sealed class ChatRunExecutor(
 
     private static readonly System.Text.RegularExpressions.Regex SecretPattern = new(
         @"Bearer\s+[^\s""']+|sk-[A-Za-z0-9_-]{8,}",
-        System.Text.RegularExpressions.RegexOptions.Compiled);
+        System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
 
     /// <summary>Roteia `pipeline:{id}` e repassa as linhas SSE do upstream.</summary>
     private async Task RunPipelineAsync(

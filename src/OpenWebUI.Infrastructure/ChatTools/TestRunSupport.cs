@@ -88,7 +88,7 @@ public static partial class TestRunOutputParser
         }
         var total = Regex.Match(output,
             @"Total tests:\s*(\d+)\D*?Passed:\s*(\d+)\D*?Failed:\s*(\d+)(?:\D*?Skipped:\s*(\d+))?",
-            RegexOptions.Singleline);
+            RegexOptions.Singleline, RegexDefaults.MatchTimeout);
         return total.Success
             ? new TestRunCounts(int.Parse(total.Groups[2].Value), int.Parse(total.Groups[3].Value),
                 total.Groups[4].Success ? int.Parse(total.Groups[4].Value) : null)
@@ -154,7 +154,7 @@ public static partial class TestRunOutputParser
     }
 
     private static int? Num(string text, string pattern) =>
-        Regex.Match(text, pattern) is { Success: true } m ? int.Parse(m.Groups[1].Value) : null;
+        Regex.Match(text, pattern, RegexOptions.None, RegexDefaults.MatchTimeout) is { Success: true } m ? int.Parse(m.Groups[1].Value) : null;
 
     [GeneratedRegex(@"Failed:\s*(\d+)\s*,\s*Passed:\s*(\d+)\s*,\s*Skipped:\s*(\d+)")]
     private static partial Regex DotnetSummaryRegex();

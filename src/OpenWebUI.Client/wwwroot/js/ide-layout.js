@@ -17,7 +17,7 @@
         attachKeys: (ref) => { dotnet = ref; },
         detachKeys: () => { dotnet = null; },
         sashValue: (k) => store.get("sash:" + k),
-        copyText: (t) => { try { navigator.clipboard.writeText(t); } catch { /* sem permissão */ } },
+        copyText: (t) => { navigator.clipboard.writeText(t).catch(() => { /* sem permissão */ }); },
         getAutosave: () => store.get("autosave") === "1",
         setAutosave: (on) => store.set("autosave", on ? "1" : "0"),
     };
