@@ -147,18 +147,23 @@ public sealed class ContextBoundaryService(AppDbContext db, ConfigService config
 
         // Marcador persistido (Role="compaction" — mesmo visual do resumo
         // automático): posição logo após o intervalo coberto, fora dele.
+        // Pendura no leaf do caminho ativo (SPEC-20261013-chat-branching) —
+        // o marcador pertence ao ramo onde a fronteira foi fechada.
         var tracked = await db.Chats.Include(c => c.Messages)
             .FirstOrDefaultAsync(c => c.Id == chatId, ct);
         if (tracked is not null)
         {
-            tracked.Messages.Add(new ChatMessage
+            var marker = new ChatMessage
             {
                 ChatId = tracked.Id,
                 Role = "compaction",
                 Content = $"[contexto colapsado — {closed.Goal}]\n{mergedReport}",
                 Position = lastPos + 1,
                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            });
+                ParentId = BranchService.ResolveLeaf(tracked)?.Id,
+            };
+            tracked.Messages.Add(marker);
+            tracked.LeafMessageId = marker.Id;
             tracked.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             await db.SaveChangesAsync(ct);
         }

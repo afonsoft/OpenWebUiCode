@@ -114,6 +114,48 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
                             </button>
                         }
+                        @if (_loadedChatId is not null && _branchCount > 1)
+                        {
+                            @* Ramos divergentes (SPEC-20261013-chat-branching):
+                               chip no header indica alternativas e abre o popover
+                               de leafs — clicar num leaf troca o caminho ativo. *@
+                            <div class="relative">
+                                <button class="flex cursor-pointer items-center gap-1 rounded-lg px-1.5 py-0.5 text-xs text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+                                        title="@L["chat.branches_hint"]" aria-label="@L["chat.branches"]"
+                                        @onclick="ToggleBranchesAsync">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3v4.5m0 0c0 2.485 2.015 4.5 4.5 4.5h4.5m-9-4.5v9a3 3 0 0 0 3 3h6m0 0-2.25-2.25M16.5 19.5l-2.25 2.25" /></svg>
+                                    @_branchCount
+                                </button>
+                                @if (_showBranches)
+                                {
+                                    <div class="absolute right-0 top-full z-40 mt-1 w-72 rounded-xl border border-gray-100 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-900">
+                                        <div class="px-3 py-1.5 text-[0.6875rem] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                                            @L["chat.branches"]
+                                        </div>
+                                        @foreach (var leaf in _branches)
+                                        {
+                                            <button class="flex w-full cursor-pointer flex-col gap-0.5 px-3 py-2 text-left text-xs transition hover:bg-gray-50 dark:hover:bg-gray-850"
+                                                    @onclick="() => ActivateLeafAsync(leaf.LeafId)">
+                                                <span class="flex items-center justify-between gap-2">
+                                                    <span class="truncate font-medium text-gray-700 dark:text-gray-300">@leaf.Preview</span>
+                                                    @if (leaf.IsActive)
+                                                    {
+                                                        <span class="flex-none text-blue-600 dark:text-blue-400">@L["chat.branch_active"]</span>
+                                                    }
+                                                </span>
+                                                <span class="text-gray-400 dark:text-gray-500">
+                                                    @leaf.MessageCount @L["chat.branch_messages"] · @FormatBranchTime(leaf.UpdatedAt)
+                                                </span>
+                                                @if (!string.IsNullOrEmpty(leaf.Summary))
+                                                {
+                                                    <span class="truncate italic text-gray-400 dark:text-gray-500" title="@leaf.Summary">@leaf.Summary</span>
+                                                }
+                                            </button>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
                         <button class="flex size-10 lg:size-6 cursor-pointer items-center justify-center rounded-lg transition
                                        @(_showPanel ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900" : "text-gray-500 hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200")"
                                 title="@L["chat.panel_title"]" aria-label="@L["chat.panel_title"]" @onclick="TogglePanelAsync">
@@ -216,7 +258,8 @@
                             OnGenerateImage="() => GenerateImageAtAsync(index)"
                             Speaking="_speakingIndex == index"
                             TtsSupported="_ttsSupported"
-                            OnSpeak="() => SpeakAtAsync(index)" />
+                            OnSpeak="() => SpeakAtAsync(index)"
+                            OnBranch="() => ActivateLeafAsync(message.Id!)" />
                     }
                 </div>
             }
@@ -827,6 +870,12 @@
     // Revisor de run (SPEC-20261013-run-advisor): flag por chat, relida
     // pelo servidor a cada gatilho.
     private bool _advisorEnabled;
+    // Árvore de conversa (SPEC-20261013-chat-branching): leaf ativo,
+    // nº de leafs divergentes e o popover de ramos.
+    private int _branchCount;
+    private string? _activeLeafId;
+    private bool _showBranches;
+    private List<BranchLeafResponse> _branches = [];
     // SPEC-20261009-agent-modes-plan-build: build (default) | plan.
     private string _agentMode = "chat";
     private WorkspaceRepoResponse? _pendingRepo;
@@ -1238,6 +1287,10 @@
             _approvalPreset = chat.ApprovalPreset;
             _agentMode = AgentModeVisuals.Normalize(chat.Mode);
             _advisorEnabled = chat.AdvisorEnabled;
+            _branchCount = chat.BranchCount;
+            _activeLeafId = chat.ActiveLeafId;
+            _showBranches = false;
+            _branches = [];
             _messages.Clear();
             _messages.AddRange(chat.Messages);
             await LoadComposerStateAsync(chat.Id);
@@ -1857,6 +1910,57 @@
         _input = _messages[index].Content;
     }
 
+    /// <summary>
+    /// Ativa uma mensagem como leaf do caminho (SPEC-20261013-chat-branching):
+    /// "ramificar daqui" nas bolhas e troca de leaf no popover usam o mesmo
+    /// endpoint — a resposta já vem renderizada no caminho ativado.
+    /// </summary>
+    private async Task ActivateLeafAsync(string messageId)
+    {
+        if (_streaming || _loadedChatId is null)
+        {
+            return;
+        }
+        _showBranches = false;
+        try
+        {
+            var chat = await Api.ActivateBranchAsync(_loadedChatId, messageId);
+            if (chat is null)
+            {
+                return;
+            }
+            _messages.Clear();
+            _messages.AddRange(chat.Messages);
+            _branchCount = chat.BranchCount;
+            _activeLeafId = chat.ActiveLeafId;
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _error = ex.Message;
+        }
+    }
+
+    /// <summary>Abre/fecha o popover de ramos; carrega os leafs na abertura.</summary>
+    private async Task ToggleBranchesAsync()
+    {
+        _showBranches = !_showBranches;
+        if (_showBranches && _loadedChatId is not null)
+        {
+            try
+            {
+                _branches = await Api.GetBranchesAsync(_loadedChatId);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
+            {
+                _branches = [];
+            }
+        }
+    }
+
+    /// <summary>Hora curta do leaf para o popover de ramos.</summary>
+    private static string FormatBranchTime(long epochSeconds) =>
+        DateTimeOffset.FromUnixTimeSeconds(epochSeconds).LocalDateTime.ToString("g");
+
     private async Task RegenerateAtAsync(int index)
     {
         if (_streaming || _messages.Count == 0)
@@ -2053,7 +2157,7 @@
                 _toolIds.Count > 0 ? _toolIds.ToList() : null,
                 _webSearch ? true : null,
                 mentionPaths,
-                _cts.Token);
+                ct: _cts.Token);
             _activeRunId = run.Id;
 
             await ConsumeRunEventsAsync(

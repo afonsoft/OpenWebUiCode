@@ -80,6 +80,9 @@ builder.Services.AddScoped<UserConfigOverlayService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
 builder.Services.AddScoped<HistoryResourceService>();
 builder.Services.AddScoped<IContextSummarizer, LlmContextSummarizer>();
+// Árvore de conversa (SPEC-20261013-chat-branching): walk leaf→raiz,
+// leafs divergentes e resumo do ramo abandonado.
+builder.Services.AddScoped<BranchService>();
 // Papéis/capacidades de modelo (SPEC-20261013-model-roles).
 builder.Services.AddScoped<ModelCapabilityResolver>();
 builder.Services.AddScoped(sp => new ModelRoleResolver(

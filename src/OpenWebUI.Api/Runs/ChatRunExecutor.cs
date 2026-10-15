@@ -401,11 +401,14 @@ public sealed class ChatRunExecutor(
             if (chat is not null)
             {
                 var pos = chat.Messages.Count == 0 ? 0 : chat.Messages.Max(m => m.Position) + 1;
-                chat.Messages.Add(new ChatMessage
+                var message = new ChatMessage
                 {
                     ChatId = chat.Id, Role = "user", Content = steer.Content,
                     Position = pos, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                });
+                    ParentId = BranchService.ResolveLeaf(chat)?.Id,
+                };
+                chat.Messages.Add(message);
+                chat.LeafMessageId = message.Id;
             }
             broadcaster.Publish(run.Id,
                 $"event: steer\ndata: {JsonSerializer.Serialize(new { mode = steer.Mode, content = steer.Content }, JsonOptions)}");
@@ -517,10 +520,14 @@ public sealed class ChatRunExecutor(
         {
             try
             {
-                var persisted = await db.ChatMessages.AsNoTracking()
-                    .Where(m => m.ChatId == run.ChatId)
-                    .OrderBy(m => m.Position)
-                    .ToListAsync(ct);
+                // Caminho ativo (SPEC-20261013-chat-branching RF-002): fora
+                // dele, mensagens de outros ramos nunca voltam ao modelo.
+                var persistedChat = await db.Chats.AsNoTracking()
+                    .Include(c => c.Messages)
+                    .FirstOrDefaultAsync(c => c.Id == run.ChatId, ct);
+                var persisted = persistedChat is null
+                    ? []
+                    : BranchService.WalkPath(persistedChat);
                 var visible = ContextBoundaryService.FilterMessages(
                     persisted, await boundaries.ListAsync(run.ChatId, ct));
                 var history = visible
@@ -1145,12 +1152,17 @@ public sealed class ChatRunExecutor(
                 .FirstOrDefaultAsync(c => c.Id == run.ChatId, CancellationToken.None);
             if (chat is not null)
             {
+                // As mensagens da run penduram em cadeia no leaf ativo:
+                // cada nova é filha da anterior, e a última vira o leaf
+                // (RF-001 — o caminho ativo avança com a resposta).
                 var nextPosition = chat.Messages.Count == 0
                     ? 0
                     : chat.Messages.Max(m => m.Position) + 1;
+                var parentId = BranchService.ResolveLeaf(chat)?.Id;
+                ChatMessage? lastAdded = null;
                 foreach (var m in toolMessages ?? [])
                 {
-                    chat.Messages.Add(new ChatMessage
+                    var message = new ChatMessage
                     {
                         ChatId = chat.Id,
                         Role = m.Role,
@@ -1160,11 +1172,14 @@ public sealed class ChatRunExecutor(
                         ToolCallId = m.ToolCallId,
                         Position = nextPosition++,
                         Timestamp = now,
-                    });
+                        ParentId = parentId,
+                    };
+                    chat.Messages.Add(message);
+                    parentId = (lastAdded = message).Id;
                 }
                 if (content.Length > 0)
                 {
-                    chat.Messages.Add(new ChatMessage
+                    var message = new ChatMessage
                     {
                         ChatId = chat.Id,
                         Role = "assistant",
@@ -1172,7 +1187,14 @@ public sealed class ChatRunExecutor(
                         Model = run.Model,
                         Position = nextPosition,
                         Timestamp = now,
-                    });
+                        ParentId = parentId,
+                    };
+                    chat.Messages.Add(message);
+                    lastAdded = message;
+                }
+                if (lastAdded is not null)
+                {
+                    chat.LeafMessageId = lastAdded.Id;
                 }
                 chat.UpdatedAt = now;
             }

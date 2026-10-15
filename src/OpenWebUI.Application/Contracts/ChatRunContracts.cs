@@ -10,6 +10,11 @@ namespace OpenWebUI.Application.Contracts;
 /// <param name="Params">Parâmetros de geração (temperature, top_p, max_tokens), opcional.</param>
 /// <param name="WebSearch">Quando true, injeta resultados de busca web como contexto.</param>
 /// <param name="MentionPaths">Caminhos do workdir mencionados via chips @path (RF-002 — expandidos em blocos <file> no prompt).</param>
+/// <param name="ForkFromMessageId">
+/// Ramificação atômica (SPEC-20261013-chat-branching RF-004): quando presente,
+/// a nova mensagem pendura nesta mensagem em vez do leaf ativo — equivale a
+/// "ativar + enviar" num request só.
+/// </param>
 public sealed record EnqueueChatRunRequest(
     string? Content,
     string Model,
@@ -17,7 +22,8 @@ public sealed record EnqueueChatRunRequest(
     IReadOnlyList<string>? ToolIds = null,
     IReadOnlyDictionary<string, object>? Params = null,
     bool? WebSearch = null,
-    IReadOnlyList<string>? MentionPaths = null);
+    IReadOnlyList<string>? MentionPaths = null,
+    string? ForkFromMessageId = null);
 
 /// <summary>Payload do POST de steer/queue numa run viva (SPEC-20261010-steer-queue).</summary>
 /// <param name="Message">Texto injetado como mensagem do usuário na run.</param>

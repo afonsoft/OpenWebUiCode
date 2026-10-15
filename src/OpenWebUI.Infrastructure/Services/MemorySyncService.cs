@@ -215,9 +215,10 @@ public class MemorySyncService(
 
     private static string? BuildTranscript(Chat chat)
     {
-        var messages = chat.Messages
+        // Caminho ativo (SPEC-20261013-chat-branching): a destilação lê o
+        // ramo corrente, não todos os leafs misturados por Position.
+        var messages = BranchService.WalkPath(chat)
             .Where(m => m.Role is "user" or "assistant")
-            .OrderBy(m => m.Position)
             .TakeLast(MaxMessagesPerChat)
             .ToList();
         if (messages.Count == 0)

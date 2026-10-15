@@ -274,7 +274,7 @@ public sealed class ChatRunDispatcher(
                 ? 0
                 : parentChat.Messages.Max(m => m.Position) + 1;
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            parentChat.Messages.Add(new ChatMessage
+            var notice = new ChatMessage
             {
                 ChatId = parentChat.Id,
                 Role = "assistant",
@@ -283,7 +283,10 @@ public sealed class ChatRunDispatcher(
                     + "Resultado completo via builtin:run_result.",
                 Position = position,
                 Timestamp = now,
-            });
+                ParentId = BranchService.ResolveLeaf(parentChat)?.Id,
+            };
+            parentChat.Messages.Add(notice);
+            parentChat.LeafMessageId = notice.Id;
             parentChat.UpdatedAt = now;
             await db.SaveChangesAsync(CancellationToken.None);
         }

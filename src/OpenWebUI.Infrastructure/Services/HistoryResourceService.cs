@@ -56,26 +56,37 @@ public sealed class HistoryResourceService(AppDbContext db)
             return (null, $"Chat '{chatId}' não encontrado.");
         }
 
-        var query = db.ChatMessages.AsNoTracking()
+        var all = await db.ChatMessages.AsNoTracking()
             .Where(m => m.ChatId == chatId)
-            .OrderBy(m => m.Position);
+            .OrderBy(m => m.Position)
+            .ToListAsync(ct);
+
+        // Branching (SPEC-20261013): transcript/tail seguem o caminho ativo
+        // leaf→raiz — os ramos paralelos não vazam pro histórico. Os seletores
+        // pontuais msg:/call: seguem globais (recuperam qualquer nó da árvore).
+        var materialized = new Chat
+        {
+            Id = chat.Id,
+            LeafMessageId = chat.LeafMessageId,
+            Messages = all,
+        };
+        var activePath = BranchService.WalkPath(materialized);
 
         List<ChatMessage> messages;
         if (selector is null)
         {
-            messages = await query.ToListAsync(ct);
+            messages = activePath;
         }
         else if (selector.StartsWith("tail:", StringComparison.OrdinalIgnoreCase)
             && int.TryParse(selector[5..], out var n) && n > 0)
         {
-            var all = await query.Select(m => m.Id).ToListAsync(ct);
-            var skip = Math.Max(0, all.Count - Math.Min(n, 500));
-            messages = await query.Skip(skip).ToListAsync(ct);
+            var skip = Math.Max(0, activePath.Count - Math.Min(n, 500));
+            messages = activePath.Skip(skip).ToList();
         }
         else if (selector.StartsWith("msg:", StringComparison.OrdinalIgnoreCase))
         {
             var id = selector[4..];
-            var msg = await query.FirstOrDefaultAsync(m => m.Id == id, ct);
+            var msg = all.FirstOrDefault(m => m.Id == id);
             messages = msg is null ? [] : [msg];
             if (msg is null)
             {
@@ -85,7 +96,7 @@ public sealed class HistoryResourceService(AppDbContext db)
         else if (selector.StartsWith("call:", StringComparison.OrdinalIgnoreCase))
         {
             var callId = selector[5..];
-            var msg = await query.FirstOrDefaultAsync(m => m.ToolCallId == callId, ct);
+            var msg = all.FirstOrDefault(m => m.ToolCallId == callId);
             messages = msg is null ? [] : [msg];
             if (msg is null)
             {

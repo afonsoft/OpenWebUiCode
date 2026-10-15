@@ -169,6 +169,14 @@ public class Chat
     /// </summary>
     public bool AdvisorEnabled { get; set; }
 
+    /// <summary>
+    /// Leaf do ramo ativo (SPEC-20261013-chat-branching RF-001): a árvore de
+    /// mensagens é caminhada <c>LeafMessageId→root</c> por
+    /// <see cref="ChatMessage.ParentId"/>; null = chat legado/linear — a
+    /// ponta implícita é a maior <see cref="ChatMessage.Position"/>.
+    /// </summary>
+    public string? LeafMessageId { get; set; }
+
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 
@@ -219,6 +227,14 @@ public class ChatMessage
     /// Id do tool call que originou esta mensagem (somente <c>tool</c>).
     /// </summary>
     public string? ToolCallId { get; set; }
+
+    /// <summary>
+    /// Mensagem anterior no ramo (SPEC-20261013-chat-branching RF-001):
+    /// os nós do chat formam uma árvore; null = raiz ou dado legado — no
+    /// walk do caminho, a aresta implícita legada é "mensagem com maior
+    /// <see cref="Position"/> anterior" (compatibilidade sem backfill).
+    /// </summary>
+    public string? ParentId { get; set; }
 }
 
 /// <summary>Status possíveis de uma run desacoplada de chat.</summary>

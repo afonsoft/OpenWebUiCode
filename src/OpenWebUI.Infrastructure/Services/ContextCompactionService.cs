@@ -274,11 +274,16 @@ public sealed class ContextCompactionService(
             if (tracked is not null)
             {
                 var pos = tracked.Messages.Count == 0 ? 0 : tracked.Messages.Max(m => m.Position) + 1;
-                tracked.Messages.Add(new ChatMessage
+                // O marcador pendura no leaf do caminho compactado
+                // (SPEC-20261013-chat-branching): outro ramo não o herda.
+                var marker = new ChatMessage
                 {
                     ChatId = tracked.Id, Role = "compaction", Content = summary.Text,
                     Position = pos, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                });
+                    ParentId = BranchService.ResolveLeaf(tracked)?.Id,
+                };
+                tracked.Messages.Add(marker);
+                tracked.LeafMessageId = marker.Id;
                 tracked.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 await db.SaveChangesAsync(ct);
             }

@@ -132,6 +132,17 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<ChatResponse?> DeleteMessageAsync(string chatId, string messageId) =>
         SendAsync<ChatResponse>(HttpMethod.Delete, $"/api/v1/chats/{chatId}/messages/{messageId}");
 
+    /// <summary>Leafs divergentes do chat (SPEC-20261013-chat-branching RF-003).</summary>
+    public async Task<List<BranchLeafResponse>> GetBranchesAsync(string chatId) =>
+        await SendAsync<List<BranchLeafResponse>>(
+            HttpMethod.Get, $"/api/v1/chats/{chatId}/branches") ?? [];
+
+    /// <summary>Ativa uma mensagem como leaf — retorna o caminho renderizado (RF-004).</summary>
+    public Task<ChatResponse?> ActivateBranchAsync(string chatId, string leafId) =>
+        SendAsync<ChatResponse>(HttpMethod.Post,
+            $"/api/v1/chats/{chatId}/branches/activate",
+            new ActivateBranchRequest(leafId));
+
     /// <summary>Remove um chat.</summary>
     public async Task<bool> DeleteChatAsync(string id)
     {

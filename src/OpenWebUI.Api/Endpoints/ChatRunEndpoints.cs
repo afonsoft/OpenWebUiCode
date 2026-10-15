@@ -47,6 +47,7 @@ public static class ChatRunEndpoints
         AppDbContext db,
         ChatRunDispatcher dispatcher,
         ContextBoundaryService boundaries,
+        BranchService branches,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -66,6 +67,15 @@ public static class ChatRunEndpoints
             return Results.NotFound(new { detail = "Chat não encontrado." });
         }
 
+        // Ramificação atômica (RF-004): ativa o alvo como leaf — resumindo o
+        // ramo abandonado — antes de pendurar a nova mensagem nele.
+        if (request.ForkFromMessageId is not null
+            && !await branches.ActivateLeafAsync(
+                chat, request.ForkFromMessageId, request.Model, ct))
+        {
+            return Results.NotFound(new { detail = "Mensagem de origem não encontrada." });
+        }
+
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         if (!string.IsNullOrWhiteSpace(request.Content))
@@ -74,28 +84,33 @@ public static class ChatRunEndpoints
             var nextPosition = chat.Messages.Count == 0
                 ? 0
                 : chat.Messages.Max(m => m.Position) + 1;
-            chat.Messages.Add(new ChatMessage
+            var message = new ChatMessage
             {
                 ChatId = chat.Id,
                 Role = "user",
                 Content = request.Content,
                 Position = nextPosition,
                 Timestamp = now,
-            });
+                ParentId = BranchService.ResolveLeaf(chat)?.Id,
+            };
+            chat.Messages.Add(message);
+            chat.LeafMessageId = message.Id;
             chat.UpdatedAt = now;
         }
-        else if (chat.Messages.OrderByDescending(m => m.Position).FirstOrDefault()?.Role != "user")
+        else if (BranchService.WalkPath(chat).LastOrDefault()?.Role != "user")
         {
             // Sem conteúdo novo, a run regenera sobre o histórico — que precisa terminar em msg do usuário.
             return Results.BadRequest(new { detail = "Histórico não termina em mensagem do usuário." });
         }
 
         // Histórico reconstruído no servidor — a fonte da verdade é o banco.
+        // O caminho ativo (leaf→raiz, RF-002) substitui a ordenação global por
+        // Position: fora dele, mensagens de outros ramos nunca chegam ao modelo.
         // Boundaries fechadas (SPEC-20261013-agent-context-management RF-002)
         // filtram o contexto: mensagens cobertas permanecem persistidas, mas
         // não voltam ao modelo — o marcador "compaction" carrega o report.
-        var visible = await boundaries.FilterAsync(
-            chat.Id, chat.Messages.OrderBy(m => m.Position), ct);
+        var path = BranchService.WalkPath(chat);
+        var visible = await boundaries.FilterAsync(chat.Id, path, ct);
         var history = visible
             .Select(m => new ChatCompletionMessage(
                 m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
