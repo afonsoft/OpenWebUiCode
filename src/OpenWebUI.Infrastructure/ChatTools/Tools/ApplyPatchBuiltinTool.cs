@@ -196,7 +196,7 @@ public sealed class ApplyPatchBuiltinTool(FormatHookService? formatHook = null) 
         {
             return (null, $"Move to '{relMove}': destino já existe.");
         }
-        if (Encoding.UTF8.GetByteCount(newText) > WorkspaceFiles.MaxFileBytes)
+        if (Encoding.UTF8.GetByteCount(newText ?? string.Empty) > WorkspaceFiles.MaxFileBytes)
         {
             return (null, $"Update File '{rel}': resultado excede {WorkspaceFiles.MaxFileBytes / 1024}KB.");
         }
