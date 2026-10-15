@@ -323,6 +323,10 @@ public sealed class WorktreeService(
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        // Checkouts/worktrees no volume DATA_ROOT podem ter outro dono —
+        // evita "detected dubious ownership" sem mexer em config global.
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("safe.directory=*");
         foreach (var arg in args)
         {
             psi.ArgumentList.Add(arg);
