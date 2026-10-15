@@ -693,7 +693,7 @@ public class EndpointEdgeTests
     public async Task Executor_ToolDesconhecida_OuSpecQuebrada_RetornaErro()
     {
         await using var db = CreateContext();
-        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry());
+        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry(), new ConfigService(db, TestCache.Create()));
         var tools = new List<Tool>
         {
             NewTool("outra", $"{_mockBaseUrl}/tool-ok"),
@@ -711,7 +711,7 @@ public class EndpointEdgeTests
     public async Task Executor_UrlInacessivel_OuCancelada_RetornaErro()
     {
         await using var db = CreateContext();
-        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry());
+        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry(), new ConfigService(db, TestCache.Create()));
         var tools = new List<Tool> { NewTool("minha_tool", "http://localhost:1/x") };
 
         var down = (await executor.ExecuteAsync(tools, "minha_tool", "{}")).Text;
@@ -727,7 +727,7 @@ public class EndpointEdgeTests
     public async Task Executor_Respostas_TextoErroETruncamento()
     {
         await using var db = CreateContext();
-        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry());
+        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry(), new ConfigService(db, TestCache.Create()));
         var tools = new List<Tool>
         {
             NewTool("minha_tool", $"{_mockBaseUrl}/tool-ok"),
@@ -750,7 +750,7 @@ public class EndpointEdgeTests
     public async Task Executor_LoadEnabled_FiltraVaziasDesabilitadasEAlheias()
     {
         await using var db = CreateContext();
-        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry());
+        var executor = new ToolExecutor(db, new StubHttpClientFactory(), NewPythonExecutor(), NewMcp(db), EmptyRegistry(), new ConfigService(db, TestCache.Create()));
 
         var empty = await executor.LoadEnabledAsync("u1", []);
         Assert.That(empty, Is.Empty);

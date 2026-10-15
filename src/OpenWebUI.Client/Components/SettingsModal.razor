@@ -180,6 +180,37 @@
                     </div>
                     <button class="auth-submit" disabled="@string.IsNullOrWhiteSpace(_newMemory)"
                             @onclick="AddMemoryAsync">@L["settings.add"]</button>
+
+                    <div class="field">
+                        <div class="field-label">@L["settings.memory_sync_label"]</div>
+                        <label class="check">
+                            <input type="checkbox" checked="@(_memSync?.Enabled == true)"
+                                   disabled="@(_memSync?.AdminDisabled == true)"
+                                   @onchange="OnMemSyncEnabledChanged" id="fld-memsync" />
+                            @L["settings.memory_sync_enabled"]
+                        </label>
+                        @if (_memSync?.AdminDisabled == true)
+                        {
+                            <div class="field-note">@L["settings.memory_sync_admin_locked"]</div>
+                        }
+                        @if (_memSync is not null)
+                        {
+                            <div class="flex gap-2 mb-2">
+                                <div class="field flex-1">
+                                    <label for="fld-memsync-int">@L["settings.memory_sync_interval"]</label>
+                                    <input class="input" type="number" min="1" max="168"
+                                           @bind="_memSyncInterval" id="fld-memsync-int" />
+                                </div>
+                                <div class="field flex-1">
+                                    <label for="fld-memsync-age">@L["settings.memory_sync_max_age"]</label>
+                                    <input class="input" type="number" min="1" max="365"
+                                           @bind="_memSyncMaxAge" id="fld-memsync-age" />
+                                </div>
+                            </div>
+                            <button class="auth-submit" @onclick="SaveMemSyncAsync">@L["common.save"]</button>
+                            <div class="field-note">@L["settings.memory_sync_hint"]</div>
+                        }
+                    </div>
                 }
                 else if (_tab == "notifications")
                 {
@@ -207,6 +238,19 @@
                 }
                 else if (_tab == "github")
                 {
+                    @if (_ghConfigured && _ghSource is not null)
+                    {
+                        <div class="field-note">
+                            @if (_ghSource == "global")
+                            {
+                                <span>@L["settings.cfg_source_global"]</span>
+                            }
+                            else
+                            {
+                                <span>@L["settings.cfg_source_user"]</span>
+                            }
+                        </div>
+                    }
                     <div class="field">
                         <label for="gh-token">@L["settings.github_token"]</label>
                         <input id="gh-token" class="input" type="password" autocomplete="off" spellcheck="false"
@@ -216,6 +260,10 @@
                     @if (_ghConfigured)
                     {
                         <div class="field-note">@L.T("settings.github_connected", ("login", _ghLogin ?? ""))</div>
+                        @if (_ghSource == "global")
+                        {
+                            <div class="field-note">@L["settings.github_inherited_note"]</div>
+                        }
                     }
                     <div class="field-actions">
                         <button type="button" class="auth-submit"
@@ -348,7 +396,14 @@
                             @foreach (var role in RoleKeys)
                             {
                                 <div class="flex items-center justify-between gap-2 min-h-11">
-                                    <div class="text-sm">@L[$"settings.model_role_{role}"]</div>
+                                    <div class="text-sm">
+                                        @L[$"settings.model_role_{role}"]
+                                        @if (RoleInheritedFrom(role) is { } inheritedFrom)
+                                        {
+                                            <div class="text-xs text-gray-400">
+                                                @L.T("settings.model_role_inherited", ("models", inheritedFrom))</div>
+                                        }
+                                    </div>
                                     <select class="input max-w-64" disabled="@_modelsSaving"
                                             value="@RoleValue(role)"
                                             @onchange="e => SetRoleAsync(role, e.Value?.ToString())"
@@ -359,6 +414,42 @@
                                             <option value="@m.Id">@m.Provider: @m.Name</option>
                                         }
                                     </select>
+                                </div>
+                            }
+                            @if (_byok is not null && _byok.Enabled)
+                            {
+                                <div class="field mt-2">
+                                    <div class="field-label">@L["settings.byok_section"]</div>
+                                    <div class="field-note mb-2">@L["settings.byok_hint"]</div>
+                                    @foreach (var provider in ByokProviders)
+                                    {
+                                        var has = _byok.Providers.Contains(provider);
+                                        <div class="flex items-center justify-between gap-2 min-h-11">
+                                            <div class="text-sm">
+                                                @provider
+                                                @if (has)
+                                                {
+                                                    <div class="text-xs text-gray-400">@L["settings.byok_key_set"]</div>
+                                                }
+                                            </div>
+                                            <div class="flex gap-2 flex-none items-center">
+                                                <input class="input max-w-48" type="password" autocomplete="off"
+                                                       placeholder="@L["settings.byok_key_ph"]"
+                                                       aria-label="@provider"
+                                                       @bind="_byokDrafts[provider]" />
+                                                @if (has)
+                                                {
+                                                    <button class="msg-action danger" disabled="@_byokSaving"
+                                                            @onclick="() => ClearByokAsync(provider)">@L["settings.byok_remove"]</button>
+                                                }
+                                                else
+                                                {
+                                                    <button class="button-sm" disabled="@(_byokSaving || string.IsNullOrWhiteSpace(_byokDrafts.GetValueOrDefault(provider)))"
+                                                            @onclick="() => SaveByokAsync(provider)">@L["common.save"]</button>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
                                 </div>
                             }
                         </div>
@@ -449,6 +540,68 @@
                                 </select>
                             </div>
                         }
+                    }
+
+                    <hr class="modal-sep" />
+                    <div class="field-label">@L["settings.mcp_section"]</div>
+                    <div class="field-note">@L["settings.mcp_hint"]</div>
+                    @if (_userMcp is null)
+                    {
+                        <div>@L["common.loading"]</div>
+                    }
+                    else
+                    {
+                        @if (_mcpMessage is not null)
+                        {
+                            <div class="field-note">@_mcpMessage</div>
+                        }
+                        @foreach (var entry in _userMcp)
+                        {
+                            var isMine = entry.Source == "user";
+                            <div class="flex items-center justify-between gap-2 min-h-11">
+                                <div class="min-w-0">
+                                    <div class="text-sm truncate">@entry.Server.Name</div>
+                                    <div class="text-xs text-gray-400">
+                                        @(isMine ? L["settings.cfg_source_user"] : L["settings.cfg_source_global"])
+                                        @if (entry.Server.LastError is { Length: > 0 } err)
+                                        {
+                                            <span> · @err</span>
+                                        }
+                                    </div>
+                                </div>
+                                <div class="flex gap-2 flex-none items-center">
+                                    @if (isMine)
+                                    {
+                                        <button type="button" class="msg-action danger" disabled="@_mcpSaving"
+                                                aria-label="@($"{entry.Server.Name} remove")"
+                                                @onclick="() => DeleteUserMcpAsync(entry.Server.Id)">✕</button>
+                                    }
+                                    <button type="button" role="switch" aria-checked="@(entry.EnabledForMe ? "true" : "false")"
+                                            aria-label="@entry.Server.Name" disabled="@_mcpSaving"
+                                            class="flex h-11 w-14 flex-none items-center justify-center cursor-pointer disabled:opacity-50"
+                                            @onclick="() => ToggleUserMcpAsync(entry)">
+                                        <span class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors @(entry.EnabledForMe ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-700")">
+                                            <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform @(entry.EnabledForMe ? "translate-x-6" : "translate-x-1")"></span>
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                        @if (_userMcp.Count == 0)
+                        {
+                            <div class="field-note">@L["settings.mcp_none"]</div>
+                        }
+                        <div class="field mt-2">
+                            <div class="field-label">@L["settings.mcp_add"]</div>
+                            <div class="flex gap-2">
+                                <input class="input flex-1" @bind="_mcpName" aria-label="@L["settings.mcp_name_ph"]"
+                                       placeholder="@L["settings.mcp_name_ph"]" />
+                                <input class="input flex-1" @bind="_mcpUrl" aria-label="@L["settings.mcp_url_ph"]"
+                                       placeholder="@L["settings.mcp_url_ph"]" />
+                                <button class="button-sm flex-none" disabled="@(_mcpSaving || string.IsNullOrWhiteSpace(_mcpName) || string.IsNullOrWhiteSpace(_mcpUrl))"
+                                        @onclick="AddUserMcpAsync">@L["common.add"]</button>
+                            </div>
+                        </div>
                     }
                 }
                 else if (_tab == "admin")
@@ -612,6 +765,43 @@
                             <div class="field-note">@_adminWebhookMessage</div>
                         }
 
+                        <hr class="modal-sep" />
+                        <div class="field"><strong>@L["settings.admin_defaults_section"]</strong></div>
+                        <div class="field">
+                            <label for="admin-gh-token">@L["settings.admin_github_token"]</label>
+                            <input id="admin-gh-token" class="input" type="password" autocomplete="off" spellcheck="false"
+                                   placeholder="@L["settings.github_token_ph"]" @bind="_adminGhToken" />
+                            <div class="field-note">
+                                @if (_adminGhConfigured)
+                                {
+                                    @L.T("settings.github_connected", ("login", _adminGhLogin ?? ""))
+                                }
+                                else
+                                {
+                                    @L["settings.admin_github_hint"]
+                                }
+                            </div>
+                            <div class="field-actions">
+                                <button type="button" class="button-sm" disabled="@(_adminGhSaving || string.IsNullOrWhiteSpace(_adminGhToken))"
+                                        @onclick="SaveAdminGitHubAsync">@L["common.save"]</button>
+                                @if (_adminGhConfigured)
+                                {
+                                    <button type="button" class="msg-action danger" disabled="@_adminGhSaving"
+                                            @onclick="ClearAdminGitHubAsync">@L["settings.github_remove"]</button>
+                                }
+                            </div>
+                        </div>
+                        <label class="check">
+                            <input type="checkbox" checked="@_adminByokEnabled"
+                                   @onchange="e => SetAdminByokAsync(e.Value is true)" />
+                            @L["settings.admin_byok_toggle"]
+                        </label>
+                        <div class="field-note">@L["settings.admin_byok_hint"]</div>
+                        @if (_adminCfgMessage is not null)
+                        {
+                            <div class="field-note">@_adminCfgMessage</div>
+                        }
+
                         @if (_adminMessage is not null)
                         {
                             <div class="field-note">@_adminMessage</div>
@@ -653,15 +843,22 @@
             var gh = await Api.GetGitHubConfigAsync();
             _ghConfigured = gh?.Configured == true;
             _ghLogin = gh?.Login;
+            _ghSource = gh?.Source;
             _ghMessage = null;
         }
         if (tab == "models")
         {
             await LoadModelCatalogAsync();
+            _byok = await Api.GetUserProviderKeysAsync();
         }
         if (tab == "tools")
         {
             await LoadToolApprovalsAsync();
+            await LoadUserMcpAsync();
+        }
+        if (tab == "admin")
+        {
+            await LoadAdminConfigLayersAsync();
         }
         if (tab == "notifications")
         {
@@ -708,6 +905,7 @@
     private string _ghToken = string.Empty;
     private bool _ghConfigured;
     private string? _ghLogin;
+    private string? _ghSource;
     private bool _ghSaving;
     private string? _ghMessage;
 
@@ -726,6 +924,7 @@
 
         _ghConfigured = true;
         _ghLogin = result.Login;
+        _ghSource = result.Source;
         _ghToken = string.Empty;
         _ghMessage = L.T("settings.github_connected", ("login", _ghLogin ?? ""));
     }
@@ -739,11 +938,13 @@
         {
             _ghConfigured = cfg.Configured;
             _ghLogin = cfg.Login;
+            _ghSource = cfg.Source;
         }
         else
         {
             _ghConfigured = false;
             _ghLogin = null;
+            _ghSource = null;
         }
     }
 
@@ -826,7 +1027,9 @@
                 .Where(m => !m.Enabled)
                 .Select(m => $"{m.Provider}:{m.Id}")
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            _modelRoles = await Api.GetModelRolesAsync();
+            var rolesResponse = await Api.GetModelRolesFullAsync();
+            _modelRoles = rolesResponse?.Roles?.ToDictionary(kv => kv.Key, kv => kv.Value) ?? [];
+            _modelRolesGlobal = rolesResponse?.Global?.ToDictionary(kv => kv.Key, kv => kv.Value) ?? [];
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
@@ -838,12 +1041,23 @@
     // ── Papéis de modelo (SPEC-20261013-model-roles RF-005) ──
     private static readonly string[] RoleKeys = ["tasks", "memory", "advisor"];
     private Dictionary<string, List<string>> _modelRoles = [];
+    private Dictionary<string, List<string>> _modelRolesGlobal = [];
 
     /// <summary>Primeiro id da cadeia do papel (UI v1 = um modelo por papel;
     /// o resolver já suporta cadeias para uso futuro).</summary>
     private string RoleValue(string role) =>
         _modelRoles.TryGetValue(role, out var chain) && chain.Count > 0
             ? chain[0] : string.Empty;
+
+    /// <summary>
+    /// Cadeia herdada do admin quando o papel não tem override do usuário
+    /// (SPEC-20261014-config-layers RF-004/RF-006) — vira hint de provenance.
+    /// </summary>
+    private string? RoleInheritedFrom(string role) =>
+        string.IsNullOrEmpty(RoleValue(role))
+            && _modelRolesGlobal.TryGetValue(role, out var chain) && chain.Count > 0
+                ? string.Join(", ", chain)
+                : null;
 
     /// <summary>Define/remove o modelo de um papel e persiste no servidor.</summary>
     private async Task SetRoleAsync(string role, string? modelId)
@@ -864,6 +1078,166 @@
         if (!saved)
         {
             _modelsMessage = L["settings.model_roles_error"];
+        }
+    }
+
+    // ── BYOK — chaves de provider do usuário (SPEC-20261014-config-layers RF-005) ──
+    private static readonly string[] ByokProviders = ["openai", "anthropic", "google"];
+    private UserProviderKeysResponse? _byok;
+    private readonly Dictionary<string, string?> _byokDrafts = new();
+    private bool _byokSaving;
+
+    /// <summary>Grava a chave BYOK do provider (valor nunca volta do servidor).</summary>
+    private async Task SaveByokAsync(string provider)
+    {
+        var key = _byokDrafts.GetValueOrDefault(provider)?.Trim();
+        if (string.IsNullOrEmpty(key))
+        {
+            return;
+        }
+        _byokSaving = true;
+        if (await Api.SetUserProviderKeyAsync(provider, key))
+        {
+            _byokDrafts[provider] = null;
+            _byok = await Api.GetUserProviderKeysAsync();
+        }
+        _byokSaving = false;
+    }
+
+    /// <summary>Remove a chave BYOK do provider (volta à chave global).</summary>
+    private async Task ClearByokAsync(string provider)
+    {
+        _byokSaving = true;
+        if (await Api.DeleteUserProviderKeyAsync(provider))
+        {
+            _byok = await Api.GetUserProviderKeysAsync();
+        }
+        _byokSaving = false;
+    }
+
+    // ── MCP do usuário (SPEC-20261014-config-layers RF-002) ──
+    private List<UserMcpServerEntry>? _userMcp;
+    private string _mcpName = string.Empty;
+    private string _mcpUrl = string.Empty;
+    private bool _mcpSaving;
+    private string? _mcpMessage;
+
+    /// <summary>Carrega o catálogo efetivo de MCP do usuário.</summary>
+    private async Task LoadUserMcpAsync()
+    {
+        _mcpMessage = null;
+        try
+        {
+            _userMcp = await Api.GetUserMcpServersAsync();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _userMcp = [];
+        }
+    }
+
+    /// <summary>Toggle do servidor: global grava tombstone; próprio liga/desliga.</summary>
+    private async Task ToggleUserMcpAsync(UserMcpServerEntry entry)
+    {
+        _mcpSaving = true;
+        var ok = await Api.SetUserMcpServerEnabledAsync(entry.Server.Id, !entry.EnabledForMe);
+        _mcpSaving = false;
+        if (ok)
+        {
+            await LoadUserMcpAsync();
+        }
+        else
+        {
+            _mcpMessage = L["settings.mcp_error"];
+        }
+    }
+
+    /// <summary>Cria um servidor MCP do usuário (só transporte http remoto).</summary>
+    private async Task AddUserMcpAsync()
+    {
+        _mcpSaving = true;
+        _mcpMessage = null;
+        var created = await Api.CreateUserMcpServerAsync(new McpServerUpsertRequest(
+            _mcpName.Trim(), "http", Url: _mcpUrl.Trim(), Enabled: true));
+        _mcpSaving = false;
+        if (created is null)
+        {
+            _mcpMessage = L["settings.mcp_error"];
+            return;
+        }
+        _mcpName = string.Empty;
+        _mcpUrl = string.Empty;
+        await LoadUserMcpAsync();
+    }
+
+    /// <summary>Remove um servidor MCP do próprio usuário.</summary>
+    private async Task DeleteUserMcpAsync(string id)
+    {
+        _mcpSaving = true;
+        if (await Api.DeleteUserMcpServerAsync(id))
+        {
+            await LoadUserMcpAsync();
+        }
+        else
+        {
+            _mcpMessage = L["settings.mcp_error"];
+        }
+        _mcpSaving = false;
+    }
+
+    // ── Defaults globais do admin (SPEC-20261014-config-layers RF-003/RF-005) ──
+    private string _adminGhToken = string.Empty;
+    private bool _adminGhConfigured;
+    private string? _adminGhLogin;
+    private bool _adminGhSaving;
+    private bool _adminByokEnabled;
+    private string? _adminCfgMessage;
+
+    /// <summary>Carrega GitHub global + flag BYOK (aba admin).</summary>
+    private async Task LoadAdminConfigLayersAsync()
+    {
+        var gh = await Api.GetGlobalGitHubAsync();
+        _adminGhConfigured = gh?.Configured == true;
+        _adminGhLogin = gh?.Login;
+        _adminByokEnabled = (await Api.GetUserProviderKeysFlagAsync())?.Enabled == true;
+    }
+
+    /// <summary>Valida e grava o PAT default global do GitHub.</summary>
+    private async Task SaveAdminGitHubAsync()
+    {
+        _adminGhSaving = true;
+        _adminCfgMessage = null;
+        var result = await Api.SetGlobalGitHubTokenAsync(_adminGhToken.Trim());
+        _adminGhSaving = false;
+        if (result is null)
+        {
+            _adminCfgMessage = L["settings.github_save_error"];
+            return;
+        }
+        _adminGhConfigured = true;
+        _adminGhLogin = result.Login;
+        _adminGhToken = string.Empty;
+    }
+
+    /// <summary>Remove o PAT default global do GitHub.</summary>
+    private async Task ClearAdminGitHubAsync()
+    {
+        _adminGhSaving = true;
+        _adminCfgMessage = await Api.ClearGlobalGitHubTokenAsync()
+            ? null : L["settings.github_save_error"];
+        _adminGhConfigured = false;
+        _adminGhLogin = null;
+        _adminGhSaving = false;
+    }
+
+    /// <summary>Liga/desliga o flag BYOK (persiste imediato).</summary>
+    private async Task SetAdminByokAsync(bool enabled)
+    {
+        _adminByokEnabled = enabled;
+        if (!await Api.SetUserProviderKeysFlagAsync(enabled))
+        {
+            _adminByokEnabled = !enabled;
+            _adminCfgMessage = L["settings.mcp_error"];
         }
     }
 
@@ -977,6 +1351,10 @@
 
     private List<MemoryResponse> _memories = [];
     private string _newMemory = string.Empty;
+    // Auto-sync de memória do agente (SPEC-20261014-memory-pipeline).
+    private MemorySyncResponse? _memSync;
+    private int _memSyncInterval = 6;
+    private int _memSyncMaxAge = 30;
 
     private bool _adminLoaded;
     private string _adminWebUiName = "Open WebUI";
@@ -1088,13 +1466,21 @@
             var apiKeyTask = Api.GetApiKeyAsync();
             var memoriesTask = Api.GetMemoriesAsync();
             var webhookTask = Api.GetWebhookAsync();
-            await Task.WhenAll(versionTask, apiKeyTask, memoriesTask, webhookTask);
+            var memSyncTask = Api.GetMemorySyncAsync();
+            await Task.WhenAll(
+                versionTask, apiKeyTask, memoriesTask, webhookTask, memSyncTask);
 
             _version = versionTask.Result?.Version;
             _name = Auth.CurrentUser?.Name ?? string.Empty;
             _profileImage = Auth.CurrentUser?.ProfileImageUrl ?? string.Empty;
             _apiKeyInfo = apiKeyTask.Result;
             _memories = memoriesTask.Result;
+            _memSync = memSyncTask.Result;
+            if (_memSync is not null)
+            {
+                _memSyncInterval = _memSync.IntervalHours;
+                _memSyncMaxAge = _memSync.MaxAgeDays;
+            }
 
             _webhook = webhookTask.Result;
             if (_webhook is not null)
@@ -1369,6 +1755,35 @@
         {
             _memories.Add(added);
             _newMemory = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Toggle do auto-sync de memória — persiste só o override de
+    /// <c>enabled</c>, preservando os overrides numéricos já existentes
+    /// (null no PUT removeria o override e o campo voltaria a herdar).
+    /// </summary>
+    private async Task OnMemSyncEnabledChanged(ChangeEventArgs e)
+    {
+        var enabled = e.Value is true;
+        var updated = await Api.SetMemorySyncAsync(new MemorySyncPrefs(
+            enabled, _memSync?.User?.IntervalHours, _memSync?.User?.MaxAgeDays));
+        if (updated is not null)
+        {
+            _memSync = updated;
+        }
+    }
+
+    /// <summary>Salva intervalo/janela do auto-sync (override do usuário).</summary>
+    private async Task SaveMemSyncAsync()
+    {
+        var updated = await Api.SetMemorySyncAsync(
+            new MemorySyncPrefs(null, _memSyncInterval, _memSyncMaxAge));
+        if (updated is not null)
+        {
+            _memSync = updated;
+            _memSyncInterval = updated.IntervalHours;
+            _memSyncMaxAge = updated.MaxAgeDays;
         }
     }
 

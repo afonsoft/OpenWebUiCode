@@ -10,6 +10,11 @@ namespace OpenWebUI.Application.Contracts;
 /// <param name="Params">Parâmetros de geração (temperature, top_p, max_tokens), opcional.</param>
 /// <param name="WebSearch">Quando true, injeta resultados de busca web como contexto.</param>
 /// <param name="MentionPaths">Caminhos do workdir mencionados via chips @path (RF-002 — expandidos em blocos <file> no prompt).</param>
+/// <param name="ForkFromMessageId">
+/// Ramificação atômica (SPEC-20261013-chat-branching RF-004): quando presente,
+/// a nova mensagem pendura nesta mensagem em vez do leaf ativo — equivale a
+/// "ativar + enviar" num request só.
+/// </param>
 public sealed record EnqueueChatRunRequest(
     string? Content,
     string Model,
@@ -17,7 +22,8 @@ public sealed record EnqueueChatRunRequest(
     IReadOnlyList<string>? ToolIds = null,
     IReadOnlyDictionary<string, object>? Params = null,
     bool? WebSearch = null,
-    IReadOnlyList<string>? MentionPaths = null);
+    IReadOnlyList<string>? MentionPaths = null,
+    string? ForkFromMessageId = null);
 
 /// <summary>Payload do POST de steer/queue numa run viva (SPEC-20261010-steer-queue).</summary>
 /// <param name="Message">Texto injetado como mensagem do usuário na run.</param>
@@ -222,8 +228,21 @@ public sealed record ToolGateDecision(
 /// <c>always-allow</c> | <c>auto</c> (RF-004). Null não altera.
 /// </param>
 /// <param name="Title">Novo título do chat. Null não altera; vazio é ignorado.</param>
+/// <param name="Mode">Modo do agente (<c>chat|plan|build</c>). Null não altera.</param>
+/// <param name="AdvisorEnabled">
+/// Revisor de run (SPEC-20261013-run-advisor RF-005). Null não altera.
+/// </param>
 public sealed record ChatPatchRequest(
-    string? ApprovalPreset, string? Title = null, string? Mode = null);
+    string? ApprovalPreset, string? Title = null, string? Mode = null,
+    bool? AdvisorEnabled = null);
+
+/// <summary>
+/// Conselho do revisor de run (SPEC-20261013-run-advisor RF-003): evento
+/// SSE <c>advisor</c> com o texto curto e o gatilho que o produziu.
+/// </summary>
+/// <param name="Text">Conselho (capado a ~500 chars).</param>
+/// <param name="Trigger"><c>user_message</c> | <c>tool_burst</c> | <c>pause</c>.</param>
+public sealed record RunAdvisorEvent(string Text, string Trigger);
 
 /// <summary>Arquivo alterado num workdir git (numstat + status M/A).</summary>
 public sealed record WorkspaceGitFileResponse(

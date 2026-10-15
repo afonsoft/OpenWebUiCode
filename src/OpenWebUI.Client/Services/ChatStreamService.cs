@@ -70,6 +70,9 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         /// SPEC-20261007-chat-agent-parity RF-010, emitido por todo_write).
         /// </summary>
         public sealed record Tasks(RunTasksEvent Snapshot) : ChatStreamEvent;
+
+        /// <summary>Conselho do revisor de run (SPEC-20261013-run-advisor RF-003).</summary>
+        public sealed record Advisor(RunAdvisorEvent Event) : ChatStreamEvent;
     }
 
     /// <summary>Resultado de arena da última requisição (payload {"arena": ...}), quando houver.</summary>
@@ -116,13 +119,14 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         IReadOnlyList<string>? toolIds = null,
         bool? webSearch = null,
         IReadOnlyList<string>? mentionPaths = null,
+        string? forkFromMessageId = null,
         CancellationToken ct = default)
     {
         using var httpRequest = auth.CreateRequest(
             HttpMethod.Post, $"/api/v1/chats/{chatId}/messages");
         httpRequest.Content = JsonContent.Create(new EnqueueChatRunRequest(
             content, model, fileIds, toolIds, WebSearch: webSearch,
-            MentionPaths: mentionPaths));
+            MentionPaths: mentionPaths, ForkFromMessageId: forkFromMessageId));
 
         using var response = await http.SendAsync(httpRequest, ct);
         await EnsureSuccessAsync(response, "enviar mensagem", ct);
@@ -413,6 +417,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             "approval_asked" => ParseApprovalAsked(node),
             "mode" => ParseMode(node),
             "tasks" => ParseTasks(node),
+            "advisor" => ParseAdvisor(node),
             "changes" => ParseChanges(node),
             "checkpoint" => ParseCheckpoint(node),
             "status" => ParseStatus(node),
@@ -471,6 +476,13 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         new ChatStreamEvent.Mode(
             new RunModeEvent(
                 node["mode"]?.GetValue<string>() ?? "build"));
+
+    /// <summary>Evento <c>advisor</c>: conselho curto do revisor de run.</summary>
+    private static ChatStreamEvent ParseAdvisor(JsonNode node) =>
+        new ChatStreamEvent.Advisor(
+            new RunAdvisorEvent(
+                node["text"]?.GetValue<string>() ?? string.Empty,
+                node["trigger"]?.GetValue<string>() ?? string.Empty));
 
     private static ChatStreamEvent ParseTasks(JsonNode node)
     {

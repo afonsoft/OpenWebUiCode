@@ -19,23 +19,69 @@ public static class RepoSkillEndpoints
         var repo = app.MapGroup("/api/v1/workspace/repo").RequireAuthorization();
         repo.MapGet("/skills", ListSkillsAsync);
         repo.MapGet("/skills/{name}", GetSkillAsync);
+        repo.MapPut("/skills/{name}/enabled", SetSkillEnabledAsync);
         repo.MapGet("/commands", ListCommandsAsync);
         repo.MapGet("/commands/{name}", GetCommandAsync);
     }
 
+    /// <summary>
+    /// Catálogo de skills do repo com provenance de desligamento
+    /// (SPEC-20261014-config-layers): <c>enabled=false</c> quando o admin
+    /// desligou globalmente (<c>disabledByAdmin</c>) ou o usuário desligou
+    /// para si — deny admin é absoluto.
+    /// </summary>
     private static async Task<IResult> ListSkillsAsync(
         string? chatId, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        SkillDiscoveryService skills, CancellationToken ct)
+        SkillDiscoveryService skills, UserConfigOverlayService overlay, CancellationToken ct)
     {
-        var (_, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
         }
 
+        var hidden = await overlay.HiddenSkillNamesAsync(userId!, ct);
+        var adminOff = await overlay.AdminDisabledSkillNamesAsync(ct);
         var scan = skills.Scan(workdir!);
         return Results.Ok(scan.Skills.Select(s =>
-            new RepoSkillItemResponse(s.Name, s.Description, "skill", s.Path)).ToList());
+            new RepoSkillItemResponse(
+                s.Name, s.Description, "skill", s.Path,
+                !hidden.Contains(s.Name), adminOff.Contains(s.Name))).ToList());
+    }
+
+    /// <summary>
+    /// Liga/desliga uma repo-skill só para o usuário atual
+    /// (<c>u:{id}:skills-disabled</c>). Skill desligada pelo admin não
+    /// religa — deny global é absoluto (RF-006).
+    /// </summary>
+    private static async Task<IResult> SetSkillEnabledAsync(
+        string name, string? chatId, McpServerEnabledRequest request,
+        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
+        SkillDiscoveryService skills, UserConfigOverlayService overlay, CancellationToken ct)
+    {
+        var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        if (reject is not null)
+        {
+            return reject;
+        }
+
+        var entry = skills.Scan(workdir!).Skills
+            .FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (entry is null)
+        {
+            return Results.NotFound(new { detail = $"Skill '{name}' não encontrada no repositório." });
+        }
+        var adminOff = await overlay.AdminDisabledSkillNamesAsync(ct);
+        if (request.Enabled && adminOff.Contains(entry.Name))
+        {
+            return Results.BadRequest(new
+            {
+                detail = "Skill desabilitada pelo administrador — o usuário não pode religar.",
+            });
+        }
+
+        await overlay.SetSkillDisabledAsync(userId!, entry.Name, disabled: !request.Enabled, ct);
+        return Results.Ok(new { status = true });
     }
 
     private static async Task<IResult> GetSkillAsync(

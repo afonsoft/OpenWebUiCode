@@ -35,6 +35,9 @@ public sealed class ChatRunExecutor(
     ChatRunPauses pauses,
     CheckpointService checkpoints,
     ContextCompactionService compaction,
+    ContextBoundaryService boundaries,
+    RunAdvisorService advisor,
+    IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
 {
@@ -52,6 +55,27 @@ public sealed class ChatRunExecutor(
     /// file_write/file_edit — alimenta a aba Changes do painel.
     /// </summary>
     private readonly Dictionary<string, RunChangeItem> _changes = new();
+
+    /// <summary>
+    /// Notas system pendentes → próximo round (conselhos do advisor +
+    /// confirmação de compactação forçada por <c>new_context</c>).
+    /// </summary>
+    private readonly Queue<ChatCompletionMessage> _contextNotes = new();
+
+    /// <summary>"nome → preview" das últimas tool calls (contexto do advisor).</summary>
+    private readonly Queue<string> _recentTools = new();
+
+    /// <summary>Conselhos já disparados nesta run (cap do RF-001).</summary>
+    private int _advisorCount;
+
+    /// <summary>Tool results desde o último burst de revisão (gatilho N=5).</summary>
+    private int _toolResultsSinceAdvise;
+
+    /// <summary>Revisão em voo — no máx. uma por vez (RF-001).</summary>
+    private volatile bool _advisorInFlight;
+
+    /// <summary>Último disparo (cooldown do RF-001).</summary>
+    private DateTimeOffset _advisorLastAt = DateTimeOffset.MinValue;
 
     /// <summary>Roda a run até o fim e atualiza o registro com o resultado.</summary>
     public async Task ExecuteAsync(ChatRun run, CancellationToken ct)
@@ -135,6 +159,19 @@ public sealed class ChatRunExecutor(
                 request, user, db, config, rag, webSearch, repos, ct, chatMode,
                 run.ChatId, logger);
 
+            // Notebook persistente do chat (SPEC-20261013-agent-context-
+            // management RF-003): injetado como system na entrada de toda
+            // run — sobrevive a compactação, reload e troca de provider.
+            var contextNotebook = await boundaries.GetNotesAsync(run.ChatId, ct);
+            if (!string.IsNullOrWhiteSpace(contextNotebook))
+            {
+                effective = effective with
+                {
+                    Messages = [new ChatCompletionMessage(
+                        "system", $"[context notes]\n{contextNotebook}"), .. effective.Messages],
+                };
+            }
+
             var outletRules = ModelFilterService.OutletRules(
                 ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()
                     .Where(m => m.IsActive && (m.Id == request.Model || m.Name == request.Model)
@@ -147,6 +184,10 @@ public sealed class ChatRunExecutor(
             if (tools is { Count: > 0 })
             {
                 var builtinContext = await BuildToolContextAsync(run, user, ct);
+                // Advisor (SPEC-20261013-run-advisor): a entrada da mensagem
+                // do usuário dispara a primeira revisão — em background,
+                // com o subset read-only do workspace disponível.
+                await KickAdvisorAsync(run, "user_message", builtinContext, ct);
 
                 // Checkpoints do workdir (SPEC-20261009-checkpoints-revert):
                 // turn 0 = estado pré-run; cada tool mutável depois — o
@@ -196,9 +237,28 @@ public sealed class ChatRunExecutor(
                     // rodada; queued só quando a run ficaria ociosa.
                     OnRoundBoundaryAsync: (queuedOnly, t) =>
                         PollSteerAsync(run, queuedOnly, t),
+                    // Conselhos do advisor viram notas system no round
+                    // seguinte — sem zerar o teto de iterações.
+                    OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
                     OnResultAsync: async (call, output, result, denied, t) =>
                     {
                         await PublishToolResultAsync(run, call, output, result, denied);
+                        lock (_recentTools)
+                        {
+                            _recentTools.Enqueue(
+                                $"{call.Name} → {Scrub(Truncate(output, 120)).ReplaceLineEndings(" ")}");
+                            while (_recentTools.Count > 8)
+                            {
+                                _recentTools.Dequeue();
+                            }
+                        }
+                        // Burst de tools (RF-001): a cada 5 resultados uma
+                        // revisão — no máx. 1 por burst, cap/cooldown no kick.
+                        if (++_toolResultsSinceAdvise >= 5)
+                        {
+                            _toolResultsSinceAdvise = 0;
+                            await KickAdvisorAsync(run, "tool_burst", builtinContext, t);
+                        }
                         if (!denied && ToolExecutor.FindTool(tools, call.Name) is { } tool
                             && (ToolCallRiskClassifier.IsFileMutation(
                                     tool, call.ArgumentsJson, builtinContext.WorkspacePath)
@@ -238,12 +298,16 @@ public sealed class ChatRunExecutor(
                         }
                     });
                 var outcome = await ChatPipeline.RunToolLoopAsync(
-                    effective, tools, toolExecutor, providers, ct, callbacks, builtinContext);
+                    effective, tools, toolExecutor, providers, ct, callbacks,
+                    builtinContext, run.UserId);
                 toolMessages = outcome?.ToolMessages;
             }
             else
             {
-                await foreach (var line in providers.StreamCompletionAsync(effective, ct))
+                // Sem tool loop o conselho só sai como evento — não há
+                // fronteira de rodada para a nota de contexto.
+                await KickAdvisorAsync(run, "user_message", null, ct);
+                await foreach (var line in providers.StreamCompletionAsync(effective, run.UserId, ct))
                 {
                     await pauses.WaitIfPausedAsync(run.Id, ct);
                     var processed = ModelFilterService.ProcessSseLine(line, outletRules);
@@ -337,11 +401,14 @@ public sealed class ChatRunExecutor(
             if (chat is not null)
             {
                 var pos = chat.Messages.Count == 0 ? 0 : chat.Messages.Max(m => m.Position) + 1;
-                chat.Messages.Add(new ChatMessage
+                var message = new ChatMessage
                 {
                     ChatId = chat.Id, Role = "user", Content = steer.Content,
                     Position = pos, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                });
+                    ParentId = BranchService.ResolveLeaf(chat)?.Id,
+                };
+                chat.Messages.Add(message);
+                chat.LeafMessageId = message.Id;
             }
             broadcaster.Publish(run.Id,
                 $"event: steer\ndata: {JsonSerializer.Serialize(new { mode = steer.Mode, content = steer.Content }, JsonOptions)}");
@@ -352,6 +419,147 @@ public sealed class ChatRunExecutor(
         }
         await db.SaveChangesAsync(CancellationToken.None);
         return promoted;
+    }
+
+    /// <summary>
+    /// Gatilhos do revisor de run (SPEC-20261013-run-advisor RF-001): checa
+    /// o flag do chat + cadência (cap por run, cooldown, uma revisão por
+    /// vez) e dispara a revisão em task própria com timeout de 20s — o
+    /// turno nunca espera pelo advisor (RF-004). Um conselho produzido vira
+    /// evento SSE <c>advisor</c> e entra na fila drenada como nota system
+    /// na próxima fronteira de rodada (RF-003).
+    /// </summary>
+    private async Task KickAdvisorAsync(
+        ChatRun run, string trigger, BuiltinToolContext? builtinContext,
+        CancellationToken ct)
+    {
+        if (_advisorInFlight
+            || _advisorCount >= RunAdvisorService.MaxAdvicesPerRun
+            || DateTimeOffset.UtcNow - _advisorLastAt < RunAdvisorService.Cooldown)
+        {
+            return;
+        }
+        // Flag relido por gatilho — desligar mid-run vale já aqui (RF-004).
+        if (!await advisor.IsEnabledAsync(run.ChatId, ct))
+        {
+            return;
+        }
+        _advisorCount++;
+        _advisorLastAt = DateTimeOffset.UtcNow;
+        _advisorInFlight = true;
+
+        string[] snapshot;
+        lock (_recentTools)
+        {
+            snapshot = [.. _recentTools];
+        }
+        var (runId, chatId, userId, model) =
+            (run.Id, run.ChatId, run.UserId, run.Model);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(
+                    TimeSpan.FromSeconds(20));
+                // Escopo próprio: a revisão roda em paralelo ao DbContext do
+                // executor (EF Core não é thread-safe).
+                using var scope = scopes.CreateScope();
+                var scoped = scope.ServiceProvider;
+                var review = scoped.GetRequiredService<RunAdvisorService>();
+                var advice = await review.AdviseAsync(
+                    new ChatRun
+                    {
+                        Id = runId, ChatId = chatId, UserId = userId, Model = model,
+                    },
+                    trigger, snapshot, builtinContext, timeout.Token);
+                if (advice is null)
+                {
+                    return;
+                }
+                // Run terminada durante a revisão → conselho descartado.
+                var status = await scoped.GetRequiredService<AppDbContext>()
+                    .ChatRuns.AsNoTracking()
+                    .Where(r => r.Id == runId)
+                    .Select(r => r.Status)
+                    .FirstOrDefaultAsync(timeout.Token);
+                if (status is not (ChatRunStatus.Running or ChatRunStatus.Paused))
+                {
+                    return;
+                }
+                broadcaster.Publish(runId,
+                    $"event: advisor\ndata: {JsonSerializer.Serialize(new RunAdvisorEvent(advice, trigger), JsonOptions)}");
+                lock (_contextNotes)
+                {
+                    _contextNotes.Enqueue(new ChatCompletionMessage(
+                        "system", $"[advisor] {advice}"));
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex,
+                    "Advisor falhou no gatilho {Trigger} da run {RunId} — segue sem conselho.",
+                    trigger, runId);
+            }
+            finally
+            {
+                _advisorInFlight = false;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Fronteira de rodada (SPEC-20261013-agent-context-management RF-004):
+    /// consome o pedido <c>new_context</c> uma vez — compacta o histórico
+    /// persistido já (sem esperar o próximo enqueue) e devolve a fila de
+    /// notas system (advisor + confirmação) para o próximo round.
+    /// </summary>
+    private async Task<IReadOnlyList<ChatCompletionMessage>> DrainContextNotesAsync(
+        ChatRun run, CancellationToken ct)
+    {
+        if (await boundaries.ConsumeNewContextAsync(run.Id, ct))
+        {
+            try
+            {
+                // Caminho ativo (SPEC-20261013-chat-branching RF-002): fora
+                // dele, mensagens de outros ramos nunca voltam ao modelo.
+                var persistedChat = await db.Chats.AsNoTracking()
+                    .Include(c => c.Messages)
+                    .FirstOrDefaultAsync(c => c.Id == run.ChatId, ct);
+                var persisted = persistedChat is null
+                    ? []
+                    : BranchService.WalkPath(persistedChat);
+                var visible = ContextBoundaryService.FilterMessages(
+                    persisted, await boundaries.ListAsync(run.ChatId, ct));
+                var history = visible
+                    .Select(m => new ChatCompletionMessage(
+                        m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
+                    .ToList();
+                if (await compaction.MaybeCompactAsync(
+                        run.ChatId, history, run.Model, ct, run.UserId, force: true))
+                {
+                    lock (_contextNotes)
+                    {
+                        _contextNotes.Enqueue(new ChatCompletionMessage(
+                            "system",
+                            "[contexto] Nova janela aplicada — o histórico anterior foi "
+                            + "resumido; o que deve persistir pertence ao notebook."));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "new_context falhou na run {RunId} — segue sem compactar.", run.Id);
+            }
+        }
+
+        List<ChatCompletionMessage> notes;
+        lock (_contextNotes)
+        {
+            notes = [.. _contextNotes];
+            _contextNotes.Clear();
+        }
+        return notes;
     }
 
     /// <summary>Publica o evento <c>tool_call</c> com preview higienizado dos args.</summary>
@@ -666,6 +874,8 @@ public sealed class ChatRunExecutor(
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
         broadcaster.Publish(run.Id,
             $"event: approval_asked\ndata: {JsonSerializer.Serialize(new RunApprovalAskedEvent(call.Id, call.Name, kind, argsPreview), JsonOptions)}");
+        // Pausa por aprovação (RF-001): o advisor revisa enquanto o dono decide.
+        await KickAdvisorAsync(run, "pause", builtinContext, ct);
         var result = await approvals.WaitAsync(run.Id, run.ChatId, call.Id,
             call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson));
         var message = string.IsNullOrWhiteSpace(result.Message)
@@ -942,12 +1152,17 @@ public sealed class ChatRunExecutor(
                 .FirstOrDefaultAsync(c => c.Id == run.ChatId, CancellationToken.None);
             if (chat is not null)
             {
+                // As mensagens da run penduram em cadeia no leaf ativo:
+                // cada nova é filha da anterior, e a última vira o leaf
+                // (RF-001 — o caminho ativo avança com a resposta).
                 var nextPosition = chat.Messages.Count == 0
                     ? 0
                     : chat.Messages.Max(m => m.Position) + 1;
+                var parentId = BranchService.ResolveLeaf(chat)?.Id;
+                ChatMessage? lastAdded = null;
                 foreach (var m in toolMessages ?? [])
                 {
-                    chat.Messages.Add(new ChatMessage
+                    var message = new ChatMessage
                     {
                         ChatId = chat.Id,
                         Role = m.Role,
@@ -957,11 +1172,14 @@ public sealed class ChatRunExecutor(
                         ToolCallId = m.ToolCallId,
                         Position = nextPosition++,
                         Timestamp = now,
-                    });
+                        ParentId = parentId,
+                    };
+                    chat.Messages.Add(message);
+                    parentId = (lastAdded = message).Id;
                 }
                 if (content.Length > 0)
                 {
-                    chat.Messages.Add(new ChatMessage
+                    var message = new ChatMessage
                     {
                         ChatId = chat.Id,
                         Role = "assistant",
@@ -969,7 +1187,14 @@ public sealed class ChatRunExecutor(
                         Model = run.Model,
                         Position = nextPosition,
                         Timestamp = now,
-                    });
+                        ParentId = parentId,
+                    };
+                    chat.Messages.Add(message);
+                    lastAdded = message;
+                }
+                if (lastAdded is not null)
+                {
+                    chat.LeafMessageId = lastAdded.Id;
                 }
                 chat.UpdatedAt = now;
             }

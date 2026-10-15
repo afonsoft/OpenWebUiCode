@@ -99,17 +99,18 @@ public class AutomationService(AppDbContext db, ProviderService providers, Notif
                     automation.ModelId,
                     [new ChatCompletionMessage("user", automation.Prompt)],
                     Stream: false),
-                ct);
+                automation.UserId, ct);
 
-            chat.Messages.Add(new ChatMessage
+            var userMsg = new ChatMessage
             {
                 ChatId = chat.Id,
                 Role = "user",
                 Content = automation.Prompt,
                 Position = 0,
                 Timestamp = now,
-            });
-            chat.Messages.Add(new ChatMessage
+            };
+            chat.Messages.Add(userMsg);
+            var assistantMsg = new ChatMessage
             {
                 ChatId = chat.Id,
                 Role = "assistant",
@@ -117,7 +118,10 @@ public class AutomationService(AppDbContext db, ProviderService providers, Notif
                 Model = automation.ModelId,
                 Position = 1,
                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            });
+                ParentId = userMsg.Id,
+            };
+            chat.Messages.Add(assistantMsg);
+            chat.LeafMessageId = assistantMsg.Id;
             db.Chats.Add(chat);
             run.ChatId = chat.Id;
         }

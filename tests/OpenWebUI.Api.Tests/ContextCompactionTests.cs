@@ -176,12 +176,103 @@ public class ContextCompactionTests
             Is.False);
     }
 
+    [Test]
+    public async Task MaybeCompact_CorteDentroDoTurno_GeraPrefixo()
+    {
+        // SPEC-20261014 RF-004: corte com tool block no limite → resumo
+        // cobre até o início do turno e o prefixo do turno vai separado.
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 10);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var fake = new FakeSummarizer("RESUMO HEAD");
+        var svc = NewService(db, fake, config);
+
+        var history = new List<ChatCompletionMessage>
+        {
+            new("user", "u0"),
+            new("assistant", "plano", ToolCallsJson: "[{\"id\":\"c1\"}]"),
+            new("tool", "r1", ToolCallId: "c1"),
+            new("tool", "r2", ToolCallId: "c1"),
+            new("user", "u4"),
+            new("user", "u5"),
+        };
+
+        Assert.That(await svc.MaybeCompactAsync("c1", history, "m", CancellationToken.None), Is.True);
+
+        var applied = await svc.ApplyAsync("c1", history, CancellationToken.None);
+        // [resumo] + [prefixo do turno] + tail(2)
+        Assert.Multiple(() =>
+        {
+            Assert.That(applied, Has.Count.EqualTo(4));
+            Assert.That(applied[0].Content, Does.Contain("RESUMO HEAD"));
+            Assert.That(applied[1].Content, Does.Contain("r1")
+                .And.Contain("r2")
+                .And.Contain("Turno em andamento"));
+            Assert.That(applied[2].Content, Is.EqualTo("u4"));
+            Assert.That(applied[3].Content, Is.EqualTo("u5"));
+        });
+    }
+
+    [Test]
+    public async Task ApplyAsync_PodaToolResultGrandeNaJanela()
+    {
+        // RF-001: a janela projetada passa pela poda mesmo sem compactação.
+        await using var db = NewDb();
+        var svc = NewService(db, new FakeSummarizer("x"));
+        var big = new string('x', ContextPruner.ElideBytes + 50);
+        var history = new List<ChatCompletionMessage>
+        {
+            new("user", "u"),
+            new("assistant", "", ToolCallsJson: "[{\"id\":\"c9\"}]"),
+            new("tool", big, ToolCallId: "c9"),
+            new("assistant", "fim"),
+        };
+
+        var result = await svc.ApplyAsync("c1", history, CancellationToken.None);
+
+        Assert.That(result[2].Content, Does.Contain("elidido")
+            .And.Contain("history://c1/call:c9"));
+        Assert.That(result[3].Content, Is.EqualTo("fim"));
+    }
+
+    [Test]
+    public async Task ApplyAsync_ComDigest_InjetaSecoesEstruturadas()
+    {
+        // RF-002: digest estruturado renderiza seções após a prosa.
+        await using var db = NewDb();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("chat:c1:compaction", new
+        {
+            cutoff = 2,
+            summary = "prosa",
+            digest = new
+            {
+                text = "prosa",
+                files = new[] { "a.cs" },
+                decisions = new[] { "usar DI" },
+                pending = new[] { "testes" },
+            },
+        });
+        var svc = NewService(db, new FakeSummarizer("x"));
+
+        var result = await svc.ApplyAsync("c1", Msgs(6), CancellationToken.None);
+
+        Assert.That(result[0].Content, Does.Contain("prosa")
+            .And.Contain("Arquivos").And.Contain("a.cs")
+            .And.Contain("Decisões").And.Contain("Pendências"));
+    }
+
     private static ContextCompactionService NewService(
         AppDbContext db, IContextSummarizer summarizer, ConfigService? config = null) =>
         new(db,
             config ?? new ConfigService(db, TestCache.Create()),
             summarizer,
-            new ModelRoleResolver(db, _ => Task.FromResult(new List<ModelInfo>()),
+            new ModelRoleResolver(db, config ?? new ConfigService(db, TestCache.Create()),
+                _ => Task.FromResult(new List<ModelInfo>()),
                 NullLogger<ModelRoleResolver>.Instance),
             NullLogger<ContextCompactionService>.Instance);
 
@@ -189,16 +280,17 @@ public class ContextCompactionTests
     {
         public int Calls { get; private set; }
 
-        public Task<string?> SummarizeAsync(string model, string transcript, CancellationToken ct)
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
         {
             Calls++;
-            return Task.FromResult(result);
+            return Task.FromResult(result is null ? null
+            : new ContextSummary(result, [], [], []));
         }
     }
 
     private sealed class ThrowingSummarizer : IContextSummarizer
     {
-        public Task<string?> SummarizeAsync(string model, string transcript, CancellationToken ct) =>
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct) =>
             throw new InvalidOperationException("boom");
     }
 }

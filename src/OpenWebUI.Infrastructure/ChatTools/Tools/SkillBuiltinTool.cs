@@ -9,7 +9,9 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// commands RF-004, padrão <c>src/tool/skill.ts</c> do opencode).
 /// Somente leitura: retorna markdown, nunca executa código.
 /// </summary>
-public sealed class SkillBuiltinTool(SkillDiscoveryService skills) : IBuiltinChatTool
+public sealed class SkillBuiltinTool(
+    SkillDiscoveryService skills,
+    UserConfigOverlayService overlay) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "skill";
@@ -35,29 +37,32 @@ public sealed class SkillBuiltinTool(SkillDiscoveryService skills) : IBuiltinCha
     public ApprovalTier Tier => ApprovalTier.Read;
 
     /// <inheritdoc />
-    public Task<BuiltinToolResult> ExecuteAsync(
+    public async Task<BuiltinToolResult> ExecuteAsync(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
         var name = args.TryGetProperty("name", out var n) ? n.GetString() : null;
         var scan = skills.Scan(context.WorkspacePath);
+        var hidden = await overlay.HiddenSkillNamesAsync(context.UserId, ct);
+        var visible = scan.Skills
+            .Where(s => !hidden.Contains(s.Name)).ToList();
         if (string.IsNullOrWhiteSpace(name))
         {
-            return Task.FromResult(new BuiltinToolResult(
-                "Parâmetro 'name' obrigatório. Skills disponíveis: " + Names(scan)));
+            return new BuiltinToolResult(
+                "Parâmetro 'name' obrigatório. Skills disponíveis: " + Names(visible));
         }
 
-        var entry = scan.Skills.FirstOrDefault(
+        var entry = visible.FirstOrDefault(
             s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        return Task.FromResult(entry is null
+        return entry is null
             ? new BuiltinToolResult(
-                $"Skill '{name}' não encontrada no repositório. Disponíveis: {Names(scan)}")
+                $"Skill '{name}' não encontrada ou desabilitada. Disponíveis: {Names(visible)}")
             : new BuiltinToolResult(
                 $"Skill '{entry.Name}' carregada de {entry.Path} — siga as instruções abaixo:\n\n{entry.Body}",
-                new { entry.Name, entry.Path }));
+                new { entry.Name, entry.Path });
     }
 
-    private static string Names(RepoScanResult scan) =>
-        scan.Skills.Count == 0
+    private static string Names(IReadOnlyList<RepoEntry> skills) =>
+        skills.Count == 0
             ? "(nenhuma)"
-            : string.Join(", ", scan.Skills.Select(s => s.Name));
+            : string.Join(", ", skills.Select(s => s.Name));
 }

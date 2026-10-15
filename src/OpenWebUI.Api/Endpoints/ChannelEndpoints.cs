@@ -704,7 +704,7 @@ public static class ChannelEndpoints
                         modelId,
                         [new ChatCompletionMessage("user", prompt)],
                         Stream: false),
-                    ct);
+                    userId: null, ct);
             }
             catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)
             {

@@ -48,6 +48,7 @@ public class ModelRolesTests
 
     private static ModelRoleResolver NewResolver(AppDbContext db, params string[] catalogIds) =>
         new(db,
+            new ConfigService(db, TestCache.Create()),
             _ => Task.FromResult(catalogIds
                 .Select(id => new ModelInfo(id, id, "ollama", "x")).ToList()),
             NullLogger<ModelRoleResolver>.Instance);
@@ -256,6 +257,7 @@ public class ModelRolesTests
 
         var summarizer = new RecordingSummarizer("resumo");
         var resolver = new ModelRoleResolver(db,
+            new ConfigService(db, TestCache.Create()),
             _ => Task.FromResult(new List<ModelInfo> { new("tiny", "t", "ollama", "x") }),
             NullLogger<ModelRoleResolver>.Instance);
         var svc = new ContextCompactionService(db, config, summarizer, resolver,
@@ -286,6 +288,7 @@ public class ModelRolesTests
 
         var summarizer = new RecordingSummarizer("resumo");
         var resolver = new ModelRoleResolver(db,
+            new ConfigService(db, TestCache.Create()),
             _ => Task.FromResult(new List<ModelInfo>()),
             NullLogger<ModelRoleResolver>.Instance);
         var svc = new ContextCompactionService(db, config, summarizer, resolver,
@@ -303,10 +306,11 @@ public class ModelRolesTests
     {
         public string? LastModel { get; private set; }
 
-        public Task<string?> SummarizeAsync(string model, string transcript, CancellationToken ct)
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
         {
             LastModel = model;
-            return Task.FromResult(result);
+            return Task.FromResult(result is null ? null
+            : new ContextSummary(result, [], [], []));
         }
     }
 }

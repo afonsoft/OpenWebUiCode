@@ -330,12 +330,55 @@ public class ProviderService(
         return models;
     }
 
+    /// <summary>
+    /// Aplica as chaves BYOK do usuário sobre a config global
+    /// (SPEC-20261014-config-layers RF-005): quando
+    /// <c>features.userProviderKeys</c> está ligado e o usuário tem chave
+    /// para o tipo, ela substitui a(s) chave(s) globais daquele tipo —
+    /// a config retornada nunca vaza a chave de outro usuário.
+    /// </summary>
+    internal async Task<ConnectionsConfig> ApplyUserKeysAsync(
+        ConnectionsConfig connections, string? userId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(userId)
+            || !await config.GetAsync(
+                UserConfigOverlayService.UserProviderKeysFlag, false, ct))
+        {
+            return connections;
+        }
+        var keys = await config.GetAsync<Dictionary<string, string>?>(
+            UserConfigOverlayService.ProviderKeysKey(userId), null, ct);
+        if (keys is not { Count: > 0 })
+        {
+            return connections;
+        }
+
+        var openAiKeys = connections.OpenAiApiKeys;
+        if (keys.TryGetValue(ProviderTypes.OpenAi, out var openAiKey)
+            && !string.IsNullOrWhiteSpace(openAiKey))
+        {
+            // A chave do usuário cobre todas as conexões openai do tipo
+            // (sem granularidade por URL na v1 — ver SPEC RF-005).
+            openAiKeys = connections.OpenAiBaseUrls.Select(_ => openAiKey).ToList();
+        }
+        var providers = connections.ProvidersOrEmpty
+            .Select(p => keys.TryGetValue(p.Type, out var key)
+                    && !string.IsNullOrWhiteSpace(key)
+                ? p with { ApiKey = key }
+                : p)
+            .ToList();
+        return connections with { OpenAiApiKeys = openAiKeys, Providers = providers };
+    }
+
     /// <summary>Executa uma completion sem streaming e retorna o texto do assistant.</summary>
     /// <param name="request">Requisição de completion (Stream é ignorado).</param>
+    /// <param name="userId">Usuário da requisição — resolve chaves BYOK quando habilitadas.</param>
     /// <param name="ct">Token de cancelamento.</param>
-    public async Task<string> CompleteAsync(ChatCompletionRequest request, CancellationToken ct = default)
+    public async Task<string> CompleteAsync(
+        ChatCompletionRequest request, string? userId = null, CancellationToken ct = default)
     {
-        var connections = await config.GetConnectionsAsync(ct);
+        var connections = await ApplyUserKeysAsync(
+            await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
 
         return provider switch
@@ -354,12 +397,15 @@ public class ProviderService(
     /// Roteia para Ollama ou OpenAI conforme o provedor resolvido para o modelo.
     /// </summary>
     /// <param name="request">Requisição de completion enviada pelo cliente.</param>
+    /// <param name="userId">Usuário da requisição — resolve chaves BYOK quando habilitadas.</param>
     /// <param name="ct">Token de cancelamento.</param>
     public async IAsyncEnumerable<string> StreamCompletionAsync(
         ChatCompletionRequest request,
+        string? userId = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var connections = await config.GetConnectionsAsync(ct);
+        var connections = await ApplyUserKeysAsync(
+            await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
 
         var lines = provider switch
@@ -383,11 +429,13 @@ public class ProviderService(
     /// (loop de tools). Roteia Ollama/OpenAI e normaliza as chamadas.
     /// </summary>
     /// <param name="request">Requisição com Tools preenchidas.</param>
+    /// <param name="userId">Usuário da requisição — resolve chaves BYOK quando habilitadas.</param>
     /// <param name="ct">Token de cancelamento.</param>
     public async Task<ProviderCompletion> CompleteWithToolsAsync(
-        ChatCompletionRequest request, CancellationToken ct = default)
+        ChatCompletionRequest request, string? userId = null, CancellationToken ct = default)
     {
-        var connections = await config.GetConnectionsAsync(ct);
+        var connections = await ApplyUserKeysAsync(
+            await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
         var payload = BuildPayload(request, stream: false, provider);
         JsonNode? json;
@@ -478,13 +526,16 @@ public class ProviderService(
     /// </summary>
     /// <param name="request">Requisição com Tools preenchidas (ou null para o round final).</param>
     /// <param name="onDelta">Callback por pedaço de texto (pode ser null — vira buffered).</param>
+    /// <param name="userId">Usuário da requisição — resolve chaves BYOK quando habilitadas.</param>
     /// <param name="ct">Token de cancelamento.</param>
     public async Task<ProviderCompletion?> CompleteWithToolsStreamingAsync(
         ChatCompletionRequest request,
         Func<string, CancellationToken, Task>? onDelta,
+        string? userId = null,
         CancellationToken ct = default)
     {
-        var connections = await config.GetConnectionsAsync(ct);
+        var connections = await ApplyUserKeysAsync(
+            await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
         var payload = BuildPayload(request, stream: true, provider);
 

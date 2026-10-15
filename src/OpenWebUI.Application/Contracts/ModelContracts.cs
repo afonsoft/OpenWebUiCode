@@ -28,8 +28,15 @@ public sealed record CatalogModelListResponse(IReadOnlyList<CatalogModel> Data);
 
 /// <summary>Papéis de modelo do usuário (SPEC-20261013-model-roles):
 /// papel → cadeia de ids em ordem de fallback.</summary>
-/// <param name="Roles">Mapa <c>{tasks|memory|advisor: [id,...]}</c>.</param>
-public sealed record ModelRolesResponse(IReadOnlyDictionary<string, List<string>> Roles);
+/// <param name="Roles">Mapa <c>{tasks|memory|advisor: [id,...]}</c> do usuário.</param>
+/// <param name="Global">
+/// Cadeias globais do admin (SPEC-20261014-config-layers RF-004) —
+/// usadas quando o usuário não tem override do papel. A UI mostra como
+/// provenance "herdado do admin".
+/// </param>
+public sealed record ModelRolesResponse(
+    IReadOnlyDictionary<string, List<string>> Roles,
+    IReadOnlyDictionary<string, List<string>>? Global = null);
 
 /// <summary>Escrita dos papéis (PUT /api/v1/configs/user/model-roles):
 /// substitui o mapa inteiro; cadeia vazia remove o papel.</summary>

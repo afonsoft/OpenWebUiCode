@@ -64,14 +64,17 @@ public partial class McpClientService(
             var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
 
             var stale = await db.Tools
-                .Where(t => t.UserId == null && t.Url.StartsWith($"{VirtualUrlPrefix}{server.Id}/"))
+                .Where(t => t.Url.StartsWith($"{VirtualUrlPrefix}{server.Id}/"))
                 .ToListAsync(timeout.Token);
             db.Tools.RemoveRange(stale);
 
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            // Tools virtuais herdam o dono do server (SPEC-20261014-config-
+            // layers RF-002): globais ficam null (visíveis a todos); de
+            // usuário carregam o userId e só entram no catálogo dele.
             var virtualTools = tools.Select(t => new Tool
             {
-                UserId = null,
+                UserId = server.UserId,
                 Name = t.Name,
                 Description = t.Description,
                 SpecJson = BuildSpecJson(server, t),

@@ -47,7 +47,8 @@ public sealed record ChatMessageModel(
     IReadOnlyList<ChatMessageVersionModel>? Versions = null,
     string? ToolCallId = null,
     string? ToolCallsJson = null,
-    IReadOnlyList<ChatMessageFileModel>? Files = null);
+    IReadOnlyList<ChatMessageFileModel>? Files = null,
+    string? ParentId = null);
 
 /// <summary>Resumo de um chat para listagem na barra lateral.</summary>
 /// <param name="Id">Identificador do chat.</param>
@@ -120,7 +121,10 @@ public sealed record ChatResponse(
     string ApprovalPreset = "approve-mutations",
     string Mode = "chat",
     string? ParentChatId = null,
-    string? ParentTitle = null);
+    string? ParentTitle = null,
+    bool AdvisorEnabled = false,
+    string? ActiveLeafId = null,
+    int BranchCount = 0);
 
 /// <summary>Requisição para criar ou atualizar um chat.</summary>
 /// <param name="Title">Título do chat.</param>
@@ -170,6 +174,30 @@ public sealed record AdminChatSummaryResponse(
     bool Archived,
     long CreatedAt,
     long UpdatedAt);
+
+/// <summary>
+/// Leaf divergente de um chat (SPEC-20261013-chat-branching RF-003):
+/// ponta de um ramo na árvore de mensagens.
+/// </summary>
+/// <param name="LeafId">Id da mensagem-leaf.</param>
+/// <param name="Depth">Profundidade do ramo (arestas até a raiz).</param>
+/// <param name="MessageCount">Mensagens no caminho raiz→leaf.</param>
+/// <param name="Preview">Início do conteúdo do leaf.</param>
+/// <param name="Summary">Resumo gerado ao abandonar o ramo (RF-005), quando há.</param>
+/// <param name="UpdatedAt">Instante do leaf (epoch seconds).</param>
+/// <param name="IsActive">Se é o leaf ativo do chat.</param>
+public sealed record BranchLeafResponse(
+    string LeafId,
+    int Depth,
+    int MessageCount,
+    string Preview,
+    string? Summary,
+    long UpdatedAt,
+    bool IsActive);
+
+/// <summary>Pedido de ativação de leaf (POST /branches/activate, RF-004).</summary>
+/// <param name="LeafId">Mensagem que vira a nova ponta do caminho ativo.</param>
+public sealed record ActivateBranchRequest(string LeafId);
 
 /// <summary>Página da listagem administrativa de chats.</summary>
 /// <param name="Items">Chats da página.</param>

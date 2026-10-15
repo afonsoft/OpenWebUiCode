@@ -88,9 +88,10 @@ public class ApiService(HttpClient http, AuthService auth)
     /// </summary>
     public Task<ChatResponse?> PatchChatAsync(
         string id, string? approvalPreset = null, string? title = null,
-        string? mode = null) =>
+        string? mode = null, bool? advisorEnabled = null) =>
         SendAsync<ChatResponse>(HttpMethod.Patch,
-            $"/api/v1/chats/{id}", new ChatPatchRequest(approvalPreset, title, mode));
+            $"/api/v1/chats/{id}",
+            new ChatPatchRequest(approvalPreset, title, mode, advisorEnabled));
 
     /// <summary>Alterna o estado de fixado de um chat.</summary>
     public Task<ChatResponse?> TogglePinChatAsync(string id) =>
@@ -130,6 +131,17 @@ public class ApiService(HttpClient http, AuthService auth)
     /// <summary>Exclui uma mensagem e as seguintes.</summary>
     public Task<ChatResponse?> DeleteMessageAsync(string chatId, string messageId) =>
         SendAsync<ChatResponse>(HttpMethod.Delete, $"/api/v1/chats/{chatId}/messages/{messageId}");
+
+    /// <summary>Leafs divergentes do chat (SPEC-20261013-chat-branching RF-003).</summary>
+    public async Task<List<BranchLeafResponse>> GetBranchesAsync(string chatId) =>
+        await SendAsync<List<BranchLeafResponse>>(
+            HttpMethod.Get, $"/api/v1/chats/{chatId}/branches") ?? [];
+
+    /// <summary>Ativa uma mensagem como leaf — retorna o caminho renderizado (RF-004).</summary>
+    public Task<ChatResponse?> ActivateBranchAsync(string chatId, string leafId) =>
+        SendAsync<ChatResponse>(HttpMethod.Post,
+            $"/api/v1/chats/{chatId}/branches/activate",
+            new ActivateBranchRequest(leafId));
 
     /// <summary>Remove um chat.</summary>
     public async Task<bool> DeleteChatAsync(string id)
@@ -299,6 +311,105 @@ public class ApiService(HttpClient http, AuthService auth)
     /// <summary>Lista as tools descobertas de um servidor.</summary>
     public async Task<List<McpToolResponse>> GetMcpToolsAsync(string serverId) =>
         await SendAsync<List<McpToolResponse>>(HttpMethod.Get, $"/api/v1/mcp/servers/{serverId}/tools") ?? [];
+
+    // ---------------- Camadas de config (SPEC-20261014-config-layers) ----------------
+
+    /// <summary>Papéis do usuário + cadeias globais do admin (provenance, RF-004).</summary>
+    public Task<ModelRolesResponse?> GetModelRolesFullAsync() =>
+        SendAsync<ModelRolesResponse>(HttpMethod.Get, "/api/v1/configs/user/model-roles");
+
+    /// <summary>Cadeias globais de papéis (admin, RF-004).</summary>
+    public Task<ModelRolesResponse?> GetGlobalModelRolesAsync() =>
+        SendAsync<ModelRolesResponse>(HttpMethod.Get, "/api/v1/configs/model-roles");
+
+    /// <summary>Grava as cadeias globais de papéis (admin).</summary>
+    public async Task<bool> UpdateGlobalModelRolesAsync(Dictionary<string, List<string>> roles) =>
+        await SendStatusAsync(HttpMethod.Put, "/api/v1/configs/model-roles",
+            new UpdateModelRolesRequest(roles));
+
+    /// <summary>Status do PAT global do GitHub (admin; valor nunca retorna).</summary>
+    public Task<GitHubConfigResponse?> GetGlobalGitHubAsync() =>
+        SendAsync<GitHubConfigResponse>(HttpMethod.Get, "/api/v1/configs/github");
+
+    /// <summary>Valida e grava o PAT default global (admin).</summary>
+    public Task<GitHubConfigResponse?> SetGlobalGitHubTokenAsync(string token) =>
+        SendAsync<GitHubConfigResponse>(HttpMethod.Put, "/api/v1/configs/github",
+            new GitHubTokenRequest(token));
+
+    /// <summary>Remove o PAT default global (admin).</summary>
+    public async Task<bool> ClearGlobalGitHubTokenAsync() =>
+        await SendStatusAsync(HttpMethod.Delete, "/api/v1/configs/github");
+
+    /// <summary>Flag BYOK (admin): usuários podem guardar chaves próprias.</summary>
+    public Task<FeatureToggle?> GetUserProviderKeysFlagAsync() =>
+        SendAsync<FeatureToggle>(HttpMethod.Get, "/api/v1/configs/user_provider_keys");
+
+    /// <summary>Liga/desliga BYOK (admin).</summary>
+    public async Task<bool> SetUserProviderKeysFlagAsync(bool enabled) =>
+        await SendStatusAsync(HttpMethod.Post, "/api/v1/configs/user_provider_keys",
+            new FeatureToggle(enabled));
+
+    /// <summary>Provedores com chave do usuário (só hasKey — valores nunca voltam).</summary>
+    public Task<UserProviderKeysResponse?> GetUserProviderKeysAsync() =>
+        SendAsync<UserProviderKeysResponse>(HttpMethod.Get, "/api/v1/configs/user/provider-keys");
+
+    /// <summary>Grava a chave BYOK do usuário para um provider.</summary>
+    public async Task<bool> SetUserProviderKeyAsync(string provider, string key) =>
+        await SendStatusAsync(HttpMethod.Put,
+            $"/api/v1/configs/user/provider-keys/{provider}", new UserProviderKeyRequest(key));
+
+    /// <summary>Remove a chave BYOK do usuário para um provider.</summary>
+    public async Task<bool> DeleteUserProviderKeyAsync(string provider) =>
+        await SendStatusAsync(HttpMethod.Delete,
+            $"/api/v1/configs/user/provider-keys/{provider}");
+
+    /// <summary>Auto-sync de memória: valores efetivos do usuário + camada global.</summary>
+    public Task<MemorySyncResponse?> GetMemorySyncAsync() =>
+        SendAsync<MemorySyncResponse>(HttpMethod.Get, "/api/v1/configs/user/memory-sync");
+
+    /// <summary>Override do usuário do auto-sync (null num campo = herda do global).</summary>
+    public Task<MemorySyncResponse?> SetMemorySyncAsync(MemorySyncPrefs prefs) =>
+        SendAsync<MemorySyncResponse>(HttpMethod.Put, "/api/v1/configs/user/memory-sync", prefs);
+
+    /// <summary>Camada global do auto-sync de memória (admin).</summary>
+    public async Task<bool> SetGlobalMemorySyncAsync(MemorySyncPrefs prefs) =>
+        await SendStatusAsync(HttpMethod.Put, "/api/v1/configs/memory-sync", prefs);
+
+    /// <summary>Catálogo efetivo de MCP do usuário (globais + próprios, com provenance).</summary>
+    public async Task<List<UserMcpServerEntry>> GetUserMcpServersAsync() =>
+        await SendAsync<List<UserMcpServerEntry>>(
+            HttpMethod.Get, "/api/v1/users/user/mcp-servers/") ?? [];
+
+    /// <summary>Cria servidor MCP do usuário (transporte http remoto apenas).</summary>
+    public Task<McpServerResponse?> CreateUserMcpServerAsync(McpServerUpsertRequest request) =>
+        SendAsync<McpServerResponse>(HttpMethod.Post, "/api/v1/users/user/mcp-servers/", request);
+
+    /// <summary>Remove servidor MCP do próprio usuário.</summary>
+    public async Task<bool> DeleteUserMcpServerAsync(string id) =>
+        await SendStatusAsync(HttpMethod.Delete, $"/api/v1/users/user/mcp-servers/{id}");
+
+    /// <summary>Redescobre as tools de um servidor MCP do usuário.</summary>
+    public async Task<int> RefreshUserMcpServerAsync(string id)
+    {
+        var result = await SendAsync<JsonNode>(HttpMethod.Post,
+            $"/api/v1/users/user/mcp-servers/{id}/refresh", null);
+        return result?["tools"]?.GetValue<int>() ?? -1;
+    }
+
+    /// <summary>
+    /// Toggle no escopo do usuário: servidor próprio liga/desliga;
+    /// servidor global grava o tombstone de desligamento do usuário.
+    /// </summary>
+    public async Task<bool> SetUserMcpServerEnabledAsync(string id, bool enabled) =>
+        await SendStatusAsync(HttpMethod.Put,
+            $"/api/v1/users/user/mcp-servers/{id}/enabled", new McpServerEnabledRequest(enabled));
+
+    /// <summary>Liga/desliga uma repo-skill só para o usuário (deny admin é absoluto).</summary>
+    public async Task<bool> SetRepoSkillEnabledAsync(string name, bool enabled, string? chatId = null) =>
+        await SendStatusAsync(HttpMethod.Put,
+            $"/api/v1/workspace/repo/skills/{Uri.EscapeDataString(name)}/enabled"
+                + (chatId is null ? "" : $"?chatId={chatId}"),
+            new McpServerEnabledRequest(enabled));
 
     // ---------------- Prompts ----------------
 

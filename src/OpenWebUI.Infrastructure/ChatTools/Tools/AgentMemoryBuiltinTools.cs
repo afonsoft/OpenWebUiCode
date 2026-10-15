@@ -246,3 +246,163 @@ public sealed class MemorySearchBuiltinTool(AppDbContext db, WorkspaceRepoServic
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max] + "…";
 }
+
+/// <summary>
+/// <c>builtin:memory_learn</c> — lição durável estruturada (SPEC-20261014
+/// memory-pipeline RF-003): o modelo ensina sem esperar a consolidação em
+/// background. Dedup determinístico — mesma <c>lesson</c> no mesmo
+/// <c>context</c> atualiza a entrada <c>learn:</c> existente em vez de
+/// duplicar. Tags livres ajudam o <c>memory_search</c>.
+/// </summary>
+public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
+{
+    /// <summary>Cap de caracteres da lição.</summary>
+    private const int MaxLessonChars = 2000;
+
+    /// <summary>Cap de caracteres do contexto.</summary>
+    private const int MaxContextChars = 300;
+
+    /// <summary>Máximo de tags aceitas.</summary>
+    private const int MaxTags = 8;
+
+    /// <summary>Cap de caracteres de cada tag.</summary>
+    private const int MaxTagChars = 50;
+
+    /// <inheritdoc />
+    public string Name => "memory_learn";
+
+    /// <inheritdoc />
+    public string Description =>
+        "Record a durable lesson — structured knowledge worth keeping "
+            + "across sessions (e.g. 'integration tests need Docker "
+            + "running'). Re-learning the same lesson in the same context "
+            + "updates it. Memories surface in future system prompts.";
+
+    /// <inheritdoc />
+    public string ParametersJson => """
+        {
+          "type": "object",
+          "properties": {
+            "lesson": {
+              "type": "string",
+              "description": "The lesson to remember (concise, one fact)."
+            },
+            "context": {
+              "type": "string",
+              "description": "Where the lesson applies (e.g. 'deploy', 'repo:owner/name'). Optional."
+            },
+            "tags": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Optional free-form tags for memory_search."
+            }
+          },
+          "required": ["lesson"]
+        }
+        """;
+
+    /// <inheritdoc />
+    public ApprovalTier Tier => ApprovalTier.Write;
+
+    /// <inheritdoc />
+    public async Task<BuiltinToolResult> ExecuteAsync(
+        JsonElement args, BuiltinToolContext context, CancellationToken ct)
+    {
+        var lesson = ReadStringField(args, "lesson", MaxLessonChars);
+        if (string.IsNullOrWhiteSpace(lesson))
+        {
+            return new BuiltinToolResult("Parâmetro 'lesson' é obrigatório.");
+        }
+        var ctx = ReadStringField(args, "context", MaxContextChars)?.Trim();
+        var tags = ReadTags(args);
+
+        // Título determinístico: mesmo (contexto, lesson) → mesma chave →
+        // update em vez de duplicar (RF-003, similaridade simples).
+        var ctxSlug = Slug(ctx ?? "general");
+        var hash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(
+                        ctxSlug + "\n" + lesson.Trim())))
+            .ToLowerInvariant()[..8];
+        var title = $"learn:{ctxSlug}:{hash}";
+
+        var content = lesson.Trim();
+        if (tags.Count > 0)
+        {
+            content += "\n\ntags: " + string.Join(", ", tags);
+        }
+
+        var existing = await db.AgentMemories
+            .FirstOrDefaultAsync(m => m.UserId == context.UserId
+                && m.Scope == "global" && m.Title == title, ct);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var updated = existing is not null;
+        if (existing is null)
+        {
+            existing = new AgentMemory
+            {
+                UserId = context.UserId,
+                Scope = "global",
+                Title = title,
+                CreatedAt = now,
+            };
+            db.AgentMemories.Add(existing);
+        }
+        existing.Content = content;
+        existing.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+
+        return new BuiltinToolResult(
+            (updated ? "Lição atualizada: " : "Lição registrada: ")
+                + $"'{title}'"
+                + (tags.Count > 0 ? $" [tags: {string.Join(", ", tags)}]" : string.Empty),
+            new { memoryId = existing.Id, title, updated });
+    }
+
+    private static string? ReadStringField(JsonElement args, string field, int max)
+    {
+        if (!args.TryGetProperty(field, out var el) || el.ValueKind != JsonValueKind.String
+            || el.GetString() is not { } s)
+        {
+            return null;
+        }
+        return s.Length > max ? s[..max] : s;
+    }
+
+    private static List<string> ReadTags(JsonElement args)
+    {
+        var tags = new List<string>();
+        if (args.TryGetProperty("tags", out var el)
+            && el.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in el.EnumerateArray())
+            {
+                if (t.ValueKind == JsonValueKind.String
+                    && t.GetString() is { Length: > 0 } s)
+                {
+                    tags.Add(s.Length > MaxTagChars ? s[..MaxTagChars] : s);
+                    if (tags.Count == MaxTags)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        return tags;
+    }
+
+    private static string Slug(string value)
+    {
+        var sb = new System.Text.StringBuilder(value.Length);
+        foreach (var c in value.Trim().ToLowerInvariant())
+        {
+            sb.Append(char.IsLetterOrDigit(c) ? c : '-');
+        }
+        var slug = sb.ToString().Trim('-');
+        while (slug.Contains("--", StringComparison.Ordinal))
+        {
+            slug = slug.Replace("--", "-", StringComparison.Ordinal);
+        }
+        return slug.Length > 60 ? slug[..60].TrimEnd('-') : slug;
+    }
+}

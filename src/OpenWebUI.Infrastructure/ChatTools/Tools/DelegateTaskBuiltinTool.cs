@@ -95,6 +95,10 @@ public sealed class DelegateTaskBuiltinTool(
               "type": "string",
               "description": "Optional persona: name or id of an active workspace Skill whose instructions become the sub-agent's system prompt (e.g. 'reviewer', 'tester')."
             },
+            "agent": {
+              "type": "string",
+              "description": "Optional declarative agent name (see builtin_agent_catalog): applies its system prompt, model and tool allowlist to the child run."
+            },
             "merge": {
               "type": "boolean",
               "description": "true: auto-merge the child's worktree into the workspace when it completes (wait=true only; with wait=false the parent reviews via builtin_worktree_diff and merges via builtin_worktree_merge)."
@@ -118,8 +122,9 @@ public sealed class DelegateTaskBuiltinTool(
         }
 
         var extra = ReadString(args, "context", MaxContextChars);
-        var wait = !args.TryGetProperty("wait", out var waitEl)
-            || waitEl.ValueKind is not JsonValueKind.False;
+        var waitExplicit = args.TryGetProperty("wait", out var waitEl)
+            ? waitEl.ValueKind == JsonValueKind.True
+            : (bool?)null;
         var autoMerge = args.TryGetProperty("merge", out var mergeEl)
             && mergeEl.ValueKind == JsonValueKind.True;
         var fullPrompt = string.IsNullOrWhiteSpace(extra)
@@ -135,6 +140,68 @@ public sealed class DelegateTaskBuiltinTool(
         if (personaError is not null)
         {
             return personaError;
+        }
+
+        // SPEC-20261014-agent-definitions RF-003: `agent` referencia uma
+        // definição declarativa do catálogo (built-in < admin < user <
+        // workspace opt-in). Sub-agentes só podem delegar para nomes da
+        // sua allowlist `spawns` (kv gravada no nascimento da run).
+        var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+        var agentName = ReadString(args, "agent", 200)?.Trim();
+        var allowedCsv = await config.GetAsync<string?>(
+            $"r:{context.RunId}:agent.spawns", null, ct);
+        var callerDepth = await config.GetAsync<int?>(
+            $"r:{context.RunId}:agent.depth", null, ct);
+        if (callerDepth == 0)
+        {
+            // Run nascida de agente sem profundidade residual — a tool só
+            // existe se vazou por toolIds explícitos; bloqueia sempre.
+            return new BuiltinToolResult(
+                "Este sub-agente não pode delegar (maxDepth esgotado).");
+        }
+        if (agentName is null && allowedCsv is not null)
+        {
+            // Run nascida de agente com spawns: delegação livre bypassaria a
+            // allowlist — o filho tem que referenciar um nome permitido.
+            return new BuiltinToolResult(
+                "Este sub-agente só pode delegar via parâmetro 'agent' "
+                    + $"para: {allowedCsv}.");
+        }
+
+        AgentDefinition? agent = null;
+        if (agentName is not null)
+        {
+            var agents = scope.ServiceProvider
+                .GetRequiredService<AgentDefinitionService>();
+            agent = await agents.FindAsync(
+                context.UserId, context.WorkspacePath, agentName, ct);
+            if (agent is null)
+            {
+                var catalog = await agents.ListAsync(
+                    context.UserId, context.WorkspacePath, ct);
+                return new BuiltinToolResult(
+                    $"Agente '{agentName}' não encontrado. Disponíveis: "
+                    + (catalog.Count == 0
+                        ? "(nenhum)"
+                        : string.Join(", ", catalog.Keys.Order())));
+            }
+
+            if (allowedCsv is not null
+                && !allowedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries
+                    | StringSplitOptions.TrimEntries)
+                    .Contains(agent.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                return new BuiltinToolResult(
+                    $"Este sub-agente só pode delegar para: {allowedCsv}. "
+                        + $"'{agent.Name}' não está na allowlist spawns.");
+            }
+
+            if (personaSkill is not null)
+            {
+                return new BuiltinToolResult(
+                    "Use 'agent' OU 'persona' — os dois definem o system "
+                        + "prompt do filho e não se combinam.");
+            }
         }
 
         var parentRun = context.RunId is { } parentId
@@ -155,10 +222,14 @@ public sealed class DelegateTaskBuiltinTool(
         // Herda modelo + tools do pai; exclui o próprio delegate apenas
         // quando o filho atingiria o teto de profundidade.
         IReadOnlyList<string>? childToolIds = null;
+        var parentHadDelegate = false;
         try
         {
             var parentRequest = JsonSerializer.Deserialize<ChatCompletionRequest>(
                 parentRun.RequestJson, JsonOptions);
+            parentHadDelegate = parentRequest?.ToolIds?.Any(id =>
+                id.Equals($"{BuiltinToolRegistry.IdPrefix}{Name}",
+                    StringComparison.OrdinalIgnoreCase)) == true;
             childToolIds = parentRequest?.ToolIds
                 ?.Where(id => childDepth < MaxDepth
                     || !id.Equals(
@@ -170,6 +241,69 @@ public sealed class DelegateTaskBuiltinTool(
         {
             // RequestJson corrompido: delega sem tools, nunca falha por isso.
         }
+
+        // RF-003: o agente filtra o conjunto herdado — allowlist ∩ tools do
+        // pai (nunca amplia o preset do chat); ausente = só tools Read-tier;
+        // ["*"] = herda integral. `spawns` vazio ou depth residual esgotado
+        // também removem delegate_task do filho.
+        if (agent is not null)
+        {
+            var registry = scope.ServiceProvider
+                .GetRequiredService<BuiltinToolRegistry>();
+            childToolIds = agent.Tools is null
+                ? childToolIds?.Where(id =>
+                        registry.TierOfName(StripPrefix(id)) == ApprovalTier.Read)
+                    .ToList()
+                : agent.Tools.Contains("*")
+                    ? childToolIds
+                    : childToolIds?.Where(id => agent.Tools.Contains(
+                            StripPrefix(id), StringComparer.OrdinalIgnoreCase))
+                        .ToList();
+        }
+        // Depth residual do filho: min(maxDepth do agente, teto global) —
+        // gravado como kv para enforcement quando ele próprio delegar.
+        var childSpawnDepth = agent is null ? 0
+            : Math.Min(agent.MaxDepth, MaxDepth - childDepth);
+        var childCanSpawn = agent?.Spawns.Count > 0 && childSpawnDepth > 0;
+        if (childCanSpawn && parentHadDelegate && childToolIds is List<string> mutable
+            && (agent!.Tools is null || agent.Tools.Contains("*"))
+            && !mutable.Contains($"{BuiltinToolRegistry.IdPrefix}{Name}",
+                StringComparer.OrdinalIgnoreCase))
+        {
+            // `spawns` declarado implica a tool de delegação — readiciona
+            // porque o pai a tinha (a allowlist Read-tier a teria filtrado).
+            // Tools explícita sem delegate_task é exclusão intencional: honra.
+            mutable.Add($"{BuiltinToolRegistry.IdPrefix}{Name}");
+        }
+        if (!childCanSpawn)
+        {
+            childToolIds = childToolIds?.Where(id =>
+                    !id.Equals($"{BuiltinToolRegistry.IdPrefix}{Name}",
+                        StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        // RF-003: modelo do filho — `model:` explícito > `role:` (cadeia do
+        // papel) > modelo do pai.
+        var childModel = parentRun.Model;
+        if (agent?.Model is { Length: > 0 } agentModel)
+        {
+            childModel = agentModel.StartsWith("role:", StringComparison.OrdinalIgnoreCase)
+                ? await scope.ServiceProvider
+                    .GetRequiredService<ModelRoleResolver>()
+                    .ResolveAsync(
+                        agentModel["role:".Length..], context.UserId,
+                        parentRun.Model, ct)
+                : agentModel;
+        }
+
+        // `blocking` do agente é o default de wait (o arg explícito vence).
+        var wait = waitExplicit ?? agent?.Blocking ?? true;
+
+        // RF-001 `skills`: slugs de skills pessoais ativas autoload —
+        // conteúdo concatenado ao system prompt do agente.
+        var systemPrompt = agent is null ? personaSkill?.Content
+            : await ComposeSystemPromptAsync(db, context, agent, ct);
 
         var preset = context.ChatId is { } chatId
             ? await db.Chats.AsNoTracking()
@@ -185,9 +319,9 @@ public sealed class DelegateTaskBuiltinTool(
         var childChat = new Chat
         {
             UserId = context.UserId,
-            Title = $"delegado: {title}",
+            Title = agent is null ? $"delegado: {title}" : $"agent:{agent.Name}: {title}",
             ParentChatId = context.ChatId,
-            ModelsJson = JsonSerializer.Serialize(new[] { parentRun.Model }),
+            ModelsJson = JsonSerializer.Serialize(new[] { childModel }),
             ToolIdsJson = JsonSerializer.Serialize(childToolIds ?? []),
             ApprovalPreset = preset,
             // Subtarefa é workspace-capable por natureza — o modo efetivo
@@ -196,13 +330,13 @@ public sealed class DelegateTaskBuiltinTool(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        if (personaSkill is not null)
+        if (systemPrompt is not null)
         {
             childChat.Messages.Add(new ChatMessage
             {
                 ChatId = childChat.Id,
                 Role = "system",
-                Content = personaSkill.Content,
+                Content = systemPrompt,
                 Position = 0,
                 Timestamp = now,
             });
@@ -212,17 +346,17 @@ public sealed class DelegateTaskBuiltinTool(
             ChatId = childChat.Id,
             Role = "user",
             Content = fullPrompt,
-            Position = personaSkill is null ? 0 : 1,
+            Position = systemPrompt is null ? 0 : 1,
             Timestamp = now,
         });
         db.Chats.Add(childChat);
 
         var childRequest = new ChatCompletionRequest(
-            parentRun.Model,
+            childModel,
             [
-                .. personaSkill is null
+                .. systemPrompt is null
                     ? Array.Empty<ChatCompletionMessage>()
-                    : new[] { new ChatCompletionMessage("system", personaSkill.Content) },
+                    : new[] { new ChatCompletionMessage("system", systemPrompt) },
                 new ChatCompletionMessage("user", fullPrompt),
             ],
             Stream: true,
@@ -231,13 +365,31 @@ public sealed class DelegateTaskBuiltinTool(
         {
             ChatId = childChat.Id,
             UserId = context.UserId,
-            Model = parentRun.Model,
+            Model = childModel,
             RequestJson = JsonSerializer.Serialize(childRequest, JsonOptions),
             ParentRunId = parentRun.Id,
             CreatedAt = now,
         };
         db.ChatRuns.Add(childRun);
         await db.SaveChangesAsync(ct);
+
+        // RF-003: constraints de delegação do filho — allowlist spawns +
+        // profundidade residual ficam em kv para enforcement no delegate
+        // dele (spawns ∪ maxDepth; enforcement por-hop, não transitivo).
+        if (agent is not null && childCanSpawn)
+        {
+            await config.SetAsync(
+                $"r:{childRun.Id}:agent.spawns", string.Join(",", agent.Spawns), ct);
+            await config.SetAsync(
+                $"r:{childRun.Id}:agent.depth", childSpawnDepth, ct);
+        }
+        else if (agent is not null)
+        {
+            // Filho sem capacidade de spawn: ainda marca depth 0 — se a tool
+            // delegate_task vazar para ele (toolIds explicitamente pedidos),
+            // o enforcement bloqueia.
+            await config.SetAsync($"r:{childRun.Id}:agent.depth", 0, ct);
+        }
 
         // SPEC-20261010-chat-repo-binding: o filho herda o binding POR CHAT
         // do pai (não o global). SPEC-15: herda repo/branch mas com
@@ -462,6 +614,46 @@ public sealed class DelegateTaskBuiltinTool(
         {
             return $"\n\n(merge: falhou — {ex.Message}; worktree preservado)";
         }
+    }
+
+    /// <summary>
+    /// RF-001 `skills`: system prompt do agente = corpo do arquivo +
+    /// conteúdo das skills pessoais ativas cujos slugs estão em
+    /// <see cref="AgentDefinition.Skills"/> (mesma resolução do persona —
+    /// Skill por Name ou Id, IsActive).
+    /// </summary>
+    private static async Task<string> ComposeSystemPromptAsync(
+        AppDbContext db, BuiltinToolContext context, AgentDefinition agent,
+        CancellationToken ct)
+    {
+        var sb = new System.Text.StringBuilder(agent.SystemPrompt);
+        if (agent.Skills.Count > 0)
+        {
+            var userSkills = await db.Skills.AsNoTracking()
+                .Where(s => s.UserId == context.UserId && s.IsActive)
+                .ToListAsync(ct);
+            var skills = userSkills
+                .Where(s => agent.Skills.Contains(s.Name, StringComparer.OrdinalIgnoreCase)
+                    || agent.Skills.Contains(s.Id, StringComparer.OrdinalIgnoreCase))
+                .OrderBy(s => s.Name, StringComparer.Ordinal);
+            foreach (var skill in skills)
+            {
+                sb.Append("\n\n<skill name=\"").Append(skill.Name).Append("\">\n")
+                    .Append(skill.Content).Append("\n</skill>");
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Nome sem o prefixo <c>builtin:</c>/<c>builtin_</c> do id.</summary>
+    private static string StripPrefix(string toolId)
+    {
+        var id = toolId.StartsWith(BuiltinToolRegistry.IdPrefix, StringComparison.OrdinalIgnoreCase)
+            ? toolId[BuiltinToolRegistry.IdPrefix.Length..]
+            : toolId.StartsWith(BuiltinToolRegistry.SpecPrefix, StringComparison.OrdinalIgnoreCase)
+                ? toolId[BuiltinToolRegistry.SpecPrefix.Length..]
+                : toolId;
+        return id;
     }
 
     private static string? ReadString(JsonElement args, string field, int max)

@@ -25,7 +25,7 @@ public static class ToolEndpoints
 
     private static async Task<IResult> ListAsync(
         HttpContext http, AppDbContext db, BuiltinToolRegistry builtins,
-        CancellationToken ct)
+        ConfigService config, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -38,13 +38,30 @@ public static class ToolEndpoints
         // (servidor desligado remove as tools do picker sem apagá-las). Ids
         // "builtin:*" (SPEC-20261007-chat-agent-tools) são sistema — entram no
         // fim da lista sem precisar de cadastro.
-        var tools = await db.Tools.AsNoTracking()
+        // MCP virtual: globais (UserId null) visíveis a todos; de usuário
+        // só ao dono — e menos as de servidor global desligado para ele ou
+        // sombreado por nome (SPEC-20261014-config-layers RF-002).
+        var hidden = await new UserConfigOverlayService(db, config)
+            .HiddenMcpServerIdsAsync(user.Id, ct);
+        var tools = (await db.Tools.AsNoTracking()
             .Where(t => t.UserId == user.Id
-                || (t.Url.StartsWith(McpClientService.VirtualUrlPrefix) && t.Enabled))
+                || (t.UserId == null
+                    && t.Url.StartsWith(McpClientService.VirtualUrlPrefix) && t.Enabled))
             .OrderBy(t => t.Name)
-            .ToListAsync(ct);
+            .ToListAsync(ct))
+            .Where(t => !t.Url.StartsWith(McpClientService.VirtualUrlPrefix)
+                || !hidden.Contains(t.Url[McpClientService.VirtualUrlPrefix.Length..]
+                    .Split('/', 2)[0]))
+            .ToList();
+        // Gate admin (SPEC-20261013-agent-context-management RF-005): com
+        // contexttools.enabled=false as tools de contexto nem aparecem no picker.
+        var builtinList = builtins.All.AsEnumerable();
+        if (await config.GetAsync<bool?>("contexttools.enabled", null, ct) == false)
+        {
+            builtinList = builtinList.Where(t => !ContextBoundaryService.IsContextTool(t.Name));
+        }
         return Results.Ok(
-            tools.Select(ToResponse).Concat(builtins.All.Select(ToBuiltinResponse)));
+            tools.Select(ToResponse).Concat(builtinList.Select(ToBuiltinResponse)));
     }
 
     private static async Task<IResult> CreateAsync(

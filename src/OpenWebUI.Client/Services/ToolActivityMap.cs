@@ -69,6 +69,8 @@ public static class ToolActivityMap
                 => "chat.activity.image",
             _ when Contains(name, "decision_auto")
                 => "chat.activity.decision_auto",
+            _ when Contains(name, "advisor")
+                => "chat.activity.advisor",
             _ => "chat.activity.tool",
         };
     }

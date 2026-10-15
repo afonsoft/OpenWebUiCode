@@ -28,6 +28,20 @@ public sealed record McpServerUpsertRequest(
     Dictionary<string, string>? Headers = null,
     bool Enabled = true);
 
+/// <summary>
+/// Entrada do catálogo efetivo de MCP do usuário
+/// (SPEC-20261014-config-layers RF-002/RF-006): <c>Source</c> =
+/// <c>global</c> (admin) ou <c>user</c> (próprio); <c>EnabledForMe</c>
+/// desce quando o usuário desligou um servidor global só para si.
+/// </summary>
+public sealed record UserMcpServerEntry(
+    McpServerResponse Server,
+    string Source,
+    bool EnabledForMe);
+
+/// <summary>Liga/desliga um servidor MCP no escopo do usuário.</summary>
+public sealed record McpServerEnabledRequest(bool Enabled);
+
 /// <summary>Tool virtual descoberta num servidor MCP (materializada como Tool com UserId "mcp").</summary>
 public sealed record McpToolResponse(
     string Id,

@@ -126,6 +126,13 @@
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Z" /></svg>
                     </button>
                 }
+                @if (OnBranch.HasDelegate)
+                {
+                    <button class="size-6 flex items-center justify-center rounded-md hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+                            title="@L["chat.branch_here"]" aria-label="@L["chat.branch_here"]" @onclick="() => OnBranch.InvokeAsync()">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 3.75a.75.75 0 0 1 .75.75v1.5h1.5a.75.75 0 0 1 0 1.5h-1.5v1.5a.75.75 0 0 1-1.5 0v-1.5h-1.5a.75.75 0 0 1 0-1.5h1.5v-1.5A.75.75 0 0 1 6 3.75Z" transform="rotate(45 12 12)" /><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3v4.5m0 0c0 2.485 2.015 4.5 4.5 4.5h4.5m-9-4.5v9a3 3 0 0 0 3 3h6m0 0-2.25-2.25M16.5 19.5l-2.25 2.25" /></svg>
+                    </button>
+                }
             </div>
         }
     </div>
@@ -155,6 +162,12 @@
 
     /// <summary>Disparado ao pedir edição da mensagem (usuário).</summary>
     [Parameter] public EventCallback OnEdit { get; set; }
+
+    /// <summary>
+    /// Disparado ao pedir "ramificar daqui" (SPEC-20261013-chat-branching):
+    /// a mensagem vira o leaf ativo e o próximo envio continua dela.
+    /// </summary>
+    [Parameter] public EventCallback OnBranch { get; set; }
 
     /// <summary>Disparado ao avaliar a resposta (1 ou -1).</summary>
     [Parameter] public EventCallback<int> OnRate { get; set; }

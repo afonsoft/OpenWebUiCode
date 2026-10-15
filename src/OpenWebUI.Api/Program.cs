@@ -72,13 +72,34 @@ builder.Services.AddSingleton<IChatRunDispatcher>(
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ChatRunDispatcher>());
 builder.Services.AddScoped<ChatRunExecutor>();
 builder.Services.AddScoped<ContextCompactionService>();
+// Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
+// context-management): boundaries + notebook + flag new_context via kv.
+builder.Services.AddScoped<ContextBoundaryService>();
+// Camadas de configuração por usuário (SPEC-20261014-config-layers).
+builder.Services.AddScoped<UserConfigOverlayService>();
+// Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
+builder.Services.AddScoped<HistoryResourceService>();
 builder.Services.AddScoped<IContextSummarizer, LlmContextSummarizer>();
+// Árvore de conversa (SPEC-20261013-chat-branching): walk leaf→raiz,
+// leafs divergentes e resumo do ramo abandonado.
+builder.Services.AddScoped<BranchService>();
 // Papéis/capacidades de modelo (SPEC-20261013-model-roles).
 builder.Services.AddScoped<ModelCapabilityResolver>();
 builder.Services.AddScoped(sp => new ModelRoleResolver(
     sp.GetRequiredService<AppDbContext>(),
+    sp.GetRequiredService<ConfigService>(),
     ct => sp.GetRequiredService<ProviderService>().ListModelsAsync(ct),
     sp.GetRequiredService<ILogger<ModelRoleResolver>>()));
+// Revisor de run (SPEC-20261013-run-advisor): delegates encapsulam as
+// chamadas externas para a sessão isolada read-only do advisor.
+builder.Services.AddScoped(sp => new RunAdvisorService(
+    sp.GetRequiredService<AppDbContext>(),
+    sp.GetRequiredService<BuiltinToolRegistry>(),
+    sp.GetRequiredService<ModelRoleResolver>(),
+    sp.GetRequiredService<ConfigService>(),
+    (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct),
+    (tools, name, args, bctx, ct) => sp.GetRequiredService<ToolExecutor>()
+        .ExecuteAsync(tools, name, args, bctx, ct)));
 
 // Notificações de run (SPEC-20261007-chat-notifications): SignalR para abas
 // conectadas + Web Push quando nenhuma aba está conectada.
@@ -106,12 +127,18 @@ builder.Services.AddScoped<IBuiltinChatTool, FileWriteBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, FileEditBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ApplyPatchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TodoWriteBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, RewindBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ContextNotesBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, NewContextBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, DelegateTaskBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RunResultBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, WorktreeDiffBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, WorktreeMergeBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemorySaveBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemorySearchBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, MemoryLearnBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, AgentCatalogBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RoutineBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReminderBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, BrowserScreenshotBuiltinTool>();
@@ -139,6 +166,7 @@ builder.Services.AddSingleton<WorktreeService>();
 builder.Services.AddScoped<FormatHookService>();
 builder.Services.AddSingleton<CheckpointService>();
 builder.Services.AddSingleton<SkillDiscoveryService>();
+builder.Services.AddScoped<AgentDefinitionService>();
 builder.Services.AddScoped<GitHubService>();
 builder.Services.AddHttpClient(GitHubService.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(30));
@@ -459,6 +487,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapToolEndpoints();
     app.MapChatJobEndpoints();
     app.MapMcpEndpoints();
+    app.MapUserMcpEndpoints();
     app.MapChannelEndpoints();
 }
 
@@ -476,6 +505,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapCheckpointEndpoints();
     app.MapWorkspaceTestRunEndpoints();
     app.MapRepoSkillEndpoints();
+    app.MapAgentEndpoints();
     app.MapIdeEndpoints();
     app.MapPreviewEndpoints();
     app.MapLspEndpoints();

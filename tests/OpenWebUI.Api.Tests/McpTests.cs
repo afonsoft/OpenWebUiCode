@@ -277,7 +277,7 @@ public class McpTests
         var mc2 = TestCache.Create();
         var executor = new ToolExecutor(db, new StubHttpClientFactory(),
             new PythonToolExecutor(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()),
-            new McpClientService(db, mc2), EmptyRegistry());
+            new McpClientService(db, mc2), EmptyRegistry(), new ConfigService(db, TestCache.Create()));
 
         var tools = await db.Tools.Where(t => (t.Url ?? "").StartsWith($"mcp://{server.Id}/")).ToListAsync();
 
@@ -314,7 +314,7 @@ public class McpTests
         await _client.DeleteAsync($"/api/v1/mcp/servers/{server.Id}");
         var executor = new ToolExecutor(db, new StubHttpClientFactory(),
             new PythonToolExecutor(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()),
-            mcp, EmptyRegistry());
+            mcp, EmptyRegistry(), new ConfigService(db, TestCache.Create()));
         var gone = (await executor.ExecuteAsync(tools, NomeFuncao(tools, "echo"), "{}")).Text;
         Assert.That(gone, Does.Contain("não existe mais"));
     }

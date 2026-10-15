@@ -47,6 +47,25 @@ public static class ConfigEndpoints
         group.MapGet("/user/model-roles", GetUserModelRolesAsync);
         group.MapPut("/user/model-roles", UpdateUserModelRolesAsync);
 
+        // Camadas de config (SPEC-20261014-config-layers): defaults globais
+        // do admin + overrides por usuário.
+        group.MapGet("/model-roles", GetGlobalModelRolesAsync);
+        group.MapPut("/model-roles", UpdateGlobalModelRolesAsync);
+        group.MapGet("/github", GetGlobalGitHubAsync);
+        group.MapPut("/github", SetGlobalGitHubAsync);
+        group.MapDelete("/github", ClearGlobalGitHubAsync);
+        group.MapGet("/user_provider_keys", GetUserProviderKeysToggleAsync);
+        group.MapPost("/user_provider_keys", UpdateUserProviderKeysToggleAsync);
+        group.MapGet("/user/provider-keys", GetUserProviderKeysAsync);
+        group.MapPut("/user/provider-keys/{provider}", SetUserProviderKeyAsync);
+        group.MapDelete("/user/provider-keys/{provider}", ClearUserProviderKeyAsync);
+        // Auto-sync de memória (SPEC-20261014-memory-pipeline RF-004):
+        // usuário ajusta seus overrides; admin fixa a camada global
+        // (`memsync.enabled=false` global é negativa absoluta de custo).
+        group.MapGet("/user/memory-sync", GetUserMemorySyncAsync);
+        group.MapPut("/user/memory-sync", UpdateUserMemorySyncAsync);
+        group.MapPut("/memory-sync", UpdateGlobalMemorySyncAsync);
+
         group.MapGet("/ratelimit", GetRateLimitAsync);
         group.MapPost("/ratelimit", UpdateRateLimitAsync);
         group.MapPost("/ratelimit/reset", ResetLoginLockoutAsync);
@@ -287,7 +306,9 @@ public static class ConfigEndpoints
         {
             return Results.Unauthorized();
         }
-        return Results.Ok(new ModelRolesResponse(await roles.GetRolesAsync(user.Id, ct)));
+        return Results.Ok(new ModelRolesResponse(
+            await roles.GetRolesAsync(user.Id, ct),
+            await roles.GetGlobalRolesAsync(ct)));
     }
 
     /// <summary>PUT /api/v1/configs/user/model-roles — substitui o mapa;
@@ -327,8 +348,299 @@ public static class ConfigEndpoints
         }
 
         await roles.SetRolesAsync(user.Id, payload, ct);
-        return Results.Ok(new ModelRolesResponse(await roles.GetRolesAsync(user.Id, ct)));
+        return Results.Ok(new ModelRolesResponse(
+            await roles.GetRolesAsync(user.Id, ct),
+            await roles.GetGlobalRolesAsync(ct)));
     }
+
+    // ---------------- Camadas globais (admin) ----------------
+
+    /// <summary>GET /api/v1/configs/model-roles — cadeias globais por papel (admin).</summary>
+    private static async Task<IResult> GetGlobalModelRolesAsync(
+        HttpContext http, ModelRoleResolver roles, CancellationToken ct) =>
+        IsAdmin(http)
+            ? Results.Ok(new ModelRolesResponse(await roles.GetGlobalRolesAsync(ct)))
+            : Results.Forbid();
+
+    /// <summary>PUT /api/v1/configs/model-roles — substitui as cadeias globais (admin).</summary>
+    private static async Task<IResult> UpdateGlobalModelRolesAsync(
+        UpdateModelRolesRequest request, HttpContext http,
+        ModelRoleResolver roles, ProviderService providers, CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+
+        var payload = request.Roles ?? [];
+        var unknownRole = payload.Keys
+            .FirstOrDefault(k => !ModelRoleResolver.IsKnownRole(k));
+        if (unknownRole is not null)
+        {
+            return Results.BadRequest(new { detail = $"Papel desconhecido: '{unknownRole}'." });
+        }
+
+        var ids = payload.Values.SelectMany(v => v ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        if (ids.Count > 0)
+        {
+            var known = (await providers.ListModelsAsync(ct))
+                .Select(m => m.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var invalid = ids.Where(id => !known.Contains(id)).ToList();
+            if (invalid.Count > 0)
+            {
+                return Results.BadRequest(new
+                {
+                    detail = $"Modelo(s) não encontrado(s) no catálogo: {string.Join(", ", invalid)}.",
+                });
+            }
+        }
+
+        await roles.SetGlobalRolesAsync(payload, ct);
+        return Results.Ok(new ModelRolesResponse(await roles.GetGlobalRolesAsync(ct)));
+    }
+
+    /// <summary>GET /api/v1/configs/github — status do PAT global (admin; valor nunca exposto).</summary>
+    private static async Task<IResult> GetGlobalGitHubAsync(
+        HttpContext http, ConfigService config, CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        var configured = await config.GetAsync<string?>(
+            GitHubService.GlobalTokenKey, null, ct) is { Length: > 0 };
+        var login = configured
+            ? await config.GetAsync<string?>("github.login", null, ct)
+            : null;
+        return Results.Ok(new GitHubConfigResponse(configured, login, "global"));
+    }
+
+    /// <summary>PUT /api/v1/configs/github — valida e grava o PAT default global (admin).</summary>
+    private static async Task<IResult> SetGlobalGitHubAsync(
+        GitHubTokenRequest request, HttpContext http,
+        GitHubService github, CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        if (string.IsNullOrWhiteSpace(request.Token))
+        {
+            return Results.BadRequest(new { detail = "Token é obrigatório." });
+        }
+        var login = await github.SetGlobalTokenAsync(request.Token.Trim(), ct);
+        return login is null
+            ? Results.BadRequest(new { detail = "Token inválido ou GitHub indisponível." })
+            : Results.Ok(new GitHubConfigResponse(true, login, "global"));
+    }
+
+    /// <summary>DELETE /api/v1/configs/github — remove o PAT default global (admin).</summary>
+    private static async Task<IResult> ClearGlobalGitHubAsync(
+        HttpContext http, GitHubService github, CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        await github.ClearGlobalTokenAsync(ct);
+        return Results.Ok(new StatusResponse(true));
+    }
+
+    // ---------------- BYOK — chaves de provider por usuário ----------------
+
+    /// <summary>GET /api/v1/configs/user_provider_keys — flag BYOK (admin, default off).</summary>
+    private static async Task<IResult> GetUserProviderKeysToggleAsync(
+        ConfigService config, CancellationToken ct) =>
+        Results.Ok(new FeatureToggle(
+            await config.GetAsync("features.userProviderKeys", false, ct)));
+
+    /// <summary>POST /api/v1/configs/user_provider_keys — liga/desliga BYOK (admin).</summary>
+    private static async Task<IResult> UpdateUserProviderKeysToggleAsync(
+        FeatureToggle request, HttpContext http, ConfigService config, CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        await config.SetAsync("features.userProviderKeys", request.Enabled, ct);
+        return Results.Ok(new FeatureToggle(request.Enabled));
+    }
+
+    /// <summary>
+    /// GET /api/v1/configs/user/provider-keys — provedores com chave do
+    /// usuário (RF-005). Expõe só <c>hasKey</c> + flag global — nunca valores.
+    /// </summary>
+    private static async Task<IResult> GetUserProviderKeysAsync(
+        HttpContext http, AppDbContext db, ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        var enabled = await config.GetAsync("features.userProviderKeys", false, ct);
+        var keys = await config.GetAsync<Dictionary<string, string>?>(
+            UserConfigOverlayService.ProviderKeysKey(user.Id), null, ct) ?? [];
+        return Results.Ok(new UserProviderKeysResponse(
+            enabled,
+            keys.Where(kv => !string.IsNullOrEmpty(kv.Value))
+                .Select(kv => kv.Key).OrderBy(p => p).ToList()));
+    }
+
+    /// <summary>PUT /api/v1/configs/user/provider-keys/{provider} — grava a chave BYOK.</summary>
+    private static async Task<IResult> SetUserProviderKeyAsync(
+        string provider, UserProviderKeyRequest request,
+        HttpContext http, AppDbContext db, ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (!await config.GetAsync("features.userProviderKeys", false, ct))
+        {
+            return Results.BadRequest(new
+            {
+                detail = "Chaves de provider por usuário estão desabilitadas pelo admin.",
+            });
+        }
+        if (!UserConfigOverlayService.IsByokProvider(provider))
+        {
+            return Results.BadRequest(new { detail = $"Provider '{provider}' não aceita chave de usuário." });
+        }
+        if (string.IsNullOrWhiteSpace(request.Key))
+        {
+            return Results.BadRequest(new { detail = "key é obrigatória." });
+        }
+
+        var keys = await config.GetAsync<Dictionary<string, string>?>(
+            UserConfigOverlayService.ProviderKeysKey(user.Id), null, ct) ?? [];
+        keys[provider.ToLowerInvariant()] = request.Key.Trim();
+        await config.SetAsync(
+            UserConfigOverlayService.ProviderKeysKey(user.Id), keys, ct);
+        return Results.Ok(new StatusResponse(true));
+    }
+
+    /// <summary>DELETE /api/v1/configs/user/provider-keys/{provider} — remove a chave BYOK.</summary>
+    private static async Task<IResult> ClearUserProviderKeyAsync(
+        string provider, HttpContext http, AppDbContext db,
+        ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        var keys = await config.GetAsync<Dictionary<string, string>?>(
+            UserConfigOverlayService.ProviderKeysKey(user.Id), null, ct);
+        if (keys is not null && keys.Remove(provider.ToLowerInvariant()))
+        {
+            await config.SetAsync(
+                UserConfigOverlayService.ProviderKeysKey(user.Id), keys, ct);
+        }
+        return Results.Ok(new StatusResponse(true));
+    }
+
+    // ---------------- Auto-sync de memória (SPEC-20261014-memory-pipeline) ----------------
+
+    /// <summary>GET /api/v1/configs/user/memory-sync — efetivo + camada global.</summary>
+    private static async Task<IResult> GetUserMemorySyncAsync(
+        HttpContext http, AppDbContext db, UserConfigOverlayService overlay,
+        ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        return Results.Ok(await BuildMemorySyncResponseAsync(user.Id, overlay, config, ct));
+    }
+
+    /// <summary>PUT /api/v1/configs/user/memory-sync — override do usuário (null = herda).</summary>
+    private static async Task<IResult> UpdateUserMemorySyncAsync(
+        MemorySyncPrefs request, HttpContext http, AppDbContext db,
+        UserConfigOverlayService overlay, ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (request.IntervalHours is < 1 or > 168
+            || request.MaxAgeDays is < 1 or > 365)
+        {
+            return Results.BadRequest(new
+            {
+                detail = "intervalHours ∈ [1,168] e maxAgeDays ∈ [1,365].",
+            });
+        }
+
+        await overlay.SetUserAsync(user.Id, "memsync.enabled", request.Enabled, ct);
+        await overlay.SetUserAsync(
+            user.Id, "memsync.intervalHours", request.IntervalHours, ct);
+        await overlay.SetUserAsync(
+            user.Id, "memsync.maxAgeDays", request.MaxAgeDays, ct);
+        return Results.Ok(await BuildMemorySyncResponseAsync(user.Id, overlay, config, ct));
+    }
+
+    /// <summary>PUT /api/v1/configs/memory-sync — camada global do admin.</summary>
+    private static async Task<IResult> UpdateGlobalMemorySyncAsync(
+        MemorySyncPrefs request, HttpContext http, ConfigService config,
+        CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        if (request.IntervalHours is < 1 or > 168
+            || request.MaxAgeDays is < 1 or > 365)
+        {
+            return Results.BadRequest(new
+            {
+                detail = "intervalHours ∈ [1,168] e maxAgeDays ∈ [1,365].",
+            });
+        }
+        await config.SetAsync("memsync.enabled", request.Enabled, ct);
+        await config.SetAsync("memsync.intervalHours", request.IntervalHours, ct);
+        await config.SetAsync("memsync.maxAgeDays", request.MaxAgeDays, ct);
+        return Results.Ok(await ReadGlobalMemorySyncAsync(config, ct));
+    }
+
+    /// <summary>Monta o efetivo do usuário dobrando a negativa global do admin.</summary>
+    private static async Task<MemorySyncResponse> BuildMemorySyncResponseAsync(
+        string userId, UserConfigOverlayService overlay,
+        ConfigService config, CancellationToken ct)
+    {
+        var global = await ReadGlobalMemorySyncAsync(config, ct);
+        var adminDisabled = global.Enabled == false;
+        var enabled = adminDisabled
+            || (await overlay.GetAsync(userId, "memsync.enabled", true, ct)).Value;
+        // enabled efetivo: admin-deny é absoluto — quando desligado, false.
+        var effEnabled = adminDisabled ? false : enabled;
+        var interval = Math.Clamp(
+            (await overlay.GetAsync(
+                userId, "memsync.intervalHours",
+                MemorySyncService.DefaultIntervalHours, ct)).Value, 1, 168);
+        var maxAge = Math.Clamp(
+            (await overlay.GetAsync(
+                userId, "memsync.maxAgeDays",
+                MemorySyncService.DefaultMaxAgeDays, ct)).Value, 1, 365);
+        var userLayer = new MemorySyncPrefs(
+            await config.GetAsync<bool?>($"u:{userId}:memsync.enabled", null, ct),
+            await config.GetAsync<int?>($"u:{userId}:memsync.intervalHours", null, ct),
+            await config.GetAsync<int?>($"u:{userId}:memsync.maxAgeDays", null, ct));
+        return new MemorySyncResponse(
+            effEnabled, interval, maxAge, adminDisabled, global, userLayer);
+    }
+
+    /// <summary>Lê os valores crus da camada global (null = sem override).</summary>
+    private static async Task<MemorySyncPrefs> ReadGlobalMemorySyncAsync(
+        ConfigService config, CancellationToken ct) =>
+        new(
+            await config.GetAsync<bool?>("memsync.enabled", null, ct),
+            await config.GetAsync<int?>("memsync.intervalHours", null, ct),
+            await config.GetAsync<int?>("memsync.maxAgeDays", null, ct));
 
     // ---------------- Rate limiting ----------------
 
