@@ -486,12 +486,45 @@ public class ProviderService(
         return ParseCompletionMessage(json, openAi);
     }
 
+    /// <summary>
+    /// Extrai o texto de raciocínio de um <c>delta</c>/<c>message</c>
+    /// OpenAI-compatível: <c>reasoning_content</c> (deepseek/qwen),
+    /// <c>reasoning</c> (openrouter/gpt-oss) ou
+    /// <c>reasoning_details[].text</c> (openrouter detalhado).
+    /// </summary>
+    private static string? ExtractOpenAiReasoning(JsonNode? node)
+    {
+        if (node?["reasoning_content"] is JsonValue rc
+            && rc.TryGetValue<string>(out var s) && s.Length > 0)
+        {
+            return s;
+        }
+        if (node?["reasoning"] is JsonValue r
+            && r.TryGetValue<string>(out s) && s.Length > 0)
+        {
+            return s;
+        }
+        if (node?["reasoning_details"] is JsonArray details)
+        {
+            var joined = string.Concat(details
+                .Select(d => d?["text"] as JsonValue)
+                .Where(t => t is not null && t.TryGetValue<string>(out _))
+                .Select(t => t!.GetValue<string>()));
+            return joined.Length > 0 ? joined : null;
+        }
+        return null;
+    }
+
     /// <summary>Normaliza <c>choices[0].message</c> (OpenAI) ou <c>message</c> (Ollama).</summary>
     private static ProviderCompletion ParseCompletionMessage(JsonNode? json, bool openAi)
     {
         var firstChoice = json?["choices"] is JsonArray { Count: > 0 } arr ? arr[0] : null;
         var message = openAi ? firstChoice?["message"] : json?["message"];
         var content = message?["content"]?.GetValue<string>() ?? string.Empty;
+        var reasoning = openAi
+            ? ExtractOpenAiReasoning(message)
+            : message?["thinking"] is JsonValue th && th.TryGetValue<string>(out var t)
+                ? t : null;
         var calls = new List<ProviderToolCall>();
         var callsNode = message?["tool_calls"]?.AsArray();
         var callsJson = callsNode?.ToJsonString() ?? "[]";
@@ -512,7 +545,7 @@ public class ProviderService(
             }
         }
 
-        return new ProviderCompletion(content, calls, callsJson);
+        return new ProviderCompletion(content, calls, callsJson, reasoning);
     }
 
     /// <summary>
@@ -526,11 +559,16 @@ public class ProviderService(
     /// </summary>
     /// <param name="request">Requisição com Tools preenchidas (ou null para o round final).</param>
     /// <param name="onDelta">Callback por pedaço de texto (pode ser null — vira buffered).</param>
+    /// <param name="onReasoning">Callback por pedaço de raciocínio/thinking
+    /// (reasoning_content, thinking_delta, thought:true, message.thinking).
+    /// Canal separado do conteúdo — a UI mostra colapsado e nada é
+    /// persistido na mensagem (SPEC-20261015-chat-thinking-stream).</param>
     /// <param name="userId">Usuário da requisição — resolve chaves BYOK quando habilitadas.</param>
     /// <param name="ct">Token de cancelamento.</param>
     public async Task<ProviderCompletion?> CompleteWithToolsStreamingAsync(
         ChatCompletionRequest request,
         Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning = null,
         string? userId = null,
         CancellationToken ct = default)
     {
@@ -543,10 +581,10 @@ public class ProviderService(
         {
             return provider switch
             {
-                "openai" => await StreamOpenAiToolsAsync(request, connections, payload, onDelta, ct),
-                "anthropic" => await StreamAnthropicToolsAsync(request, connections, onDelta, ct),
-                "google" => await StreamGoogleToolsAsync(request, connections, onDelta, ct),
-                _ => await StreamOllamaToolsAsync(request, connections, payload, onDelta, ct),
+                "openai" => await StreamOpenAiToolsAsync(request, connections, payload, onDelta, onReasoning, ct),
+                "anthropic" => await StreamAnthropicToolsAsync(request, connections, onDelta, onReasoning, ct),
+                "google" => await StreamGoogleToolsAsync(request, connections, onDelta, onReasoning, ct),
+                _ => await StreamOllamaToolsAsync(request, connections, payload, onDelta, onReasoning, ct),
             };
         }
         catch (HttpRequestException)
@@ -570,6 +608,7 @@ public class ProviderService(
         ConnectionsConfig connections,
         JsonObject payload,
         Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
         CancellationToken ct)
     {
         var (index, baseUrl) = FirstOpenAiConnection(connections);
@@ -601,6 +640,10 @@ public class ProviderService(
             if (buffered.Content.Length > 0 && onDelta is not null)
             {
                 await onDelta(buffered.Content, ct);
+            }
+            if (!string.IsNullOrEmpty(buffered.Reasoning) && onReasoning is not null)
+            {
+                await onReasoning(buffered.Reasoning, ct);
             }
             return buffered;
         }
@@ -643,6 +686,15 @@ public class ProviderService(
                 {
                     await onDelta(piece, ct);
                 }
+            }
+
+            // Reasoning/thinking de gateways OpenAI-compatíveis (deepseek,
+            // openrouter, OmniRoute): reasoning_content | reasoning |
+            // reasoning_details[].text — canal separado do content.
+            if (onReasoning is not null
+                && ExtractOpenAiReasoning(delta) is { Length: > 0 } thought)
+            {
+                await onReasoning(thought, ct);
             }
 
             if (delta?["tool_calls"] is not JsonArray callParts)
@@ -707,6 +759,7 @@ public class ProviderService(
         ConnectionsConfig connections,
         JsonObject payload,
         Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
         CancellationToken ct)
     {
         var baseUrl = FirstBaseUrl(connections)
@@ -770,6 +823,16 @@ public class ProviderService(
                 {
                     await onDelta(piece, ct);
                 }
+            }
+
+            // Modelos "think" do Ollama emitem message.thinking separado
+            // de message.content na mesma linha NDJSON.
+            if (onReasoning is not null
+                && node?["message"]?["thinking"] is JsonValue think
+                && think.TryGetValue<string>(out var thought)
+                && thought.Length > 0)
+            {
+                await onReasoning(thought, ct);
             }
 
             if (node?["message"]?["tool_calls"] is JsonArray { Count: > 0 } calls)
@@ -1067,6 +1130,7 @@ public class ProviderService(
     private static ProviderCompletion ParseAnthropicResponse(JsonNode? json)
     {
         var content = new StringBuilder();
+        var reasoning = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
         foreach (var block in json?["content"]?.AsArray() ?? [])
@@ -1075,6 +1139,11 @@ public class ProviderService(
             {
                 case "text":
                     content.Append(block?["text"]?.GetValue<string>());
+                    break;
+                case "thinking":
+                    // Bloco de raciocínio (extended thinking): canal separado —
+                    // não entra no Content persistido.
+                    reasoning.Append(block?["thinking"]?.GetValue<string>());
                     break;
                 case "tool_use":
                     var id = block?["id"]?.GetValue<string>()
@@ -1095,7 +1164,9 @@ public class ProviderService(
                     break;
             }
         }
-        return new ProviderCompletion(content.ToString(), calls, callsJson.ToJsonString());
+        return new ProviderCompletion(
+            content.ToString(), calls, callsJson.ToJsonString(),
+            reasoning.Length > 0 ? reasoning.ToString() : null);
     }
 
     private async Task<string> CompleteAnthropicAsync(
@@ -1182,11 +1253,19 @@ public class ProviderService(
 
         await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
         {
-            if (eventName == "content_block_delta"
-                && data?["delta"]?["type"]?.GetValue<string>() == "text_delta")
+            if (eventName == "content_block_delta")
             {
-                var text = data?["delta"]?["text"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(text))
+                var deltaType = data?["delta"]?["type"]?.GetValue<string>();
+                // thinking_delta sai como delta.reasoning (canal separado);
+                // signature_delta (metadado criptográfico) é descartada.
+                var (field, prop) = deltaType switch
+                {
+                    "text_delta" => ("content", "text"),
+                    "thinking_delta" => ("reasoning", "thinking"),
+                    _ => (null, null),
+                };
+                if (field is not null && prop is not null
+                    && data?["delta"]?[prop]?.GetValue<string>() is { Length: > 0 } text)
                 {
                     var chunk = new JsonObject
                     {
@@ -1194,7 +1273,7 @@ public class ProviderService(
                         ["choices"] = new JsonArray(new JsonObject
                         {
                             ["index"] = 0,
-                            ["delta"] = new JsonObject { ["content"] = text },
+                            ["delta"] = new JsonObject { [field] = text },
                         }),
                     };
                     yield return $"data: {chunk.ToJsonString()}";
@@ -1217,6 +1296,7 @@ public class ProviderService(
         ChatCompletionRequest request,
         ConnectionsConfig connections,
         Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
         CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, "anthropic");
@@ -1248,7 +1328,8 @@ public class ProviderService(
             else if (eventName == "content_block_delta")
             {
                 var delta = data?["delta"];
-                if (delta?["type"]?.GetValue<string>() == "text_delta")
+                var deltaType = delta?["type"]?.GetValue<string>();
+                if (deltaType == "text_delta")
                 {
                     var text = delta?["text"]?.GetValue<string>();
                     if (!string.IsNullOrEmpty(text))
@@ -1260,7 +1341,16 @@ public class ProviderService(
                         }
                     }
                 }
-                else if (delta?["type"]?.GetValue<string>() == "input_json_delta"
+                else if (deltaType == "thinking_delta")
+                {
+                    // Canal separado: thinking não entra no content da run.
+                    var thinking = delta?["thinking"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(thinking) && onReasoning is not null)
+                    {
+                        await onReasoning(thinking, ct);
+                    }
+                }
+                else if (deltaType == "input_json_delta"
                     && openTools.TryGetValue(index, out var tool))
                 {
                     tool.Args.Append(delta?["partial_json"]?.GetValue<string>());
@@ -1504,6 +1594,7 @@ public class ProviderService(
     private static ProviderCompletion ParseGoogleResponse(JsonNode? json)
     {
         var content = new StringBuilder();
+        var reasoning = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
         var parts = json?["candidates"] is JsonArray { Count: > 0 } c
@@ -1513,7 +1604,17 @@ public class ProviderService(
         {
             if (part?["text"] is { } text)
             {
-                content.Append(text.GetValue<string>());
+                // part.thought=true é raciocínio — não vai para o Content.
+                var isThought = part["thought"] is JsonValue flag
+                    && flag.TryGetValue<bool>(out var b) && b;
+                if (isThought)
+                {
+                    reasoning.Append(text.GetValue<string>());
+                }
+                else
+                {
+                    content.Append(text.GetValue<string>());
+                }
             }
             else if (part?["functionCall"] is { } call)
             {
@@ -1533,7 +1634,9 @@ public class ProviderService(
                 });
             }
         }
-        return new ProviderCompletion(content.ToString(), calls, callsJson.ToJsonString());
+        return new ProviderCompletion(
+            content.ToString(), calls, callsJson.ToJsonString(),
+            reasoning.Length > 0 ? reasoning.ToString() : null);
     }
 
     private async Task<string> CompleteGoogleAsync(
@@ -1583,19 +1686,24 @@ public class ProviderService(
             foreach (var part in parts ?? [])
             {
                 var text = part?["text"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(text))
+                if (string.IsNullOrEmpty(text))
                 {
-                    var chunk = new JsonObject
-                    {
-                        ["object"] = "chat.completion.chunk",
-                        ["choices"] = new JsonArray(new JsonObject
-                        {
-                            ["index"] = 0,
-                            ["delta"] = new JsonObject { ["content"] = text },
-                        }),
-                    };
-                    yield return $"data: {chunk.ToJsonString()}";
+                    continue;
                 }
+                // thought:true = raciocínio do modelo → delta.reasoning.
+                var field = part?["thought"] is JsonValue flag
+                    && flag.TryGetValue<bool>(out var b) && b
+                    ? "reasoning" : "content";
+                var chunk = new JsonObject
+                {
+                    ["object"] = "chat.completion.chunk",
+                    ["choices"] = new JsonArray(new JsonObject
+                    {
+                        ["index"] = 0,
+                        ["delta"] = new JsonObject { [field] = text },
+                    }),
+                };
+                yield return $"data: {chunk.ToJsonString()}";
             }
         }
         yield return "data: [DONE]";
@@ -1609,6 +1717,7 @@ public class ProviderService(
         ChatCompletionRequest request,
         ConnectionsConfig connections,
         Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
         CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, "google");
@@ -1634,13 +1743,26 @@ public class ProviderService(
                 if (part?["text"] is { } textNode)
                 {
                     var text = textNode.GetValue<string>();
-                    if (!string.IsNullOrEmpty(text))
+                    if (string.IsNullOrEmpty(text))
                     {
-                        content.Append(text);
-                        if (onDelta is not null)
+                        continue;
+                    }
+                    // part.thought=true é a cadeia de raciocínio do Gemini —
+                    // antes vazava para o content persistido da resposta.
+                    var isThought = part["thought"] is JsonValue flag
+                        && flag.TryGetValue<bool>(out var b) && b;
+                    if (isThought)
+                    {
+                        if (onReasoning is not null)
                         {
-                            await onDelta(text, ct);
+                            await onReasoning(text, ct);
                         }
+                        continue;
+                    }
+                    content.Append(text);
+                    if (onDelta is not null)
+                    {
+                        await onDelta(text, ct);
                     }
                 }
                 else if (part?["functionCall"] is { } call)
@@ -1866,6 +1988,18 @@ public class ProviderService(
 
             var done = node?["done"]?.GetValue<bool>() ?? false;
             var content = node?["message"]?["content"]?.GetValue<string>();
+            var delta = new JsonObject
+            {
+                ["role"] = "assistant",
+                ["content"] = content ?? string.Empty,
+            };
+            // Modelos "think" do Ollama: message.thinking sai separado.
+            if (node?["message"]?["thinking"] is JsonValue think
+                && think.TryGetValue<string>(out var thinking)
+                && thinking.Length > 0)
+            {
+                delta["reasoning"] = thinking;
+            }
             var chunk = new JsonObject
             {
                 ["id"] = $"chatcmpl-{Guid.NewGuid():N}",
@@ -1875,11 +2009,7 @@ public class ProviderService(
                 ["choices"] = new JsonArray(new JsonObject
                 {
                     ["index"] = 0,
-                    ["delta"] = new JsonObject
-                    {
-                        ["role"] = "assistant",
-                        ["content"] = content ?? string.Empty,
-                    },
+                    ["delta"] = delta,
                     ["finish_reason"] = done ? "stop" : null,
                 }),
             };
@@ -1966,7 +2096,11 @@ public class ProviderService(
 public sealed record ProviderCompletion(
     string Content,
     IReadOnlyList<ProviderToolCall> ToolCalls,
-    string ToolCallsJson);
+    string ToolCallsJson,
+    /// <summary>Raciocínio do modelo (reasoning/thinking) quando o provider
+    /// o expõe — nunca faz parte de <paramref name="Content"/>: vai para o
+    /// canal próprio do stream e não deve ser persistido na mensagem.</param>
+    string? Reasoning = null);
 
 /// <summary>Chamada de função normalizada (Ollama/OpenAI).</summary>
 /// <param name="Id">Id da chamada (echo em tool_call_id).</param>

@@ -33,6 +33,13 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         public sealed record Delta(string Text) : ChatStreamEvent;
 
         /// <summary>
+        /// Pedaço de raciocínio/thinking do modelo
+        /// (SPEC-20261015-chat-thinking-stream): canal separado do content —
+        /// a UI exibe numa seção colapsável e nada entra na mensagem final.
+        /// </summary>
+        public sealed record Reasoning(string Text) : ChatStreamEvent;
+
+        /// <summary>
         /// Keepalive do servidor (linha <c>: hb</c>) — prova de que a
         /// conexão SSE segue viva; re-arma o watchdog do consumidor.
         /// </summary>
@@ -365,7 +372,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
 
             var evt = eventName;
             eventName = null;
-            ChatStreamEvent? produced = null;
+            List<ChatStreamEvent>? produced = null;
             string? error = null;
             try
             {
@@ -399,16 +406,19 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             }
             if (produced is not null)
             {
-                yield return produced with { Seq = lastSeq };
+                foreach (var item in produced)
+                {
+                    yield return item with { Seq = lastSeq };
+                }
             }
         }
     }
 
     /// <summary>Despacha o payload por <c>event:</c>; sem nome segue o formato OpenAI.</summary>
-    private ChatStreamEvent? ParseEventPayload(JsonNode node, string? evt, out string? error)
+    private List<ChatStreamEvent>? ParseEventPayload(JsonNode node, string? evt, out string? error)
     {
         error = null;
-        return evt switch
+        var single = evt switch
         {
             "tool_call" => ParseToolCall(node),
             "tool_result" => ParseToolResult(node),
@@ -421,8 +431,13 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             "changes" => ParseChanges(node),
             "checkpoint" => ParseCheckpoint(node),
             "status" => ParseStatus(node),
-            _ => ParseOpenAiChunk(node, out error),
+            _ => null,
         };
+        if (single is not null)
+        {
+            return [single];
+        }
+        return evt is null ? ParseOpenAiChunk(node, out error) : null;
     }
 
     private static ChatStreamEvent ParseToolCall(JsonNode node) =>
@@ -534,16 +549,16 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         return null;
     }
 
-    /// <summary>Chunk do formato OpenAI (sem <c>event:</c>): delta, erro ou arena.</summary>
-    private ChatStreamEvent? ParseOpenAiChunk(JsonNode node, out string? error)
+    /// <summary>Chunk do formato OpenAI (sem <c>event:</c>): delta, reasoning,
+    /// erro ou arena — um chunk pode carregar reasoning E content juntos.</summary>
+    private List<ChatStreamEvent>? ParseOpenAiChunk(JsonNode node, out string? error)
     {
         error = node["error"]?.GetValue<string>();
         // Gateways podem emitir chunks sem choice (só role/usage/keepalive):
         // indexar um array vazio lança ArgumentOutOfRangeException.
         var choices = node["choices"] as JsonArray;
-        var delta = choices is { Count: > 0 }
-            ? choices[0]?["delta"]?["content"]?.GetValue<string>()
-            : null;
+        var delta = choices is { Count: > 0 } ? choices[0]?["delta"] : null;
+        var content = delta?["content"]?.GetValue<string>();
         var arena = node["arena"];
         if (arena is not null)
         {
@@ -555,7 +570,52 @@ public class ChatStreamService(HttpClient http, AuthService auth)
                         r?["content"]?.GetValue<string>() ?? string.Empty))
                     .ToList());
         }
-        return string.IsNullOrEmpty(delta) ? null : new ChatStreamEvent.Delta(delta);
+
+        List<ChatStreamEvent>? events = null;
+        // SPEC-20261015 RF-003: reasoning/thinking — campo normalizado
+        // `reasoning` (tradutores) + campos nativos do pass-through
+        // OpenAI-compatível (reasoning_content / reasoning /
+        // reasoning_details[].text). Reasoning sai antes do Delta: a UI
+        // auto-colapsa a seção quando o primeiro content chega.
+        var reasoning = ExtractReasoning(delta);
+        if (reasoning is not null)
+        {
+            events = [new ChatStreamEvent.Reasoning(reasoning)];
+        }
+        if (!string.IsNullOrEmpty(content))
+        {
+            (events ??= []).Add(new ChatStreamEvent.Delta(content));
+        }
+        return events;
+    }
+
+    /// <summary>Extrai reasoning do delta — normalizado + variantes de
+    /// gateway OpenAI-compatível (SPEC-20261015 RF-003).</summary>
+    private static string? ExtractReasoning(JsonNode? delta)
+    {
+        if (delta is null)
+        {
+            return null;
+        }
+        if (delta["reasoning"] is JsonValue normalized
+            && normalized.TryGetValue<string>(out var s) && s.Length > 0)
+        {
+            return s;
+        }
+        if (delta["reasoning_content"] is JsonValue rc
+            && rc.TryGetValue<string>(out s) && s.Length > 0)
+        {
+            return s;
+        }
+        if (delta["reasoning_details"] is JsonArray details)
+        {
+            var joined = string.Concat(details
+                .Select(d => d?["text"] as JsonValue)
+                .Where(t => t is not null && t.TryGetValue<string>(out _))
+                .Select(t => t!.GetValue<string>()));
+            return joined.Length > 0 ? joined : null;
+        }
+        return null;
     }
 
     private static async Task EnsureSuccessAsync(

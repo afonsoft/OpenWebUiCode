@@ -475,6 +475,12 @@ public static class ChatPipeline
         Func<ProviderToolCall, string, JsonElement?, bool, CancellationToken, Task>? OnResultAsync = null,
         Func<string, CancellationToken, Task>? OnDeltaAsync = null,
         /// <summary>
+        /// Raciocínio/thinking do modelo (SPEC-20261015-chat-thinking-stream):
+        /// reasoning_content/thinking_delta/thought:true/thinking chegam por
+        /// este canal separado — a UI exibe colapsado e nada é persistido.
+        /// </summary>
+        Func<string, CancellationToken, Task>? OnReasoningAsync = null,
+        /// <summary>
         /// Spec de tools anunciado por rodada (SPEC-20261009-agent-modes-
         /// plan-build): o executor refiltra pelo modo a cada round — o
         /// plan_exit aprovado promove a build já na próxima rodada. Null
@@ -634,7 +640,7 @@ public static class ChatPipeline
             request = request with { Tools = await announce(ct) };
         }
         var step = await providers.CompleteWithToolsStreamingAsync(
-            request, callbacks?.OnDeltaAsync, userId, ct);
+            request, callbacks?.OnDeltaAsync, callbacks?.OnReasoningAsync, userId, ct);
         if (step is not null)
         {
             return step;
@@ -644,6 +650,13 @@ public static class ChatPipeline
         if (buffered.Content.Length > 0 && callbacks?.OnDeltaAsync is not null)
         {
             await callbacks.OnDeltaAsync(buffered.Content, ct);
+        }
+        // Fallback buffered: o reasoning chega inteiro de uma vez quando o
+        // endpoint recusou stream+tools.
+        if (!string.IsNullOrEmpty(buffered.Reasoning)
+            && callbacks?.OnReasoningAsync is not null)
+        {
+            await callbacks.OnReasoningAsync(buffered.Reasoning, ct);
         }
         return buffered;
     }

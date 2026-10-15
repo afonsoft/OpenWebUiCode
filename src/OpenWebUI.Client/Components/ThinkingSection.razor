@@ -1,0 +1,85 @@
+@inject LocalizationService L
+
+@*
+    Seção colapsável de raciocínio/thinking do modelo
+    (SPEC-20261015-chat-thinking-stream RF-004): expande enquanto os
+    deltas de reasoning chegam, auto-colapsa quando a resposta começa e
+    fica re-expansível depois. O texto NÃO é persistido na mensagem — é
+    telemetria ao vivo do que o modelo está pensando. Cap de 64KB no
+    display (texto antigo elidido com "…") e scroll ancorado no fim.
+*@
+
+@if (!string.IsNullOrEmpty(Text))
+{
+    <div class="flex flex-col py-1.5">
+        <button type="button"
+                class="flex items-center gap-1.5 self-start px-1 py-0.5 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+                aria-expanded="@(Expanded ? "true" : "false")"
+                aria-controls="thinking-body"
+                aria-live="polite"
+                @onclick="OnToggle">
+            @if (Streaming && Expanded)
+            {
+                <svg class="size-3 flex-none animate-spin text-purple-500 dark:text-purple-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                </svg>
+            }
+            else
+            {
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3 flex-none text-purple-500 dark:text-purple-400" aria-hidden="true">
+                    <path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16ZM8.5 7.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm4 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-5.03 4.53a.75.75 0 0 1 1.06 0 2 2 0 0 0 2.94 0 .75.75 0 1 1 1.06 1.06 3.5 3.5 0 0 1-5.06 0 .75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+                </svg>
+            }
+            <span class="font-medium">@L["chat.thinking.title"]</span>
+            @if (Expanded && Elapsed is { } elapsed)
+            {
+                @* Elapsed ao vivo enquanto aberto — atualizado na cadência
+                   dos deltas; o leitor de tela ouve só na virada de
+                   aberto/fechado (aria-live no header). *@
+                <span class="text-gray-400/80 dark:text-gray-600 tabular-nums">
+                    @L.T("chat.thinking.elapsed", ("seconds", ((int)elapsed.TotalSeconds).ToString()))
+                </span>
+            }
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                 stroke="currentColor" class="size-3 transition-transform @(Expanded ? "rotate-90" : "")" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+        </button>
+        @if (Expanded)
+        {
+            @* Scroll ancorado no sentinel: texto novo sempre visível enquanto
+               a seção está aberta. Sem aria-live no corpo — deltas chegam em
+               rajada e anunciar cada pedaço inundaria o leitor de tela. *@
+            <div id="thinking-body"
+                 class="mt-1 max-h-48 overflow-y-auto rounded-lg border border-gray-200/70 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/40 px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap text-gray-500 dark:text-gray-400 font-mono">
+                @DisplayText
+                <div class="h-0" style="overflow-anchor: auto"></div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private const int DisplayCap = 64 * 1024;
+
+    /// <summary>Texto acumulado do raciocínio desta run.</summary>
+    [Parameter] public string? Text { get; set; }
+
+    /// <summary>True enquanto a run ainda transmite (spinner no título).</summary>
+    [Parameter] public bool Streaming { get; set; }
+
+    /// <summary>Seção aberta (auto-expandida pelo stream ou toggle do usuário).</summary>
+    [Parameter] public bool Expanded { get; set; }
+
+    /// <summary>Tempo decorrido de raciocínio da run — exibido no header
+    /// enquanto a seção está aberta (RF-004).</summary>
+    [Parameter] public TimeSpan? Elapsed { get; set; }
+
+    /// <summary>Toggle do usuário — sobrepõe o comportamento automático.</summary>
+    [Parameter] public EventCallback OnToggle { get; set; }
+
+    /// <summary>Cauda de 64KB quando o raciocínio passa do cap de display.</summary>
+    private string DisplayText =>
+        Text is { Length: > DisplayCap } t ? "…" + t[^DisplayCap..] : Text ?? string.Empty;
+}
