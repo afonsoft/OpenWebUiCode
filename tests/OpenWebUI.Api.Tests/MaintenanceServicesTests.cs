@@ -9,6 +9,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.ChatTools.Tools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
@@ -25,6 +26,7 @@ public class MaintenanceServicesTests
     private string _root = null!;
     private string _dbPath = null!;
     private ServiceProvider _provider = null!;
+    private OllamaStubHandler _handler = null!;
 
     [SetUp]
     public void SetUp()
@@ -32,21 +34,33 @@ public class MaintenanceServicesTests
         _root = Path.Join(Path.GetTempPath(), $"owui-maint-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_root);
         _dbPath = Path.Join(_root, "test.db");
+        lock (ListLogger.Messages)
+        {
+            ListLogger.Messages.Clear();
+        }
 
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(
             o => o.UseSqlite($"Data Source={_dbPath}"));
-        services.AddLogging();
+        services.AddLogging(b => b.AddProvider(ListLogger.Provider)
+            .SetMinimumLevel(LogLevel.Debug));
         services.AddHybridCache();
         services.AddSingleton<IHostEnvironment>(new StubEnvLocal(_root));
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+        _handler = new OllamaStubHandler();
         services.AddSingleton<IHttpClientFactory>(
-            new StubHttpClientFactory(new OllamaStubHandler()));
+            new StubHttpClientFactory(_handler));
         services.AddScoped<ConfigService>();
         services.AddScoped<WorkspaceRepoService>();
         services.AddScoped<ProviderService>();
         services.AddScoped<NotificationService>();
         services.AddSingleton<WorktreeService>();
+        services.AddScoped<UserConfigOverlayService>();
+        services.AddScoped(sp => new ModelRoleResolver(
+            sp.GetRequiredService<AppDbContext>(),
+            sp.GetRequiredService<ConfigService>(),
+            ct => sp.GetRequiredService<ProviderService>().ListModelsAsync(ct),
+            sp.GetRequiredService<ILogger<ModelRoleResolver>>()));
         services.AddScoped<MemorySyncService>();
         services.AddScoped<RetentionService>();
         _provider = services.BuildServiceProvider();
@@ -58,7 +72,11 @@ public class MaintenanceServicesTests
     }
 
     [TearDown]
-    public void TearDown() => _provider.Dispose();
+    public void TearDown()
+    {
+        _provider.Dispose();
+        _handler.Dispose();
+    }
 
     private AppDbContext NewDb() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
@@ -107,10 +125,12 @@ public class MaintenanceServicesTests
         await NewMemSync().RunOnceAsync(default);
 
         await using var db = NewDb();
-        var memory = await db.AgentMemories.SingleAsync(m => m.UserId == "u1");
+        var memory = await db.AgentMemories.SingleOrDefaultAsync(m => m.UserId == "u1");
+        Assert.That(memory, Is.Not.Null,
+            "logs: " + string.Join(" | ", ListLogger.Messages));
         Assert.Multiple(() =>
         {
-            Assert.That(memory.Title, Is.EqualTo("auto:deploy notes"));
+            Assert.That(memory!.Title, Is.EqualTo("auto:deploy notes"));
             Assert.That(memory.Scope, Is.EqualTo("global"));
             Assert.That(memory.Content, Does.Contain("fato1"));
         });
@@ -167,6 +187,135 @@ public class MaintenanceServicesTests
         var count = await check.AgentMemories
             .CountAsync(m => m.UserId == "u1" && m.Title.StartsWith("auto:"));
         Assert.That(count, Is.EqualTo(25));
+    }
+
+    [Test]
+    public async Task Config_Get_Miss_NaoGrudaFallbackNoCache()
+    {
+        var cfg = Config();
+        // Chave inexistente: leituras com fallbacks diferentes não podem
+        // contaminar o slot compartilhado bool/bool? do cache.
+        var a = await cfg.GetAsync("zzz.missing", false);
+        var b = await cfg.GetAsync<bool?>("zzz.missing", null);
+        var c = await cfg.GetAsync("zzz.missing", true);
+        TestContext.Out.WriteLine($"a={a} b={(b?.ToString() ?? "null")} c={c}");
+        Assert.Multiple(() =>
+        {
+            Assert.That(a, Is.False);
+            Assert.That(b, Is.Null);
+            Assert.That(c, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task MemSync_UsaPapelMemory_QuandoConfigurado()
+    {
+        // SPEC-20261014-memory-pipeline AC: cadeia do papel `memory` do
+        // usuário resolve o modelo da destilação em vez do modelo do chat.
+        await Config().SetAsync("connections",
+            new ConnectionsConfig(["http://stub.local"], [], []));
+        var resolver = _provider.GetRequiredService<ModelRoleResolver>();
+        await resolver.SetRolesAsync("u1",
+            new Dictionary<string, List<string>> { ["memory"] = ["fake:mem"] },
+            default);
+        await SeedChatAsync("c1", "deploy notes", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+        await NewMemSync().RunOnceAsync(default);
+
+        Assert.That(_handler.LastChatModel, Is.EqualTo("fake:mem"));
+    }
+
+    [Test]
+    public async Task MemSync_AdminGlobalOff_EhAbsoluto()
+    {
+        // RF-004: `memsync.enabled=false` global é negativa absoluta — nem
+        // opt-in explícito do usuário reabilita (custo de provider).
+        await Config().SetAsync("connections",
+            new ConnectionsConfig(["http://stub.local"], [], []));
+        await Config().SetAsync("memsync.enabled", false);
+        await Config().SetAsync("u:u1:memsync.enabled", true);
+        await SeedChatAsync("c1", "t", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+        await NewMemSync().RunOnceAsync(default);
+
+        await using var db = NewDb();
+        Assert.That(await db.AgentMemories.CountAsync(m => m.UserId == "u1"), Is.Zero);
+    }
+
+    [Test]
+    public async Task MemSync_MaxAgeDays_PulaChatVelho()
+    {
+        await Config().SetAsync("connections",
+            new ConnectionsConfig(["http://stub.local"], [], []));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        // Chat de 40 dias atrás — fora da janela default de 30d.
+        await SeedChatAsync("c-old", "antigo", now - 40L * 86400);
+        await SeedChatAsync("c-new", "recente", now);
+
+        await NewMemSync().RunOnceAsync(default);
+
+        await using var db = NewDb();
+        var titles = await db.AgentMemories
+            .Where(m => m.UserId == "u1").Select(m => m.Title).ToListAsync();
+        Assert.That(titles, Is.EqualTo(new[] { "auto:recente" }));
+    }
+
+    [Test]
+    public async Task MemSync_Intervalo_NaoRodaAntesDaHora()
+    {
+        // last = agora-1h, intervalo de 6h → mesmo com chat novo, não roda.
+        await Config().SetAsync("connections",
+            new ConnectionsConfig(["http://stub.local"], [], []));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await Config().SetAsync("u:u1:memsync.last", now - 3600);
+        await SeedChatAsync("c1", "t", now - 1800);
+
+        await NewMemSync().RunOnceAsync(default);
+
+        Assert.That(_handler.LastChatModel, Is.Null);
+        await using var db = NewDb();
+        Assert.That(await db.AgentMemories.CountAsync(m => m.UserId == "u1"), Is.Zero);
+    }
+
+    [Test]
+    public async Task MemSync_IntervaloOverride_RodaQuandoVencido()
+    {
+        // Intervalo de 1h do usuário + last de 2h atrás → roda.
+        await Config().SetAsync("connections",
+            new ConnectionsConfig(["http://stub.local"], [], []));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await Config().SetAsync("u:u1:memsync.intervalHours", 1);
+        await Config().SetAsync("u:u1:memsync.last", now - 7200);
+        await SeedChatAsync("c1", "t", now - 3600);
+
+        await NewMemSync().RunOnceAsync(default);
+
+        Assert.That(_handler.LastChatModel, Is.Not.Null);
+    }
+
+    [Test]
+    public async Task MemoryLearn_GravaEDedupa()
+    {
+        var tool = new MemoryLearnBuiltinTool(NewDb());
+        var ctx = new OpenWebUI.Infrastructure.ChatTools.BuiltinToolContext(
+            "u1", "c1", null, _root, _root);
+        var args = System.Text.Json.JsonDocument.Parse(
+            """{"lesson":"rodar testes exige docker","context":"deploy","tags":["tests","ci"]}""")
+            .RootElement;
+
+        var first = await tool.ExecuteAsync(args, ctx, default);
+        var second = await tool.ExecuteAsync(args, ctx, default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.Text, Does.Contain("Lição registrada"));
+            Assert.That(second.Text, Does.Contain("Lição atualizada"));
+        });
+        await using var db = NewDb();
+        var mems = await db.AgentMemories
+            .Where(m => m.UserId == "u1" && m.Title.StartsWith("learn:")).ToListAsync();
+        Assert.That(mems, Has.Count.EqualTo(1));
+        Assert.That(mems[0].Content, Does.Contain("tags: tests, ci"));
     }
 
     // ---------------- Retention ----------------
@@ -259,20 +408,61 @@ public class MaintenanceServicesTests
 
     private sealed class OllamaStubHandler : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(
+        /// <summary>Último modelo pedido em /api/chat (asserção de papel).</summary>
+        public string? LastChatModel;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var json = request.RequestUri!.AbsolutePath switch
             {
-                "/api/tags" => """{"models":[{"model":"fake:1","name":"fake:1"}]}""",
-                "/api/chat" => """{"message":{"content":"fato1\nfato2"}}""",
+                "/api/tags" => """{"models":[{"model":"fake:1","name":"fake:1"},{"model":"fake:mem","name":"fake:mem"}]}""",
+                "/api/chat" => await ChatReplyAsync(request),
                 _ => "{}",
             };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json"),
-            });
+            };
         }
+
+        private async Task<string> ChatReplyAsync(HttpRequestMessage request)
+        {
+            var body = await request.Content!.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            LastChatModel = doc.RootElement.TryGetProperty("model", out var m)
+                ? m.GetString() : null;
+            return """{"message":{"content":"fato1\nfato2"}}""";
+        }
+    }
+
+    /// <summary>Captura logs do memsync para inspeção de falhas do sync.</summary>
+    private sealed class ListLogger(string category) : ILogger
+    {
+        public static readonly ListLoggerProvider Provider = new();
+        public static readonly List<string> Messages = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) =>
+            category.Contains("MemorySync")
+                || (level >= LogLevel.Warning && !category.Contains("EntityFramework"));
+        public void Log<TState>(LogLevel level, EventId id, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (IsEnabled(level))
+            {
+                lock (Messages)
+                {
+                    Messages.Add(formatter(state, exception) + " " + exception);
+                }
+            }
+        }
+    }
+
+    private sealed class ListLoggerProvider : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new ListLogger(categoryName);
+        public void Dispose() { }
     }
 
     private sealed class StubEnvLocal(string contentRoot) : IHostEnvironment

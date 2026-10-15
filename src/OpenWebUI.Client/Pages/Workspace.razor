@@ -218,6 +218,46 @@
             {
                 <div class="sidebar-empty">@L["workspace.no_skills"]</div>
             }
+
+            @* Repo-skills descobertas no repositório vinculado — toggle por
+               usuário (SPEC-20261014-config-layers); deny do admin é absoluto. *@
+            @if (_repoSkillsBound)
+            {
+                <div class="card-row">
+                    <div class="card-main">
+                        <div class="card-title">@L["workspace.repo_skills"]</div>
+                        <div class="card-sub">@L["workspace.repo_skills_hint"]</div>
+                    </div>
+                </div>
+                @foreach (var skill in _repoSkills)
+                {
+                    <div class="card-row">
+                        <div class="card-main">
+                            <div class="card-title">@skill.Name</div>
+                            <div class="card-sub">@skill.Description</div>
+                        </div>
+                        <div class="card-actions">
+                            @if (skill.DisabledByAdmin)
+                            {
+                                <span class="card-sub">@L["workspace.repo_skill_admin_off"]</span>
+                            }
+                            else
+                            {
+                                <label class="check">
+                                    <input type="checkbox" checked="@skill.Enabled"
+                                           aria-label="@skill.Name"
+                                           @onchange="e => ToggleRepoSkillAsync(skill, e.Value is true)" />
+                                    @L["workspace.enable"]
+                                </label>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (_repoSkills.Count == 0)
+                {
+                    <div class="sidebar-empty">@L["workspace.no_repo_skills"]</div>
+                }
+            }
         </div>
     }
     else
@@ -277,6 +317,8 @@
     private string? _knowledgeStatus;
     private List<ToolResponse> _tools = [];
     private List<SkillResponse> _skills = [];
+    private List<RepoSkillItemResponse> _repoSkills = [];
+    private bool _repoSkillsBound;
     private bool _loadFailed;
     private string? _skillEditId;
     private string _skillName = "";
@@ -313,6 +355,9 @@
             _files = await Api.GetFilesAsync();
             _knowledge = await Api.GetKnowledgeAsync();
             _skills = await Api.GetSkillsAsync() ?? [];
+            // Repo-skills do binding default (sem chat) — 404 vira lista vazia.
+            _repoSkills = await Api.GetRepoSkillsAsync() ?? [];
+            _repoSkillsBound = _repoSkills.Count > 0;
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
@@ -360,6 +405,22 @@
     {
         await Api.DeleteSkillAsync(skill.Id);
         _skills.RemoveAll(s => s.Id == skill.Id);
+    }
+
+    /// <summary>
+    /// Toggle de repo-skill só para o usuário (SPEC-20261014-config-layers):
+    /// servidor recusa religar quando o admin desligou (deny absoluto).
+    /// </summary>
+    private async Task ToggleRepoSkillAsync(RepoSkillItemResponse skill, bool enabled)
+    {
+        if (await Api.SetRepoSkillEnabledAsync(skill.Name, enabled))
+        {
+            var idx = _repoSkills.FindIndex(s => s.Name == skill.Name);
+            if (idx >= 0)
+            {
+                _repoSkills[idx] = skill with { Enabled = enabled };
+            }
+        }
     }
 
     private async Task ToggleKnowledgeDetailAsync(KnowledgeResponse item)

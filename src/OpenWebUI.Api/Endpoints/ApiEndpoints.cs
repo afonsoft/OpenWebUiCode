@@ -360,7 +360,7 @@ public static class ApiEndpoints
                     Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id));
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct,
-                    builtinContext: builtinContext);
+                    builtinContext: builtinContext, userId: user.Id);
                 if (outcome?.FinalContent is { } finished)
                 {
                     foreach (var (regex, replacement) in outletRules)
@@ -380,7 +380,7 @@ public static class ApiEndpoints
                 }
             }
 
-            await foreach (var line in providers.StreamCompletionAsync(effective, ct))
+            await foreach (var line in providers.StreamCompletionAsync(effective, user.Id, ct))
             {
                 await writer.WriteLineAsync(
                     ModelFilterService.ProcessSseLine(line, outletRules));

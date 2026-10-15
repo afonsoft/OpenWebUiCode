@@ -174,18 +174,32 @@ public static class AutomationHookEndpoints
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var position = await db.ChatMessages
+        var leaf = await db.ChatMessages
             .Where(m => m.ChatId == hook.ChatId)
-            .Select(m => (int?)m.Position)
-            .MaxAsync(ct) ?? -1;
-        db.ChatMessages.Add(new ChatMessage
+            .OrderByDescending(m => m.Position)
+            .Select(m => new { m.Id, m.Position })
+            .FirstOrDefaultAsync(ct);
+        // Leaf explícito só vale se ainda existe (podem ter sido deletados);
+        // senão cai no topo legado por Position.
+        string? leafId = hook.Chat.LeafMessageId;
+        if (leafId is not null && leaf?.Id != leafId
+            && !await db.ChatMessages.AnyAsync(
+                m => m.ChatId == hook.ChatId && m.Id == leafId, ct))
+        {
+            leafId = null;
+        }
+        leafId ??= leaf?.Id;
+        var message = new ChatMessage
         {
             ChatId = hook.ChatId,
             Role = "user",
             Content = content,
-            Position = position + 1,
+            Position = (leaf?.Position ?? -1) + 1,
             Timestamp = now,
-        });
+            ParentId = leafId,
+        };
+        db.ChatMessages.Add(message);
+        hook.Chat.LeafMessageId = message.Id;
 
         var run = new ChatRun
         {

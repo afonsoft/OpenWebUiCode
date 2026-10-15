@@ -62,6 +62,8 @@ public static class ChatEndpoints
         group.MapPost("/{id}/messages/{messageId}", UpdateMessageAsync);
         group.MapDelete("/{id}/messages/{messageId}", DeleteMessageAsync);
         group.MapGet("/{id}/messages/{messageId}/versions", GetMessageVersionsAsync);
+        group.MapGet("/{id}/branches", ListBranchesAsync);
+        group.MapPost("/{id}/branches/activate", ActivateBranchAsync);
 
         // Runs desacopladas (SPEC-20261007-chat-detached-runs).
         ChatRunEndpoints.MapChatRunEndpoints(group);
@@ -297,12 +299,11 @@ public static class ChatEndpoints
             chat.Title,
             User = new { chat.User?.Name },
             Models = JsonSerializer.Deserialize<List<string>>(chat.ModelsJson, JsonOptions) ?? [],
-            Messages = chat.Messages
-                .OrderBy(m => m.Position)
+            Messages = BranchService.WalkPath(chat)
                 .Select(m => new ChatMessageModel(
                 m.Id, m.Role, m.Content, m.Model, m.Timestamp,
                 JsonSerializer.Deserialize<List<ChatMessageVersionModel>>(m.VersionsJson, JsonOptions),
-                m.ToolCallId, m.ToolCallsJson))
+                m.ToolCallId, m.ToolCallsJson, m.ParentId))
                 .ToList(),
             chat.CreatedAt,
             chat.UpdatedAt,
@@ -366,6 +367,7 @@ public static class ChatEndpoints
         ChatUpsertRequest request,
         HttpContext http,
         AppDbContext db,
+        ConfigService config,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -381,6 +383,9 @@ public static class ChatEndpoints
             Title = string.IsNullOrWhiteSpace(request.Title) ? "New Chat" : request.Title.Trim(),
             ModelsJson = JsonSerializer.Serialize(request.Models ?? [], JsonOptions),
             ToolIdsJson = JsonSerializer.Serialize(request.ToolIds ?? [], JsonOptions),
+            // SPEC-20261013-run-advisor RF-005: default admin do revisor.
+            AdvisorEnabled = await config.GetAsync<bool?>(
+                "advisor.default", null, ct) ?? false,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -569,10 +574,56 @@ public static class ChatEndpoints
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         chat.UpdatedAt = now;
 
+        // Merge por caminho (SPEC-20261013-chat-branching): o cliente envia só
+        // o caminho ativo — mensagens fora dele (ramos irmãos) são preservadas.
+        // Deleta-se o que estava no caminho antigo e sumiu do request; lista
+        // vazia mantém o comportamento antigo de limpar tudo.
         var previous = chat.Messages
             .ToDictionary(m => m.Id, m => (m.Content, m.Model, m.VersionsJson));
-        db.ChatMessages.RemoveRange(chat.Messages);
-        chat.Messages = MapMessages(request.Messages, chat.Id, now);
+        if (request.Messages.Count == 0)
+        {
+            db.ChatMessages.RemoveRange(chat.Messages);
+            chat.Messages = [];
+            chat.LeafMessageId = null;
+        }
+        else
+        {
+            var oldPathIds = BranchService.WalkPath(chat)
+                .Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+            var incomingIds = request.Messages
+                .Where(m => !string.IsNullOrEmpty(m.Id))
+                .Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+            var toRemove = chat.Messages
+                .Where(m => oldPathIds.Contains(m.Id) && !incomingIds.Contains(m.Id))
+                .ToList();
+            if (toRemove.Count > 0)
+            {
+                db.ChatMessages.RemoveRange(toRemove);
+                chat.Messages.RemoveAll(m => toRemove.Contains(m));
+            }
+
+            var mapped = MapMessages(request.Messages, chat.Id, now);
+            var byId = chat.Messages.ToDictionary(m => m.Id, StringComparer.Ordinal);
+            chat.Messages = mapped.Select(m =>
+            {
+                if (!byId.TryGetValue(m.Id, out var existing))
+                {
+                    return m;
+                }
+                existing.Content = m.Content;
+                existing.Model = m.Model;
+                existing.ToolCallId = m.ToolCallId;
+                existing.ToolCallsJson = m.ToolCallsJson;
+                // Cliente legado não conhece ParentId — omite na volta;
+                // preserva o armazenado em vez de apagar a árvore.
+                existing.ParentId = m.ParentId ?? existing.ParentId;
+                existing.Position = m.Position;
+                existing.Timestamp = m.Timestamp;
+                return existing;
+            }).Concat(chat.Messages.Where(m => !incomingIds.Contains(m.Id))).ToList();
+            // O leaf é a ponta do caminho que o cliente descreveu.
+            chat.LeafMessageId = mapped[^1].Id;
+        }
         foreach (var m in chat.Messages.Where(m => previous.ContainsKey(m.Id)))
         {
             var old = previous[m.Id];
@@ -633,6 +684,13 @@ public static class ChatEndpoints
                     new { detail = "modo build exige repositório vinculado ao chat." });
             }
             chat.Mode = request.Mode;
+            changed = true;
+        }
+        if (request.AdvisorEnabled is { } advisor)
+        {
+            // Revisor de run (SPEC-20261013-run-advisor RF-005) — relido
+            // por gatilho; desligar mid-run vale já na próxima fronteira.
+            chat.AdvisorEnabled = advisor;
             changed = true;
         }
         if (request.Title is { } rawTitle && !string.IsNullOrWhiteSpace(rawTitle))
@@ -852,18 +910,28 @@ public static class ChatEndpoints
             CreatedAt = now,
             UpdatedAt = now,
         };
+        // A árvore é preservada: ids novos, ParentId remapeado (RF-001).
+        var idMap = chat.Messages.ToDictionary(
+            m => m.Id, _ => Guid.NewGuid().ToString(), StringComparer.Ordinal);
         clone.Messages = chat.Messages
             .OrderBy(m => m.Position)
             .Select((m, i) => new ChatMessage
             {
+                Id = idMap[m.Id],
                 ChatId = clone.Id,
                 Role = m.Role,
                 Content = m.Content,
                 Model = m.Model,
                 Position = i,
                 Timestamp = m.Timestamp,
+                ParentId = m.ParentId is null
+                    ? null
+                    : idMap.GetValueOrDefault(m.ParentId),
             })
             .ToList();
+        clone.LeafMessageId = chat.LeafMessageId is null
+            ? null
+            : idMap.GetValueOrDefault(chat.LeafMessageId);
 
         db.Chats.Add(clone);
         await db.SaveChangesAsync(ct);
@@ -952,6 +1020,56 @@ public static class ChatEndpoints
         return Results.Ok(new StatusResponse(true));
     }
 
+    /// <summary>
+    /// Leafs divergentes do chat (SPEC-20261013-chat-branching RF-003):
+    /// cada ponta de ramo com profundidade, contagem, preview e resumo.
+    /// </summary>
+    private static async Task<IResult> ListBranchesAsync(
+        string id, HttpContext http, AppDbContext db, BranchService branches,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var chat = await LoadChatAsync(id, user?.Id, db, ct);
+        if (chat is null)
+        {
+            return Results.NotFound();
+        }
+
+        var leaves = await branches.ListBranchesAsync(chat, ct);
+        return Results.Ok(leaves.Select(l => new BranchLeafResponse(
+            l.LeafId, l.Depth, l.MessageCount, l.Preview, l.Summary,
+            l.UpdatedAt, l.IsActive)));
+    }
+
+    /// <summary>
+    /// Ativa uma mensagem como leaf (RF-004): o próximo envio pendura nela.
+    /// O ramo abandonado com ≥4 mensagens ganha resumo no papel
+    /// <c>memory</c> (RF-005); a resposta renderiza o novo caminho ativo.
+    /// </summary>
+    private static async Task<IResult> ActivateBranchAsync(
+        string id,
+        ActivateBranchRequest request,
+        HttpContext http,
+        AppDbContext db,
+        BranchService branches,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var chat = await LoadChatAsync(id, user?.Id, db, ct, tracking: true);
+        if (chat is null)
+        {
+            return Results.NotFound();
+        }
+
+        var model = JsonSerializer.Deserialize<List<string>>(chat.ModelsJson, JsonOptions)
+            ?.FirstOrDefault();
+        if (!await branches.ActivateLeafAsync(chat, request.LeafId, model, ct))
+        {
+            return Results.NotFound(new { detail = "Leaf não encontrado neste chat." });
+        }
+        return Results.Ok(ToResponse(chat));
+    }
+
     private static async Task<IResult> UpdateMessageAsync(
         string id,
         string messageId,
@@ -1009,11 +1127,44 @@ public static class ChatEndpoints
             return Results.NotFound();
         }
 
-        // Remove a mensagem e tudo que veio depois dela (espelha o comportamento do original).
-        var toRemove = chat.Messages
-            .Where(m => m.Position >= chat.Messages[index].Position)
-            .ToList();
+        // Remove a mensagem e a subárvore dela (SPEC-20261013-chat-branching):
+        // descendentes explícitos por ParentId + a continuação legada
+        // implícita por Position. Num chat que nunca ramificou isso equivale
+        // ao "ela e tudo que veio depois" de antes; ramos irmãos sobrevivem.
+        var target = chat.Messages[index];
+        var toRemoveIds = new HashSet<string>(StringComparer.Ordinal) { target.Id };
+        var queue = new Queue<string>();
+        queue.Enqueue(target.Id);
+        while (queue.Count > 0)
+        {
+            var parentId = queue.Dequeue();
+            foreach (var child in chat.Messages.Where(m => m.ParentId == parentId))
+            {
+                if (toRemoveIds.Add(child.Id))
+                {
+                    queue.Enqueue(child.Id);
+                }
+            }
+        }
+        foreach (var m in chat.Messages.Where(
+            m => m.ParentId is null && m.Position >= target.Position))
+        {
+            toRemoveIds.Add(m.Id);
+        }
+
+        var toRemove = chat.Messages.Where(m => toRemoveIds.Contains(m.Id)).ToList();
         db.ChatMessages.RemoveRange(toRemove);
+        chat.Messages.RemoveAll(m => toRemoveIds.Contains(m.Id));
+
+        // Leaf deletado (RF-edge): volta ao pai do alvo — explícito ou a
+        // ponta legada restante (maior Position sem pai sobrevivente).
+        if (chat.LeafMessageId is not null && toRemoveIds.Contains(chat.LeafMessageId))
+        {
+            chat.LeafMessageId = target.ParentId
+                ?? chat.Messages
+                    .Where(m => m.ParentId is null)
+                    .MaxBy(m => m.Position)?.Id;
+        }
         chat.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         await db.SaveChangesAsync(ct);
         await hub.Clients.Group(ChatHub.ChatGroupName(id))
@@ -1104,6 +1255,7 @@ public static class ChatEndpoints
                 Model = m.Model,
                 ToolCallId = m.ToolCallId,
                 ToolCallsJson = m.ToolCallsJson,
+                ParentId = m.ParentId,
                 Position = i,
                 Timestamp = m.Timestamp > 0 ? m.Timestamp : now,
             })
@@ -1140,12 +1292,13 @@ public static class ChatEndpoints
         chat.Id,
         chat.Title,
         JsonSerializer.Deserialize<List<string>>(chat.ModelsJson, JsonOptions) ?? [],
-        chat.Messages
-            .OrderBy(m => m.Position)
+        // O cliente renderiza o caminho ativo (leaf→raiz): fora dele, os
+        // outros ramos não aparecem (SPEC-20261013-chat-branching RF-002).
+        BranchService.WalkPath(chat)
             .Select(m => new ChatMessageModel(
                 m.Id, m.Role, m.Content, m.Model, m.Timestamp,
                 JsonSerializer.Deserialize<List<ChatMessageVersionModel>>(m.VersionsJson, JsonOptions),
-                m.ToolCallId, m.ToolCallsJson))
+                m.ToolCallId, m.ToolCallsJson, m.ParentId))
             .ToList(),
         chat.Pinned,
         chat.Archived,
@@ -1158,7 +1311,10 @@ public static class ChatEndpoints
         chat.ApprovalPreset,
         chat.Mode,
         chat.ParentChatId,
-        parentTitle);
+        parentTitle,
+        chat.AdvisorEnabled,
+        BranchService.ResolveLeaf(chat)?.Id,
+        BranchService.ListLeaves(chat).Count);
 
     /// <summary>Filtro por tags.</summary>
     public sealed record TagQueryRequest(IReadOnlyList<string> Tags);

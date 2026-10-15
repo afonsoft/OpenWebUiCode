@@ -475,6 +475,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("AdvisorEnabled")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ApprovalPreset")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -486,6 +489,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("FolderId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LeafMessageId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Mode")
@@ -605,6 +611,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Model")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ParentId")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Position")
@@ -1122,6 +1131,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Url")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");

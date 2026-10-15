@@ -221,6 +221,35 @@ public sealed record BannerRequest(string Type, string Title, string Content, bo
 /// <param name="Enabled">Se a feature está habilitada.</param>
 public sealed record FeatureToggle(bool Enabled);
 
+/// <summary>Visão das chaves de provider do usuário (BYOK, SPEC-20261014-config-layers RF-005).</summary>
+/// <param name="Enabled">Se o admin habilitou chaves por usuário (<c>features.userProviderKeys</c>).</param>
+/// <param name="Providers">Provedores com chave configurada — valores nunca retornam.</param>
+public sealed record UserProviderKeysResponse(bool Enabled, IReadOnlyList<string> Providers);
+
+/// <summary>Grava a chave BYOK do usuário para um provider.</summary>
+/// <param name="Key">Chave de API (obrigatória; nunca volta em GET).</param>
+public sealed record UserProviderKeyRequest(string? Key);
+
+/// <summary>
+/// Preferências de auto-sync de memória (SPEC-20261014-memory-pipeline
+/// RF-004). Null em PUT remove o override da camada (volta a herdar).
+/// </summary>
+/// <param name="Enabled">Liga/desliga consolidação e injeção do usuário.</param>
+/// <param name="IntervalHours">Cadência entre syncs (1–168h).</param>
+/// <param name="MaxAgeDays">Janela de chats elegíveis (1–365d).</param>
+public sealed record MemorySyncPrefs(bool? Enabled, int? IntervalHours, int? MaxAgeDays);
+
+/// <summary>GET /configs/user/memory-sync — valores efetivos + camadas cruas.</summary>
+/// <param name="Enabled">Efetivo (já dobra a negativa absoluta do admin).</param>
+/// <param name="IntervalHours">Cadência efetiva em horas.</param>
+/// <param name="MaxAgeDays">Janela efetiva em dias.</param>
+/// <param name="AdminDisabled">Admin desligou globalmente — override do usuário não reabilita.</param>
+/// <param name="Global">Valores crus da camada global (null = sem override admin).</param>
+/// <param name="User">Valores crus do override do usuário (null = herda).</param>
+public sealed record MemorySyncResponse(
+    bool Enabled, int IntervalHours, int MaxAgeDays,
+    bool AdminDisabled, MemorySyncPrefs Global, MemorySyncPrefs User);
+
 /// <summary>Configuração de cadastro.</summary>
 /// <param name="EnableSignup">Cadastro aberto.</param>
 /// <param name="DefaultUserRole">Papel de novos usuários (pending/user/admin).</param>

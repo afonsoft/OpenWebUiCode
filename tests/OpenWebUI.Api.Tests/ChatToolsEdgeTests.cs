@@ -1,7 +1,10 @@
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.ChatTools.Tools;
+using OpenWebUI.Infrastructure.Data;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -792,7 +795,8 @@ public class ChatToolsEdgeTests
     [Test]
     public async Task FileRead_PaginacaoEErros()
     {
-        var tool = new FileReadBuiltinTool();
+        var tool = new FileReadBuiltinTool(new HistoryResourceService(new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite("Data Source=:memory:").Options)));
         var content = string.Join('\n', Enumerable.Range(1, 10).Select(i => $"linha {i}"));
         File.WriteAllText(Path.Join(_workspace, "f.txt"), content);
 
@@ -834,9 +838,73 @@ public class ChatToolsEdgeTests
     }
 
     [Test]
+    public async Task FileRead_HistoryUri_PaginacaoEErros()
+    {
+        var dbPath = Path.Join(_workspace, "hist.db");
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite($"Data Source={dbPath}").Options;
+        await using (var seed = new AppDbContext(options))
+        {
+            await seed.Database.EnsureCreatedAsync();
+            seed.Users.Add(new User
+            {
+                Id = "u1", Name = "U1", Email = "u1@e.local", Role = "user",
+            });
+            var chat = new Chat
+            {
+                Id = "c1", UserId = "u1", Title = "t",
+                ModelsJson = "[]", CreatedAt = 1, UpdatedAt = 1,
+            };
+            seed.Chats.Add(chat);
+            for (var i = 1; i <= 6; i++)
+            {
+                seed.ChatMessages.Add(new ChatMessage
+                {
+                    Id = $"m{i}", ChatId = "c1", Role = "user",
+                    Content = $"fala {i}", Position = i, Timestamp = i,
+                });
+            }
+            await seed.SaveChangesAsync();
+        }
+
+        var tool = new FileReadBuiltinTool(new HistoryResourceService(new AppDbContext(options)));
+
+        // Transcript inteiro paginado.
+        var r = await tool.ExecuteAsync(
+            Args("{\"path\":\"history://c1\",\"offset\":2,\"limit\":3}"), Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("fala 2"));
+            Assert.That(r.Text, Does.Contain("fala 4"));
+            Assert.That(r.Text, Does.Not.Contain("fala 5]"));
+            Assert.That(r.Text, Does.Contain("truncado"));
+        });
+
+        // Erros: chat inexistente e seletor inválido propagam a mensagem.
+        var missing = await tool.ExecuteAsync(
+            Args("{\"path\":\"history://nope\"}"), Ctx(), default);
+        Assert.That(missing.Text, Is.Not.EqualTo(""));
+
+        var grep = new FileGrepBuiltinTool(
+            new HistoryResourceService(new AppDbContext(options)));
+        var hits = await grep.ExecuteAsync(
+            Args("{\"pattern\":\"fala [13]\",\"path\":\"history://c1\"}"), Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(hits.Text, Does.Contain("fala 1"));
+            Assert.That(hits.Text, Does.Contain("fala 3"));
+            Assert.That(hits.Text, Does.Not.Contain("fala 2]"));
+        });
+        var noHits = await grep.ExecuteAsync(
+            Args("{\"pattern\":\"zzz\",\"path\":\"history://c1\"}"), Ctx(), default);
+        Assert.That(noHits.Text, Does.Contain("Sem matches"));
+    }
+
+    [Test]
     public async Task FileGrep_Matriz()
     {
-        var tool = new FileGrepBuiltinTool();
+        var tool = new FileGrepBuiltinTool(new HistoryResourceService(new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite("Data Source=:memory:").Options)));
         File.WriteAllText(Path.Join(_workspace, "a.cs"), "public class Foo {}\n// TODO x");
         File.WriteAllText(Path.Join(_workspace, "b.md"), "# título\nTODO aqui");
         File.WriteAllText(Path.Join(_workspace, "c.cs"), "sem match");

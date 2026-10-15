@@ -219,7 +219,21 @@ public static class ChatPipeline
         // 3.5a. Memórias duráveis do agente (SPEC-20261010-agent-memory):
         // globais + as do repo bound deste chat — as 12 mais recentes, cap
         // ~1800 chars, num bloco marcado. O agente grava/edita via
-        // builtin_memory_save; a busca completa é builtin_memory_search.
+        // builtin_memory_save/builtin_memory_learn; a busca completa é
+        // builtin_memory_search.
+        // SPEC-20261014-memory-pipeline RF-004: o mesmo kv em camadas do
+        // auto-sync controla a injeção — off é silenciador (não purge).
+        // Leitura em camadas manual: `u:` ausente (ou override removido —
+        // ValueJson="null" desserializa como null em bool?) herda o global;
+        // global unset assume o default true. `memAdminOff` mantém a
+        // negativa absoluta do admin mesmo com opt-in do usuário.
+        var memAdminOff = await config.GetAsync<bool?>(
+            "memsync.enabled", null, ct) == false;
+        var memEnabled = !memAdminOff
+            && (await config.GetAsync<bool?>(
+                    $"u:{user.Id}:memsync.enabled", null, ct)
+                ?? await config.GetAsync("memsync.enabled", true, ct));
+        if (memEnabled)
         {
             var memories = await db.AgentMemories.AsNoTracking()
                 .Where(m => m.UserId == user.Id
@@ -234,8 +248,12 @@ public static class ChatPipeline
                 var lines = memories.Select(m =>
                     $"- [{m.Scope}{(m.RepoSlug is not null ? $" {m.RepoSlug}" : "")}] "
                     + $"{m.Title}: {m.Content}");
-                var block = "<agent_memory>\n" + string.Join("\n", lines)
-                    + "\n</agent_memory>";
+                // SPEC-20261014-memory-pipeline RF-002: ressalva
+                // não-autoritativa — memória é heurística e pode estar
+                // desatualizada; o modelo deve validar antes de confiar.
+                var block = "<agent_memory>\n(memórias derivadas de sessões "
+                    + "anteriores — heurísticas, podem estar desatualizadas)\n"
+                    + string.Join("\n", lines) + "\n</agent_memory>";
                 systemParts.Add(block.Length <= 1800
                     ? block
                     : block[..1800] + "\n…\n</agent_memory>");
@@ -400,7 +418,13 @@ public static class ChatPipeline
         /// queued). Mensagens retornadas são injetadas no histórico e zeram o
         /// teto de rounds — o turno recomeça a contagem.
         /// </summary>
-        Func<bool, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnRoundBoundaryAsync = null);
+        Func<bool, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnRoundBoundaryAsync = null,
+        /// <summary>
+        /// Notas de contexto (SPEC-20261013-run-advisor RF-003): drenadas no
+        /// topo de cada round e anexadas ao histórico <em>sem</em> zerar o
+        /// teto — são avisos (ex.: conselho do advisor), não input do usuário.
+        /// </summary>
+        Func<CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnContextNotesAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -415,7 +439,8 @@ public static class ChatPipeline
         ProviderService providers,
         CancellationToken ct,
         ToolLoopCallbacks? callbacks = null,
-        BuiltinToolContext? builtinContext = null)
+        BuiltinToolContext? builtinContext = null,
+        string? userId = null)
     {
         const int maxRounds = 5;
         var messages = effective.Messages.ToList();
@@ -434,12 +459,23 @@ public static class ChatPipeline
                     continue;
                 }
             }
+            // Notas de contexto (advisor): entram sem zerar o teto — o
+            // conselho guia a rodada atual, não recomeça o turno.
+            if (callbacks?.OnContextNotesAsync is not null)
+            {
+                var notes = await callbacks.OnContextNotesAsync(ct);
+                if (notes.Count > 0)
+                {
+                    messages.AddRange(notes);
+                }
+            }
             if (callbacks?.OnPhaseAsync is not null)
             {
                 await callbacks.OnPhaseAsync("generating", null, ct);
             }
             var step = await CompleteRoundAsync(
-                providers, effective with { Messages = messages }, callbacks, ct);
+                providers, effective with { Messages = messages }, callbacks, ct,
+                userId ?? builtinContext?.UserId);
             if (step.ToolCalls.Count == 0)
             {
                 // Antes de ficar ociosa, promove mensagens queued (SPEC-20261010).
@@ -503,7 +539,8 @@ public static class ChatPipeline
 
         // Teto de iterações atingido: resposta final sem tools.
         var final = await CompleteRoundAsync(
-            providers, effective with { Messages = messages, Tools = null }, callbacks, ct);
+            providers, effective with { Messages = messages, Tools = null }, callbacks, ct,
+            userId ?? builtinContext?.UserId);
         return new ToolLoopOutcome(final.Content, toolMessages);
     }
 
@@ -517,7 +554,8 @@ public static class ChatPipeline
         ProviderService providers,
         ChatCompletionRequest request,
         ToolLoopCallbacks? callbacks,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? userId = null)
     {
         // Refiltra o spec anunciado por rodada (modo plan/build pode
         // mudar mid-run); Tools=null explícito (round final) respeitado.
@@ -526,13 +564,13 @@ public static class ChatPipeline
             request = request with { Tools = await announce(ct) };
         }
         var step = await providers.CompleteWithToolsStreamingAsync(
-            request, callbacks?.OnDeltaAsync, ct);
+            request, callbacks?.OnDeltaAsync, userId, ct);
         if (step is not null)
         {
             return step;
         }
 
-        var buffered = await providers.CompleteWithToolsAsync(request, ct);
+        var buffered = await providers.CompleteWithToolsAsync(request, userId, ct);
         if (buffered.Content.Length > 0 && callbacks?.OnDeltaAsync is not null)
         {
             await callbacks.OnDeltaAsync(buffered.Content, ct);
@@ -593,7 +631,7 @@ public static class ChatPipeline
                 var effective = await EnrichRequestAsync(
                     request with { Model = competitor, Stream = false },
                     user, db, config, rag, webSearch, repos, ct);
-                responses.Add(await providers.CompleteAsync(effective, ct));
+                responses.Add(await providers.CompleteAsync(effective, user.Id, ct));
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException)

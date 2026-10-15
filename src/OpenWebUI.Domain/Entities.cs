@@ -161,6 +161,22 @@ public class Chat
     /// </summary>
     public string Mode { get; set; } = "chat";
 
+    /// <summary>
+    /// Revisor de run (SPEC-20261013-run-advisor RF-005): quando ligado, um
+    /// modelo secundário (papel <c>advisor</c>) observa a run e injeta
+    /// conselhos curtos no feed/contexto. Default do admin em
+    /// <c>advisor.default</c>; gate global em <c>advisor.enabled</c>.
+    /// </summary>
+    public bool AdvisorEnabled { get; set; }
+
+    /// <summary>
+    /// Leaf do ramo ativo (SPEC-20261013-chat-branching RF-001): a árvore de
+    /// mensagens é caminhada <c>LeafMessageId→root</c> por
+    /// <see cref="ChatMessage.ParentId"/>; null = chat legado/linear — a
+    /// ponta implícita é a maior <see cref="ChatMessage.Position"/>.
+    /// </summary>
+    public string? LeafMessageId { get; set; }
+
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 
@@ -211,6 +227,14 @@ public class ChatMessage
     /// Id do tool call que originou esta mensagem (somente <c>tool</c>).
     /// </summary>
     public string? ToolCallId { get; set; }
+
+    /// <summary>
+    /// Mensagem anterior no ramo (SPEC-20261013-chat-branching RF-001):
+    /// os nós do chat formam uma árvore; null = raiz ou dado legado — no
+    /// walk do caminho, a aresta implícita legada é "mensagem com maior
+    /// <see cref="Position"/> anterior" (compatibilidade sem backfill).
+    /// </summary>
+    public string? ParentId { get; set; }
 }
 
 /// <summary>Status possíveis de uma run desacoplada de chat.</summary>
@@ -1352,6 +1376,13 @@ public class McpServer
 
     /// <summary>Último erro de conexão/discovery (legível, nunca exception).</summary>
     public string? LastError { get; set; }
+
+    /// <summary>
+    /// Dono do servidor (SPEC-20261014-config-layers RF-002): null = global
+    /// provisionado pelo admin; preenchido = servidor do usuário (credenciais
+    /// e tools isoladas por dono).
+    /// </summary>
+    public string? UserId { get; set; }
 
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
