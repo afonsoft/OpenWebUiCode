@@ -43,14 +43,32 @@ public sealed record ModelRolesResponse(
 /// <param name="Roles">Mapa papel → ids; null = limpa tudo.</param>
 public sealed record UpdateModelRolesRequest(Dictionary<string, List<string>>? Roles);
 
+/// <summary>
+/// Imagem resolvida de um anexo para envio multimodal ao provider
+/// (SPEC-20261013-chat-media-attachments RF-006) — serializada por provider:
+/// Ollama <c>images[]</c>, OpenAI <c>image_url</c> data-url, Anthropic bloco
+/// <c>image</c> base64.
+/// </summary>
+/// <param name="MimeType">MIME da imagem (image/*).</param>
+/// <param name="Base64Data">Bytes do arquivo em base64.</param>
+public sealed record ChatImageData(string MimeType, string Base64Data);
+
 /// <summary>Mensagem enviada ao endpoint de chat completion.</summary>
 /// <param name="Role">Papel: system, user ou assistant.</param>
 /// <param name="Content">Conteúdo textual.</param>
+/// <param name="FileIds">
+/// Ids dos anexos desta mensagem (interno — resolução preguiçosa de
+/// imagens na pipeline; vem de <c>ChatMessage.FilesJson</c> e não é
+/// serializado ao provider).
+/// </param>
+/// <param name="Images">Imagens resolvidas pela pipeline para envio multimodal.</param>
 public sealed record ChatCompletionMessage(
     string Role,
     string Content,
     string? ToolCallId = null,
-    string? ToolCallsJson = null);
+    string? ToolCallsJson = null,
+    IReadOnlyList<string>? FileIds = null,
+    IReadOnlyList<ChatImageData>? Images = null);
 
 /// <summary>Requisição de chat completion compatível com OpenAI.</summary>
 /// <param name="Model">Identificador do modelo.</param>

@@ -25,6 +25,19 @@
             @(Message.Role == "assistant" ? Message.Model ?? L["chat.assistant"] : L["chat.you"])
         </div>
 
+        @* SPEC-20261013-chat-media-attachments RF-004: anexos da mensagem
+           acima do texto — imagem/vídeo inline contido (clique abre o
+           lightbox), demais tipos seguem chip de texto. *@
+        @if (Message.Files is { Count: > 0 } files)
+        {
+            <div class="flex flex-wrap gap-1.5 mb-1 @(Message.Role == "user" ? "justify-end" : "")">
+                @foreach (var f in files)
+                {
+                    <AttachmentThumb FileId="@f.Id" Name="@f.Name" Type="@f.Type"
+                                     OnOpen="() => OpenPreviewAsync(f)" />
+                }
+            </div>
+        }
         <div @ref="_contentRef" class="@(Message.Role == "user"
                 ? "rounded-3xl bg-gray-100 dark:bg-gray-850 px-4 py-2.5 text-gray-800 dark:text-gray-100 text-[0.9375rem] whitespace-pre-wrap"
                 : "prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-100")">
@@ -125,6 +138,12 @@
     </div>
 </div>
 
+@if (_preview is { } preview)
+{
+    <MediaLightbox Src="@preview.Src" Name="@preview.Name" Type="@preview.Type"
+                   OnClose="() => _preview = null" />
+}
+
 @code {
     /// <summary>Mensagem a renderizar.</summary>
     [Parameter, EditorRequired] public ChatMessageModel Message { get; set; } = default!;
@@ -172,6 +191,17 @@
     private string? _htmlFor;
     private string _html = string.Empty;
     private string? _enhancedFor;
+    private (string Src, string? Name, string Type)? _preview;
+
+    /// <summary>Abre o lightbox do anexo (RF-005) — resolve o object URL primeiro.</summary>
+    private async Task OpenPreviewAsync(ChatMessageFileModel f)
+    {
+        var src = await JS.InvokeAsync<string?>("openwebui.media.resolve", f.Id);
+        if (src is not null)
+        {
+            _preview = (src, f.Name, f.Type);
+        }
+    }
 
     /// <summary>Conteúdo exibido: versão atual (_versionOffset=0) ou uma versão anterior.</summary>
     private string DisplayContent =>

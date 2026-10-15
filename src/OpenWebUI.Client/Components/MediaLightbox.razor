@@ -1,0 +1,66 @@
+@* SPEC-20261013-chat-media-attachments RF-005: overlay fullscreen de
+   mídia — imagem em object-contain, vídeo com controls+autoplay; fecha
+   por Esc, botão ✕ e clique no backdrop. Sem zoom/pan em v1. *@
+@inject LocalizationService L
+@inject IJSRuntime JS
+
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+     role="dialog" aria-modal="true" aria-label="@L["chat.close_preview"]"
+     @onclick="CloseAsync"
+     @onkeydown="OnKeyDownAsync"
+     tabindex="-1" @ref="_overlay">
+    <button type="button"
+            class="absolute top-4 right-4 size-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-xl cursor-pointer"
+            aria-label="@L["chat.close_preview"]"
+            @onclick="CloseAsync" @onclick:stopPropagation="true">×</button>
+
+    <div class="max-h-[92vh] max-w-[92vw]" @onclick:stopPropagation="true">
+        @if (Type == "video")
+        {
+            <video src="@Src" controls autoplay class="max-h-[92vh] max-w-[92vw] rounded-lg shadow-2xl"></video>
+        }
+        else
+        {
+            <img src="@Src" alt="@Name" class="max-h-[92vh] max-w-[92vw] object-contain rounded-lg shadow-2xl" />
+        }
+        @if (!string.IsNullOrEmpty(Name))
+        {
+            <div class="mt-2 text-center text-xs text-white/70 select-none">@Name</div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>Object URL resolvido da mídia.</summary>
+    [Parameter, EditorRequired] public string Src { get; set; } = string.Empty;
+
+    /// <summary>Nome do arquivo (legenda/alt).</summary>
+    [Parameter] public string? Name { get; set; }
+
+    /// <summary>Classe do anexo: <c>image</c> | <c>video</c>.</summary>
+    [Parameter] public string Type { get; set; } = "image";
+
+    /// <summary>Fechamento do overlay (Esc/✕/backdrop).</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private ElementReference _overlay;
+
+    /// <inheritdoc />
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await _overlay.FocusAsync();
+        }
+    }
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await CloseAsync();
+        }
+    }
+}

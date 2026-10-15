@@ -229,6 +229,13 @@ public class ChatMessage
     public string? ToolCallId { get; set; }
 
     /// <summary>
+    /// Anexos da mensagem (SPEC-20261013-chat-media-attachments RF-003):
+    /// JSON de <c>ChatMessageFileModel[]</c> — só metadados
+    /// (id/name/contentType/size/type), nunca path nem bytes.
+    /// </summary>
+    public string? FilesJson { get; set; }
+
+    /// <summary>
     /// Mensagem anterior no ramo (SPEC-20261013-chat-branching RF-001):
     /// os nós do chat formam uma árvore; null = raiz ou dado legado — no
     /// walk do caminho, a aresta implícita legada é "mensagem com maior

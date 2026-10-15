@@ -6,6 +6,30 @@ namespace OpenWebUI.Application.Contracts;
 /// <param name="Timestamp">Instante da versão (epoch seconds).</param>
 public sealed record ChatMessageVersionModel(string Content, string? Model, long Timestamp);
 
+/// <summary>
+/// Metadados de um anexo da mensagem (SPEC-20261013-chat-media-attachments
+/// RF-003): nunca contém path de storage nem bytes — só o que a UI precisa
+/// para renderizar a mídia via <c>GET /api/v1/files/{id}/content</c>.
+/// </summary>
+/// <param name="Id">Id do arquivo (<c>FileEntry</c>).</param>
+/// <param name="Name">Nome original do arquivo.</param>
+/// <param name="ContentType">MIME reportado no upload.</param>
+/// <param name="Size">Tamanho em bytes.</param>
+/// <param name="Type">Classe derivada do ContentType: <c>image</c> | <c>video</c> | <c>file</c>.</param>
+public sealed record ChatMessageFileModel(
+    string Id, string Name, string? ContentType, long Size, string Type)
+{
+    /// <summary>Deriva <paramref name="Type"/> do ContentType (image/* → image; video/* → video; resto → file).</summary>
+    public static ChatMessageFileModel Of(
+        string id, string name, string? contentType, long size) => new(
+        id, name, contentType, size,
+        contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
+            ? "image"
+            : contentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
+                ? "video"
+                : "file");
+}
+
 /// <summary>Uma mensagem dentro de um chat (formato OpenAI simplificado).</summary>
 /// <param name="Id">Identificador estável da mensagem.</param>
 /// <param name="Role">Papel: system, user ou assistant.</param>
@@ -13,6 +37,7 @@ public sealed record ChatMessageVersionModel(string Content, string? Model, long
 /// <param name="Model">Modelo que gerou a mensagem (somente assistant).</param>
 /// <param name="Timestamp">Instante de criação em UTC (epoch seconds).</param>
 /// <param name="Versions">Versões anteriores da mensagem (edições/regenerações).</param>
+/// <param name="Files">Anexos da mensagem (RF-003) — imagens/vídeos renderizam inline.</param>
 public sealed record ChatMessageModel(
     string Id,
     string Role,
@@ -22,6 +47,7 @@ public sealed record ChatMessageModel(
     IReadOnlyList<ChatMessageVersionModel>? Versions = null,
     string? ToolCallId = null,
     string? ToolCallsJson = null,
+    IReadOnlyList<ChatMessageFileModel>? Files = null,
     string? ParentId = null);
 
 /// <summary>Resumo de um chat para listagem na barra lateral.</summary>

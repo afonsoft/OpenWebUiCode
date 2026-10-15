@@ -437,7 +437,7 @@ public class ProviderService(
         var connections = await ApplyUserKeysAsync(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
-        var payload = BuildPayload(request, stream: false);
+        var payload = BuildPayload(request, stream: false, provider);
         JsonNode? json;
         bool openAi = provider == "openai";
 
@@ -537,7 +537,7 @@ public class ProviderService(
         var connections = await ApplyUserKeysAsync(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
-        var payload = BuildPayload(request, stream: true);
+        var payload = BuildPayload(request, stream: true, provider);
 
         try
         {
@@ -944,6 +944,35 @@ public class ProviderService(
                 messages.Add(new JsonObject
                 {
                     ["role"] = "assistant",
+                    ["content"] = blocks,
+                });
+                continue;
+            }
+
+            // SPEC-20261013-chat-media-attachments RF-006: imagens do anexo
+            // viram blocos {type:"image", source:{base64}} na Messages API.
+            if (m.Images is { Count: > 0 } images && m.Role == "user")
+            {
+                var blocks = new JsonArray
+                {
+                    new JsonObject { ["type"] = "text", ["text"] = m.Content },
+                };
+                foreach (var img in images)
+                {
+                    blocks.Add(new JsonObject
+                    {
+                        ["type"] = "image",
+                        ["source"] = new JsonObject
+                        {
+                            ["type"] = "base64",
+                            ["media_type"] = img.MimeType,
+                            ["data"] = img.Base64Data,
+                        },
+                    });
+                }
+                messages.Add(new JsonObject
+                {
+                    ["role"] = "user",
                     ["content"] = blocks,
                 });
                 continue;
@@ -1637,7 +1666,15 @@ public class ProviderService(
         return new ProviderCompletion(content.ToString(), calls, callsJson.ToJsonString());
     }
 
-    private JsonObject BuildPayload(ChatCompletionRequest request, bool stream)
+    /// <summary>
+    /// Monta o payload chat-completions. <paramref name="provider"/> decide o
+    /// formato das imagens (SPEC-20261013-chat-media-attachments RF-006):
+    /// Ollama recebe <c>images: [base64]</c> ao lado do content string;
+    /// OpenAI-compatible recebe <c>content</c> como array de partes
+    /// <c>text</c> + <c>image_url</c> (data-url). Mensagem sem imagens
+    /// mantém <c>content</c> string (compat).
+    /// </summary>
+    private JsonObject BuildPayload(ChatCompletionRequest request, bool stream, string provider)
     {
         var payload = new JsonObject
         {
@@ -1650,6 +1687,38 @@ public class ProviderService(
                         ["role"] = m.Role,
                         ["content"] = m.Content,
                     };
+                    if (m.Images is { Count: > 0 } images)
+                    {
+                        if (provider == ProviderTypes.Ollama)
+                        {
+                            node["images"] = new JsonArray(images
+                                .Select(img => (JsonNode)JsonValue.Create(img.Base64Data)!)
+                                .ToArray());
+                        }
+                        else
+                        {
+                            var parts = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["type"] = "text",
+                                    ["text"] = m.Content,
+                                },
+                            };
+                            foreach (var img in images)
+                            {
+                                parts.Add(new JsonObject
+                                {
+                                    ["type"] = "image_url",
+                                    ["image_url"] = new JsonObject
+                                    {
+                                        ["url"] = $"data:{img.MimeType};base64,{img.Base64Data}",
+                                    },
+                                });
+                            }
+                            node["content"] = parts;
+                        }
+                    }
                     if (m.ToolCallId is not null)
                     {
                         node["tool_call_id"] = m.ToolCallId;
@@ -1703,7 +1772,7 @@ public class ProviderService(
         var baseUrl = FirstBaseUrl(connections)
             ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
 
-        var payload = BuildPayload(request, stream: false);
+        var payload = BuildPayload(request, stream: false, ProviderTypes.Ollama);
         using var content = new StringContent(
             payload.ToJsonString(), Encoding.UTF8, "application/json");
         using var response = await httpClientFactory.CreateClient().PostAsync(
@@ -1719,7 +1788,7 @@ public class ProviderService(
     {
         var (index, baseUrl) = FirstOpenAiConnection(connections);
 
-        var payload = BuildPayload(request, stream: false);
+        var payload = BuildPayload(request, stream: false, ProviderTypes.OpenAi);
         using var httpRequest = new HttpRequestMessage(
             HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
         {
@@ -1748,7 +1817,7 @@ public class ProviderService(
         var baseUrl = FirstBaseUrl(connections)
             ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
 
-        var payload = BuildPayload(request, stream: true);
+        var payload = BuildPayload(request, stream: true, ProviderTypes.Ollama);
         // Ollama aceita "options" em vez de parâmetros de topo: move extras para lá.
         if (request.Params is { Count: > 0 })
         {
@@ -1840,7 +1909,7 @@ public class ProviderService(
     {
         var (index, baseUrl) = FirstOpenAiConnection(connections);
 
-        var payload = BuildPayload(request, stream: true);
+        var payload = BuildPayload(request, stream: true, ProviderTypes.OpenAi);
         using var httpRequest = new HttpRequestMessage(
             HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
         {

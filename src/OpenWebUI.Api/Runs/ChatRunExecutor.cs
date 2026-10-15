@@ -157,7 +157,7 @@ public sealed class ChatRunExecutor(
 
             var effective = await ChatPipeline.EnrichRequestAsync(
                 request, user, db, config, rag, webSearch, repos, ct, chatMode,
-                run.ChatId);
+                run.ChatId, logger);
 
             // Notebook persistente do chat (SPEC-20261013-agent-context-
             // management RF-003): injetado como system na entrada de toda

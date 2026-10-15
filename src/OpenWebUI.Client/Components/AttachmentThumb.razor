@@ -1,0 +1,134 @@
+@* SPEC-20261013-chat-media-attachments RF-001/RF-004: thumb reusável de
+   anexo — image/* e video/* resolvem o object URL autenticado
+   (openwebui.media) e mostram a mídia; demais tipos e falhas de fetch
+   caem no chip de texto. Compact=true no composer (quadradinho + ×);
+   false na bolha (tamanho contido, clique abre lightbox). *@
+@inject IJSRuntime JS
+@inject LocalizationService L
+
+@if (IsMedia && _src is not null)
+{
+    <div class="relative group/thumb @(Compact ? "" : "inline-block")">
+        @if (Type == "image")
+        {
+            <img src="@_src" alt="@Name"
+                 class="@(Compact
+                     ? "size-16 rounded-xl object-cover border border-gray-200 dark:border-gray-700"
+                     : "max-h-64 max-w-xs rounded-xl object-cover border border-gray-200 dark:border-gray-700 cursor-pointer")"
+                 role="@(Compact ? null : "button")"
+                 tabindex="@(Compact ? null : "0")"
+                 title="@L["chat.open_attachment"]"
+                 @onerror="OnMediaErrorAsync"
+                 @onclick="() => OnOpen.InvokeAsync()"
+                 @onkeydown="OnKeyDownAsync" />
+        }
+        else
+        {
+            <video src="@_src" muted="@Compact" controls="@(!Compact)" preload="metadata"
+                   class="@(Compact
+                       ? "size-16 rounded-xl object-cover border border-gray-200 dark:border-gray-700"
+                       : "max-h-64 max-w-xs rounded-xl border border-gray-200 dark:border-gray-700 cursor-pointer")"
+                   title="@(Compact ? Name : L["chat.open_attachment"])"
+                   @onclick="OpenIfInlineAsync"
+                   @onkeydown="OnKeyDownAsync"></video>
+        }
+        @if (Removable && OnRemove.HasDelegate)
+        {
+            <button type="button"
+                    class="absolute -top-1.5 -right-1.5 size-5 rounded-full bg-gray-700 dark:bg-gray-200 text-white dark:text-gray-800 text-xs leading-none shadow cursor-pointer"
+                    aria-label="@L["chat.attachment_remove"]"
+                    @onclick="() => OnRemove.InvokeAsync()"
+                    @onclick:stopPropagation="true">×</button>
+        }
+    </div>
+}
+else if (IsMedia && !_failed)
+{
+    @* Skeleton enquanto o object URL resolve. *@
+    <div class="@(Compact ? "size-16" : "h-32 w-48") rounded-xl bg-gray-100 dark:bg-gray-850 animate-pulse" aria-hidden="true"></div>
+}
+else
+{
+    <span class="flex items-center gap-1.5 rounded-xl bg-gray-100 dark:bg-gray-850 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300"
+          title="@(_failed ? L["chat.attachment_unavailable"] : Name)">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" /></svg>
+        @(Compact ? Name : $"{Name}{(_failed ? $" — {L["chat.attachment_unavailable"]}" : "")}")
+        @if (Removable && OnRemove.HasDelegate)
+        {
+            <button type="button" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer"
+                    aria-label="@L["chat.attachment_remove"]"
+                    @onclick="() => OnRemove.InvokeAsync()">×</button>
+        }
+    </span>
+}
+
+@code {
+    /// <summary>Id do arquivo (FileEntry) — resolve via <c>openwebui.media</c>.</summary>
+    [Parameter, EditorRequired] public string FileId { get; set; } = string.Empty;
+
+    /// <summary>Nome do arquivo (tooltip/alt/chip).</summary>
+    [Parameter] public string Name { get; set; } = string.Empty;
+
+    /// <summary>Classe do anexo: <c>image</c> | <c>video</c> | <c>file</c>.</summary>
+    [Parameter] public string Type { get; set; } = "file";
+
+    /// <summary>Modo compacto (composer) — quadradinho sem clique de lightbox.</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    /// <summary>Exibe botão × de remoção (composer).</summary>
+    [Parameter] public bool Removable { get; set; }
+
+    /// <summary>Clique na mídia (bolha) — abre o lightbox.</summary>
+    [Parameter] public EventCallback OnOpen { get; set; }
+
+    /// <summary>Remoção do anexo (composer).</summary>
+    [Parameter] public EventCallback OnRemove { get; set; }
+
+    /// <summary>URL resolvida — quando null, o componente resolve via JS (cache por fileId).</summary>
+    public string? Src => _src;
+
+    private bool IsMedia => Type is "image" or "video";
+    private string? _src;
+    private bool _failed;
+    private string? _resolvedFor;
+
+    /// <inheritdoc />
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!IsMedia || _resolvedFor == FileId)
+        {
+            return;
+        }
+        _resolvedFor = FileId;
+        _src = null;
+        _failed = false;
+        try
+        {
+            _src = await JS.InvokeAsync<string?>("openwebui.media.resolve", FileId);
+        }
+        catch (JSException)
+        {
+            _src = null;
+        }
+        _failed = _src is null;
+    }
+
+    private async Task OnMediaErrorAsync()
+    {
+        // Bytes corrompidos/parciais → revoga o URL e cai no chip.
+        _src = null;
+        _failed = true;
+        await JS.InvokeVoidAsync("openwebui.media.revoke", FileId);
+    }
+
+    private Task OpenIfInlineAsync() =>
+        Compact ? Task.CompletedTask : OnOpen.InvokeAsync();
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs e)
+    {
+        if (!Compact && (e.Key == "Enter" || e.Key == " "))
+        {
+            await OnOpen.InvokeAsync();
+        }
+    }
+}

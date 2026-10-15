@@ -404,14 +404,16 @@
         <div class="mx-auto w-full max-w-4xl px-4 pb-3">
             @if (_attachedFiles.Count > 0)
             {
+                @* SPEC-20261013-chat-media-attachments RF-001: image/* e
+                   video/* mostram miniatura (object URL autenticado);
+                   demais tipos seguem chip de texto. *@
                 <div class="mb-1 mx-1 flex flex-wrap gap-1.5">
                     @foreach (var file in _attachedFiles)
                     {
-                        <span class="flex items-center gap-1.5 rounded-xl bg-gray-100 dark:bg-gray-850 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" /></svg>
-                            @file.Filename
-                            <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer" @onclick="() => _attachedFiles.Remove(file)">×</button>
-                        </span>
+                        <AttachmentThumb FileId="@file.Id" Name="@file.Filename"
+                                         Type="@AttachmentType(file.ContentType)"
+                                         Compact="true" Removable="true"
+                                         OnRemove="() => RemoveAttachmentAsync(file)" />
                     }
                 </div>
             }
@@ -1717,6 +1719,27 @@
             : RepoSlashCommands.Merge(_prompts, _repoSkills, _repoCommands, prefix);
     }
 
+    /// <summary>Classe do anexo pelo MIME (espelha ChatMessageFileModel.Of).</summary>
+    private static string AttachmentType(string? contentType) =>
+        contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
+            ? "image"
+            : contentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
+                ? "video"
+                : "file";
+
+    /// <summary>Remove anexo do composer e solta o object URL se ninguém mais usa.</summary>
+    private async Task RemoveAttachmentAsync(FileResponse file)
+    {
+        _attachedFiles.Remove(file);
+        // O URL pode estar em uso por uma bolha de mensagem enviada — só
+        // revoga quando nenhuma mensagem local referencia o arquivo.
+        var stillUsed = _messages.Any(m => m.Files?.Any(f => f.Id == file.Id) == true);
+        if (!stillUsed)
+        {
+            await JS.InvokeVoidAsync("openwebui.media.revoke", file.Id);
+        }
+    }
+
     private async Task TriggerFilePicker()
     {
         await JS.InvokeVoidAsync("openwebui.openFilePicker", _fileInput?.Element);
@@ -1814,7 +1837,14 @@
             content += (content.Length > 0 ? "\n\n" : "") + "📄 " + string.Join(", ", mentionPaths);
         }
 
-        _messages.Add(new ChatMessageModel(Guid.NewGuid().ToString(), "user", content, null, now));
+        // RF-003/RF-004: a bolha local já mostra os anexos; o servidor
+        // persiste FilesJson no enqueue (os ids viajam em FileIds).
+        var attached = _attachedFiles
+            .Select(f => ChatMessageFileModel.Of(f.Id, f.Filename, f.ContentType, f.Size))
+            .ToList();
+        _messages.Add(new ChatMessageModel(
+            Guid.NewGuid().ToString(), "user", content, null, now,
+            Files: attached.Count > 0 ? attached : null));
         _attachedFiles.Clear();
         _mentionPaths.Clear();
 

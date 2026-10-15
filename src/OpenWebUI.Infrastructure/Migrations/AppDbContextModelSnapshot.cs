@@ -610,6 +610,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("FilesJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Model")
                         .HasColumnType("TEXT");
 

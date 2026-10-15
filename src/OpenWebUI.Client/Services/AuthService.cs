@@ -1,10 +1,13 @@
 using System.Net.Http.Json;
+using Microsoft.JSInterop;
 using OpenWebUI.Application.Contracts;
 
 namespace OpenWebUI.Client.Services;
 
 /// <summary>Gerencia autenticação do usuário: login, cadastro, sessão e token JWT.</summary>
-public class AuthService(HttpClient http, BrowserStorage storage, LocalizationService l10n)
+public class AuthService(
+    HttpClient http, BrowserStorage storage, LocalizationService l10n,
+    IJSRuntime? js = null)
 {
     private const string TokenKey = "webui.token";
     private const string UserKey = "webui.user";
@@ -91,6 +94,19 @@ public class AuthService(HttpClient http, BrowserStorage storage, LocalizationSe
         CurrentUser = null;
         await RemoveStorageSafeAsync(TokenKey);
         await RemoveStorageSafeAsync(UserKey);
+        // SPEC-20261013-chat-media-attachments RF-002: solta os object URLs
+        // de mídia cacheados — são autorizados pelo token encerrado.
+        try
+        {
+            if (js is not null)
+            {
+                await js.InvokeVoidAsync("openwebui.media.revokeAll");
+            }
+        }
+        catch (Exception)
+        {
+            // Interop indisponível no shutdown — o cache morre com a página.
+        }
         Changed?.Invoke();
     }
 
