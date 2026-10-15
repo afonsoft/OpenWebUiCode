@@ -321,17 +321,183 @@ public class ChatBranchingTests
         Assert.That(tracked.LeafMessageId, Is.Not.EqualTo(foreignLeaf));
     }
 
+    // ---------------- Bordas de cobertura ----------------
+
+    [Test]
+    public void WalkPath_ParentDangling_CaiNaArestaLegada()
+    {
+        // ParentId apontando pra id inexistente — o walk usa a aresta
+        // legada por Position em vez de quebrar.
+        var chat = SeedLinearChat("c1", 4);
+        var solto = Msg("c1", 4, parentId: "id-fantasma");
+        chat.Messages.Add(solto);
+        chat.LeafMessageId = solto.Id;
+
+        var path = BranchService.WalkPath(chat);
+
+        Assert.That(path.Last().Id, Is.EqualTo(solto.Id));
+        Assert.That(path, Has.Count.EqualTo(5),
+            "pai dangling não interrompe — desce pela cadeia legada");
+    }
+
+    [Test]
+    public void ListLeaves_ChatVazio_Vazio()
+    {
+        var chat = new Chat
+        {
+            Id = "vazio", UserId = "u1", ModelsJson = "[]", CreatedAt = 1, UpdatedAt = 1,
+        };
+
+        Assert.That(BranchService.ListLeaves(chat), Is.Empty);
+        Assert.That(BranchService.WalkPath(chat), Is.Empty);
+        Assert.That(BranchService.ResolveLeaf(chat), Is.Null);
+    }
+
+    [Test]
+    public async Task ListBranches_ResumoPersistido_ApareceNoLeaf()
+    {
+        var chat = SeedLinearChat("c1", 5);
+        var alt = Msg("c1", 5, "user", chat.Messages[2].Id);
+        chat.Messages.Add(alt);
+        chat.LeafMessageId = alt.Id;
+        await using var db = NewDb();
+        db.Chats.Add(chat);
+        await db.SaveChangesAsync();
+        var leafAntigo = chat.Messages[^2].Id; // ponta legada (pos 4)
+        await new ConfigService(db, TestCache.Create())
+            .SetAsync(BranchService.SummaryKey("c1", leafAntigo), "resumo salvo", default);
+
+        var tracked = await db.Chats.Include(c => c.Messages)
+            .FirstAsync(c => c.Id == "c1");
+        var branches = await NewService(db).ListBranchesAsync(tracked, default);
+
+        var antigo = branches.Single(b => b.LeafId == leafAntigo);
+        Assert.That(antigo.Summary, Is.EqualTo("resumo salvo"));
+        Assert.That(branches.Single(b => b.LeafId == alt.Id).Summary, Is.Null);
+    }
+
+    [Test]
+    public async Task ActivateLeaf_ReativarMesmoLeaf_SemResumo()
+    {
+        // Alvo já é o leaf ativo — nada abandonado, summarizer não roda.
+        var summarizer = new StubSummarizer { Result = new ContextSummary("x", [], [], []) };
+        var chat = SeedLinearChat("c1", 6);
+        chat.LeafMessageId = chat.Messages[^1].Id;
+        await using var db = NewDb();
+        db.Chats.Add(chat);
+        await db.SaveChangesAsync();
+
+        var tracked = await db.Chats.Include(c => c.Messages)
+            .FirstAsync(c => c.Id == "c1");
+        var ok = await NewService(db, summarizer)
+            .ActivateLeafAsync(tracked, chat.LeafMessageId, "fake:1", default);
+
+        Assert.That(ok, Is.True);
+        Assert.That(summarizer.Calls, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task ActivateLeaf_ResumoVazio_NaoPersiste()
+    {
+        var summarizer = new StubSummarizer { Result = new ContextSummary("   ", [], [], []) };
+        var chat = SeedLinearChat("c1", 6);
+        chat.LeafMessageId = chat.Messages[^1].Id;
+        var alt = Msg("c1", 6, "user", chat.Messages[2].Id);
+        chat.Messages.Add(alt);
+        await using var db = NewDb();
+        db.Chats.Add(chat);
+        await db.SaveChangesAsync();
+
+        var tracked = await db.Chats.Include(c => c.Messages)
+            .FirstAsync(c => c.Id == "c1");
+        var oldLeaf = chat.LeafMessageId;
+        var service = NewService(db, summarizer);
+        await service.ActivateLeafAsync(tracked, alt.Id, "fake:1", default);
+
+        Assert.That(summarizer.Calls, Is.EqualTo(1));
+        Assert.That(await service.GetBranchSummaryAsync("c1", oldLeaf!, default), Is.Null);
+    }
+
+    [Test]
+    public async Task ActivateLeaf_ResumoLongo_TruncaTranscript()
+    {
+        // Transcript >12k chars é cortado antes de ir ao summarizer.
+        var captor = new StubSummarizer { Result = new ContextSummary("ok", [], [], []) };
+        var chat = new Chat
+        {
+            Id = "c1", UserId = "u1", ModelsJson = "[]", CreatedAt = 1, UpdatedAt = 1,
+        };
+        for (var i = 0; i < 6; i++)
+        {
+            var m = Msg("c1", i);
+            m.Content = new string('x', 4_000);
+            chat.Messages.Add(m);
+        }
+        chat.LeafMessageId = chat.Messages[^1].Id;
+        var alt = Msg("c1", 6, "user", chat.Messages[2].Id);
+        chat.Messages.Add(alt);
+        await using var db = NewDb();
+        db.Chats.Add(chat);
+        await db.SaveChangesAsync();
+
+        var tracked = await db.Chats.Include(c => c.Messages)
+            .FirstAsync(c => c.Id == "c1");
+        await NewService(db, captor).ActivateLeafAsync(tracked, alt.Id, "fake:1", default);
+
+        Assert.That(captor.LastTranscript!.Length,
+            Is.LessThanOrEqualTo(12_000));
+    }
+
+    // ---------------- history:// sobre o caminho ativo ----------------
+
+    [Test]
+    public async Task History_CaminhoAtivo_NaoMostraRamoIrmao()
+    {
+        var chat = SeedLinearChat("c1", 6);
+        var alt = Msg("c1", 6, "user", chat.Messages[2].Id);
+        chat.Messages.Add(alt);
+        chat.LeafMessageId = alt.Id;
+        await using var db = NewDb();
+        db.Chats.Add(chat);
+        await db.SaveChangesAsync();
+
+        var svc = new HistoryResourceService(db);
+        var (text, err) = await svc.ResolveAsync(
+            "history://c1", "u1", null, default);
+
+        Assert.That(err, Is.Null);
+        Assert.That(text, Does.Contain("conteúdo 6"));
+        Assert.That(text, Does.Not.Contain("conteúdo 5"),
+            "transcript vazou mensagem do ramo inativo");
+
+        var (tail, err2) = await svc.ResolveAsync(
+            "history://c1/tail:1", "u1", null, default);
+        Assert.That(err2, Is.Null);
+        Assert.That(tail, Does.Contain("conteúdo 6"));
+
+        // msg: segue global — recupera mensagem do ramo inativo.
+        var idFora = chat.Messages[4].Id;
+        var (msg, err3) = await svc.ResolveAsync(
+            $"history://c1/msg:{idFora}", "u1", null, default);
+        Assert.That(err3, Is.Null);
+        Assert.That(msg, Does.Contain("conteúdo 4"));
+    }
+
     /// <summary>Summarizer fake: captura chamadas e pode falhar/retornar texto.</summary>
     private sealed class StubSummarizer : IContextSummarizer
     {
         public ContextSummary? Result { get; set; }
         public bool Throws { get; set; }
         public int Calls { get; private set; }
+        public string? LastTranscript { get; private set; }
+        public string? LastModel { get; private set; }
 
         public Task<ContextSummary?> SummarizeAsync(
             string model, string transcript, string? userId, CancellationToken ct)
         {
             Calls++;
+            LastModel = model;
+            LastTranscript = transcript;
             if (Throws)
             {
                 throw new InvalidOperationException("summarizer quebrou");
@@ -613,5 +779,109 @@ public class ChatBranchingE2ETests
         var branches = await _client.GetFromJsonAsync<List<BranchLeafResponse>>(
             $"/api/v1/chats/{chat.Id}/branches");
         Assert.That(branches!.Count, Is.EqualTo(2), "upsert apagou o ramo irmão");
+    }
+
+    [Test]
+    public async Task Clone_PreservaRamosComIdsRemapeados()
+    {
+        // Clone: a árvore vai toda — ParentId/leaf remapeados pros ids novos.
+        var auth = await SignUpAsync("BrH", "brh@branch.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatLinearAsync(3);
+        var pivot = chat.Messages[1];
+        await EnfileirarAsync(chat.Id, "alternativa", pivot.Id);
+
+        var cloneResp = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/clone", null);
+        Assert.That(cloneResp.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await cloneResp.Content.ReadAsStringAsync());
+        var clone = (await cloneResp.Content.ReadFromJsonAsync<ChatResponse>())!;
+
+        Assert.That(clone.BranchCount, Is.EqualTo(2));
+        Assert.That(clone.Messages.All(m => m.Id != null
+            && !chat.Messages.Any(o => o.Id == m.Id)),
+            Is.True, "ids do clone devem ser novos");
+        // O caminho ativo do clone espelha o do original: msg0 → pivot → alt.
+        Assert.That(clone.Messages, Has.Count.EqualTo(3));
+        Assert.That(clone.Messages[^1].ParentId, Is.EqualTo(clone.Messages[1].Id));
+        Assert.That(clone.ActiveLeafId, Is.EqualTo(clone.Messages[^1].Id));
+    }
+
+    [Test]
+    public async Task Delete_Pivot_RemoveSubarvoreERecuaLeaf()
+    {
+        // Deletar o pivot remove ele + o descendente explícito e a
+        // continuação legada — sobra só a raiz.
+        var auth = await SignUpAsync("BrI", "bri@branch.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatLinearAsync(3);
+        var pivot = chat.Messages[1];
+        await EnfileirarAsync(chat.Id, "alternativa", pivot.Id);
+
+        var del = await _client.DeleteAsync(
+            $"/api/v1/chats/{chat.Id}/messages/{pivot.Id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = (await del.Content.ReadFromJsonAsync<ChatResponse>())!;
+
+        Assert.That(body.Messages, Has.Count.EqualTo(1));
+        Assert.That(body.BranchCount, Is.EqualTo(1));
+        Assert.That(body.ActiveLeafId, Is.EqualTo(chat.Messages[0].Id));
+    }
+
+    [Test]
+    public async Task UpdateChat_ClienteLegado_PreservaParentIdArmazenado()
+    {
+        // Cliente antigo não conhece ParentId: envia o campo nulo — o
+        // merge preserva o ParentId que já estava gravado (RF-compat).
+        var auth = await SignUpAsync("BrJ", "brj@branch.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatLinearAsync(2);
+        var pivot = chat.Messages[0];
+        await EnfileirarAsync(chat.Id, "alternativa", pivot.Id);
+        var ativo = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        var alt = ativo!.Messages[^1];
+        Assert.That(alt.ParentId, Is.EqualTo(pivot.Id));
+
+        // Reenvia o mesmo caminho mas com ParentId nulo (cliente legado).
+        var legado = ativo.Messages
+            .Select(m => m with { ParentId = null }).ToList();
+        var upsert = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}",
+            new ChatUpsertRequest("chat", ["llama3"], legado));
+        Assert.That(upsert.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var depois = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        Assert.That(depois!.Messages[^1].ParentId, Is.EqualTo(pivot.Id),
+            "ParentId armazenado sumiu num upsert de cliente legado");
+    }
+
+    [Test]
+    public async Task Enqueue_SemConteudo_RegeneraSobreCaminho()
+    {
+        // Regenerar (content=null) exige o caminho terminando em user.
+        // Ativa o pivot assistant → 400; ativa o pivot user → Accepted.
+        var auth = await SignUpAsync("BrK", "brk@branch.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatLinearAsync(3);
+        var assistant = chat.Messages[1];
+        var user = chat.Messages[2];
+
+        await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/branches/activate",
+            new ActivateBranchRequest(assistant.Id));
+        var ruim = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/messages",
+            new EnqueueChatRunRequest(null, "llama3"));
+        Assert.That(ruim.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/branches/activate",
+            new ActivateBranchRequest(user.Id));
+        var bom = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/messages",
+            new EnqueueChatRunRequest(null, "llama3"));
+        Assert.That(bom.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
     }
 }
