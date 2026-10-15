@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261014-context-maintenance-v2` |
 | Ticket | #365 |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | `SPEC-20261014-cli-opencode-analysis` (RF-001/RF-002) |
 
 ## 1. User Story

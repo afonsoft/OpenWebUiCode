@@ -922,6 +922,8 @@
   "chat.src_prompt": "prompt",
   "chat.src_skill": "skill",
   "chat.src_command": "cmd",
+  "chat.src_builtin": "builtin",
+  "chat.cmd_plan": "Modo plan — analiza el requisito y genera la SPEC SDD",
   "sidebar.children": "Subtareas",
   "sidebar.delegated": "Chat delegado",
   "sidebar.delegated_badge": "delegado",

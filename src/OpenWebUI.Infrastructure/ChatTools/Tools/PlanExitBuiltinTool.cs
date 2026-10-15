@@ -23,8 +23,11 @@ public sealed class PlanExitBuiltinTool : IBuiltinChatTool
 
     /// <inheritdoc />
     public string Description =>
-        "Plan-mode only: call when the plan is ready — saves it to "
-        + ".openwebui/plans/ and asks the user to approve execution.";
+        "Plan-mode only: call when the SPEC SDD plan is ready — saves it to "
+        + ".openwebui/plans/ and asks the user to approve execution. The plan "
+        + "must follow the SPEC SDD structure (Metadata, User Story, Scope, "
+        + "Requirements RF-###, Acceptance Criteria, Task Plan, DoD, Open "
+        + "Questions) — a plain checklist is refused.";
 
     /// <inheritdoc />
     public string ParametersJson => """
@@ -60,6 +63,14 @@ public sealed class PlanExitBuiltinTool : IBuiltinChatTool
                 "Erro: informe o plano completo em `plan`.", Refused: true));
         }
 
+        // SPEC-20261015-plan-spec-sdd RF-002: o plano precisa ser uma SPEC
+        // SDD — recusa com a lista do que falta para o modelo reenviar.
+        var invalid = PlanSpecTemplate.Validate(plan);
+        if (invalid is not null)
+        {
+            return Task.FromResult(new BuiltinToolResult(invalid, Refused: true));
+        }
+
         var title = args.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String
             ? t.GetString() : null;
         var fileName = $"{SanitizeName(context.RunId ?? "plan")}.md";
@@ -72,8 +83,12 @@ public sealed class PlanExitBuiltinTool : IBuiltinChatTool
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        var doc = $"# {title ?? "Plano"}\n\n{plan}\n\n---\n"
-            + $"_Run `{context.RunId}` — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC_\n";
+        // A SPEC já começa com o heading `# SPEC-...` — o título wrapper só
+        // entra quando o plano não abre com heading próprio.
+        var doc = (plan.TrimStart().StartsWith("# ", StringComparison.Ordinal)
+                ? plan
+                : $"# {title ?? "Plano"}\n\n{plan}")
+            + $"\n\n---\n_Run `{context.RunId}` — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC_\n";
         File.WriteAllText(full, doc);
         return Task.FromResult(new BuiltinToolResult(
             $"Plano gravado em `{relative}`.",

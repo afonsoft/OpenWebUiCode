@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-model-roles` |
 | Ticket | [#350](https://github.com/afonsoft/open-webui/issues/350) — PR [#356](https://github.com/afonsoft/open-webui/pull/356) |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 

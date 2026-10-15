@@ -50,6 +50,29 @@ public class RepoSlashCommandsTests
         Assert.That(items, Has.Count.EqualTo(5));
     }
 
+    /// <summary>SPEC-20261015-plan-spec-sdd RF-003: builtins entram na
+    /// frente do merge e casam por prefixo como as demais fontes.</summary>
+    [Test]
+    public void Merge_BuiltinPlan_PrimeiroEFiltraPorPrefixo()
+    {
+        var items = RepoSlashCommands.Merge(
+            [Prompt("plugin")], [], [], "pl",
+            builtins: RepoSlashCommands.Builtins);
+        Assert.Multiple(() =>
+        {
+            Assert.That(items[0].Command, Is.EqualTo("plan"));
+            Assert.That(items[0].Source, Is.EqualTo("builtin"));
+            Assert.That(items[0].Title, Is.EqualTo("chat.cmd_plan"),
+                "título do builtin é a chave i18n resolvida no render");
+            Assert.That(items.Select(i => i.Command),
+                Is.EqualTo(new[] { "plan", "plugin" }));
+        });
+
+        var foraDoPrefixo = RepoSlashCommands.Merge(
+            [], [], [], "fix", builtins: RepoSlashCommands.Builtins);
+        Assert.That(foraDoPrefixo, Is.Empty);
+    }
+
     [Test]
     public void Interpolate_Arguments()
     {

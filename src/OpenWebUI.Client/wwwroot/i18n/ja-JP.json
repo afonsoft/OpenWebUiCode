@@ -922,6 +922,8 @@
   "chat.src_prompt": "prompt",
   "chat.src_skill": "skill",
   "chat.src_command": "cmd",
+  "chat.src_builtin": "builtin",
+  "chat.cmd_plan": "プランモード — 要件を分析してSPEC SDDを生成",
   "sidebar.children": "サブタスク",
   "sidebar.delegated": "チャット",
   "sidebar.delegated_badge": "",

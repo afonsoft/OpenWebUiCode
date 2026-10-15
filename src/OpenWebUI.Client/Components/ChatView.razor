@@ -453,7 +453,7 @@
                                         role="option"
                                         @onclick="() => SelectPrompt(p)">
                                     <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@L[$"chat.src_{p.Source}"]</span>
-                                    <span class="truncate">/@p.Command @p.Title</span>
+                                    <span class="truncate">/@p.Command @(p.Source == "builtin" ? L[p.Title] : p.Title)</span>
                                 </button>
                             }
                         </div>
@@ -1442,6 +1442,18 @@
     private async Task SelectPrompt(SlashItem item)
     {
         _promptSuggestions = [];
+        // SPEC-20261015-plan-spec-sdd RF-003: builtin /plan liga o modo plan
+        // e o texto já digitado depois do comando permanece como requisito.
+        if (item.Source == "builtin")
+        {
+            var builtinArgs = RepoSlashCommands.ArgsAfter(_input);
+            if (item.Command == "plan")
+            {
+                await SetAgentModeAsync("plan");
+            }
+            _input = builtinArgs;
+            return;
+        }
         if (item.Source == "prompt")
         {
             var prompt = _prompts.FirstOrDefault(
@@ -1718,7 +1730,8 @@
             : null;
         _promptSuggestions = prefix is null
             ? []
-            : RepoSlashCommands.Merge(_prompts, _repoSkills, _repoCommands, prefix);
+            : RepoSlashCommands.Merge(_prompts, _repoSkills, _repoCommands, prefix,
+                builtins: RepoSlashCommands.Builtins);
     }
 
     /// <summary>Classe do anexo pelo MIME (espelha ChatMessageFileModel.Of).</summary>
@@ -1814,6 +1827,21 @@
         var text = _input.Trim();
         var fileIds = _attachedFiles.Select(f => f.Id).ToList();
         var mentionPaths = _mentionPaths.Count > 0 ? _mentionPaths.ToList() : null;
+        // SPEC-20261015-plan-spec-sdd RF-003: "/plan <requisito>" enviado sem
+        // passar pela sugestão também liga o modo plan — o restante vira a msg.
+        if (text.StartsWith("/plan", StringComparison.OrdinalIgnoreCase)
+            && (text.Length == "/plan".Length || char.IsWhiteSpace(text["/plan".Length])))
+        {
+            await SetAgentModeAsync("plan");
+            text = RepoSlashCommands.ArgsAfter(text);
+            if (text.Length == 0 && fileIds.Count == 0 && mentionPaths is null)
+            {
+                // Só troca de modo — esvazia o composer e encerra sem enviar.
+                _input = string.Empty;
+                _promptSuggestions = [];
+                return;
+            }
+        }
         if ((text.Length == 0 && fileIds.Count == 0 && mentionPaths is null) || string.IsNullOrEmpty(_model))
         {
             return;
