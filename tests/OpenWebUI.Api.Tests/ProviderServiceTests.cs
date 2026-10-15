@@ -31,6 +31,7 @@ public class ProviderServiceTests
     private TimeSpan? _clientTimeout;
     private readonly ConcurrentQueue<RecordedRequest> _requests = new();
     private readonly ConcurrentDictionary<string, (int Status, string Body, int DelayMs)> _routes = new();
+    private readonly ConcurrentDictionary<string, ConcurrentQueue<(int Status, string Body, int DelayMs)>> _routeQueues = new();
 
     private sealed record RecordedRequest(
         string Path, string? Authorization, string Body,
@@ -66,6 +67,7 @@ public class ProviderServiceTests
     public void SetUp()
     {
         _routes.Clear();
+        _routeQueues.Clear();
         _requests.Clear();
         _clientTimeout = null;
     }
@@ -185,8 +187,20 @@ public class ProviderServiceTests
                 ctx.Request.Headers["x-goog-api-key"],
                 ctx.Request.Headers["anthropic-version"]));
 
-            var (status, payload, delayMs) =
-                _routes.TryGetValue(path, out var route) ? route : (404, "{}", 0);
+            // Rotas enfileiradas respondem em sequência (uma por request) —
+            // usadas por testes de multi-round; sem fila, cai na rota fixa.
+            (int status, string payload, int delayMs) routeValue;
+            if (_routeQueues.TryGetValue(path, out var queue)
+                && queue.TryDequeue(out var next))
+            {
+                routeValue = next;
+            }
+            else
+            {
+                routeValue = _routes.TryGetValue(path, out var route)
+                    ? route : (404, "{}", 0);
+            }
+            var (status, payload, delayMs) = routeValue;
             if (delayMs > 0)
             {
                 await Task.Delay(delayMs, ct);
@@ -1807,6 +1821,178 @@ public class ProviderServiceTests
             // Um request por rodada — o turno reiniciado conta de novo.
             Assert.That(
                 _requests.Count(r => r.Path == "/chat/completions"), Is.EqualTo(2));
+        });
+    }
+
+    // ---- Tolerância do stream OpenAI + diagnóstico de round vazio ----
+
+    [Test]
+    public async Task StreamOpenAiTools_ArgumentsObjeto_SerializaEmVezDeQuebrar()
+    {
+        // Alguns gateways mandam arguments já montado como objeto JSON em
+        // vez de string fragmentada — o buffer deve serializar, não falhar.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"minha_tool\",\"arguments\":{\"path\":\"/tmp\",\"n\":2}}}]}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"finish_reason\":\"tool_calls\",\"delta\":{}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.ToolCalls, Has.Count.EqualTo(1));
+            Assert.That(result.ToolCalls[0].Name, Is.EqualTo("minha_tool"));
+            Assert.That(result.ToolCalls[0].ArgumentsJson,
+                Does.Contain("\"path\":\"/tmp\""));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_ToolCallsForaDeArray_IgnoraSemExcecao()
+    {
+        // tool_calls como objeto solto (fora do shape OpenAI) é contado no
+        // diagnóstico em vez de quebrar o round com exceção.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":{\"id\":\"c1\",\"function\":{\"name\":\"x\"}}}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result!.ToolCalls, Is.Empty);
+            Assert.That(result.Content, Is.EqualTo("ok"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_RoundSoReasoning_RetornaVazio()
+    {
+        // Só reasoning + [DONE]: o completion sai com Content/ToolCalls
+        // vazios — é o sinal que dispara o auto-continue no loop.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"hmm\"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null,
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reasoning, Is.EqualTo(new[] { "hmm" }));
+            Assert.That(result!.Content, Is.Empty);
+            Assert.That(result.ToolCalls, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task CompleteOpenAi_AssistantComDsmlVazado_SanitizaPayload()
+    {
+        // Histórico persistido com markup DSML cru (resposta pré-filtro):
+        // o payload upstream não pode devolver o markup — induziria o
+        // modelo a re-emitir o formato em vez de tool_calls estruturado.
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var req = new ChatCompletionRequest("m1",
+            [
+                new ChatCompletionMessage("user", "leia o readme"),
+                new ChatCompletionMessage("assistant",
+                    "vou ler\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"f\">\n"
+                    + "</｜DSML｜invoke>\n</｜DSML｜tool_calls>"),
+                new ChatCompletionMessage("user", "continue"),
+            ], Stream: false, Connection: "openai");
+
+        var content = await NewService().CompleteAsync(req, "u1");
+
+        var body = JsonNode.Parse(
+            _requests.Last(r => r.Path == "/chat/completions").Body)!;
+        var assistantContent = body["messages"]!.AsArray()
+            .First(m => m!["role"]!.GetValue<string>() == "assistant")!
+            ["content"]!.GetValue<string>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(content, Is.EqualTo("ok"));
+            Assert.That(assistantContent, Does.Not.Contain("DSML"));
+            Assert.That(assistantContent, Does.Contain("vou ler"));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_RoundVazio_AutoContinuaEResponde()
+    {
+        // Rodada 1: só reasoning, sem content nem calls — o loop injeta o
+        // nudge de continuação e a rodada 2 responde. Sem o fix a run
+        // encerrava "completed" com 0 chars (stall pós-pensamento).
+        _routeQueues["/chat/completions"] = new ConcurrentQueue<(int, string, int)>(
+        [
+            (200,
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"pensando\"}}]}\n\n" +
+                "data: {\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"delta\":{}}]}\n\n" +
+                "data: [DONE]\n\n", 0),
+            (200,
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"resposta\"}}]}\n\n" +
+                "data: [DONE]\n\n", 0),
+        ]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default,
+            new ChatPipeline.ToolLoopCallbacks(
+                OnDeltaAsync: (d, _) => { deltas.Add(d); return Task.CompletedTask; }),
+            userId: "u1", log: NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome, Is.Not.Null);
+            Assert.That(outcome!.FinalContent, Is.EqualTo("resposta"));
+            Assert.That(deltas, Is.EqualTo(new[] { "resposta" }));
+            Assert.That(
+                _requests.Count(r => r.Path == "/chat/completions"), Is.EqualTo(2));
+            // O nudge foi injetado como mensagem user no 2º request.
+            var second = JsonNode.Parse(
+                _requests.Where(r => r.Path == "/chat/completions").Last().Body)!;
+            var lastMsg = second["messages"]!.AsArray().Last()!;
+            Assert.That(lastMsg["role"]!.GetValue<string>(), Is.EqualTo("user"));
+            Assert.That(lastMsg["content"]!.GetValue<string>(),
+                Does.Contain("veio vazia"));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_RoundsVaziosSeguidos_EncerraAposLimite()
+    {
+        // Modelo insiste em rounds vazios: 3 nudges e encerra — o
+        // auto-continue não vira loop infinito.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"...\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, userId: "u1", log: NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome, Is.Not.Null);
+            Assert.That(outcome!.FinalContent, Is.Empty);
+            // r0..r3: 4 requests — 3 nudges injetados, 4º vazio encerra.
+            Assert.That(
+                _requests.Count(r => r.Path == "/chat/completions"), Is.EqualTo(4));
         });
     }
 }

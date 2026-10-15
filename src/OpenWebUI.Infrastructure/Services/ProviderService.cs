@@ -698,6 +698,21 @@ public class ProviderService(
         // vazam na UI.
         var dsmlContent = new DsmlToolCallFilter();
         var dsmlReasoning = new DsmlToolCallFilter();
+
+        // Diagnóstico do round: contadores estruturais alimentam o warning de
+        // "round vazio" (a run que termina sem resposta nem tool call) e o
+        // trace opcional por chunk (OPENWEBUI_LOG_UPSTREAM_STREAM=1).
+        var traceUpstream = string.Equals(
+            Environment.GetEnvironmentVariable("OPENWEBUI_LOG_UPSTREAM_STREAM"),
+            "1", StringComparison.Ordinal);
+        var chunks = 0;
+        var toolCallParts = 0;
+        var nonArrayToolCalls = 0;
+        var reasoningChars = 0;
+        var sawDsmlMarker = false;
+        string? finishReason = null;
+        string? upstreamModel = null;
+
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             if (!line.StartsWith("data:", StringComparison.Ordinal))
@@ -720,9 +735,25 @@ public class ProviderService(
             {
                 continue;
             }
+            chunks++;
+            sawDsmlMarker |= data.Contains("DSML", StringComparison.Ordinal);
+            // Gateways como o OmniRoute roteiam o alias pedido para backends
+            // diferentes por request — registrar o modelo real que respondeu
+            // explica diferenças de comportamento (tool calling, tetos).
+            // Chunks de heartbeat chegam com model="keepalive": ignorar.
+            if (upstreamModel is null
+                && node?["model"]?.GetValue<string>() is { } m
+                && m != "keepalive")
+            {
+                upstreamModel = m;
+            }
 
             var choice = node?["choices"] is JsonArray { Count: > 0 } arr ? arr[0] : null;
             var delta = choice?["delta"];
+            if (choice?["finish_reason"]?.GetValue<string>() is { Length: > 0 } fr)
+            {
+                finishReason = fr;
+            }
             var piece = delta?["content"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(piece))
             {
@@ -740,20 +771,30 @@ public class ProviderService(
             // Reasoning/thinking de gateways OpenAI-compatíveis (deepseek,
             // openrouter, OmniRoute): reasoning_content | reasoning |
             // reasoning_details[].text — canal separado do content.
-            if (onReasoning is not null
-                && ExtractOpenAiReasoning(delta) is { Length: > 0 } thought)
+            if (ExtractOpenAiReasoning(delta) is { Length: > 0 } thought)
             {
-                var clean = dsmlReasoning.Feed(thought);
-                if (clean.Length > 0)
+                reasoningChars += thought.Length;
+                if (onReasoning is not null)
                 {
-                    await onReasoning(clean, ct);
+                    var clean = dsmlReasoning.Feed(thought);
+                    if (clean.Length > 0)
+                    {
+                        await onReasoning(clean, ct);
+                    }
                 }
             }
 
             if (delta?["tool_calls"] is not JsonArray callParts)
             {
+                // Gateway emitiu tool_calls fora do shape OpenAI (objeto
+                // solto, string etc.) — contar em vez de engolir em silêncio.
+                if (delta?["tool_calls"] is not null)
+                {
+                    nonArrayToolCalls++;
+                }
                 continue;
             }
+            toolCallParts += callParts.Count;
 
             foreach (var part in callParts)
             {
@@ -769,10 +810,17 @@ public class ProviderService(
                 {
                     buffer.Name = name;
                 }
-                var args = part?["function"]?["arguments"]?.GetValue<string>();
-                if (args is not null)
+                // arguments chega fragmentado como string; alguns gateways
+                // mandam o objeto já montado — serializa em vez de quebrar.
+                var argsNode = part?["function"]?["arguments"];
+                if (argsNode is JsonValue argsValue
+                    && argsValue.TryGetValue<string>(out var args))
                 {
                     buffer.Args.Append(args);
+                }
+                else if (argsNode is not null)
+                {
+                    buffer.Args.Append(argsNode.ToJsonString());
                 }
             }
         }
@@ -811,6 +859,37 @@ public class ProviderService(
                 string.Join(", ", dsmlContent.Calls.Concat(dsmlReasoning.Calls)
                     .Select(c => c.Name).Distinct()));
         }
+
+        // Observabilidade do round: o trace por-chunk é opt-in; o "round
+        // vazio" (sem content e sem calls — a run morre em silêncio na UI)
+        // sempre loga, junto dos sinais que explicam a causa.
+        if (traceUpstream)
+        {
+            logger.LogInformation(
+                "Upstream stream: model={UpstreamModel}, {Chunks} chunks, "
+                + "{ToolCallParts} tool_call part(s), "
+                + "{NonArrayToolCalls} tool_calls fora de array, finish_reason={FinishReason}, "
+                + "dsmlMarker={DsmlSeen}, content={ContentChars} chars, reasoning={ReasoningChars} chars.",
+                upstreamModel ?? "(none)", chunks, toolCallParts, nonArrayToolCalls,
+                finishReason ?? "(none)", sawDsmlMarker, content.Length, reasoningChars);
+        }
+        if (calls.Count == 0 && content.Length == 0)
+        {
+            logger.LogWarning(
+                "Round streamed encerrou vazio: model={UpstreamModel}, {Chunks} chunks, "
+                + "reasoning={ReasoningChars} chars, "
+                + "finish_reason={FinishReason}, dsmlMarker={DsmlSeen}, "
+                + "tool_call_parts={ToolCallParts}, tool_calls_fora_de_array={NonArray}.",
+                upstreamModel ?? "(none)", chunks, reasoningChars,
+                finishReason ?? "(none)", sawDsmlMarker, toolCallParts, nonArrayToolCalls);
+        }
+        else if (nonArrayToolCalls > 0)
+        {
+            logger.LogWarning(
+                "{Count} chunk(s) com tool_calls fora do array OpenAI ignorados no stream.",
+                nonArrayToolCalls);
+        }
+
         var callsJson = SerializeToolCallsEcho(calls);
         return new ProviderCompletion(content.ToString(), calls, callsJson);
     }
@@ -2037,10 +2116,17 @@ public class ProviderService(
             ["messages"] = new JsonArray(request.Messages
                 .Select(m =>
                 {
+                    // Histórico pode conter markup DSML vazado de respostas
+                    // antigas (pré-filtro): devolvê-lo ao modelo induz a
+                    // re-emissão do formato — sanitiza o texto do assistant.
+                    var content = m.Role == "assistant"
+                        && m.Content.Contains("<｜DSML｜", StringComparison.Ordinal)
+                        ? DsmlToolCallFilter.Extract(m.Content).Text
+                        : m.Content;
                     var node = new JsonObject
                     {
                         ["role"] = m.Role,
-                        ["content"] = m.Content,
+                        ["content"] = content,
                     };
                     if (m.Images is { Count: > 0 } images)
                     {
@@ -2057,7 +2143,7 @@ public class ProviderService(
                                 new JsonObject
                                 {
                                     ["type"] = "text",
-                                    ["text"] = m.Content,
+                                    ["text"] = content,
                                 },
                             };
                             foreach (var img in images)
