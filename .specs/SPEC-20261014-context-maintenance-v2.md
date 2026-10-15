@@ -9,8 +9,8 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261014-context-maintenance-v2` |
-| Ticket | TBD |
-| Status | `Draft` |
+| Ticket | #365 |
+| Status | `Approved` |
 | Parent | `SPEC-20261014-cli-opencode-analysis` (RF-001/RF-002) |
 
 ## 1. User Story
