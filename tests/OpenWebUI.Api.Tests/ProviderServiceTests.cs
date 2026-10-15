@@ -1338,4 +1338,115 @@ public class ProviderServiceTests
             Assert.That(result.Reasoning, Is.EqualTo("pensei "));
         });
     }
+
+    // ---- DeepSeek DSML: tool calls entregues como markup no texto ----
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlNoReasoning_ViraToolCallSemVazar()
+    {
+        // DeepSeek via gateway compatível emite <｜DSML｜tool_calls> dentro
+        // de reasoning_content em vez de delta.tool_calls — o filtro
+        // converte em ProviderToolCall e o markup não vaza na UI.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"preciso ler \"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"<｜DSML｜tool_calls><｜DSML｜invoke name=\\\"file_read\\\"><｜DSML｜parameter name=\\\"path\\\" string=\\\"true\\\">a.md</｜DSML｜parameter><｜DSML｜parameter name=\\\"offset\\\" string=\\\"false\\\">26</｜DSML｜parameter></｜DSML｜invoke>\"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"</｜DSML｜tool_calls>\"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; },
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            var call = result!.ToolCalls.Single();
+            Assert.That(call.Name, Is.EqualTo("file_read"));
+            var args = JsonNode.Parse(call.ArgumentsJson)!;
+            Assert.That(args["path"]!.GetValue<string>(), Is.EqualTo("a.md"));
+            Assert.That(args["offset"]!.GetValue<int>(), Is.EqualTo(26));
+            Assert.That(string.Concat(reasoning), Is.EqualTo("preciso ler "));
+            Assert.That(deltas, Is.EqualTo(new[] { "ok" }));
+            // Echo no formato tool_calls p/ o modelo ver na próxima rodada.
+            Assert.That(result.ToolCallsJson, Does.Contain("\"file_read\""));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlQuebradoEntreChunks_AindaParseia()
+    {
+        // O marcador pode chegar partido no meio ("<｜DSML｜tool_" + "calls>")
+        // — o filtro segura o sufixo suspeito até o bloco fechar.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"vou ler <｜DSML｜tool_\"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"calls><｜DSML｜invoke name=\\\"search\\\"><｜DSML｜parameter name=\\\"q\\\" string=\\\"true\\\">x</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls> pronto\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; }, null);
+
+        Assert.Multiple(() =>
+        {
+            var call = result!.ToolCalls.Single();
+            Assert.That(call.Name, Is.EqualTo("search"));
+            Assert.That(JsonNode.Parse(call.ArgumentsJson)!["q"]!.GetValue<string>(),
+                Is.EqualTo("x"));
+            Assert.That(result.Content, Is.EqualTo("vou ler  pronto"));
+            Assert.That(string.Concat(deltas), Does.Not.Contain("DSML"));
+        });
+    }
+
+    [Test]
+    public async Task CompleteOpenAi_DsmlNoContentBuffered_ViraToolCall()
+    {
+        // Resposta buffered (endpoint ignorou stream): markup no content
+        // também vira call e sai do texto persistido.
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"content\":\"feito<｜DSML｜tool_calls>" +
+            "<｜DSML｜invoke name=\\\"git_commit\\\"></｜DSML｜invoke>" +
+            "</｜DSML｜tool_calls>\"}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsAsync(
+            Req("m1", connection: "openai"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Content, Is.EqualTo("feito"));
+            var call = result.ToolCalls.Single();
+            Assert.That(call.Name, Is.EqualTo("git_commit"));
+            Assert.That(result.ToolCallsJson, Does.Contain("\"git_commit\""));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAi_SemTools_DsmlNaoVazaNaUi()
+    {
+        // Caminho sem tools: markup nunca vira call (nada a executar), mas
+        // também não pode poluir o texto do usuário nem o reasoning.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lendo <｜DSML｜tool_calls><｜DSML｜invoke name=\\\"x\\\"></｜DSML｜invoke></｜DSML｜tool_calls>\"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"pens<｜DSML｜tool_calls><｜DSML｜invoke name=\\\"y\\\"></｜DSML｜invoke></｜DSML｜tool_calls>ou\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var lines = await DrainAsync(NewService().StreamCompletionAsync(
+            Req("m1", connection: "openai")));
+
+        Assert.Multiple(() =>
+        {
+            var all = string.Concat(lines);
+            Assert.That(all, Does.Not.Contain("DSML"));
+            Assert.That(all, Does.Contain("lendo "));
+            Assert.That(all, Does.Contain("pensou"));
+            Assert.That(lines[^1], Is.EqualTo("data: [DONE]"));
+        });
+    }
 }

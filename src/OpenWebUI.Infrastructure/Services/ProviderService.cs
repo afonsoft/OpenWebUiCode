@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Logging;
 using OpenWebUI.Application.Contracts;
@@ -520,11 +521,21 @@ public class ProviderService(
     {
         var firstChoice = json?["choices"] is JsonArray { Count: > 0 } arr ? arr[0] : null;
         var message = openAi ? firstChoice?["message"] : json?["message"];
-        var content = message?["content"]?.GetValue<string>() ?? string.Empty;
-        var reasoning = openAi
+        // DSML (DeepSeek): markup de tool_calls pode vir dentro do texto —
+        // extrai as calls e limpa content/reasoning antes de devolver.
+        var (content, dsmlCalls) = DsmlToolCallFilter.Extract(
+            message?["content"]?.GetValue<string>() ?? string.Empty);
+        var rawReasoning = openAi
             ? ExtractOpenAiReasoning(message)
             : message?["thinking"] is JsonValue th && th.TryGetValue<string>(out var t)
                 ? t : null;
+        string? reasoning = null;
+        if (rawReasoning is not null)
+        {
+            var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
+            reasoning = clean.Length > 0 ? clean : null;
+            dsmlCalls.AddRange(moreCalls);
+        }
         var calls = new List<ProviderToolCall>();
         var callsNode = message?["tool_calls"]?.AsArray();
         var callsJson = callsNode?.ToJsonString() ?? "[]";
@@ -543,6 +554,18 @@ public class ProviderService(
                     call!["id"]?.GetValue<string>() ?? Guid.NewGuid().ToString("N"),
                     name, argsJson));
             }
+        }
+        if (dsmlCalls.Count > 0)
+        {
+            calls.AddRange(dsmlCalls);
+            // Echo no formato OpenAI: o callsJson precisa incluir as calls
+            // sintetizadas para o modelo ver na próxima rodada.
+            callsJson = JsonSerializer.Serialize(calls.Select(c => new
+            {
+                id = c.Id,
+                type = "function",
+                function = new { name = c.Name, arguments = c.ArgumentsJson },
+            }));
         }
 
         return new ProviderCompletion(content, calls, callsJson, reasoning);
@@ -653,6 +676,11 @@ public class ProviderService(
 
         var content = new StringBuilder();
         var callBuffers = new SortedDictionary<int, OpenAiToolCallBuffer>();
+        // DSML (DeepSeek): tool calls podem chegar como markup no texto de
+        // content/reasoning — filtrados aqui viram ProviderToolCall e não
+        // vazam na UI.
+        var dsmlContent = new DsmlToolCallFilter();
+        var dsmlReasoning = new DsmlToolCallFilter();
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             if (!line.StartsWith("data:", StringComparison.Ordinal))
@@ -681,10 +709,14 @@ public class ProviderService(
             var piece = delta?["content"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(piece))
             {
-                content.Append(piece);
-                if (onDelta is not null)
+                var visible = dsmlContent.Feed(piece);
+                if (visible.Length > 0)
                 {
-                    await onDelta(piece, ct);
+                    content.Append(visible);
+                    if (onDelta is not null)
+                    {
+                        await onDelta(visible, ct);
+                    }
                 }
             }
 
@@ -694,7 +726,11 @@ public class ProviderService(
             if (onReasoning is not null
                 && ExtractOpenAiReasoning(delta) is { Length: > 0 } thought)
             {
-                await onReasoning(thought, ct);
+                var clean = dsmlReasoning.Feed(thought);
+                if (clean.Length > 0)
+                {
+                    await onReasoning(clean, ct);
+                }
             }
 
             if (delta?["tool_calls"] is not JsonArray callParts)
@@ -724,6 +760,23 @@ public class ProviderService(
             }
         }
 
+        // [DONE]: solta o que o filtro DSML segurou (texto normal segue;
+        // markup truncado já entregou os invokes completos que couberam).
+        var tailContent = dsmlContent.Flush();
+        if (tailContent.Length > 0)
+        {
+            content.Append(tailContent);
+            if (onDelta is not null)
+            {
+                await onDelta(tailContent, ct);
+            }
+        }
+        var tailReasoning = dsmlReasoning.Flush();
+        if (tailReasoning.Length > 0 && onReasoning is not null)
+        {
+            await onReasoning(tailReasoning, ct);
+        }
+
         var calls = callBuffers.Values
             .Where(b => b.Name is not null)
             .Select(b => new ProviderToolCall(
@@ -731,6 +784,8 @@ public class ProviderService(
                 b.Name!,
                 b.Args.Length > 0 ? b.Args.ToString() : "{}"))
             .ToList();
+        calls.AddRange(dsmlContent.Calls);
+        calls.AddRange(dsmlReasoning.Calls);
         var callsJson = JsonSerializer.Serialize(calls.Select(c => new
         {
             id = c.Id,
@@ -746,6 +801,161 @@ public class ProviderService(
         public string? Id { get; set; }
         public string? Name { get; set; }
         public StringBuilder Args { get; } = new();
+    }
+
+    /// <summary>
+    /// Filtro streaming-safe de tool calls no markup DSML do DeepSeek
+    /// (<c>&lt;｜DSML｜tool_calls&gt;…&lt;/｜DSML｜tool_calls&gt;</c>):
+    /// alguns gateways OpenAI-compatíveis entregam as chamadas como texto
+    /// dentro de <c>reasoning_content</c>/<c>content</c> em vez do campo
+    /// <c>tool_calls</c> — sem o filtro o markup vaza na UI e a tool nunca
+    /// executa (a run "trava"). O filtro segura apenas o que pode ser o
+    /// início do marcador, converte invokes completos em
+    /// <see cref="ProviderToolCall"/> e some com o markup.
+    /// </summary>
+    private sealed class DsmlToolCallFilter
+    {
+        private const string OpenMarker = "<｜DSML｜tool_calls>";
+        private const string CloseMarker = "</｜DSML｜tool_calls>";
+        /// <summary>Bloco aberto além desse tamanho é desistido (modelo quebrado).</summary>
+        private const int MaxBlockLength = 256 * 1024;
+
+        private static readonly Regex InvokePattern = new(
+            "<｜DSML｜invoke name=\"(?<name>[^\"]+)\"\\s*>(?<body>.*?)</｜DSML｜invoke>",
+            RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex ParameterPattern = new(
+            "<｜DSML｜parameter name=\"(?<name>[^\"]+)\"(?<attrs>[^>]*)>(?<value>.*?)</｜DSML｜parameter>",
+            RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex StringAttrPattern = new(
+            "string=\"(?<v>true|false)\"", RegexOptions.Compiled);
+
+        private readonly StringBuilder _pending = new();
+        private readonly List<ProviderToolCall> _calls = [];
+        private int _syntheticId;
+
+        /// <summary>Calls já extraídas de blocos completos.</summary>
+        public IReadOnlyList<ProviderToolCall> Calls => _calls;
+
+        /// <summary>Alimenta um pedaço; devolve só o que é seguro exibir.</summary>
+        public string Feed(string piece)
+        {
+            _pending.Append(piece);
+            return Drain(flush: false);
+        }
+
+        /// <summary>Fim do stream: devolve o resto seguro; bloco truncado
+        /// ainda entrega os invokes completos que couberem.</summary>
+        public string Flush() => Drain(flush: true);
+
+        /// <summary>Uso one-shot (resposta buffered): limpa o texto e coleta
+        /// as calls de uma vez.</summary>
+        public static (string Text, List<ProviderToolCall> Calls) Extract(string text)
+        {
+            var filter = new DsmlToolCallFilter();
+            var visible = filter.Feed(text) + filter.Flush();
+            return (visible, [.. filter.Calls]);
+        }
+
+        private string Drain(bool flush)
+        {
+            var text = _pending.ToString();
+            _pending.Clear();
+            var output = new StringBuilder();
+            var pos = 0;
+            while (pos < text.Length)
+            {
+                var openIdx = text.IndexOf(OpenMarker, pos, StringComparison.Ordinal);
+                if (openIdx < 0)
+                {
+                    break;
+                }
+                output.Append(text, pos, openIdx - pos);
+                var closeIdx = text.IndexOf(
+                    CloseMarker, openIdx + OpenMarker.Length, StringComparison.Ordinal);
+                if (closeIdx >= 0)
+                {
+                    ParseInvokes(text.AsSpan(openIdx, closeIdx + CloseMarker.Length - openIdx));
+                    pos = closeIdx + CloseMarker.Length;
+                    continue;
+                }
+                var tail = text.Length - openIdx;
+                if (!flush && tail <= MaxBlockLength)
+                {
+                    _pending.Append(text, openIdx, tail);
+                    return output.ToString();
+                }
+                ParseInvokes(text.AsSpan(openIdx));
+                pos = text.Length;
+            }
+            // Sem bloco aberto restante: emite tudo menos o sufixo que pode
+            // ser o começo de um novo marcador.
+            var hold = flush ? 0 : HeldSuffixLength(text, pos);
+            var safe = text.Length - pos - hold;
+            if (safe > 0)
+            {
+                output.Append(text, pos, safe);
+            }
+            if (hold > 0)
+            {
+                _pending.Append(text, text.Length - hold, hold);
+            }
+            return output.ToString();
+        }
+
+        /// <summary>Tamanho do sufixo de <paramref name="text"/> (depois de
+        /// <paramref name="pos"/>) que é prefixo do marcador de abertura —
+        /// não pode ser emitido ainda porque pode virar um bloco DSML.</summary>
+        private static int HeldSuffixLength(string text, int pos)
+        {
+            var max = Math.Min(OpenMarker.Length - 1, text.Length - pos);
+            for (var len = max; len > 0; len--)
+            {
+                if (text.AsSpan(text.Length - len, len)
+                    .SequenceEqual(OpenMarker.AsSpan(0, len)))
+                {
+                    return len;
+                }
+            }
+            return 0;
+        }
+
+        /// <summary>Converte os invokes de um bloco (completo ou truncado)
+        /// em calls normalizadas; fragmentos incompletos são descartados.</summary>
+        private void ParseInvokes(ReadOnlySpan<char> block)
+        {
+            foreach (Match invoke in InvokePattern.Matches(block.ToString()))
+            {
+                var args = new JsonObject();
+                foreach (Match param in ParameterPattern.Matches(
+                    invoke.Groups["body"].Value))
+                {
+                    var name = param.Groups["name"].Value;
+                    var raw = param.Groups["value"].Value;
+                    var isString = StringAttrPattern.Match(
+                        param.Groups["attrs"].Value) is not { Success: true } attr
+                        || attr.Groups["v"].Value != "false";
+                    if (isString)
+                    {
+                        args[name] = raw;
+                        continue;
+                    }
+                    JsonNode? parsed = null;
+                    try
+                    {
+                        parsed = JsonNode.Parse(raw.Trim());
+                    }
+                    catch (JsonException)
+                    {
+                        // valor não-JSON com string="false" — vai como texto
+                    }
+                    args[name] = parsed ?? JsonValue.Create(raw);
+                }
+                _calls.Add(new ProviderToolCall(
+                    $"dsml_{_syntheticId++}",
+                    invoke.Groups["name"].Value,
+                    args.ToJsonString(JsonOptions)));
+            }
+        }
     }
 
     /// <summary>
@@ -2059,6 +2269,10 @@ public class ProviderService(
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
+        // DSML (DeepSeek): markup de tool_calls vazando no texto também é
+        // filtrado no caminho sem tools — nunca executa, mas não polui a UI.
+        var dsmlContent = new DsmlToolCallFilter();
+        var dsmlReasoning = new DsmlToolCallFilter();
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -2066,12 +2280,100 @@ public class ProviderService(
                 continue;
             }
 
-            yield return line;
             if (line == "data: [DONE]")
             {
+                var tail = EmitDsmlTail(dsmlContent, dsmlReasoning);
+                if (tail is not null)
+                {
+                    yield return tail;
+                }
+                yield return line;
                 yield break;
             }
+
+            yield return FilterOpenAiDeltaLine(line, dsmlContent, dsmlReasoning);
         }
+
+        // Stream encerrado sem [DONE]: solta o que o filtro segurou.
+        var orphanTail = EmitDsmlTail(dsmlContent, dsmlReasoning);
+        if (orphanTail is not null)
+        {
+            yield return orphanTail;
+        }
+    }
+
+    /// <summary>Passa content/reasoning de um chunk OpenAI pelo filtro DSML
+    /// e reemite a linha reescrita; linhas não-delta passam intactas.</summary>
+    private static string FilterOpenAiDeltaLine(
+        string line, DsmlToolCallFilter content, DsmlToolCallFilter reasoning)
+    {
+        if (!line.StartsWith("data:", StringComparison.Ordinal))
+        {
+            return line;
+        }
+        JsonNode? node;
+        try
+        {
+            node = JsonNode.Parse(line["data:".Length..]);
+        }
+        catch (JsonException)
+        {
+            return line;
+        }
+        if (node?["choices"] is not JsonArray { Count: > 0 } choices
+            || choices[0] is not JsonObject first
+            || first["delta"] is not JsonObject delta)
+        {
+            return line;
+        }
+        if (delta["content"] is JsonValue c
+            && c.TryGetValue<string>(out var s) && s.Length > 0)
+        {
+            delta["content"] = content.Feed(s);
+        }
+        // reasoning_details[] é array de segmentos — bloco DSML dividido
+        // entre elementos é raro; cobre os campos escalares (deepseek/omniroute).
+        foreach (var field in (string[])["reasoning_content", "reasoning"])
+        {
+            if (delta[field] is JsonValue r
+                && r.TryGetValue<string>(out var rs) && rs.Length > 0)
+            {
+                delta[field] = reasoning.Feed(rs);
+            }
+        }
+        return $"data: {node!.ToJsonString(JsonOptions)}";
+    }
+
+    /// <summary>Delta sintético final com o que o filtro segurou no fim do
+    /// stream (texto solto emite; markup truncado vira calls descartadas no
+    /// caminho sem tools).</summary>
+    private static string? EmitDsmlTail(
+        DsmlToolCallFilter content, DsmlToolCallFilter reasoning)
+    {
+        var tail = content.Flush();
+        var tailReasoning = reasoning.Flush();
+        if (tail.Length == 0 && tailReasoning.Length == 0)
+        {
+            return null;
+        }
+        var delta = new JsonObject();
+        if (tail.Length > 0)
+        {
+            delta["content"] = tail;
+        }
+        if (tailReasoning.Length > 0)
+        {
+            delta["reasoning"] = tailReasoning;
+        }
+        var chunk = new JsonObject
+        {
+            ["choices"] = new JsonArray(new JsonObject
+            {
+                ["index"] = 0,
+                ["delta"] = delta,
+            }),
+        };
+        return $"data: {chunk.ToJsonString(JsonOptions)}";
     }
 
     private static (int Index, string BaseUrl) FirstOpenAiConnection(ConnectionsConfig connections)
