@@ -16,22 +16,37 @@ pipeline.
 
 > **Versão em português:** [README.pt-BR.md](README.pt-BR.md)
 
-## Open WebUI (original) vs opencode vs this fork
+## Open WebUI (original) vs opencode vs oh-my-pi vs this fork
 
-| Capability | Open WebUI (FastAPI/Svelte) | opencode | **This fork (.NET/Blazor)** |
-|---|---|---|---|
-| Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ any LLM via gateway | ✅ parity + OmniRoute-friendly |
-| Repo/workspace bound to a session | ❌ single workspace | ✅ per-project | ✅ **per-chat git worktree** — strict scope, global never leaks |
-| Sub-agents / parallel sessions | ❌ | ✅ task tool + sessions | ✅ `delegate_task` async, depth ≤3, worktree-isolated |
-| Review before merge | ❌ | ✅ orchestrator reviews diffs | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
-| Steer/queue mid-run input | ❌ | ✅ durable steer/queue | ✅ `POST …/runs/{id}/steer` (steer + queue modes) |
-| Durable agent memory | ❌ | ✅ memory tools + auto-sync | ✅ `memory_save`/`memory_search` + 6h auto-distill |
-| Routines / reminders | ❌ | ✅ routine tool + scheduler | ✅ `routine`/`reminder` tools + `once` schedules |
-| Task list tool | ❌ | ✅ todo write | ✅ `todo_write` with stable ids |
-| Context compaction | ❌ | ✅ auto-summarize | ✅ LLM summary + cutoff kv |
-| Parent/child run tree UI | ❌ | ✅ session tree | ✅ sidebar tree + "delegado" badge + parent markers |
-| Parallel runs console | ❌ | ✅ | ✅ sidebar "Active runs" (`GET /chats/runs`) |
-| Runs survive browser close | partial | ✅ | ✅ server-side runs + `Last-Event-ID` resume |
+The agent roadmap was benchmarked against [opencode](https://github.com/sst/opencode)
+(incl. the [alltomatos/opencode](https://github.com/alltomatos/opencode) fork —
+see [the full analysis](docs/analise-fork-alltomatos-opencode.md)) and
+[oh-my-pi](https://github.com/can1357/oh-my-pi), whose session-tree, advisor and
+context-tooling design shaped several features below.
+
+| Capability | Open WebUI (FastAPI/Svelte) | opencode | oh-my-pi | **This fork (.NET/Blazor)** |
+|---|---|---|---|---|
+| Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ any LLM via gateway | ✅ multi-provider (TUI) | ✅ parity + OmniRoute-friendly |
+| Repo/workspace bound to a session | ❌ single workspace | ✅ per-project | ✅ per-project | ✅ **per-chat git worktree** — strict scope, global never leaks |
+| Sub-agents / parallel sessions | ❌ | ✅ task tool + sessions | ✅ declarative `.md` task agents | ✅ `delegate_task` async (procedural **and** `*.agent.md` definitions), depth ≤3, worktree-isolated |
+| Review before merge | ❌ | ✅ orchestrator reviews diffs | ❌ | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
+| Steer/queue mid-run input | ❌ | ✅ durable steer/queue | ❌ | ✅ `POST …/runs/{id}/steer` (steer + queue modes) |
+| Durable agent memory | ❌ | ✅ memory tools + auto-sync | ✅ memory tools | ✅ `memory_save`/`memory_search` + 6h auto-distill into `auto:*` memories |
+| Routines / reminders | ❌ | ✅ routine tool + scheduler | ❌ | ✅ `routine`/`reminder` tools + `once` schedules |
+| Task list tool | ❌ | ✅ todo write | ✅ | ✅ `todo_write` with stable ids |
+| Context compaction | ❌ | ✅ auto-summarize | ✅ auto + on-demand, pruning | ✅ LLM summary + mechanical pruning + structured digest + `history://` recovery |
+| Parent/child run tree UI | ❌ | ✅ session tree | ✅ session tree | ✅ sidebar tree + "delegado" badge + parent markers |
+| Parallel runs console | ❌ | ✅ | ✅ | ✅ sidebar "Active runs" (`GET /chats/runs`) |
+| Runs survive browser close | partial | ✅ | ✅ | ✅ server-side runs + `Last-Event-ID` resume |
+| **Session branching** (fork any turn) | ❌ | ❌ | ✅ `parentId` entries + `/fork` | ✅ `ParentId`/`LeafMessageId` tree + "branch from here" + branch summary |
+| **Model roles + fallback chains** | ❌ single model | partial (small model for titles) | ✅ `modelRoles` + `retry.fallbackChains` | ✅ `tasks`/`memory`/`advisor` roles + capability map (vision) + per-role fallback |
+| **Tool approval tiers** | binary approve-all | ✅ permission model | ✅ tier + per-tool policy + user override | ✅ `Read`/`Write`/`Exec` tiers, fail-closed default, per-tool overrides |
+| **Advisor / watchdog** | ❌ | ❌ | ✅ read-only second-opinion model | ✅ advisor role inspects runs + injects guidance, no approval power |
+| **Agent-directed context** | ❌ | partial | ✅ `checkpoint`/`rewind`, `context_notes`, `new_context` | ✅ same trio: checkpoint/rewind pairs, per-branch notebook, on-request rollover |
+| **Layered config + provenance** | env + admin UI | partial | ✅ env>runtime>overlay>project>global | ✅ global/admin/user layers with source tracking |
+| **Declarative agent definitions** | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools, model, spawns) discovered per repo, spawnable via `delegate_task` |
+| **Plan mode → structured output** | ❌ | ✅ plan/build modes | ❌ | ✅ `plan` mode + `/plan` slash: requirement analysis → **SPEC SDD** markdown (metadata, user story, RF-###, BDD criteria, task plan); `plan_exit` validates and persists to `.openwebui/plans/` |
+| **Media attachments in chat** | ✅ uploads | partial | ❌ | ✅ image/video thumbnails in composer, inline render + click-to-enlarge, vision-model analysis of attached images |
 
 ## Screenshots
 
@@ -85,6 +100,39 @@ pipeline.
   `automation.reminder` notification) over the built-in Automations engine.
 - **Context compaction** — when history grows, the pipeline summarizes old turns
   through the configured model and keeps a cutoff kv per chat.
+- **Plan mode → SPEC SDD** — `plan` mode (or the `/plan` slash builtin) analyses
+  the requirement read-only, then emits a full SPEC SDD markdown: metadata,
+  user story, scope, `RF-###` requirements, BDD acceptance criteria, task plan,
+  DoD and open questions. `plan_exit` validates the structure (incomplete plans
+  are refused with the missing sections), persists to `.openwebui/plans/` and
+  only promotes to `build` on user approval.
+- **Model roles + fallback chains** — dedicated models for `tasks` (titles,
+  follow-ups, tags, compaction), `memory` (distillation) and `advisor`; each
+  role resolves through a capability map (e.g. vision) with an ordered fallback
+  chain, configurable per layer.
+- **Fine-grained tool approval tiers** — every tool declares `Read`/`Write`/
+  `Exec` (fail-closed `Exec`); per-tool user overrides can relax but never
+  weaken a tool-level deny.
+- **Run advisor (watchdog)** — a secondary, read-only model reviews the live
+  transcript, can inspect the workspace with its own read tools and injects
+  guidance mid-run — with no approval or mutation power.
+- **Agent-directed context** — `checkpoint`/`rewind` tool pair (mark → explore
+  → collapse), `context_notes` (per-branch notebook that survives rollover) and
+  `new_context` (on-request compaction); mechanical pruning elides superseded
+  tool results and `history://` URIs recover full pre-compaction turns.
+- **Chat branching** — messages form a tree (`ParentId`/`LeafMessageId`);
+  "branch from here" forks any turn into a sibling chat, with a branch summary
+  for the abandoned path.
+- **Declarative agents** — `*.agent.md` files (frontmatter: tools, model,
+  spawns) discovered in the repo define named sub-agents, spawnable through
+  `delegate_task(agent: "…")`.
+- **Layered configuration** — effective settings resolve through
+  global → admin → user layers with per-key provenance.
+- **Memory pipeline** — scheduled consolidation distills session outcomes into
+  the durable memory layers that are re-injected into new runs.
+- **Chat media attachments** — image/video thumbnails inside the composer,
+  acceptable inline size after send, click-to-enlarge; attached images are
+  always analyzed together with the prompt by a vision-capable model.
 - **Retention** — daily purge (automation runs >90d, notifications >60d, steers of
   terminal runs >30d) + worktree orphan prune + WAL checkpoint + weekly VACUUM.
 - **Chat hierarchy** — `ParentChatId`/`ParentRunId`, `GET /chats/{id}/children`,
@@ -135,7 +183,7 @@ Full Docker guide: [docs/en/DEPLOY-DOCKER.md](docs/en/DEPLOY-DOCKER.md) ·
 ## Tests
 
 ```bash
-dotnet test OpenWebUI.slnx   # 1200+ API tests + client tests (NUnit)
+dotnet test OpenWebUI.slnx   # 1700+ API tests + client tests (NUnit)
 ```
 
 Coverage gate via Coverlet + ratchet (`.ci/coverage-baseline.txt` only goes up).
