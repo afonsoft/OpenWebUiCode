@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `afonsoft/open-webui` |
 | Branch | `feature/Devin-20261015-plan-spec-sdd` |
-| Ticket | (a criar) |
+| Ticket | [#381](https://github.com/afonsoft/open-webui/issues/381) |
 | Status | `In implementation` |
 
 ## 1. User Story
