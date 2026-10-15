@@ -2362,13 +2362,11 @@ public class ProviderService(
         }
         // reasoning_details[] é array de segmentos — bloco DSML dividido
         // entre elementos é raro; cobre os campos escalares (deepseek/omniroute).
-        foreach (var field in (string[])["reasoning_content", "reasoning"])
+        foreach (var field in new[] { "reasoning_content", "reasoning" }
+            .Where(f => delta[f] is JsonValue r
+                && r.TryGetValue<string>(out var rs) && rs.Length > 0))
         {
-            if (delta[field] is JsonValue r
-                && r.TryGetValue<string>(out var rs) && rs.Length > 0)
-            {
-                delta[field] = reasoning.Feed(rs);
-            }
+            delta[field] = reasoning.Feed(delta[field]!.AsValue().GetValue<string>());
         }
         return $"data: {node.ToJsonString(JsonOptions)}";
     }
