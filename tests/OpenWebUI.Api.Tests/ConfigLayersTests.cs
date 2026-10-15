@@ -870,6 +870,59 @@ public class ConfigLayersE2ETests
         Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
+    [Test]
+    public async Task Users_DeletePermissionsEOAuthSessions()
+    {
+        var victim = await SignUpAsync("V", "v@cfg.local");
+        UseToken(victim.Token);
+        var vId = (await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/auths/"))!.GetProperty("id").GetString()!;
+        var outsider = await SignUpAsync("W", "w@cfg.local");
+        UseToken(outsider.Token);
+        var wId = (await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/auths/"))!.GetProperty("id").GetString()!;
+
+        // Self: lista/revoga sessões OAuth (vazio → 404 na revogação).
+        var sessions = await _client.GetAsync($"/api/v1/users/{wId}/oauth/sessions");
+        Assert.That(sessions.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var revokeMissing = await _client.DeleteAsync(
+            $"/api/v1/users/{wId}/oauth/sessions/nope");
+        Assert.That(revokeMissing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Outro usuário sem admin → Forbidden na revogação e no delete.
+        var revokeAlien = await _client.DeleteAsync(
+            $"/api/v1/users/{vId}/oauth/sessions/nope");
+        var delAlien = await _client.DeleteAsync($"/api/v1/users/{vId}");
+        Assert.Multiple(() =>
+        {
+            Assert.That(revokeAlien.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+            Assert.That(delAlien.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+        });
+
+        // Admin: permissões do usuário (get inválido/put/get) e delete.
+        UseToken(_adminToken);
+        var perm404 = await _client.GetAsync($"/api/v1/users/nope/permissions");
+        Assert.That(perm404.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var permPut = await _client.PutAsJsonAsync(
+            $"/api/v1/users/{vId}/permissions",
+            new { workspace = new { tools = true } });
+        Assert.That(permPut.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var permGet = await _client.GetAsync($"/api/v1/users/{vId}/permissions");
+        Assert.That(permGet.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await permGet.Content.ReadAsStringAsync(),
+            Does.Contain("tools"));
+
+        // Admin não deleta a si mesmo; deleta outro usuário.
+        var adminId = (await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/auths/"))!.GetProperty("id").GetString()!;
+        var selfDel = await _client.DeleteAsync($"/api/v1/users/{adminId}");
+        Assert.That(selfDel.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var del404 = await _client.DeleteAsync("/api/v1/users/nope");
+        Assert.That(del404.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var del = await _client.DeleteAsync($"/api/v1/users/{vId}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
     /// <summary>Envelope flexível para serialização camelCase arbitrária.</summary>
     private sealed class JsonElementDict : Dictionary<string, System.Text.Json.JsonElement>
     {
