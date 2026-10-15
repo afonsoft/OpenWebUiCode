@@ -1449,4 +1449,138 @@ public class ProviderServiceTests
             Assert.That(lines[^1], Is.EqualTo("data: [DONE]"));
         });
     }
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlParamJsonInvalido_ViraString()
+    {
+        // string="false" com valor não-JSON cai no fallback de texto em vez
+        // de quebrar o parse do invoke.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<｜DSML｜tool_calls><｜DSML｜invoke name=\\\"w\\\"><｜DSML｜parameter name=\\\"p\\\" string=\\\"false\\\">not[json</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => Task.CompletedTask, null);
+
+        var call = result!.ToolCalls.Single();
+        Assert.That(
+            JsonNode.Parse(call.ArgumentsJson)!["p"]!.GetValue<string>(),
+            Is.EqualTo("not[json"));
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlBlocoTruncado_SalvaInvokesCompletos()
+    {
+        // Stream morre no meio do bloco: invoke completo ainda vira call,
+        // fragmento final é descartado sem vazar markup.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok <｜DSML｜tool_calls><｜DSML｜invoke name=\\\"a\\\"></｜DSML｜invoke><｜DSML｜invoke name=\\\"b\\\"\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; }, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.ToolCalls.Select(c => c.Name),
+                Is.EqualTo(new[] { "a" }));
+            Assert.That(string.Concat(deltas), Is.EqualTo("ok "));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_PrefixoDeMarcadorFalso_TextoPreservado()
+    {
+        // Texto que só parece marcador ("<｜DSML｜tool_x") é segurado um
+        // chunk e depois liberado inteiro — nada é perdido.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a <｜DSML｜tool_\"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x> b\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => Task.CompletedTask, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.ToolCalls, Is.Empty);
+            Assert.That(result.Content, Is.EqualTo("a <｜DSML｜tool_x> b"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlMultiplosInvokes_TodasViramCalls()
+    {
+        // Payload real observado: 3 invokes num único bloco.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<｜DSML｜tool_calls>" +
+            "<｜DSML｜invoke name=\\\"f1\\\"><｜DSML｜parameter name=\\\"p\\\" string=\\\"true\\\">a</｜DSML｜parameter></｜DSML｜invoke>" +
+            "<｜DSML｜invoke name=\\\"f2\\\"></｜DSML｜invoke>" +
+            "<｜DSML｜invoke name=\\\"f3\\\"><｜DSML｜parameter name=\\\"n\\\" string=\\\"false\\\">[1,2]</｜DSML｜parameter></｜DSML｜invoke>" +
+            "</｜DSML｜tool_calls>\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => Task.CompletedTask, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.ToolCalls.Select(c => c.Name),
+                Is.EqualTo(new[] { "f1", "f2", "f3" }));
+            Assert.That(JsonNode.Parse(result.ToolCalls[2].ArgumentsJson)!["n"]!
+                .AsArray().Count, Is.EqualTo(2));
+            Assert.That(result.ToolCalls.Select(c => c.Id),
+                Is.EqualTo(new[] { "dsml_0", "dsml_1", "dsml_2" }));
+        });
+    }
+
+    [Test]
+    public async Task CompleteOpenAi_DsmlNoReasoningBuffered_ViraToolCall()
+    {
+        // Buffered: markup dentro de reasoning_content também é extraído.
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"content\":\"oi\"," +
+            "\"reasoning_content\":\"p<｜DSML｜tool_calls><｜DSML｜invoke name=\\\"r\\\"></｜DSML｜invoke></｜DSML｜tool_calls>e\"}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsAsync(
+            Req("m1", connection: "openai"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.ToolCalls.Single().Name, Is.EqualTo("r"));
+            Assert.That(result.Reasoning, Is.EqualTo("pe"));
+            Assert.That(result.Content, Is.EqualTo("oi"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAi_SemDone_SoltaTailSegurado()
+    {
+        // Stream termina sem [DONE]: o sufixo segurado pelo filtro ainda
+        // chega à UI num delta sintético.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"abc <\"}}]}\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var lines = await DrainAsync(NewService().StreamCompletionAsync(
+            Req("m1", connection: "openai")));
+
+        // O "<" chega no delta sintético, escapado pelo encoder JSON.
+        var all = string.Concat(lines);
+        Assert.Multiple(() =>
+        {
+            Assert.That(all, Does.Contain("abc "));
+            Assert.That(all, Does.Contain("\\u003C"));
+        });
+    }
 }
