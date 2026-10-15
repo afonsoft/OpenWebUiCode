@@ -1,0 +1,24 @@
+# Open WebUI (.NET) — deploy rápido com a imagem publicada (sem clone, sem build).
+#
+#   docker compose -f docker-compose.hub.yaml up -d
+#
+# App: http://localhost:3032 (WEBUI_PORT no .env ou no comando)
+# Imagem: https://hub.docker.com/r/afonsoft/open-webui
+# Conexões com providers: .env no primeiro boot ou Configurações → Conexões (admin).
+# Build local a partir do fonte: docker-compose.yaml (raiz do repositório).
+
+services:
+  openwebui:
+    image: afonsoft/open-webui:latest
+    container_name: openwebui
+    ports:
+      - "${WEBUI_PORT:-3032}:8080"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - openwebui:/data
+    restart: unless-stopped
+
+volumes:
+  openwebui:
