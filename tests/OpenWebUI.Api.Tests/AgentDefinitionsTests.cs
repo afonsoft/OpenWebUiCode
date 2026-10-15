@@ -426,6 +426,109 @@ public class AgentDefinitionsTests
         });
     }
 
+    // ---------------- delegate_task: bordas ----------------
+
+    [Test]
+    public async Task Delegate_PromptVazio_Erro()
+    {
+        var (_, tool) = await SeedParentRunAsync();
+        var ctx = new BuiltinToolContext("u1", null, null, _root, _root);
+        var args = System.Text.Json.JsonDocument.Parse("""{"prompt":"  "}""").RootElement;
+
+        var result = await tool.ExecuteAsync(args, ctx, default);
+
+        Assert.That(result.Text, Does.Contain("'prompt'"));
+    }
+
+    [Test]
+    public async Task Delegate_SpawnsSemAgent_BloqueiaDelegacaoLivre()
+    {
+        // Run nascida de agente com allowlist: delegar sem `agent` é bypass.
+        var (parentRun, tool) = await SeedParentRunAsync();
+        await Config().SetAsync($"r:{parentRun.Id}:agent.spawns", "revisor", default);
+        var ctx = new BuiltinToolContext("u1", parentRun.ChatId, parentRun.Id, _root, _root);
+        var args = System.Text.Json.JsonDocument.Parse(
+            """{"prompt":"livre","wait":false}""").RootElement;
+
+        var result = await tool.ExecuteAsync(args, ctx, default);
+
+        Assert.That(result.Text, Does.Contain("revisor"));
+    }
+
+    [Test]
+    public async Task Delegate_AgentEPersonaJuntos_Erro()
+    {
+        await using var db = NewDb();
+        db.Skills.Add(new Skill
+        {
+            UserId = "u1", Name = "revisor-p", Content = "corpo",
+            IsActive = true, CreatedAt = 1, UpdatedAt = 1,
+        });
+        await db.SaveChangesAsync();
+
+        WriteAgent(Path.Join(DataRoot, "users", "u1", "agents"), "r.agent.md", """
+            ---
+            name: revisor
+            description: revê
+            ---
+            corpo
+            """);
+        _provider.GetRequiredService<AgentDefinitionService>().Invalidate("u1");
+        var (parentRun, tool) = await SeedParentRunAsync();
+        var ctx = new BuiltinToolContext("u1", parentRun.ChatId, parentRun.Id, _root, _root);
+        var args = System.Text.Json.JsonDocument.Parse(
+            """{"agent":"revisor","persona":"revisor-p","prompt":"x","wait":false}""")
+            .RootElement;
+
+        var result = await tool.ExecuteAsync(args, ctx, default);
+
+        Assert.That(result.Text, Does.Contain("OU 'persona'"));
+    }
+
+    [Test]
+    public async Task Delegate_SemRunId_Erro()
+    {
+        var (_, tool) = await SeedParentRunAsync();
+        var ctx = new BuiltinToolContext("u1", null, null, _root, _root);
+        var args = System.Text.Json.JsonDocument.Parse(
+            """{"prompt":"x","wait":false}""").RootElement;
+
+        var result = await tool.ExecuteAsync(args, ctx, default);
+
+        Assert.That(result.Text, Does.Contain("dentro de uma run"));
+    }
+
+    [Test]
+    public async Task Delegate_RequestJsonCorrompido_DelegaSemTools()
+    {
+        await using var db = NewDb();
+        var chat = new Chat
+        {
+            Id = $"chat-{Guid.NewGuid():N}", UserId = "u1", Title = "pai",
+            ModelsJson = "[]", CreatedAt = 1, UpdatedAt = 1,
+        };
+        db.Chats.Add(chat);
+        var run = new ChatRun
+        {
+            Id = $"run-{Guid.NewGuid():N}", ChatId = chat.Id, UserId = "u1",
+            Model = "fake:1", RequestJson = "{lixo", CreatedAt = 1,
+        };
+        db.ChatRuns.Add(run);
+        await db.SaveChangesAsync();
+        var tool = _provider.GetServices<IBuiltinChatTool>()
+            .OfType<DelegateTaskBuiltinTool>().Single();
+        var ctx = new BuiltinToolContext("u1", chat.Id, run.Id, _root, _root);
+        var args = System.Text.Json.JsonDocument.Parse(
+            """{"prompt":"x","wait":false}""").RootElement;
+
+        var result = await tool.ExecuteAsync(args, ctx, default);
+
+        Assert.That(result.Text, Does.Contain("Subtarefa delegada"));
+        var child = await db.ChatRuns.AsNoTracking()
+            .SingleAsync(r => r.ParentRunId == run.Id);
+        Assert.That(child.RequestJson, Does.Not.Contain("toolIds").Or.Contains("\"toolIds\":null"));
+    }
+
     // ---------------- helpers ----------------
 
     private async Task<(ChatRun Run, DelegateTaskBuiltinTool Tool)> SeedParentRunAsync(

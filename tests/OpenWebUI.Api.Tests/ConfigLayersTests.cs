@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
@@ -448,6 +449,65 @@ public class ConfigLayersE2ETests
     }
 
     [Test]
+    public async Task UserMcp_UpdateRefreshEToggleProprio()
+    {
+        var user = await SignUpAsync("B6", "b6@cfg.local");
+        UseToken(user.Token);
+
+        var created = await _client.PostAsJsonAsync("/api/v1/users/user/mcp-servers",
+            new
+            {
+                name = "srv", transport = "http",
+                url = "http://127.0.0.1:1/sse", enabled = true,
+                headers = new Dictionary<string, string> { ["x-a"] = "1" },
+            });
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await created.Content.ReadAsStringAsync());
+        var id = (await created.Content
+            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+
+        // Update feliz: troca nome/url, mantém header mascarado, remove ausentes.
+        var upd = await _client.PutAsJsonAsync($"/api/v1/users/user/mcp-servers/{id}",
+            new
+            {
+                name = "srv2", transport = "http",
+                url = "http://127.0.0.1:2/sse", enabled = false,
+                headers = new Dictionary<string, string> { ["x-a"] = "***", ["x-b"] = "2" },
+            });
+        Assert.That(upd.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await upd.Content.ReadAsStringAsync());
+        var body = await upd.Content.ReadFromJsonAsync<JsonElementDict>();
+        Assert.That(body!.GetProperty("name").GetString(), Is.EqualTo("srv2"));
+
+        // Transporte stdio de usuário → 400; validate falha → 400; id inexistente → 404.
+        var stdio = await _client.PutAsJsonAsync($"/api/v1/users/user/mcp-servers/{id}",
+            new { name = "s", transport = "stdio", command = "/bin/true", enabled = true });
+        Assert.That(stdio.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var badUrl = await _client.PutAsJsonAsync($"/api/v1/users/user/mcp-servers/{id}",
+            new { name = "s", transport = "http", url = "nao-url", enabled = true });
+        Assert.That(badUrl.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var notFound = await _client.PutAsJsonAsync("/api/v1/users/user/mcp-servers/nope",
+            new { name = "s", transport = "http", url = "http://x.io/s", enabled = true });
+        Assert.That(notFound.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Refresh: 404 em id inexistente; 400 quando o servidor está inacessível.
+        var refresh404 = await _client.PostAsync("/api/v1/users/user/mcp-servers/nope/refresh", null);
+        Assert.That(refresh404.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var refreshBad = await _client.PostAsync($"/api/v1/users/user/mcp-servers/{id}/refresh", null);
+        Assert.That(refreshBad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // Toggle em servidor próprio muda Enabled direto (sem tombstone).
+        var off = await _client.PutAsJsonAsync(
+            $"/api/v1/users/user/mcp-servers/{id}/enabled", new { enabled = true });
+        Assert.That(off.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var list = await _client.GetFromJsonAsync<JsonElementDict[]>(
+            "/api/v1/users/user/mcp-servers");
+        Assert.That(list!.Single(e => e.GetProperty("server")
+            .GetProperty("name").GetString() == "srv2")
+            .GetProperty("enabledForMe").GetBoolean(), Is.True);
+    }
+
+    [Test]
     public async Task ProviderKeys_ExpoemSoHasKey_ERespeitamFlag()
     {
         var user = await SignUpAsync("B2", "b2@cfg.local");
@@ -547,6 +607,267 @@ public class ConfigLayersE2ETests
         UseToken(_adminToken);
         await _client.PutAsJsonAsync("/api/v1/configs/memory-sync",
             new { enabled = (bool?)null });
+    }
+
+    [Test]
+    public async Task ModelRoles_UserEAdmin_CrudEValidacao()
+    {
+        var user = await SignUpAsync("B4", "b4@cfg.local");
+
+        UseToken(user.Token);
+        var empty = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/user/model-roles");
+        Assert.That(empty, Is.Not.Null);
+
+        // Papel desconhecido → 400.
+        var badRole = await _client.PutAsJsonAsync(
+            "/api/v1/configs/user/model-roles",
+            new { roles = new Dictionary<string, string[]> { ["fantasma"] = [] } });
+        Assert.That(badRole.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // Modelo fora do catálogo (sem conexões configuradas → catálogo vazio) → 400.
+        var badModel = await _client.PutAsJsonAsync(
+            "/api/v1/configs/user/model-roles",
+            new { roles = new Dictionary<string, string[]> { ["memory"] = ["nope:1"] } });
+        Assert.That(badModel.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // Mapa válido (vazio passa na validação de catálogo) persiste.
+        var ok = await _client.PutAsJsonAsync(
+            "/api/v1/configs/user/model-roles",
+            new { roles = new Dictionary<string, string[]> { ["memory"] = [] } });
+        Assert.That(ok.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await ok.Content.ReadAsStringAsync());
+
+        // Camada global: usuário comum é proibido; admin lê/escreve.
+        var forbidden = await _client.GetAsync("/api/v1/configs/model-roles");
+        Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+        var forbiddenPut = await _client.PutAsJsonAsync("/api/v1/configs/model-roles",
+            new { roles = new Dictionary<string, string[]>() });
+        Assert.That(forbiddenPut.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+
+        UseToken(_adminToken);
+        var globalGet = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/model-roles");
+        Assert.That(globalGet, Is.Not.Null);
+        var globalBadRole = await _client.PutAsJsonAsync("/api/v1/configs/model-roles",
+            new { roles = new Dictionary<string, string[]> { ["fantasma"] = [] } });
+        Assert.That(globalBadRole.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var globalBadModel = await _client.PutAsJsonAsync("/api/v1/configs/model-roles",
+            new { roles = new Dictionary<string, string[]> { ["advisor"] = ["nope:2"] } });
+        Assert.That(globalBadModel.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var globalOk = await _client.PutAsJsonAsync("/api/v1/configs/model-roles",
+            new { roles = new Dictionary<string, string[]> { ["advisor"] = [] } });
+        Assert.That(globalOk.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await globalOk.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task GitHubConfig_GlobalAdmin_EStatusDoUsuario()
+    {
+        var user = await SignUpAsync("B5", "b5@cfg.local");
+
+        // Usuário comum não toca a config global.
+        UseToken(user.Token);
+        var forbiddenGet = await _client.GetAsync("/api/v1/configs/github");
+        Assert.That(forbiddenGet.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+        var forbiddenPut = await _client.PutAsJsonAsync("/api/v1/configs/github",
+            new { token = "ghp_x" });
+        Assert.That(forbiddenPut.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+        var forbiddenDel = await _client.DeleteAsync("/api/v1/configs/github");
+        Assert.That(forbiddenDel.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+
+        // Admin: GET (não configurado), PUT vazio 400, DELETE idempotente.
+        UseToken(_adminToken);
+        var status = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/github");
+        Assert.That(status!.GetProperty("configured").GetBoolean(), Is.False);
+        var empty = await _client.PutAsJsonAsync("/api/v1/configs/github",
+            new { token = "   " });
+        Assert.That(empty.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var del = await _client.DeleteAsync("/api/v1/configs/github");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // Endpoints do usuário sem token: rápidos e sem rede.
+        UseToken(user.Token);
+        var mine = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/github/config");
+        Assert.That(mine!.GetProperty("configured").GetBoolean(), Is.False);
+        var repos = await _client.GetFromJsonAsync<JsonElementDict[]>(
+            "/api/v1/github/repos");
+        Assert.That(repos, Is.Empty);
+        var branches = await _client.GetAsync("/api/v1/github/repos/o/r/branches");
+        Assert.That(branches.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var emptyToken = await _client.PutAsJsonAsync("/api/v1/github/config",
+            new { token = "" });
+        Assert.That(emptyToken.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var clear = await _client.DeleteAsync("/api/v1/github/config");
+        Assert.That(clear.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // Workspace-repo: binding vazio, validação de open, unbind/pulls sem binding.
+        var binding = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/workspace/repo/");
+        Assert.That(binding!.GetProperty("repo").ValueKind,
+            Is.EqualTo(System.Text.Json.JsonValueKind.Null));
+        var openInvalid = await _client.PostAsJsonAsync("/api/v1/workspace/repo/open",
+            new { repo = "", branch = "" });
+        Assert.That(openInvalid.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var unbind = await _client.DeleteAsync("/api/v1/workspace/repo/");
+        Assert.That(unbind.StatusCode,
+            Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.NotFound));
+        var pulls = await _client.GetAsync("/api/v1/workspace/repo/pulls");
+        Assert.That(pulls.StatusCode,
+            Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.NotFound, HttpStatusCode.BadRequest));
+    }
+
+    [Test]
+    public async Task ZombieToken_GuardsDeUsuarioInexistente()
+    {
+        // Token JWT válido de usuário removido do banco: passa no
+        // middleware de auth e cai no guard `user is null` de cada handler.
+        var zombie = await SignUpAsync("Z", "z@cfg.local");
+        UseToken(zombie.Token);
+        var me = await _client.GetFromJsonAsync<JsonElementDict>("/api/v1/auths/");
+        var zombieId = me!.GetProperty("id").GetString()
+            ?? me.GetProperty("user").GetProperty("id").GetString()!;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider
+                .GetRequiredService<OpenWebUI.Infrastructure.Data.AppDbContext>();
+            var row = await db.Users.FindAsync(zombieId);
+            db.Users.Remove(row!);
+            await db.SaveChangesAsync();
+        }
+
+        var probes = new (HttpMethod Method, string Url)[]
+        {
+            (HttpMethod.Get, "/api/v1/users/user/mcp-servers"),
+            (HttpMethod.Put, "/api/v1/users/user/mcp-servers/nope/enabled"),
+            (HttpMethod.Get, "/api/v1/configs/user/model-roles"),
+            (HttpMethod.Get, "/api/v1/configs/user/memory-sync"),
+            (HttpMethod.Get, "/api/v1/configs/user/provider-keys"),
+            (HttpMethod.Get, "/api/v1/github/config"),
+            (HttpMethod.Get, "/api/v1/github/repos"),
+            (HttpMethod.Get, "/api/v1/github/repos/o/r/branches"),
+            (HttpMethod.Get, "/api/v1/workspace/repo/"),
+            (HttpMethod.Get, "/api/v1/workspace/repo/pulls"),
+            (HttpMethod.Delete, "/api/v1/workspace/repo/"),
+            (HttpMethod.Get, "/api/v1/channels/"),
+            (HttpMethod.Get, "/api/v1/channels/nope"),
+        };
+        foreach (var (method, url) in probes)
+        {
+            using var req = new HttpRequestMessage(method, url);
+            if (method is not null && (method == HttpMethod.Put || method == HttpMethod.Post))
+            {
+                req.Content = new StringContent("{}", System.Text.Encoding.UTF8,
+                    "application/json");
+            }
+            var resp = await _client.SendAsync(req);
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized),
+                $"{method} {url} devolveu {resp.StatusCode}");
+        }
+    }
+
+    [Test]
+    public async Task Channel_CrudMensagensEPermissoes()
+    {
+        var a = await SignUpAsync("CA", "ca@cfg.local");
+        var b = await SignUpAsync("CB", "cb@cfg.local");
+        UseToken(b.Token);
+        var bId = (await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/auths/"))!.GetProperty("id").GetString()!;
+
+        // Nome obrigatório.
+        UseToken(a.Token);
+        var semNome = await _client.PostAsJsonAsync("/api/v1/channels/",
+            new { name = "  ", description = (string?)null, memberIds = (string[]?)null });
+        Assert.That(semNome.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        var created = await _client.PostAsJsonAsync("/api/v1/channels/",
+            new { name = "canal-t", description = "d", memberIds = (string[]?)null });
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await created.Content.ReadAsStringAsync());
+        var channelId = (await created.Content
+            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+
+        // List + get do dono.
+        var list = await _client.GetFromJsonAsync<JsonElementDict[]>("/api/v1/channels/");
+        Assert.That(list!.Any(c => c.GetProperty("id").GetString() == channelId), Is.True);
+        var get = await _client.GetAsync($"/api/v1/channels/{channelId}");
+        Assert.That(get.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // Mensagem: vazia → 400; parent inexistente → 400; feliz → 200.
+        var emptyMsg = await _client.PostAsJsonAsync(
+            $"/api/v1/channels/{channelId}/messages",
+            new { content = " ", parentId = (string?)null });
+        Assert.That(emptyMsg.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var badParent = await _client.PostAsJsonAsync(
+            $"/api/v1/channels/{channelId}/messages",
+            new { content = "oi", parentId = "nope" });
+        Assert.That(badParent.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var msg = await _client.PostAsJsonAsync(
+            $"/api/v1/channels/{channelId}/messages",
+            new { content = "primeira", parentId = (string?)null });
+        Assert.That(msg.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await msg.Content.ReadAsStringAsync());
+        var msgId = (await msg.Content
+            .ReadFromJsonAsync<JsonElementDict>()).GetProperty("id").GetString()!;
+
+        // Não-membro não posta nem lê.
+        UseToken(b.Token);
+        var outsiderPost = await _client.PostAsJsonAsync(
+            $"/api/v1/channels/{channelId}/messages",
+            new { content = "alheio", parentId = (string?)null });
+        var outsiderGet = await _client.GetAsync($"/api/v1/channels/{channelId}/messages");
+        Assert.Multiple(() =>
+        {
+            Assert.That(outsiderPost.StatusCode,
+                Is.AnyOf(HttpStatusCode.Forbidden, HttpStatusCode.NotFound));
+            Assert.That(outsiderGet.StatusCode,
+                Is.AnyOf(HttpStatusCode.Forbidden, HttpStatusCode.NotFound));
+        });
+
+        // Dono adiciona B; B posta e reage.
+        UseToken(a.Token);
+        var add = await _client.PostAsJsonAsync(
+            $"/api/v1/channels/{channelId}/members",
+            new { userIds = new[] { bId }, role = "member" });
+        Assert.That(add.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await add.Content.ReadAsStringAsync());
+
+        UseToken(b.Token);
+        var memberPost = await _client.PostAsJsonAsync(
+            $"/api/v1/channels/{channelId}/messages",
+            new { content = "agora sim", parentId = (string?)null });
+        Assert.That(memberPost.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // Reação + pin + read.
+        var react = await _client.PostAsync(
+            $"/api/v1/channels/{channelId}/messages/{msgId}/reactions/👍", null);
+        Assert.That(react.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var pin = await _client.PostAsync(
+            $"/api/v1/channels/{channelId}/messages/{msgId}/pin", null);
+        Assert.That(pin.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var pinned = await _client.GetFromJsonAsync<JsonElementDict[]>(
+            $"/api/v1/channels/{channelId}/pinned");
+        Assert.That(pinned, Is.Not.Empty);
+        var unpin = await _client.DeleteAsync(
+            $"/api/v1/channels/{channelId}/messages/{msgId}/pin");
+        Assert.That(unpin.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var unreact = await _client.DeleteAsync(
+            $"/api/v1/channels/{channelId}/messages/{msgId}/reactions/👍");
+        Assert.That(unreact.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var read = await _client.PostAsync(
+            $"/api/v1/channels/{channelId}/read", null);
+        Assert.That(read.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // Update + delete (dono).
+        UseToken(a.Token);
+        var upd = await _client.PutAsJsonAsync($"/api/v1/channels/{channelId}",
+            new { name = "canal-t2", description = (string?)null });
+        Assert.That(upd.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var del = await _client.DeleteAsync($"/api/v1/channels/{channelId}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
     /// <summary>Envelope flexível para serialização camelCase arbitrária.</summary>

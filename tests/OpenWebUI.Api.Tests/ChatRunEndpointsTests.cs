@@ -421,4 +421,134 @@ public class ChatRunEndpointsTests
             new SteerRunRequest("alheio"));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
+
+    /// <summary>Seed de run num status arbitrário sem passar pelo dispatcher.</summary>
+    private async Task<string> SeedRunAsync(
+        string chatId, string userId, string status)
+    {
+        var runId = $"run-{Guid.NewGuid():N}";
+        using var seed = _factory.Services.CreateScope();
+        var db = seed.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.ChatRuns.Add(new ChatRun
+        {
+            Id = runId, ChatId = chatId, UserId = userId,
+            Model = "llama3", Status = status, RequestJson = "{}",
+            CreatedAt = 1,
+            StartedAt = status == ChatRunStatus.Queued ? null : 2,
+        });
+        await db.SaveChangesAsync();
+        return runId;
+    }
+
+    [Test]
+    public async Task PauseResume_EstadosEIsolamento()
+    {
+        var auth = await SignUpAsync("PR1", "pr1@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync(
+            [new ChatMessageModel("m1", "user", "oi", null, 100)]);
+
+        // Run inexistente → 404 em ambos.
+        var pause404 = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/nope/pause", null);
+        var resume404 = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/nope/resume", null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(pause404.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(resume404.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        });
+
+        // Run finalizada → pausar/resumir conflitam.
+        var done = await SeedRunAsync(chat.Id, auth.User.Id, ChatRunStatus.Completed);
+        var pauseDone = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{done}/pause", null);
+        var resumeDone = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{done}/resume", null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(pauseDone.StatusCode,
+                Is.AnyOf(HttpStatusCode.Conflict, HttpStatusCode.BadRequest));
+            Assert.That(resumeDone.StatusCode,
+                Is.AnyOf(HttpStatusCode.Conflict, HttpStatusCode.BadRequest));
+        });
+
+        // Run queued → pause 200; paused (nunca iniciou) → resume volta a queued.
+        var queued = await SeedRunAsync(chat.Id, auth.User.Id, ChatRunStatus.Queued);
+        var pause = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{queued}/pause", null);
+        Assert.That(pause.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await pause.Content.ReadAsStringAsync());
+        var pausedBody = await pause.Content
+            .ReadFromJsonAsync<ChatRunResponse>();
+        Assert.That(pausedBody!.Status, Is.EqualTo("paused"));
+
+        // Resume de run que nunca iniciou → volta a queued (re-enfileira;
+        // o dispatcher falha a run "{}" rápido — sem provider).
+        var resume = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{queued}/resume", null);
+        Assert.That(resume.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await resume.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task DecideApproval_ValidacoesEStatus()
+    {
+        var auth = await SignUpAsync("DA1", "da1@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync(
+            [new ChatMessageModel("m1", "user", "oi", null, 100)]);
+        var runId = await SeedRunAsync(chat.Id, auth.User.Id, ChatRunStatus.Running);
+
+        // Decision inválida → 400.
+        var badDecision = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{runId}/approvals/c1",
+            new { decision = "talvez" });
+        Assert.That(badDecision.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // Mensagem acima de 2KB → 400.
+        var tooLong = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{runId}/approvals/c1",
+            new { decision = "deny", message = new string('x', 2100) });
+        Assert.That(tooLong.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // Run inexistente → 404 (decision válida para passar do primeiro gate).
+        var notFound = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/runs/nope/approvals/c1",
+            new { decision = "approve" });
+        Assert.That(notFound.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Run finalizada → 410 Gone.
+        var done = await SeedRunAsync(chat.Id, auth.User.Id, ChatRunStatus.Failed);
+        var gone = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{done}/approvals/c1",
+            new { decision = "approve" });
+        Assert.That((int)gone.StatusCode, Is.EqualTo(410));
+
+        // Chat de outro usuário → 404 mesmo com run viva.
+        var outro = await SignUpAsync("DA2", "da2@runs.local");
+        UseToken(outro.Token);
+        var alien = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{runId}/approvals/c1",
+            new { decision = "approve" });
+        Assert.That(alien.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task RunDiff_RunInexistente_NotFound()
+    {
+        var auth = await SignUpAsync("RD1", "rd1@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+
+        var diff = await _client.GetAsync(
+            $"/api/v1/chats/{chat.Id}/runs/nope/diff");
+        Assert.That(diff.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Run sem worktree vinculado → resposta de erro/vazio, nunca 500.
+        var runId = await SeedRunAsync(chat.Id, auth.User.Id, ChatRunStatus.Running);
+        var noTree = await _client.GetAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{runId}/diff");
+        Assert.That((int)noTree.StatusCode, Is.LessThan(500));
+    }
 }
