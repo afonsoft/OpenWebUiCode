@@ -10,7 +10,7 @@
 | Repository | `afonsoft/open-webui` |
 | Branch | `feature/devin-20261015-chat-thinking-stream` |
 | Ticket | `[A DEFINIR — create-issues after approval]` |
-| Status | `In implementation` |
+| Status | `Done` |
 | Priority | `high` |
 | Depends on | fix/run-json-guards-and-sse-dispose (merge); SPEC-20261010-chat-activity-feed (Done) |
 
@@ -152,12 +152,12 @@ data: {"choices":[{"index":0,"delta":{"content":"A resposta…"}}]}
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** read section-3 files; confirm `ToolLoopCallbacks` extension point; inventory actual reasoning field names the OmniRoute gateway emits (curl a stream) to lock RF-001 field list.
-- [ ] **T2 — Provider layer:** `ProviderDelta`/`OnReasoningAsync` channel + normalize in the 4 parsers; unit tests per provider with fixture chunks.
-- [ ] **T3 — Executor:** publish reasoning chunks (both paths) + the RF-005 phase emissions; API tests asserting SSE sequence.
-- [ ] **T4 — Client:** `ChatStreamEvent.Reasoning` parse + tests; `ThinkingSection.razor` (collapse logic, elapsed, cap); wire into `ChatView`.
-- [ ] **T5 — i18n + guards:** keys ×8, tailwind regen, `check-i18n-parity`/`check-form-a11y`/`check-css-classes` clean.
-- [ ] **T6 — Done + PR:** SPEC `Status = Done`, PR `feature/devin-20261015-chat-thinking-stream`, merge after CI green.
+- [x] **T1 — Discovery:** read section-3 files; confirm `ToolLoopCallbacks` extension point; inventory actual reasoning field names the OmniRoute gateway emits (curl a stream) to lock RF-001 field list.
+- [x] **T2 — Provider layer:** `ProviderDelta`/`OnReasoningAsync` channel + normalize in the 4 parsers; unit tests per provider with fixture chunks.
+- [x] **T3 — Executor:** publish reasoning chunks (both paths) + the RF-005 phase emissions; API tests asserting SSE sequence.
+- [x] **T4 — Client:** `ChatStreamEvent.Reasoning` parse + tests; `ThinkingSection.razor` (collapse logic, elapsed, cap); wire into `ChatView`.
+- [x] **T5 — i18n + guards:** keys ×8, tailwind regen, `check-i18n-parity`/`check-form-a11y`/`check-css-classes` clean.
+- [x] **T6 — Done + PR:** SPEC `Status = Done`, PR `feature/devin-20261015-chat-thinking-stream`, merge after CI green.
 
 **7.1 Validation strategy**
 

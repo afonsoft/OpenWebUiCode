@@ -128,11 +128,19 @@ public class ToolStreamingTests
             }
             else if (path == "/api/chat")
             {
+                // Run sem tools (chat puro — SPEC-20261015): sem o campo
+                // "tools" no payload o mock responde NDJSON com
+                // message.thinking — o provider traduz para
+                // delta.reasoning (canal separado do content).
+                json = !body.Contains("\"tools\"", StringComparison.Ordinal)
+                    ? "{\"message\":{\"role\":\"assistant\","
+                        + "\"thinking\":\"raciocinio interno\","
+                        + "\"content\":\"resposta final\"},\"done\":true}"
                 // Segunda chamada do loop: histórico já tem role=tool.
                 // Casa pelo nome exato anunciado no tools spec (builtin_{name}) —
                 // substring solta colide com o system prompt padrão (que cita
                 // "ask_user") e desviava TODA run para o braço errado.
-                json = body.Contains("\"tool_call_id\"", StringComparison.Ordinal)
+                : body.Contains("\"tool_call_id\"", StringComparison.Ordinal)
                     ? "{\"message\":{\"role\":\"assistant\",\"content\":\"resposta pós-tool\"}}"
                     : body.Contains("builtin_ask_user", StringComparison.Ordinal)
                         ? "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-q\",\"function\":{\"name\":\"builtin:ask_user\",\"arguments\":{\"question\":\"Qual env?\",\"options\":[\"dev\",\"prod\"]}}}]}}"
@@ -1172,5 +1180,66 @@ public class ToolStreamingTests
         // Limpa a flag pra não vazar estado entre testes.
         UseToken(_adminToken);
         await _client.PutAsJsonAsync("/api/v1/browser/config", new { enabled = false });
+    }
+
+    // ---- SPEC-20261015-chat-thinking-stream: fases + canal reasoning ----
+
+    [Test]
+    public async Task RunSemTools_EmiteFasesDeProgressoEReasoning()
+    {
+        var auth = await SignUpAsync("Think", "think@tools.local");
+        UseToken(auth.Token);
+
+        // Chat puro (modo "chat", sem ToolIds): cai no caminho sem-tools.
+        // RF-005: preparing_context → connecting_model → generating →
+        // answering; o mock devolve message.thinking (→ delta.reasoning).
+        var created = await _client.PostAsJsonAsync(
+            "/api/v1/chats/", new ChatUpsertRequest("Chat thinking", ["fake:1"], []));
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await created.Content.ReadAsStringAsync());
+        var chat = (await created.Content.ReadFromJsonAsync<ChatResponse>())!;
+
+        var run = await EnfileirarAsync(chat.Id, "oi");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var eventos = await LerStreamAteFecharAsync(chat.Id, run.Id, cts.Token);
+
+        // event: status carrega dois shapes — {phase,label} de progresso
+        // e {status} de lifecycle (running/completed). Filtra o primeiro.
+        var fases = eventos.Where(e => e.Event == "status")
+            .Select(e => JsonDocument.Parse(e.Data).RootElement)
+            .Where(r => r.TryGetProperty("phase", out _))
+            .Select(r => r.GetProperty("phase").GetString())
+            .ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(fases, Does.Contain("preparing_context"),
+                "faltou fase preparing_context");
+            Assert.That(fases, Does.Contain("connecting_model"),
+                "faltou fase connecting_model");
+            Assert.That(fases, Does.Contain("generating"),
+                "faltou fase generating");
+            Assert.That(fases, Does.Contain("answering"),
+                "faltou fase answering");
+            Assert.That(fases.IndexOf("preparing_context"),
+                Is.LessThan(fases.IndexOf("connecting_model")));
+            Assert.That(fases.IndexOf("connecting_model"),
+                Is.LessThan(fases.IndexOf("generating")));
+            Assert.That(fases.IndexOf("generating"),
+                Is.LessThan(fases.IndexOf("answering")));
+        });
+
+        // Canal separado: thinking sai como delta.reasoning — nunca
+        // mistura no content que vai pro histórico.
+        var deltas = eventos.Where(e => e.Event == "").Select(e => e.Data).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(deltas.Any(d => d.Contains("\"reasoning\":\"raciocinio interno\"")),
+                Is.True, "faltou delta.reasoning no stream");
+            Assert.That(deltas.Any(d => d.Contains("\"content\":\"resposta final\"")),
+                Is.True, "faltou delta.content no stream");
+        });
+
+        var final = await AguardarFinalAsync(_client, chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
     }
 }

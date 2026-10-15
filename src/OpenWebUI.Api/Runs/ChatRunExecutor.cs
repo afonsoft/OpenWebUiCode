@@ -138,6 +138,11 @@ public sealed class ChatRunExecutor(
                 return;
             }
 
+            // SPEC-20261015 RF-005: telemetria de progresso nas etapas
+            // pré-provider — antes a run ficava muda até o primeiro token.
+            // Best-effort: uma falha de publish nunca derruba a run.
+            await PublishPhaseAsync(run, "preparing_context", null);
+
             // Compactação de contexto (SPEC-20261010-context-compaction): aplica
             // o resumo persistido, compacta o head se o histórico estourou o
             // limiar e re-aplica — a janela ao modelo sai [resumo] + tail.
@@ -147,6 +152,7 @@ public sealed class ChatRunExecutor(
                 run.ChatId, request.Messages, ct);
             if (compacted.Count != request.Messages.Count)
             {
+                await PublishPhaseAsync(run, "compacting", null);
                 request = request with { Messages = compacted };
             }
 
@@ -154,6 +160,32 @@ public sealed class ChatRunExecutor(
             // guia o prompt e o spec de tools anunciado. SPEC-15: build
             // sem repositório vinculado cai para chat.
             var chatMode = await EffectiveModeAsync(run.ChatId, ct);
+
+            // Busca web/arquivos anunciados antes do enrich — o usuário vê
+            // "Pesquisando na web…" em vez de uma tela parada.
+            if (request.WebSearch == true)
+            {
+                await PublishPhaseAsync(
+                    run, "searching_web",
+                    Scrub(Truncate(
+                        request.Messages.LastOrDefault(m => m.Role == "user")
+                            ?.Content ?? string.Empty, 60)));
+            }
+
+            // Memória durável é consultada dentro do enrich quando o
+            // memsync está ligado — o gate espelha o do ChatPipeline
+            // (global memsync.enabled + override u:{user}) para o chip
+            // "Consultando memória…" não aparecer quando está desligado.
+            var memAdminOff = await config.GetAsync<bool?>(
+                "memsync.enabled", null, ct) == false;
+            var memOn = !memAdminOff
+                && (await config.GetAsync<bool?>(
+                        $"u:{user.Id}:memsync.enabled", null, ct)
+                    ?? await config.GetAsync("memsync.enabled", true, ct));
+            if (memOn)
+            {
+                await PublishPhaseAsync(run, "consulting_memory", null);
+            }
 
             var effective = await ChatPipeline.EnrichRequestAsync(
                 request, user, db, config, rag, webSearch, repos, ct, chatMode,
@@ -178,9 +210,14 @@ public sealed class ChatRunExecutor(
                         && (m.UserId == user.Id || m.UserId == "public"))
                     .Select(m => m.MetaJson).FirstOrDefaultAsync(ct)));
 
+            if (request.ToolIds is { Count: > 0 })
+            {
+                await PublishPhaseAsync(run, "loading_tools", null);
+            }
             var tools = request.ToolIds is { Count: > 0 }
                 ? await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct)
                 : null;
+            await PublishPhaseAsync(run, "connecting_model", null);
             if (tools is { Count: > 0 })
             {
                 var builtinContext = await BuildToolContextAsync(run, user, ct);
@@ -296,6 +333,29 @@ public sealed class ChatRunExecutor(
                             await db.SaveChangesAsync(CancellationToken.None);
                             sinceCheckpoint = 0;
                         }
+                    },
+                    // SPEC-20261015 RF-002: raciocínio/thinking sai como
+                    // delta.reasoning — canal separado do content (a UI
+                    // renderiza colapsado; nunca entra em PartialContent).
+                    // Outlet rules aplicam igual — segredos no pensamento
+                    // são scrubados do mesmo jeito.
+                    OnReasoningAsync: async (piece, t) =>
+                    {
+                        await pauses.WaitIfPausedAsync(run.Id, t);
+                        var processed = piece;
+                        foreach (var (regex, replacement) in outletRules)
+                        {
+                            processed = regex.Replace(processed, replacement);
+                        }
+                        if (processed.Length == 0)
+                        {
+                            return;
+                        }
+                        var chunk = JsonSerializer.Serialize(new
+                        {
+                            choices = new[] { new { index = 0, delta = new { reasoning = processed } } },
+                        });
+                        broadcaster.Publish(run.Id, $"data: {chunk}");
                     });
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct, callbacks,
@@ -307,12 +367,23 @@ public sealed class ChatRunExecutor(
                 // Sem tool loop o conselho só sai como evento — não há
                 // fronteira de rodada para a nota de contexto.
                 await KickAdvisorAsync(run, "user_message", null, ct);
+                // RF-005: a run sem tools não emitia nenhuma fase — a UI
+                // ficava no "Pensando…" estático até o primeiro token.
+                await PublishPhaseAsync(run, "generating", null);
+                var answered = false;
                 await foreach (var line in providers.StreamCompletionAsync(effective, run.UserId, ct))
                 {
                     await pauses.WaitIfPausedAsync(run.Id, ct);
                     var processed = ModelFilterService.ProcessSseLine(line, outletRules);
                     broadcaster.Publish(run.Id, processed);
                     AccumulateDelta(processed, content);
+                    // "answering" no 1º delta de conteúdo real — reasoning
+                    // não conta (AccumulateDelta só anexa delta.content).
+                    if (!answered && content.Length > 0)
+                    {
+                        answered = true;
+                        await PublishPhaseAsync(run, "answering", null);
+                    }
                     sinceCheckpoint += processed.Length;
                     if (sinceCheckpoint >= CheckpointBytes)
                     {

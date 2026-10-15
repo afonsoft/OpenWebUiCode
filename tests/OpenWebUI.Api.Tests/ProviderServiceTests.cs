@@ -190,7 +190,14 @@ public class ProviderServiceTests
 
             var bytes = Encoding.UTF8.GetBytes(payload);
             ctx.Response.StatusCode = status;
-            ctx.Response.ContentType = "application/json";
+            // Payload SSE (`data:`/`event:`) sai como text/event-stream:
+            // o stream OpenAI+tools só entra no caminho streamed com esse
+            // content-type — os demais parsers não olham o header.
+            ctx.Response.ContentType =
+                payload.StartsWith("data:") || payload.StartsWith("event:")
+                || payload.Contains("\ndata:")
+                    ? "text/event-stream"
+                    : "application/json";
             await ctx.Response.OutputStream.WriteAsync(bytes, ct);
             ctx.Response.Close();
         }
@@ -1066,6 +1073,269 @@ public class ProviderServiceTests
         {
             Assert.That(msg["content"]!.GetValue<string>(), Is.EqualTo("oi"));
             Assert.That(msg["images"], Is.Null);
+        });
+    }
+
+    // ---- SPEC-20261015-chat-thinking-stream: reasoning/thinking por provider ----
+
+    [Test]
+    public async Task StreamOpenAiTools_ReasoningVariants_ViramOnReasoning()
+    {
+        // RF-001: gateways OpenAI-compatíveis emitem reasoning em 3 formatos —
+        // reasoning_content (deepseek/qwen), reasoning (openrouter/gpt-oss) e
+        // reasoning_details[] (openrouter detalhado). Todos viram onReasoning;
+        // nunca se misturam ao content.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"pensando \"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning\":\"mais \"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"detalhe \"}]}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"resp\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; },
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reasoning, Is.EqualTo(new[] { "pensando ", "mais ", "detalhe " }));
+            Assert.That(deltas, Is.EqualTo(new[] { "resp" }));
+            Assert.That(result!.Content, Is.EqualTo("resp"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_RespostaNaoSSE_ReasoningBuffered()
+    {
+        // Endpoint que ignora stream:true e devolve JSON: o reasoning da
+        // mensagem buffered ainda deve sair no ProviderCompletion.Reasoning.
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"content\":\"resp\",\"reasoning_content\":\"pensei\"}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("resp"));
+            Assert.That(result.Reasoning, Is.EqualTo("pensei"));
+        });
+    }
+
+    [Test]
+    public async Task StreamAnthropicTools_ThinkingDelta_ViraOnReasoning()
+    {
+        // RF-001: thinking_delta → onReasoning; signature_delta é ignorada
+        // silenciosamente (metadado criptográfico, não texto).
+        _routes["/v1/messages"] = (200,
+            "event: content_block_delta\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm \"}}\n\n" +
+            "event: content_block_delta\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n" +
+            "event: content_block_delta\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"oi\"}}\n\n" +
+            "event: message_stop\n" +
+            "data: {\"type\":\"message_stop\"}\n\n", 0);
+        await SetProvidersAsync(new ProviderConnection("anthropic", _mockUrl, "k"));
+
+        var deltas = new List<string>();
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("claude", connection: "anthropic"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; },
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reasoning, Is.EqualTo(new[] { "hmm " }));
+            Assert.That(deltas, Is.EqualTo(new[] { "oi" }));
+            Assert.That(result!.Content, Is.EqualTo("oi"));
+        });
+    }
+
+    [Test]
+    public async Task StreamGoogleTools_ThoughtPart_ViraOnReasoning()
+    {
+        // RF-001: parts com thought:true são a cadeia de pensamento do
+        // Gemini — hoje vazam para o content; devem ir para onReasoning.
+        _routes["/models/g1:streamGenerateContent"] = (200,
+            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"pensando \",\"thought\":true}]}}]}\n\n" +
+            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"oi\"}]}}]}\n\n", 0);
+        await SetProvidersAsync(new ProviderConnection("google", _mockUrl, "gk"));
+
+        var deltas = new List<string>();
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("g1", connection: "google"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; },
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reasoning, Is.EqualTo(new[] { "pensando " }));
+            Assert.That(deltas, Is.EqualTo(new[] { "oi" }));
+            Assert.That(result!.Content, Is.EqualTo("oi"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOllamaTools_Thinking_ViraOnReasoning()
+    {
+        // RF-001: Ollama (modelos think) emite message.thinking separado
+        // de message.content na mesma linha NDJSON.
+        _routes["/api/chat"] = (200,
+            "{\"message\":{\"role\":\"assistant\",\"thinking\":\"hmm \",\"content\":\"\"},\"done\":false}\n" +
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"oi\"},\"done\":true}\n", 0);
+        await SetConnectionsAsync([_mockUrl], [], []);
+
+        var deltas = new List<string>();
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "ollama"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; },
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(reasoning, Is.EqualTo(new[] { "hmm " }));
+            Assert.That(deltas, Is.EqualTo(new[] { "oi" }));
+            Assert.That(result!.Content, Is.EqualTo("oi"));
+        });
+    }
+
+    [Test]
+    public async Task StreamAnthropic_ThinkingDelta_ViraReasoningChunk()
+    {
+        // RF-002 (caminho sem tools): thinking_delta vira delta.reasoning
+        // no chunk OpenAI normalizado; signature_delta é ignorada.
+        _routes["/v1/messages"] = (200,
+            "event: content_block_delta\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm \"}}\n\n" +
+            "event: content_block_delta\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n" +
+            "event: content_block_delta\n" +
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"oi\"}}\n\n" +
+            "event: message_stop\n" +
+            "data: {\"type\":\"message_stop\"}\n\n", 0);
+        await SetProvidersAsync(new ProviderConnection("anthropic", _mockUrl, "k"));
+
+        var lines = await DrainAsync(NewService().StreamCompletionAsync(
+            Req("claude", connection: "anthropic")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0], Does.Contain("\"reasoning\":\"hmm \""));
+            Assert.That(lines[1], Does.Contain("\"content\":\"oi\""));
+            Assert.That(lines[^1], Is.EqualTo("data: [DONE]"));
+            Assert.That(lines, Has.Count.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public async Task StreamGoogle_ThoughtPart_ViraReasoningChunk()
+    {
+        // RF-002 (sem tools): part thought:true vira delta.reasoning.
+        _routes["/models/g1:streamGenerateContent"] = (200,
+            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"pensando \",\"thought\":true}]}}]}\n\n" +
+            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"oi\"}]}}]}\n\n", 0);
+        await SetProvidersAsync(new ProviderConnection("google", _mockUrl, "gk"));
+
+        var lines = await DrainAsync(NewService().StreamCompletionAsync(
+            Req("g1", connection: "google")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0], Does.Contain("\"reasoning\":\"pensando \""));
+            Assert.That(lines[1], Does.Contain("\"content\":\"oi\""));
+            Assert.That(lines[^1], Is.EqualTo("data: [DONE]"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOllama_Thinking_ViraReasoningChunk()
+    {
+        // RF-002 (sem tools): message.thinking vira delta.reasoning no
+        // chunk traduzido — content vazio não gera lixo.
+        _routes["/api/chat"] = (200,
+            "{\"message\":{\"role\":\"assistant\",\"thinking\":\"hmm \",\"content\":\"\"},\"done\":false}\n" +
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"oi\"},\"done\":true}\n", 0);
+        await SetConnectionsAsync([_mockUrl], [], []);
+
+        var lines = await DrainAsync(NewService().StreamCompletionAsync(Req("m1")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0], Does.Contain("\"reasoning\":\"hmm \""));
+            Assert.That(lines[1], Does.Contain("\"content\":\"oi\""));
+            Assert.That(lines[^1], Is.EqualTo("data: [DONE]"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAi_ReasoningContent_PassaCruParaOCliente()
+    {
+        // RF-002 (sem tools, OpenAI-compatível): o pass-through repassa as
+        // linhas cruas — o campo nativo do provider chega intacto ao
+        // cliente, que faz o mapping (ChatStreamService).
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"hmm\"}}]}\n\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"oi\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var lines = await DrainAsync(NewService().StreamCompletionAsync(
+            Req("m1", connection: "openai")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[0], Does.Contain("reasoning_content"));
+            Assert.That(lines[1], Does.Contain("\"content\":\"oi\""));
+        });
+    }
+
+    [Test]
+    public async Task CompleteGoogle_ThoughtPart_SaiDoContent()
+    {
+        // Buffered: part thought:true ia parar no Content (vazamento do
+        // raciocínio interno na resposta persistida) — agora vai para
+        // Reasoning e some do Content.
+        _routes["/models/g1:generateContent"] = (200,
+            "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[" +
+            "{\"text\":\"pensando \",\"thought\":true},{\"text\":\"oi\"}]}}]}", 0);
+        await SetProvidersAsync(new ProviderConnection("google", _mockUrl, "gk"));
+
+        var result = await NewService().CompleteWithToolsAsync(
+            Req("g1", connection: "google"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Content, Is.EqualTo("oi"));
+            Assert.That(result.Reasoning, Is.EqualTo("pensando "));
+        });
+    }
+
+    [Test]
+    public async Task CompleteAnthropic_ThinkingBlock_ViraReasoning()
+    {
+        // Buffered: bloco content[type=thinking] vai para Reasoning, não
+        // para o Content persistido.
+        _routes["/v1/messages"] = (200,
+            "{\"content\":[{\"type\":\"thinking\",\"thinking\":\"pensei \"}," +
+            "{\"type\":\"text\",\"text\":\"oi\"}]}", 0);
+        await SetProvidersAsync(new ProviderConnection("anthropic", _mockUrl, "k"));
+
+        var result = await NewService().CompleteWithToolsAsync(
+            Req("claude", connection: "anthropic"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Content, Is.EqualTo("oi"));
+            Assert.That(result.Reasoning, Is.EqualTo("pensei "));
         });
     }
 }

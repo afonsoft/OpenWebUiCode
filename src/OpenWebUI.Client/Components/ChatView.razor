@@ -239,6 +239,17 @@
                         }
                         var isLastAssistant = message.Role == "assistant" && i == _messages.Count - 1;
                         var msgKey = message.Id ?? $"m{index}";
+                        @if (isLastAssistant && _reasoning.Length > 0)
+                        {
+                            @* Pensamento do modelo (SPEC-20261015 RF-004):
+                               telemetria ao vivo — nunca persistida, some do
+                               histórico ao recarregar. *@
+                            <ThinkingSection Text="@_reasoning.ToString()"
+                                             Streaming="_streaming"
+                                             Expanded="ThinkingExpanded"
+                                             Elapsed="_thinkingElapsed"
+                                             OnToggle="ToggleThinking" />
+                        }
                         @if (isLastAssistant && _liveToolCalls.Count > 0)
                         {
                             @* Padrão Devin web: painel de atividade ACIMA do
@@ -262,6 +273,19 @@
                             OnBranch="() => ActivateLeafAsync(message.Id!)" />
                     }
                 </div>
+            }
+
+            @if (_reasoning.Length > 0
+                && (_messages.Count == 0 || _messages[^1].Role != "assistant"))
+            {
+                @* Fallback: pensamento embaixo quando a run ainda não tem
+                   placeholder de assistant na lista (eventos antes da
+                   primeira delta). *@
+                <ThinkingSection Text="@_reasoning.ToString()"
+                                 Streaming="_streaming"
+                                 Expanded="ThinkingExpanded"
+                                 Elapsed="_thinkingElapsed"
+                                 OnToggle="ToggleThinking" />
             }
 
             @if (_liveToolCalls.Count > 0
@@ -839,9 +863,28 @@
     private bool _hasDeltas;
     private readonly List<ToolCallView> _liveToolCalls = [];
 
+    // Raciocínio/thinking do modelo (SPEC-20261015-chat-thinking-stream):
+    // buffer separado do conteúdo — nunca entra na mensagem persistida.
+    // _thinkingOpen null = modo automático (aberto enquanto só há
+    // reasoning; fecha no 1º delta de content); o toggle do usuário fixa
+    // o estado pelo resto da run.
+    private readonly System.Text.StringBuilder _reasoning = new();
+    private bool? _thinkingOpen;
+    private DateTime _thinkingStartUtc;
+    private TimeSpan _thinkingElapsed;
+
     /// <summary>Label "Pensando…" — comparada por referência no flip para
     /// "Escrevendo resposta…" quando o primeiro delta chega.</summary>
     private string _thinkingLabel => L["chat.status_thinking"];
+
+    /// <summary>Estado efetivo da seção de pensamento: o override do
+    /// usuário ganha; no automático fica aberta só enquanto a run ainda
+    /// não emitiu conteúdo (RF-004 — auto-colapsa no 1º delta).</summary>
+    private bool ThinkingExpanded =>
+        _thinkingOpen ?? (_reasoning.Length > 0 && !_hasDeltas);
+
+    /// <summary>Toggle do usuário — fixa o estado até o fim da run.</summary>
+    private void ToggleThinking() => _thinkingOpen = !ThinkingExpanded;
 
     /// <summary>Converte mensagem persistida role=tool em ToolCallView para
     /// o work log colapsado (histórico — sem ArgsPreview disponível).</summary>
@@ -2332,6 +2375,9 @@
         _runTasks = [];
         _runChanges = [];
         _runCheckpoints = [];
+        _reasoning.Clear();
+        _thinkingOpen = null;
+        _thinkingElapsed = default;
 
         // Resume loop (SPEC-20261007-chat-tool-streaming): se o stream cair
         // no meio da run (proxy derrubando SSE ocioso, troca de rede, aba
@@ -2371,8 +2417,10 @@
                     // Deltas chegam em rajada: o conteúdo é sempre aplicado
                     // acima, mas a tela só re-renderiza na cadência
                     // RenderIntervalMs (eventos de tool/fase renderizam já).
-                    dirty |= evt is ChatStreamService.ChatStreamEvent.Delta;
+                    dirty |= evt is ChatStreamService.ChatStreamEvent.Delta
+                        or ChatStreamService.ChatStreamEvent.Reasoning;
                     if (evt is ChatStreamService.ChatStreamEvent.Delta
+                        or ChatStreamService.ChatStreamEvent.Reasoning
                         or ChatStreamService.ChatStreamEvent.Heartbeat
                         && (!dirty
                             || (DateTime.UtcNow - lastRender).TotalMilliseconds < RenderIntervalMs))
@@ -2440,10 +2488,24 @@
                     content.Append(delta.Text);
                     _messages[index] = placeholder with { Content = content.ToString() };
                     _hasDeltas = true;
+                    // O auto-colapso do pensamento é derivado em
+                    // ThinkingExpanded (hasDeltas=true) — aqui só o chip
+                    // vira "Escrevendo resposta…".
                     if (_statusLabel == _thinkingLabel)
                     {
                         _statusLabel = L["chat.status_writing"];
                     }
+                    break;
+                case ChatStreamService.ChatStreamEvent.Reasoning reasoning:
+                    // Canal separado do content (SPEC-20261015): acumula no
+                    // buffer de pensamento — aberto por padrão no modo
+                    // automático (ThinkingExpanded deriva de _hasDeltas).
+                    if (_reasoning.Length == 0)
+                    {
+                        _thinkingStartUtc = DateTime.UtcNow;
+                    }
+                    _reasoning.Append(reasoning.Text);
+                    _thinkingElapsed = DateTime.UtcNow - _thinkingStartUtc;
                     break;
                 case ChatStreamService.ChatStreamEvent.ToolCall call:
                     _liveToolCalls.Add(new ToolCallView { Call = call.Call });
@@ -2507,6 +2569,22 @@
                             _statusLabel = _hasDeltas
                                 ? L["chat.status_writing"]
                                 : _thinkingLabel;
+                            break;
+                        case "answering":
+                            _statusLabel = L["chat.status_writing"];
+                            break;
+                        case "preparing_context":
+                        case "compacting":
+                        case "searching_web":
+                        case "consulting_memory":
+                        case "loading_tools":
+                        case "connecting_model":
+                            // RF-005: fases de progresso pré-provider — chip
+                            // amigável (chat.progress.*) + label do evento
+                            // quando houver (ex.: query da busca web).
+                            _statusLabel = phase.Status.Label is { Length: > 0 } lbl
+                                ? $"{L[$"chat.progress.{phase.Status.Phase}"]} — {lbl}"
+                                : L[$"chat.progress.{phase.Status.Phase}"];
                             break;
                         case "running_tool":
                             // Chip acompanha a atividade amigável da call atual.
