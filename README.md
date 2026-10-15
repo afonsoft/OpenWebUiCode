@@ -24,29 +24,29 @@ see [the full analysis](docs/analise-fork-alltomatos-opencode.md)) and
 [oh-my-pi](https://github.com/can1357/oh-my-pi), whose session-tree, advisor and
 context-tooling design shaped several features below.
 
-| Capability | Open WebUI (FastAPI/Svelte) | opencode | oh-my-pi | **This fork (.NET/Blazor)** |
+| Capability | Open WebUI | opencode | oh-my-pi | **This fork (.NET/Blazor)** |
 |---|---|---|---|---|
-| Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ any LLM via gateway | ✅ multi-provider (TUI) | ✅ parity + OmniRoute-friendly |
-| Repo/workspace bound to a session | ❌ single workspace | ✅ per-project | ✅ per-project | ✅ **per-chat git worktree** — strict scope, global never leaks |
-| Sub-agents / parallel sessions | ❌ | ✅ task tool + sessions | ✅ declarative `.md` task agents | ✅ `delegate_task` async (procedural **and** `*.agent.md` definitions), depth ≤3, worktree-isolated |
-| Review before merge | ❌ | ✅ orchestrator reviews diffs | ❌ | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
-| Steer/queue mid-run input | ❌ | ✅ durable steer/queue | ❌ | ✅ `POST …/runs/{id}/steer` (steer + queue modes) |
-| Durable agent memory | ❌ | ✅ memory tools + auto-sync | ✅ memory tools | ✅ `memory_save`/`memory_search` + 6h auto-distill into `auto:*` memories |
-| Routines / reminders | ❌ | ✅ routine tool + scheduler | ❌ | ✅ `routine`/`reminder` tools + `once` schedules |
-| Task list tool | ❌ | ✅ todo write | ✅ | ✅ `todo_write` with stable ids |
-| Context compaction | ❌ | ✅ auto-summarize | ✅ auto + on-demand, pruning | ✅ LLM summary + mechanical pruning + structured digest + `history://` recovery |
-| Parent/child run tree UI | ❌ | ✅ session tree | ✅ session tree | ✅ sidebar tree + "delegado" badge + parent markers |
-| Parallel runs console | ❌ | ✅ | ✅ | ✅ sidebar "Active runs" (`GET /chats/runs`) |
-| Runs survive browser close | partial | ✅ | ✅ | ✅ server-side runs + `Last-Event-ID` resume |
-| **Session branching** (fork any turn) | ❌ | ❌ | ✅ `parentId` entries + `/fork` | ✅ `ParentId`/`LeafMessageId` tree + "branch from here" + branch summary |
-| **Model roles + fallback chains** | ❌ single model | partial (small model for titles) | ✅ `modelRoles` + `retry.fallbackChains` | ✅ `tasks`/`memory`/`advisor` roles + capability map (vision) + per-role fallback |
-| **Tool approval tiers** | binary approve-all | ✅ permission model | ✅ tier + per-tool policy + user override | ✅ `Read`/`Write`/`Exec` tiers, fail-closed default, per-tool overrides |
-| **Advisor / watchdog** | ❌ | ❌ | ✅ read-only second-opinion model | ✅ advisor role inspects runs + injects guidance, no approval power |
-| **Agent-directed context** | ❌ | partial | ✅ `checkpoint`/`rewind`, `context_notes`, `new_context` | ✅ same trio: checkpoint/rewind pairs, per-branch notebook, on-request rollover |
-| **Layered config + provenance** | env + admin UI | partial | ✅ env>runtime>overlay>project>global | ✅ global/admin/user layers with source tracking |
-| **Declarative agent definitions** | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools, model, spawns) discovered per repo, spawnable via `delegate_task` |
-| **Plan mode → structured output** | ❌ | ✅ plan/build modes | ❌ | ✅ `plan` mode + `/plan` slash: requirement analysis → **SPEC SDD** markdown (metadata, user story, RF-###, BDD criteria, task plan); `plan_exit` validates and persists to `.openwebui/plans/` |
-| **Media attachments in chat** | ✅ uploads | partial | ❌ | ✅ image/video thumbnails in composer, inline render + click-to-enlarge, vision-model analysis of attached images |
+| Chat + streaming,<br>multi-provider | ✅ Ollama/OpenAI,<br>RAG/pipelines | ✅ any LLM<br>via gateway | ✅ multi-provider<br>(TUI) | ✅ parity +<br>OmniRoute-friendly |
+| Repo/workspace<br>bound to session | ❌ single<br>workspace | ✅ per-project | ✅ per-project | ✅ **per-chat git<br>worktree** — strict<br>scope, global<br>never leaks |
+| Sub-agents /<br>parallel sessions | ❌ | ✅ task tool<br>+ sessions | ✅ declarative<br>`.md` task agents | ✅ `delegate_task`<br>(+ `*.agent.md`),<br>depth ≤3, worktree-<br>isolated |
+| Review before<br>merge | ❌ | ✅ orchestrator<br>reviews diffs | ❌ | ✅ `worktree_diff` /<br>`worktree_merge` +<br>auto-merge opt-in |
+| Steer/queue<br>mid-run input | ❌ | ✅ durable<br>steer/queue | ❌ | ✅ `…/runs/{id}/steer`<br>(steer + queue) |
+| Durable agent<br>memory | ❌ | ✅ memory tools<br>+ auto-sync | ✅ memory tools | ✅ `memory_save` /<br>`memory_search` + 6h<br>auto-distill `auto:*` |
+| Routines /<br>reminders | ❌ | ✅ routine tool<br>+ scheduler | ❌ | ✅ `routine`/`reminder`<br>+ `once` schedules |
+| Task list tool | ❌ | ✅ todo write | ✅ | ✅ `todo_write`,<br>stable ids |
+| Context<br>compaction | ❌ | ✅ auto-summarize | ✅ auto + on-demand,<br>with pruning | ✅ LLM summary +<br>pruning + digest +<br>`history://` recovery |
+| Parent/child<br>run tree UI | ❌ | ✅ session tree | ✅ session tree | ✅ sidebar tree +<br>badge + parent<br>markers |
+| Parallel runs<br>console | ❌ | ✅ | ✅ | ✅ "Active runs"<br>sidebar |
+| Runs survive<br>browser close | partial | ✅ | ✅ | ✅ server-side +<br>`Last-Event-ID` |
+| Session branching<br>(fork any turn) | ❌ | ❌ | ✅ `parentId` +<br>`/fork` | ✅ `ParentId`/`Leaf`<br>tree + "branch<br>from here" + summary |
+| Model roles +<br>fallback chains | ❌ single model | partial | ✅ `modelRoles` +<br>`fallbackChains` | ✅ `tasks`/`memory` /<br>`advisor` + vision<br>capability map |
+| Tool approval<br>tiers | binary<br>approve-all | ✅ permission<br>model | ✅ tier + tool policy<br>+ user override | ✅ `Read`/`Write`/`Exec`,<br>fail-closed, per-tool<br>overrides |
+| Advisor /<br>watchdog | ❌ | ❌ | ✅ read-only 2nd<br>opinion | ✅ advisor inspects<br>runs, no approval<br>power |
+| Agent-directed<br>context | ❌ | partial | ✅ `checkpoint`/`rewind`,<br>`context_notes`,<br>`new_context` | ✅ same trio + pruning<br>+ `history://` |
+| Layered config +<br>provenance | env + admin UI | partial | ✅ env>runtime>overlay><br>project>global | ✅ global/admin/user<br>layers + source |
+| Declarative<br>agent defs | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools,<br>model, spawns) via<br>`delegate_task` |
+| Plan mode →<br>structured output | ❌ | ✅ plan/build<br>modes | ❌ | ✅ `/plan` → **SPEC SDD**<br>markdown; `plan_exit`<br>validates + saves to<br>`.openwebui/plans/` |
+| Media attachments<br>in chat | ✅ uploads | partial | ❌ | ✅ composer thumbnails,<br>inline + click-enlarge,<br>vision analysis |
 
 ## Screenshots
 
@@ -169,12 +169,16 @@ dotnet build OpenWebUI.slnx --configuration Release
 dotnet run --project src/OpenWebUI.Api   # http://localhost:8080
 ```
 
-Docker (`:3032 → :8080`):
+Docker (`:3032 → :8080`) — published image on
+[Docker Hub](https://hub.docker.com/r/afonsoft/open-webui) and GHCR:
 
 ```bash
+docker run -d -p 3032:8080 -v openwebui-data:/data afonsoft/open-webui
+# or compose against the published image (no clone needed)
+curl -LO https://raw.githubusercontent.com/afonsoft/open-webui/main/docker-compose.hub.yaml
+docker compose -f docker-compose.hub.yaml up -d
+# or build from source
 docker compose up -d --build
-# or the published image
-docker run -p 3032:8080 ghcr.io/afonsoft/open-webui:latest
 ```
 
 Full Docker guide: [docs/en/DEPLOY-DOCKER.md](docs/en/DEPLOY-DOCKER.md) ·

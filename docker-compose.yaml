@@ -1,4 +1,4 @@
-# Open WebUI (.NET) — stack mínima: apenas o app.
+# Open WebUI (.NET) — stack mínima: apenas o app (build a partir do fonte).
 #
 #   cp .env.exemplo .env        # ajuste as variáveis (opcional)
 #   docker compose up -d --build
@@ -6,6 +6,8 @@
 # App: http://localhost:3032 (WEBUI_PORT no .env)
 # Conexões com providers: .env no primeiro boot ou Configurações → Conexões (admin).
 # Infra completa para testes (Ollama + Whisper): docker-compose.full.yaml
+# Sem build (imagem publicada no Docker Hub): docker-compose.hub.yaml
+#   docker compose -f docker-compose.hub.yaml up -d
 
 services:
   openwebui:

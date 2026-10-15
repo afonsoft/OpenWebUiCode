@@ -24,29 +24,29 @@ veja a [análise completa](docs/analise-fork-alltomatos-opencode.md)) e o
 [oh-my-pi](https://github.com/can1357/oh-my-pi), cujo desenho de árvore de
 sessões, advisor e ferramentas de contexto guiou várias features abaixo.
 
-| Capacidade | Open WebUI (FastAPI/Svelte) | opencode | oh-my-pi | **Este fork (.NET/Blazor)** |
+| Capacidade | Open WebUI | opencode | oh-my-pi | **Este fork (.NET/Blazor)** |
 |---|---|---|---|---|
-| Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ qualquer LLM via gateway | ✅ multi-provider (TUI) | ✅ paridade + OmniRoute-friendly |
-| Repo/workspace por sessão | ❌ workspace único | ✅ por projeto | ✅ por projeto | ✅ **worktree git por chat** — escopo estrito, global nunca vaza |
-| Sub-agentes / sessões paralelas | ❌ | ✅ task tool + sessions | ✅ task agents `.md` declarativos | ✅ `delegate_task` async (procedural **e** definições `*.agent.md`), depth ≤3, isolado em worktree |
-| Revisão antes do merge | ❌ | ✅ orquestrador revisa diffs | ❌ | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
-| Steer/queue no meio da run | ❌ | ✅ steer/queue durável | ❌ | ✅ `POST …/runs/{id}/steer` (modos steer + queue) |
-| Memória durável do agente | ❌ | ✅ tools de memória + auto-sync | ✅ tools de memória | ✅ `memory_save`/`memory_search` + auto-destilação 6h em memórias `auto:*` |
-| Rotinas / lembretes | ❌ | ✅ routine tool + scheduler | ❌ | ✅ tools `routine`/`reminder` + agenda `once` |
-| Tool de lista de tarefas | ❌ | ✅ todo write | ✅ | ✅ `todo_write` com ids estáveis |
-| Compactação de contexto | ❌ | ✅ auto-resumo | ✅ auto + sob demanda, com poda | ✅ resumo via LLM + poda mecânica + digest estruturado + recuperação `history://` |
-| Árvore pai/filho de runs | ❌ | ✅ árvore de sessions | ✅ árvore de sessions | ✅ árvore na sidebar + badge "delegado" + marcadores no pai |
-| Console de runs paralelas | ❌ | ✅ | ✅ | ✅ seção "Runs ativas" na sidebar (`GET /chats/runs`) |
-| Run sobrevive fechar o browser | parcial | ✅ | ✅ | ✅ runs server-side + resume por `Last-Event-ID` |
-| **Ramificação de sessão** (fork de qualquer turno) | ❌ | ❌ | ✅ entries com `parentId` + `/fork` | ✅ árvore `ParentId`/`LeafMessageId` + "ramificar daqui" + resumo do ramo |
-| **Papéis de modelo + fallback** | ❌ modelo único | parcial (modelo pequeno p/ títulos) | ✅ `modelRoles` + `retry.fallbackChains` | ✅ papéis `tasks`/`memory`/`advisor` + mapa de capacidades (visão) + fallback por papel |
-| **Tiers de aprovação de tools** | aprovar-tudo binário | ✅ modelo de permissão | ✅ tier + política por tool + override do usuário | ✅ tiers `Read`/`Write`/`Exec`, default fail-closed, overrides por tool |
-| **Advisor / watchdog** | ❌ | ❌ | ✅ modelo de segunda opinião read-only | ✅ papel advisor inspeciona runs + injeta orientação, sem poder de aprovação |
-| **Contexto dirigido pelo agente** | ❌ | parcial | ✅ `checkpoint`/`rewind`, `context_notes`, `new_context` | ✅ mesmo trio: checkpoint/rewind, notebook por ramo, rollover sob demanda |
-| **Config em camadas + proveniência** | env + UI admin | parcial | ✅ env>runtime>overlay>project>global | ✅ camadas global/admin/user com rastreio de origem |
-| **Agentes declarativos** | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools, model, spawns) descobertos no repo, via `delegate_task` |
-| **Modo plan → saída estruturada** | ❌ | ✅ modos plan/build | ❌ | ✅ modo `plan` + slash `/plan`: análise do requisito → markdown **SPEC SDD** (metadata, user story, RF-###, critérios BDD, task plan); `plan_exit` valida e persiste em `.openwebui/plans/` |
-| **Anexos de mídia no chat** | ✅ uploads | parcial | ❌ | ✅ thumbnails de imagem/vídeo no composer, render inline + clique para ampliar, análise por modelo de visão |
+| Chat + streaming,<br>multi-provider | ✅ Ollama/OpenAI,<br>RAG/pipelines | ✅ qualquer LLM<br>via gateway | ✅ multi-provider<br>(TUI) | ✅ paridade +<br>OmniRoute-friendly |
+| Repo/workspace<br>por sessão | ❌ workspace<br>único | ✅ por projeto | ✅ por projeto | ✅ **worktree git por<br>chat** — escopo<br>estrito, global<br>nunca vaza |
+| Sub-agentes /<br>sessões paralelas | ❌ | ✅ task tool<br>+ sessions | ✅ task agents<br>`.md` declarativos | ✅ `delegate_task`<br>(+ `*.agent.md`),<br>depth ≤3, isolado<br>em worktree |
+| Revisão antes<br>do merge | ❌ | ✅ orquestrador<br>revisa diffs | ❌ | ✅ `worktree_diff` /<br>`worktree_merge` +<br>auto-merge opt-in |
+| Steer/queue no<br>meio da run | ❌ | ✅ steer/queue<br>durável | ❌ | ✅ `…/runs/{id}/steer`<br>(steer + queue) |
+| Memória durável<br>do agente | ❌ | ✅ tools de memória<br>+ auto-sync | ✅ tools de memória | ✅ `memory_save` /<br>`memory_search` +<br>destilação 6h `auto:*` |
+| Rotinas /<br>lembretes | ❌ | ✅ routine tool<br>+ scheduler | ❌ | ✅ `routine`/`reminder`<br>+ agenda `once` |
+| Tool de lista<br>de tarefas | ❌ | ✅ todo write | ✅ | ✅ `todo_write`,<br>ids estáveis |
+| Compactação<br>de contexto | ❌ | ✅ auto-resumo | ✅ auto + sob demanda,<br>com poda | ✅ resumo LLM + poda<br>+ digest + recuperação<br>`history://` |
+| Árvore pai/filho<br>de runs | ❌ | ✅ árvore de<br>sessions | ✅ árvore de<br>sessions | ✅ árvore na sidebar<br>+ badge + marcadores<br>no pai |
+| Console de runs<br>paralelas | ❌ | ✅ | ✅ | ✅ "Runs ativas"<br>na sidebar |
+| Run sobrevive<br>fechar o browser | parcial | ✅ | ✅ | ✅ server-side +<br>`Last-Event-ID` |
+| Ramificação de<br>sessão (fork de<br>qualquer turno) | ❌ | ❌ | ✅ `parentId` +<br>`/fork` | ✅ árvore `ParentId`/<br>`Leaf` + "ramificar<br>daqui" + resumo |
+| Papéis de modelo<br>+ fallback | ❌ modelo único | parcial | ✅ `modelRoles` +<br>`fallbackChains` | ✅ `tasks`/`memory` /<br>`advisor` + mapa de<br>capacidades (visão) |
+| Tiers de aprovação<br>de tools | aprovar-tudo<br>binário | ✅ modelo de<br>permissão | ✅ tier + política<br>por tool + override | ✅ `Read`/`Write`/`Exec`,<br>fail-closed, override<br>por tool |
+| Advisor /<br>watchdog | ❌ | ❌ | ✅ 2ª opinião<br>read-only | ✅ advisor inspeciona<br>runs, sem poder de<br>aprovação |
+| Contexto dirigido<br>pelo agente | ❌ | parcial | ✅ `checkpoint`/`rewind`,<br>`context_notes`,<br>`new_context` | ✅ mesmo trio + poda<br>+ `history://` |
+| Config em camadas<br>+ proveniência | env + UI admin | parcial | ✅ env>runtime>overlay><br>project>global | ✅ global/admin/user<br>+ origem por chave |
+| Agentes<br>declarativos | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools,<br>model, spawns) via<br>`delegate_task` |
+| Modo plan →<br>saída estruturada | ❌ | ✅ modos<br>plan/build | ❌ | ✅ `/plan` → **SPEC SDD**<br>markdown; `plan_exit`<br>valida + persiste em<br>`.openwebui/plans/` |
+| Anexos de mídia<br>no chat | ✅ uploads | parcial | ❌ | ✅ thumbnails no<br>composer, inline +<br>ampliar, análise<br>por visão |
 
 ## Screenshots
 
@@ -171,12 +171,16 @@ dotnet build OpenWebUI.slnx --configuration Release
 dotnet run --project src/OpenWebUI.Api   # http://localhost:8080
 ```
 
-Docker (`:3032 → :8080`):
+Docker (`:3032 → :8080`) — imagem publicada no
+[Docker Hub](https://hub.docker.com/r/afonsoft/open-webui) e no GHCR:
 
 ```bash
+docker run -d -p 3032:8080 -v openwebui-data:/data afonsoft/open-webui
+# ou compose com a imagem publicada (sem clone)
+curl -LO https://raw.githubusercontent.com/afonsoft/open-webui/main/docker-compose.hub.yaml
+docker compose -f docker-compose.hub.yaml up -d
+# ou build a partir do fonte
 docker compose up -d --build
-# ou a imagem publicada
-docker run -p 3032:8080 ghcr.io/afonsoft/open-webui:latest
 ```
 
 Guia completo de deploy: [docs/pt/DEPLOY-DOCKER.md](docs/pt/DEPLOY-DOCKER.md) ·

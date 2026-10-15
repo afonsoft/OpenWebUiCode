@@ -11,10 +11,13 @@ Complete guide to running Open WebUI (.NET) — `afonsoft/open-webui` — with D
 
 ## Quick start
 
-**Prebuilt image, no checkout:**
+The image is published on [Docker Hub](https://hub.docker.com/r/afonsoft/open-webui)
+and [GHCR](https://github.com/afonsoft/open-webui/pkgs/container/open-webui) on
+every `v*.*.*` tag.
+
+**1. One command, nothing else needed:**
 
 ```bash
-docker pull afonsoft/open-webui
 docker run -d --name open-webui \
   -p 3032:8080 \
   -v openwebui-data:/data \
@@ -23,7 +26,14 @@ docker run -d --name open-webui \
 
 Open `http://localhost:3032` — the **first registered user becomes admin** (or seed one via `ADMIN_*`, below).
 
-**Compose (recommended):**
+**2. Compose with the published image (no clone, no build):**
+
+```bash
+curl -LO https://raw.githubusercontent.com/afonsoft/open-webui/main/docker-compose.hub.yaml
+docker compose -f docker-compose.hub.yaml up -d
+```
+
+**3. Compose building from source (recommended for development):**
 
 ```bash
 git clone https://github.com/afonsoft/open-webui.git
@@ -34,7 +44,7 @@ docker compose up -d --build
 
 > `docker-compose.yaml` runs **only the app** — AI providers (Ollama/OpenAI) come from `.env` or the admin UI (Settings → Connections). For a local lab with Ollama + Whisper bundled, use `docker-compose.full.yaml`.
 
-The image is published to both registries on every `v*.*.*` tag:
+Pull a specific registry or pin a version:
 
 ```bash
 docker pull afonsoft/open-webui:latest        # Docker Hub
