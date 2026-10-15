@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261014-config-layers` |
 | Ticket | #364 |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | `SPEC-20261014-cli-opencode-analysis` (RF-001) |
 
 ## 1. User Story

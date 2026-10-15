@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `fix/Devin-20261015-sonar-remediation` |
 | Ticket | [#377](https://github.com/afonsoft/open-webui/issues/377) |
-| Status | `In implementation` |
+| Status | `Done` |
 | Fonte | `sonarqube-autofix` skill · `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` · SonarCloud `afonsoft_open-webui` (análise 2026-10-15) |
 
 ## 1. User Story

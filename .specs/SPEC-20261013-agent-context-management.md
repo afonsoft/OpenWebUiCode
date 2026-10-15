@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-agent-context-management` |
 | Ticket | [#353](https://github.com/afonsoft/open-webui/issues/353) |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 

@@ -285,10 +285,12 @@ public static class ChatPipeline
                 "Modo PLAN ativo: você está em modo de planejamento somente-leitura. "
                 + "NÃO crie, modifique ou apague arquivos, NÃO execute comandos que "
                 + "alterem o sistema e NÃO chame tools de escrita — apenas leia, "
-                + "pesquise e analise. Quando o plano estiver pronto, apresente-o "
-                + "em markdown e chame a tool builtin_plan_exit passando o plano "
-                + "completo no argumento `plan`; o usuário decide se executa "
-                + "(modo build).");
+                + "pesquise e analise. "
+                // SPEC-20261015-plan-spec-sdd RF-001: a análise do requisito e
+                // a estrutura SDD são contrato — plan_exit recusa plano fora dele.
+                + OpenWebUI.Infrastructure.ChatTools.PlanSpecTemplate.Prompt
+                + " O usuário decide se executa (modo build) — nunca comece a "
+                + "implementar sem aprovação (Status = Approved).");
         }
         else if (PermissionRuleset.Normalize(agentMode) == PermissionRuleset.ChatMode)
         {

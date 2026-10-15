@@ -4,13 +4,13 @@
 
 | Field | Value |
 | --- | --- |
-| Feature | plan-spec-sdd |
-| Type | Feature |
-| Stack | .NET |
-| Repository | afonsoft/open-webui |
-| Branch | feature/Devin-20261015-plan-spec-sdd |
-| Ticket | (a criar) |
-| Status | In implementation |
+| Feature | `plan-spec-sdd` |
+| Type | `Feature` |
+| Stack | `.NET` |
+| Repository | `afonsoft/open-webui` |
+| Branch | `feature/Devin-20261015-plan-spec-sdd` |
+| Ticket | [#381](https://github.com/afonsoft/open-webui/issues/381) |
+| Status | `In implementation` |
 
 ## 1. User Story
 
@@ -94,7 +94,7 @@ Sem endpoints novos — reutiliza `PATCH /api/v1/chats/{id}` (`Mode`) e o fluxo 
 ## 7. Task Plan (agent execution)
 
 - [x] **T1 — Discovery:** ler pipeline plan, plan_exit, RepoSlashCommands, SelectPrompt/SendAsync, testes.
-- [ ] **T2 — Implementation:** PlanSpecTemplate + validação no plan_exit + prompt no pipeline + `/plan` built-in + i18n.
+- [x] **T2 — Implementation:** PlanSpecTemplate + validação no plan_exit + prompt no pipeline + `/plan` built-in + i18n.
 - [ ] **T3 — Verification:** ajustar `AgentModeE2ETests` (payload SDD), novos testes de validação/merge, rodar suites tocadas.
 - [ ] **T4 — Validation:** `dotnet build` + `dotnet test` + drift guards (i18n).
 - [ ] **T5 — Done + PR:** Status = Done, PR para `main`.

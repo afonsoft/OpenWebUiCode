@@ -153,11 +153,12 @@ public class AgentModeE2ETests
                     ? "{\"message\":{\"role\":\"assistant\",\"content\":\"resposta final\"}}"
                     : _emit switch
                     {
-                        // Em plan: pede o plan_exit com um plano mínimo.
+                        // Em plan: pede o plan_exit com uma SPEC SDD mínima
+                        // válida (SPEC-20261015-plan-spec-sdd RF-002).
                         "file_write" =>
                             "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-fw\",\"function\":{\"name\":\"builtin:file_write\",\"arguments\":{\"path\":\"x.txt\",\"content\":\"v\"}}}]}}",
                         _ =>
-                            "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-pe\",\"function\":{\"name\":\"builtin:plan_exit\",\"arguments\":{\"plan\":\"1. Ler\\n2. Escrever\",\"title\":\"T\"}}}]}}",
+                            "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-pe\",\"function\":{\"name\":\"builtin:plan_exit\",\"arguments\":{\"plan\":\"# SPEC-20261015-x\\n## 0. Metadata\\nStatus: Draft\\n## 1. User Story\\nx\\n## 2. Scope\\nx\\n## 4. Requirements\\nRF-001 1. Ler\\n## 6. Acceptance Criteria\\nx\\n## 7. Task Plan\\nx\",\"title\":\"T\"}}}]}}",
                     };
             }
             else

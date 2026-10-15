@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-approval-tiers` |
 | Ticket | [#351](https://github.com/afonsoft/open-webui/issues/351) |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 

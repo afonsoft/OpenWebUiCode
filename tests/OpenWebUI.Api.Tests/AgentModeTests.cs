@@ -242,8 +242,10 @@ public class AgentModeTests
         try
         {
             var tool = new PlanExitBuiltinTool();
+            // SPEC-20261015-plan-spec-sdd RF-002: plan_exit só aceita o
+            // esqueleto SDD — sem heading próprio cai no wrapper de título.
             using var args = JsonDocument.Parse(
-                """{"plan":"1. Ler X\n2. Editar Y","title":"Plano de teste"}""");
+                """{"plan":"## 0. Metadata\nStatus: Draft\n## 1. User Story\nx\n## 2. Scope\nx\n## 4. Requirements\nRF-001 1. Ler X\n## 6. Acceptance Criteria\nx\n## 7. Task Plan\nx","title":"Plano de teste"}""");
             var outcome = await tool.ExecuteAsync(args.RootElement,
                 new BuiltinToolContext("u1", "c1", "run-abc", workdir, workdir),
                 CancellationToken.None);

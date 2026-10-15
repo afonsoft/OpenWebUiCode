@@ -18,18 +18,30 @@ public sealed record SlashItem(string Command, string Title, string Source);
 public static class RepoSlashCommands
 {
     /// <summary>
-    /// Sugestões mescladas: prompts (source <c>prompt</c>), skills e commands
-    /// do repo cujo nome começa com <paramref name="prefix"/> (sem a barra).
+    /// Comandos internos do app (SPEC-20261015-plan-spec-sdd RF-003):
+    /// sempre disponíveis independente do repo vinculado. O
+    /// <see cref="SlashItem.Title"/> é a chave i18n (<c>chat.cmd_*</c>) —
+    /// resolvida no render do composer.
+    /// </summary>
+    public static IReadOnlyList<SlashItem> Builtins { get; } =
+        [new SlashItem("plan", "chat.cmd_plan", "builtin")];
+
+    /// <summary>
+    /// Sugestões mescladas: comandos built-in + prompts (source
+    /// <c>prompt</c>) + skills + commands do repo cujo nome começa com
+    /// <paramref name="prefix"/> (sem a barra).
     /// </summary>
     public static List<SlashItem> Merge(
         IEnumerable<PromptResponse> prompts,
         IEnumerable<RepoSkillItemResponse> skills,
         IEnumerable<RepoCommandItemResponse> commands,
-        string prefix, int take = 8)
+        string prefix, int take = 8,
+        IEnumerable<SlashItem>? builtins = null)
     {
         bool Match(string s) => s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
-        return prompts.Where(p => Match(p.Command))
-                .Select(p => new SlashItem(p.Command, p.Title, "prompt"))
+        return (builtins ?? []).Where(b => Match(b.Command))
+            .Concat(prompts.Where(p => Match(p.Command))
+                .Select(p => new SlashItem(p.Command, p.Title, "prompt")))
             .Concat(skills.Where(s => Match(s.Name))
                 .Select(s => new SlashItem(s.Name, s.Description, "skill")))
             .Concat(commands.Where(c => Match(c.Name))
