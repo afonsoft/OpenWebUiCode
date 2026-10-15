@@ -312,31 +312,49 @@ public static class ChatRunEndpoints
             // PeriodicTimer aceita um único wait pendente: o tick é criado
             // uma vez e só re-armado depois de completar.
             var moveNext = enumerator.MoveNextAsync().AsTask();
-            using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(15));
-            var tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
-            while (true)
+            try
             {
-                var winner = await Task.WhenAny(moveNext, tick);
-                if (winner == tick)
+                using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(15));
+                var tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
+                while (true)
                 {
-                    await tick; // relança OperationCanceledException no disconnect
-                    await writer.WriteLineAsync(": hb");
+                    var winner = await Task.WhenAny(moveNext, tick);
+                    if (winner == tick)
+                    {
+                        await tick; // relança OperationCanceledException no disconnect
+                        await writer.WriteLineAsync(": hb");
+                        await writer.WriteLineAsync();
+                        await writer.FlushAsync(ct);
+                        tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
+                        continue;
+                    }
+
+                    if (!await moveNext)
+                    {
+                        break;
+                    }
+                    var evt = enumerator.Current;
+                    await writer.WriteLineAsync($"id: {evt.Seq}");
+                    await writer.WriteLineAsync(evt.Payload);
                     await writer.WriteLineAsync();
                     await writer.FlushAsync(ct);
-                    tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
-                    continue;
+                    moveNext = enumerator.MoveNextAsync().AsTask();
                 }
-
-                if (!await moveNext)
+            }
+            finally
+            {
+                // Drena o MoveNext pendente antes do DisposeAsync do
+                // enumerador: dispose com chamada em voo lançava
+                // NotSupportedException — um unhandled exception no Kestrel
+                // a cada disconnect/stall do cliente.
+                try
                 {
-                    break;
+                    await moveNext;
                 }
-                var evt = enumerator.Current;
-                await writer.WriteLineAsync($"id: {evt.Seq}");
-                await writer.WriteLineAsync(evt.Payload);
-                await writer.WriteLineAsync();
-                await writer.FlushAsync(ct);
-                moveNext = enumerator.MoveNextAsync().AsTask();
+                catch
+                {
+                    // O wait já completou (cancelado/erro) — só o dreno importa.
+                }
             }
         }
         catch (OperationCanceledException)

@@ -151,7 +151,7 @@ public sealed class BuiltinToolRegistry(IEnumerable<IBuiltinChatTool> tools, ICo
     /// Desembrulha até 2 níveis de string; o resto vai cru e o chamador
     /// rejeita se o root final não for objeto.
     /// </summary>
-    internal static JsonElement NormalizeArgs(string? argumentsJson)
+    public static JsonElement NormalizeArgs(string? argumentsJson)
     {
         var current = string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson;
         JsonElement last = default;

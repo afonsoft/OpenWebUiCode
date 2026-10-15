@@ -338,7 +338,10 @@ public sealed class ChatRunExecutor(
         {
             // Qualquer falha fecha a run como failed — uma exceção que escapasse
             // deixaria a run eternamente "running" (o dispatcher só loga).
-            if (ex is not (InvalidOperationException or HttpRequestException or TaskCanceledException))
+            // InvalidOperationException loga com stack: foi a silenciar
+            // exatamente ela que o bug dos args double-encoded ficou
+            // invisível nos logs por dias.
+            if (ex is not (HttpRequestException or TaskCanceledException))
             {
                 logger.LogError(ex, "Run {RunId} falhou com exceção inesperada.", run.Id);
             }
@@ -976,7 +979,15 @@ public sealed class ChatRunExecutor(
         var multiple = false;
         try
         {
-            var args = JsonDocument.Parse(call.ArgumentsJson).RootElement;
+            // NormalizeArgs desembrulha args double-encoded (string com o
+            // objeto dentro — Gemini/OmniRoute). Sem isso o TryGetProperty
+            // em root String lançava InvalidOperationException e a run
+            // inteira ia para failed.
+            var args = BuiltinToolRegistry.NormalizeArgs(call.ArgumentsJson);
+            if (args.ValueKind != JsonValueKind.Object)
+            {
+                return new ToolGateDecision(true, Output: "Pergunta malformada (args inválidos).");
+            }
             question = args.TryGetProperty("question", out var q) && q.GetString() is { Length: > 0 } qt
                 ? qt
                 : question;
