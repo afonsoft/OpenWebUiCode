@@ -884,4 +884,32 @@ public class ChatBranchingE2ETests
             new EnqueueChatRunRequest(null, "llama3"));
         Assert.That(bom.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
     }
+
+    [Test]
+    public async Task SharedChat_RenderizaApenasCaminhoAtivo()
+    {
+        // Chat compartilhado: o GET público também vê só o caminho ativo.
+        var auth = await SignUpAsync("BrL", "brl@branch.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatLinearAsync(3);
+        var pivot = chat.Messages[0];
+        await EnfileirarAsync(chat.Id, "alternativa", pivot.Id);
+
+        var share = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/share", new { });
+        Assert.That(share.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await share.Content.ReadAsStringAsync());
+        var shareId = (await share.Content
+            .ReadFromJsonAsync<ChatResponse>())!.ShareId;
+        Assert.That(shareId, Is.Not.Null.And.Not.Empty);
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var shared = await _client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/chats/share/{shareId}");
+        var msgs = shared.GetProperty("messages").EnumerateArray().ToList();
+        Assert.That(msgs, Has.Count.EqualTo(2),
+            "shared view deve conter só o caminho ativo (raiz + alternativa)");
+        Assert.That(msgs[^1].GetProperty("content").GetString(),
+            Is.EqualTo("alternativa"));
+    }
 }
