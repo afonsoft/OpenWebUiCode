@@ -16,22 +16,37 @@ estilo VS Code e pipeline de revisão em worktree.
 
 > **English version:** [README.md](README.md)
 
-## Open WebUI (original) vs opencode vs este fork
+## Open WebUI (original) vs opencode vs oh-my-pi vs este fork
 
-| Capacidade | Open WebUI (FastAPI/Svelte) | opencode | **Este fork (.NET/Blazor)** |
-|---|---|---|---|
-| Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ qualquer LLM via gateway | ✅ paridade + OmniRoute-friendly |
-| Repo/workspace por sessão | ❌ workspace único | ✅ por projeto | ✅ **worktree git por chat** — escopo estrito, global nunca vaza |
-| Sub-agentes / sessões paralelas | ❌ | ✅ task tool + sessions | ✅ `delegate_task` async, depth ≤3, isolado em worktree |
-| Revisão antes do merge | ❌ | ✅ orquestrador revisa diffs | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
-| Steer/queue no meio da run | ❌ | ✅ steer/queue durável | ✅ `POST …/runs/{id}/steer` (modos steer + queue) |
-| Memória durável do agente | ❌ | ✅ tools de memória + auto-sync | ✅ `memory_save`/`memory_search` + auto-destilação 6h |
-| Rotinas / lembretes | ❌ | ✅ routine tool + scheduler | ✅ tools `routine`/`reminder` + agenda `once` |
-| Tool de lista de tarefas | ❌ | ✅ todo write | ✅ `todo_write` com ids estáveis |
-| Compactação de contexto | ❌ | ✅ auto-resumo | ✅ resumo via LLM + cutoff em kv |
-| Árvore pai/filho de runs | ❌ | ✅ árvore de sessions | ✅ árvore na sidebar + badge "delegado" + marcadores no pai |
-| Console de runs paralelas | ❌ | ✅ | ✅ seção "Runs ativas" na sidebar (`GET /chats/runs`) |
-| Run sobrevive fechar o browser | parcial | ✅ | ✅ runs server-side + resume por `Last-Event-ID` |
+O roadmap de agente foi benchmarked contra o [opencode](https://github.com/sst/opencode)
+(incl. o fork [alltomatos/opencode](https://github.com/alltomatos/opencode) —
+veja a [análise completa](docs/analise-fork-alltomatos-opencode.md)) e o
+[oh-my-pi](https://github.com/can1357/oh-my-pi), cujo desenho de árvore de
+sessões, advisor e ferramentas de contexto guiou várias features abaixo.
+
+| Capacidade | Open WebUI (FastAPI/Svelte) | opencode | oh-my-pi | **Este fork (.NET/Blazor)** |
+|---|---|---|---|---|
+| Chat + streaming, multi-provider | ✅ Ollama/OpenAI/RAG/pipelines | ✅ qualquer LLM via gateway | ✅ multi-provider (TUI) | ✅ paridade + OmniRoute-friendly |
+| Repo/workspace por sessão | ❌ workspace único | ✅ por projeto | ✅ por projeto | ✅ **worktree git por chat** — escopo estrito, global nunca vaza |
+| Sub-agentes / sessões paralelas | ❌ | ✅ task tool + sessions | ✅ task agents `.md` declarativos | ✅ `delegate_task` async (procedural **e** definições `*.agent.md`), depth ≤3, isolado em worktree |
+| Revisão antes do merge | ❌ | ✅ orquestrador revisa diffs | ❌ | ✅ `worktree_diff`/`worktree_merge` + auto-merge opt-in |
+| Steer/queue no meio da run | ❌ | ✅ steer/queue durável | ❌ | ✅ `POST …/runs/{id}/steer` (modos steer + queue) |
+| Memória durável do agente | ❌ | ✅ tools de memória + auto-sync | ✅ tools de memória | ✅ `memory_save`/`memory_search` + auto-destilação 6h em memórias `auto:*` |
+| Rotinas / lembretes | ❌ | ✅ routine tool + scheduler | ❌ | ✅ tools `routine`/`reminder` + agenda `once` |
+| Tool de lista de tarefas | ❌ | ✅ todo write | ✅ | ✅ `todo_write` com ids estáveis |
+| Compactação de contexto | ❌ | ✅ auto-resumo | ✅ auto + sob demanda, com poda | ✅ resumo via LLM + poda mecânica + digest estruturado + recuperação `history://` |
+| Árvore pai/filho de runs | ❌ | ✅ árvore de sessions | ✅ árvore de sessions | ✅ árvore na sidebar + badge "delegado" + marcadores no pai |
+| Console de runs paralelas | ❌ | ✅ | ✅ | ✅ seção "Runs ativas" na sidebar (`GET /chats/runs`) |
+| Run sobrevive fechar o browser | parcial | ✅ | ✅ | ✅ runs server-side + resume por `Last-Event-ID` |
+| **Ramificação de sessão** (fork de qualquer turno) | ❌ | ❌ | ✅ entries com `parentId` + `/fork` | ✅ árvore `ParentId`/`LeafMessageId` + "ramificar daqui" + resumo do ramo |
+| **Papéis de modelo + fallback** | ❌ modelo único | parcial (modelo pequeno p/ títulos) | ✅ `modelRoles` + `retry.fallbackChains` | ✅ papéis `tasks`/`memory`/`advisor` + mapa de capacidades (visão) + fallback por papel |
+| **Tiers de aprovação de tools** | aprovar-tudo binário | ✅ modelo de permissão | ✅ tier + política por tool + override do usuário | ✅ tiers `Read`/`Write`/`Exec`, default fail-closed, overrides por tool |
+| **Advisor / watchdog** | ❌ | ❌ | ✅ modelo de segunda opinião read-only | ✅ papel advisor inspeciona runs + injeta orientação, sem poder de aprovação |
+| **Contexto dirigido pelo agente** | ❌ | parcial | ✅ `checkpoint`/`rewind`, `context_notes`, `new_context` | ✅ mesmo trio: checkpoint/rewind, notebook por ramo, rollover sob demanda |
+| **Config em camadas + proveniência** | env + UI admin | parcial | ✅ env>runtime>overlay>project>global | ✅ camadas global/admin/user com rastreio de origem |
+| **Agentes declarativos** | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools, model, spawns) descobertos no repo, via `delegate_task` |
+| **Modo plan → saída estruturada** | ❌ | ✅ modos plan/build | ❌ | ✅ modo `plan` + slash `/plan`: análise do requisito → markdown **SPEC SDD** (metadata, user story, RF-###, critérios BDD, task plan); `plan_exit` valida e persiste em `.openwebui/plans/` |
+| **Anexos de mídia no chat** | ✅ uploads | parcial | ❌ | ✅ thumbnails de imagem/vídeo no composer, render inline + clique para ampliar, análise por modelo de visão |
 
 ## Screenshots
 
@@ -87,6 +102,39 @@ estilo VS Code e pipeline de revisão em worktree.
   `automation.reminder`) sobre o engine de Automações embutido.
 - **Compactação de contexto** — quando o histórico cresce, o pipeline resume os
   turnos antigos pelo modelo configurado e mantém um cutoff em kv por chat.
+- **Modo plan → SPEC SDD** — o modo `plan` (ou o slash builtin `/plan`) analisa
+  o requisito em read-only e emite uma SPEC SDD completa em markdown: metadata,
+  user story, escopo, requisitos `RF-###`, critérios BDD, task plan, DoD e
+  perguntas abertas. O `plan_exit` valida a estrutura (planos incompletos são
+  recusados com as seções faltantes), persiste em `.openwebui/plans/` e só
+  promove a `build` após aprovação do usuário.
+- **Papéis de modelo + cadeias de fallback** — modelos dedicados para `tasks`
+  (títulos, follow-ups, tags, compactação), `memory` (destilação) e `advisor`;
+  cada papel resolve por mapa de capacidades (ex.: visão) com cadeia de
+  fallback ordenada, configurável por camada.
+- **Tiers finos de aprovação de tools** — cada tool declara `Read`/`Write`/
+  `Exec` (fail-closed `Exec`); overrides por tool do usuário podem relaxar,
+  nunca enfraquecer um deny da tool.
+- **Run advisor (watchdog)** — um modelo secundário read-only revisa o
+  transcript vivo, inspeciona o workspace com tools próprias de leitura e
+  injeta orientação no meio da run — sem poder de aprovação ou mutação.
+- **Contexto dirigido pelo agente** — par de tools `checkpoint`/`rewind`
+  (marca → explora → colapsa), `context_notes` (notebook por ramo que sobrevive
+  ao rollover) e `new_context` (compactação sob demanda); poda mecânica elide
+  tool results superados e URIs `history://` recuperam turnos pré-compactação.
+- **Ramificação de chat** — mensagens formam árvore (`ParentId`/`LeafMessageId`);
+  "ramificar daqui" forka qualquer turno num chat irmão, com resumo do ramo
+  abandonado.
+- **Agentes declarativos** — arquivos `*.agent.md` (frontmatter: tools, model,
+  spawns) descobertos no repo definem sub-agentes nomeados, invocáveis por
+  `delegate_task(agent: "…")`.
+- **Configuração em camadas** — settings efetivos resolvem por
+  global → admin → usuário com proveniência por chave.
+- **Pipeline de memória** — consolidação agendada destila resultados de sessões
+  nas camadas de memória durável reinjetadas em runs novas.
+- **Anexos de mídia no chat** — thumbnails de imagem/vídeo dentro do composer,
+  tamanho inline adequado após o envio, clique para ampliar; imagens anexadas
+  são sempre analisadas junto ao prompt por um modelo com visão.
 - **Retenção** — expurgo diário (runs de automação >90d, notificações >60d, steers
   de runs terminais >30d) + prune de worktrees órfãs + WAL checkpoint + VACUUM semanal.
 - **Hierarquia de chats** — `ParentChatId`/`ParentRunId`, `GET /chats/{id}/children`,
@@ -137,7 +185,7 @@ Guia completo de deploy: [docs/pt/DEPLOY-DOCKER.md](docs/pt/DEPLOY-DOCKER.md) ·
 ## Testes
 
 ```bash
-dotnet test OpenWebUI.slnx   # 1200+ testes de API + testes de cliente (NUnit)
+dotnet test OpenWebUI.slnx   # 1700+ testes de API + testes de cliente (NUnit)
 ```
 
 Gate de cobertura via Coverlet + ratchet (`.ci/coverage-baseline.txt` só sobe).
