@@ -521,21 +521,7 @@ public class ProviderService(
     {
         var firstChoice = json?["choices"] is JsonArray { Count: > 0 } arr ? arr[0] : null;
         var message = openAi ? firstChoice?["message"] : json?["message"];
-        // DSML (DeepSeek): markup de tool_calls pode vir dentro do texto —
-        // extrai as calls e limpa content/reasoning antes de devolver.
-        var (content, dsmlCalls) = DsmlToolCallFilter.Extract(
-            message?["content"]?.GetValue<string>() ?? string.Empty);
-        var rawReasoning = openAi
-            ? ExtractOpenAiReasoning(message)
-            : message?["thinking"] is JsonValue th && th.TryGetValue<string>(out var t)
-                ? t : null;
-        string? reasoning = null;
-        if (rawReasoning is not null)
-        {
-            var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
-            reasoning = clean.Length > 0 ? clean : null;
-            dsmlCalls.AddRange(moreCalls);
-        }
+        var (content, reasoning, dsmlCalls) = ExtractDsmlFields(message, openAi);
         var calls = new List<ProviderToolCall>();
         var callsNode = message?["tool_calls"]?.AsArray();
         var callsJson = callsNode?.ToJsonString() ?? "[]";
@@ -560,16 +546,41 @@ public class ProviderService(
             calls.AddRange(dsmlCalls);
             // Echo no formato OpenAI: o callsJson precisa incluir as calls
             // sintetizadas para o modelo ver na próxima rodada.
-            callsJson = JsonSerializer.Serialize(calls.Select(c => new
-            {
-                id = c.Id,
-                type = "function",
-                function = new { name = c.Name, arguments = c.ArgumentsJson },
-            }));
+            callsJson = SerializeToolCallsEcho(calls);
         }
 
         return new ProviderCompletion(content, calls, callsJson, reasoning);
     }
+
+    /// <summary>Limpa markup DSML (DeepSeek) de content/reasoning de uma
+    /// message OpenAI-compatível e devolve as calls extraídas.</summary>
+    private static (string Content, string? Reasoning, List<ProviderToolCall> DsmlCalls)
+        ExtractDsmlFields(JsonNode? message, bool openAi)
+    {
+        var (content, dsmlCalls) = DsmlToolCallFilter.Extract(
+            message?[ContentKey]?.GetValue<string>() ?? string.Empty);
+        var rawReasoning = openAi
+            ? ExtractOpenAiReasoning(message)
+            : message?["thinking"] is JsonValue th && th.TryGetValue<string>(out var t)
+                ? t : null;
+        if (rawReasoning is null)
+        {
+            return (content, null, dsmlCalls);
+        }
+        var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
+        dsmlCalls.AddRange(moreCalls);
+        return (content, clean.Length > 0 ? clean : null, dsmlCalls);
+    }
+
+    /// <summary>Serializa calls no shape <c>tool_calls</c> OpenAI (echo p/
+    /// o modelo ver as chamadas na próxima rodada).</summary>
+    private static string SerializeToolCallsEcho(IEnumerable<ProviderToolCall> calls) =>
+        JsonSerializer.Serialize(calls.Select(c => new
+        {
+            id = c.Id,
+            type = "function",
+            function = new { name = c.Name, arguments = c.ArgumentsJson },
+        }));
 
     /// <summary>
     /// Variante streamed de <see cref="CompleteWithToolsAsync"/>: emite os
@@ -786,12 +797,7 @@ public class ProviderService(
             .ToList();
         calls.AddRange(dsmlContent.Calls);
         calls.AddRange(dsmlReasoning.Calls);
-        var callsJson = JsonSerializer.Serialize(calls.Select(c => new
-        {
-            id = c.Id,
-            type = "function",
-            function = new { name = c.Name, arguments = c.ArgumentsJson },
-        }));
+        var callsJson = SerializeToolCallsEcho(calls);
         return new ProviderCompletion(content.ToString(), calls, callsJson);
     }
 
@@ -822,12 +828,12 @@ public class ProviderService(
 
         private static readonly Regex InvokePattern = new(
             "<｜DSML｜invoke name=\"(?<name>[^\"]+)\"\\s*>(?<body>.*?)</｜DSML｜invoke>",
-            RegexOptions.Singleline | RegexOptions.Compiled);
+            RegexOptions.Singleline | RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex ParameterPattern = new(
             "<｜DSML｜parameter name=\"(?<name>[^\"]+)\"(?<attrs>[^>]*)>(?<value>.*?)</｜DSML｜parameter>",
-            RegexOptions.Singleline | RegexOptions.Compiled);
+            RegexOptions.Singleline | RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex StringAttrPattern = new(
-            "string=\"(?<v>true|false)\"", RegexOptions.Compiled);
+            "string=\"(?<v>true|false)\"", RegexOptions.Compiled, RegexTimeout);
 
         private readonly StringBuilder _pending = new();
         private readonly List<ProviderToolCall> _calls = [];
@@ -923,16 +929,17 @@ public class ProviderService(
         /// em calls normalizadas; fragmentos incompletos são descartados.</summary>
         private void ParseInvokes(ReadOnlySpan<char> block)
         {
-            foreach (Match invoke in InvokePattern.Matches(block.ToString()))
+            foreach (var invokeGroups in InvokePattern.Matches(block.ToString())
+                .Select(m => m.Groups))
             {
                 var args = new JsonObject();
-                foreach (Match param in ParameterPattern.Matches(
-                    invoke.Groups["body"].Value))
+                foreach (var paramGroups in ParameterPattern.Matches(
+                    invokeGroups["body"].Value).Select(m => m.Groups))
                 {
-                    var name = param.Groups["name"].Value;
-                    var raw = param.Groups["value"].Value;
+                    var name = paramGroups["name"].Value;
+                    var raw = paramGroups["value"].Value;
                     var isString = StringAttrPattern.Match(
-                        param.Groups["attrs"].Value) is not { Success: true } attr
+                        paramGroups["attrs"].Value) is not { Success: true } attr
                         || attr.Groups["v"].Value != "false";
                     if (isString)
                     {
@@ -952,7 +959,7 @@ public class ProviderService(
                 }
                 _calls.Add(new ProviderToolCall(
                     $"dsml_{_syntheticId++}",
-                    invoke.Groups["name"].Value,
+                    invokeGroups["name"].Value,
                     args.ToJsonString(JsonOptions)));
             }
         }
@@ -1106,6 +1113,8 @@ public class ProviderService(
     // ---------------- Anthropic (Messages API) ----------------
 
     private const string AnthropicVersion = "2023-06-01";
+    private const string ContentKey = "content";
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 
     private static ProviderConnection FindTypedConnection(
         ConnectionsConfig connections, string type) =>
@@ -2326,10 +2335,10 @@ public class ProviderService(
         {
             return line;
         }
-        if (delta["content"] is JsonValue c
+        if (delta[ContentKey] is JsonValue c
             && c.TryGetValue<string>(out var s) && s.Length > 0)
         {
-            delta["content"] = content.Feed(s);
+            delta[ContentKey] = content.Feed(s);
         }
         // reasoning_details[] é array de segmentos — bloco DSML dividido
         // entre elementos é raro; cobre os campos escalares (deepseek/omniroute).
@@ -2341,7 +2350,7 @@ public class ProviderService(
                 delta[field] = reasoning.Feed(rs);
             }
         }
-        return $"data: {node!.ToJsonString(JsonOptions)}";
+        return $"data: {node.ToJsonString(JsonOptions)}";
     }
 
     /// <summary>Delta sintético final com o que o filtro segurou no fim do
@@ -2359,7 +2368,7 @@ public class ProviderService(
         var delta = new JsonObject();
         if (tail.Length > 0)
         {
-            delta["content"] = tail;
+            delta[ContentKey] = tail;
         }
         if (tailReasoning.Length > 0)
         {
