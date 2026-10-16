@@ -208,7 +208,7 @@ jobs:
       - name: Install Tailwind CLI (standalone)
         run: |
           # Versão pinada — output de `latest` diverge do artefato commitado.
-          [ -x /tmp/tailwindcss ] || curl -sSL -o /tmp/tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-x64
+          [ -x /tmp/tailwindcss ] || curl -sSL --proto-redir =https -o /tmp/tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-x64
           chmod +x /tmp/tailwindcss
           /tmp/tailwindcss --help | head -1
 

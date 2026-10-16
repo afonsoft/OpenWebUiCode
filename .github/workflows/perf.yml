@@ -73,7 +73,7 @@ jobs:
         run: dotnet publish src/OpenWebUI.Api --configuration Release --output app-out --verbosity minimal
 
       - name: Install aiohttp (perf harness)
-        run: pip install --quiet aiohttp
+        run: 'pip install --quiet --only-binary :all: "aiohttp==3.14.4"'
 
       - name: Start mock Ollama
         run: |
