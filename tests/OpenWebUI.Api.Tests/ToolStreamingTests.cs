@@ -142,6 +142,11 @@ public class ToolStreamingTests
                 // "ask_user") e desviava TODA run para o braço errado.
                 : body.Contains("\"tool_call_id\"", StringComparison.Ordinal)
                     ? "{\"message\":{\"role\":\"assistant\",\"content\":\"resposta pós-tool\"}}"
+                    // SPEC-20261016-question-forms: prompt "multi-form" dispara
+                    // a forma questions[] (3 itens: single, multiple, livre).
+                    : body.Contains("builtin_ask_user", StringComparison.Ordinal)
+                        && body.Contains("multi-form", StringComparison.Ordinal)
+                        ? "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-q\",\"function\":{\"name\":\"builtin:ask_user\",\"arguments\":{\"questions\":[{\"question\":\"Qual env?\",\"header\":\"Ambiente\",\"options\":[{\"label\":\"dev\",\"description\":\"desenvolvimento\"},\"prod\"],\"required\":true},{\"question\":\"Quais regioes?\",\"options\":[\"a\",\"b\",\"c\"],\"multiple\":true,\"required\":false},{\"question\":\"Detalhes?\",\"required\":true}]}}}]}}"
                     : body.Contains("builtin_ask_user", StringComparison.Ordinal)
                         ? "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-q\",\"function\":{\"name\":\"builtin:ask_user\",\"arguments\":{\"question\":\"Qual env?\",\"options\":[\"dev\",\"prod\"]}}}]}}"
                         : body.Contains("builtin_file_write", StringComparison.Ordinal)
@@ -679,6 +684,92 @@ public class ToolStreamingTests
         Assert.That(eventos.Any(e => e.Event == "tool_result"
                 && e.Data.Contains("respondeu")), Is.True,
             "skip não virou tool_result 'não respondeu'");
+
+        var final = await AguardarFinalAsync(_client, chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+    }
+
+    [Test]
+    public async Task AskUser_MultiForm_EmiteQuestionsArray_RespostaViraJson()
+    {
+        var auth = await SignUpAsync("AskM", "askm@tools.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        var run = await EnfileirarAsync(chat.Id, "multi-form pergunta",
+            ["builtin:ask_user"]);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        var streamTask = Task.Run(() => LerStreamAteFecharAsync(chat.Id, run.Id, cts.Token));
+        var limite = DateTime.UtcNow.AddSeconds(30);
+        var respondeu = false;
+        while (DateTime.UtcNow < limite && !respondeu)
+        {
+            var resp = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/runs/{run.Id}/approvals/call-q",
+                new RunApprovalDecisionRequest(
+                    "approve",
+                    Message: "{\"answers\":[\"prod\",[\"a\",\"b\"],\"detalhe x\"]}"));
+            respondeu = resp.StatusCode == HttpStatusCode.OK;
+            if (!respondeu)
+            {
+                await Task.Delay(200, cts.Token);
+            }
+        }
+        Assert.That(respondeu, Is.True, "ask_user multi-form não pediu resposta em 30s");
+
+        var eventos = await streamTask;
+        Assert.Multiple(() =>
+        {
+            Assert.That(eventos.Any(e => e.Event == "question_asked"), Is.True,
+                "faltou question_asked no stream");
+            var asked = eventos.First(e => e.Event == "question_asked");
+            Assert.That(asked.Data, Does.Contain("\"questions\""),
+                "form multi sem array questions");
+            Assert.That(asked.Data, Does.Contain("Quais regioes"),
+                "segunda pergunta ausente no evento");
+            Assert.That(asked.Data, Does.Contain("Ambiente"),
+                "header da primeira pergunta ausente");
+            Assert.That(eventos.Any(e => e.Event == "tool_result"
+                    && e.Data.Contains("prod") && e.Data.Contains("detalhe x")), Is.True,
+                "answers JSON não virou tool_result");
+        });
+
+        var final = await AguardarFinalAsync(_client, chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+    }
+
+    [Test]
+    public async Task AskUser_MultiForm_Deny_DevolveRecusa()
+    {
+        var auth = await SignUpAsync("AskR", "askr@tools.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        var run = await EnfileirarAsync(chat.Id, "multi-form recusa",
+            ["builtin:ask_user"]);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        var streamTask = Task.Run(() => LerStreamAteFecharAsync(chat.Id, run.Id, cts.Token));
+        var limite = DateTime.UtcNow.AddSeconds(30);
+        var recusou = false;
+        while (DateTime.UtcNow < limite && !recusou)
+        {
+            var resp = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/runs/{run.Id}/approvals/call-q",
+                new RunApprovalDecisionRequest("deny"));
+            recusou = resp.StatusCode == HttpStatusCode.OK;
+            if (!recusou)
+            {
+                await Task.Delay(200, cts.Token);
+            }
+        }
+        Assert.That(recusou, Is.True, "ask_user multi-form não pediu resposta em 30s");
+
+        var eventos = await streamTask;
+        Assert.That(eventos.Any(e => e.Event == "tool_result"
+                && e.Data.Contains("recusou")), Is.True,
+            "dismiss não virou tool_result de recusa");
 
         var final = await AguardarFinalAsync(_client, chat.Id, run.Id);
         Assert.That(final.Status, Is.EqualTo("completed"), final.Error);

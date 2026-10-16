@@ -633,6 +633,7 @@
   "chat.question_other": "Otra (escribe tu respuesta)",
   "chat.question_submit": "Enviar respuesta",
   "chat.question_skip": "Omitir",
+  "chat.question_optional": "opcional",
   "chat.question_placeholder": "Escribe tu respuesta…",
   "common.copy": "Copiar",
   "admin.tab_analytics": "Analítica",

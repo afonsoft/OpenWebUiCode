@@ -633,6 +633,7 @@
   "chat.question_other": "その他（回答を入力）",
   "chat.question_submit": "回答を送信",
   "chat.question_skip": "スキップ",
+  "chat.question_optional": "任意",
   "chat.question_placeholder": "回答を入力…",
   "common.copy": "コピー",
   "admin.tab_analytics": "分析",

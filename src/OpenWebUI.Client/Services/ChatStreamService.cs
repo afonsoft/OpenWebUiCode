@@ -461,15 +461,33 @@ public class ChatStreamService(HttpClient http, AuthService auth)
                     : null,
                 node["videoPath"]?.GetValue<string>()));
 
-    private static ChatStreamEvent ParseQuestionAsked(JsonNode node) =>
-        new ChatStreamEvent.QuestionAsked(
+    private static ChatStreamEvent ParseQuestionAsked(JsonNode node)
+    {
+        RunQuestionItem[]? questions = null;
+        if (node["questions"] is JsonArray arr && arr.Count > 0)
+        {
+            questions = [.. arr
+                .Where(q => q is not null)
+                .Select(q => new RunQuestionItem(
+                    q!["question"]?.GetValue<string>() ?? "?",
+                    q["header"]?.GetValue<string>(),
+                    (q["options"] as JsonArray)?
+                        .Select(o => o?.GetValue<string>() ?? string.Empty)
+                        .ToArray() ?? [],
+                    q["multiple"]?.GetValue<bool>() ?? false,
+                    q["required"]?.GetValue<bool>() ?? true))];
+        }
+        return new ChatStreamEvent.QuestionAsked(
             new RunQuestionAskedEvent(
                 node["callId"]?.GetValue<string>() ?? string.Empty,
                 node["question"]?.GetValue<string>() ?? string.Empty,
                 (node["options"] as JsonArray)?
                     .Select(o => o?.GetValue<string>() ?? string.Empty)
                     .ToArray() ?? [],
-                node["multiple"]?.GetValue<bool>() ?? false));
+                node["multiple"]?.GetValue<bool>() ?? false,
+                questions,
+                node["tool"]?.GetValue<string>()));
+    }
 
     private static ChatStreamEvent ParseDecisionAuto(JsonNode node) =>
         new ChatStreamEvent.DecisionAuto(

@@ -112,8 +112,30 @@ public sealed record RunApprovalAskedEvent(
 /// </summary>
 /// <param name="Options">Opções clicáveis; vazio = só resposta livre.</param>
 /// <param name="Multiple">Mais de uma opção pode ser escolhida.</param>
+/// <param name="Questions">
+/// Form multi-pergunta (SPEC-20261016-question-forms RF-001): itens do
+/// form agrupado quando a call trouxe <c>questions[]</c>; null na forma
+/// singular — os campos top-level (Question/Options/Multiple) refletem o
+/// primeiro item em ambos os casos, preservando clientes antigos.
+/// </param>
+/// <param name="Tool">Tool que originou a pergunta (RF-005 — telemetria).</param>
 public sealed record RunQuestionAskedEvent(
-    string CallId, string Question, string[] Options, bool Multiple);
+    string CallId, string Question, string[] Options, bool Multiple,
+    IReadOnlyList<RunQuestionItem>? Questions = null, string? Tool = null);
+
+/// <summary>
+/// Item de um form multi-pergunta do ask_user
+/// (SPEC-20261016-question-forms RF-001): pergunta com header opcional,
+/// opções próprias, multi-seleção e flag de obrigatoriedade.
+/// </summary>
+/// <param name="Question">Texto da pergunta.</param>
+/// <param name="Header">Rótulo curto exibido acima da pergunta (opcional).</param>
+/// <param name="Options">Opções clicáveis; vazio = resposta livre.</param>
+/// <param name="Multiple">Permite marcar mais de uma opção.</param>
+/// <param name="Required">false permite pular (resposta null na posição).</param>
+public sealed record RunQuestionItem(
+    string Question, string? Header, string[] Options,
+    bool Multiple, bool Required);
 
 /// <summary>
 /// Evento SSE <c>decision_auto</c> (SPEC-15 RF-003): nos presets autônomos
