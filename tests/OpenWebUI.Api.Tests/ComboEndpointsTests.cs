@@ -344,4 +344,117 @@ public class ComboEndpointsTests
             $"/api/v1/combos/{combo.Id}/status");
         Assert.That(status!.Cooldowns.Any(c => c.ModelId == "fail:1"), Is.True);
     }
+
+    // ---- cobertura dos caminhos de CRUD restantes ----
+
+    [Test]
+    public async Task List_RetornaPropriosEGlobais()
+    {
+        var user = await SignUpAsync("Lister", "lister@combo.local", "senha123");
+        UseToken(user.Token);
+        await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "do-user", models: ["fake:1"]));
+
+        var lista = await _client.GetFromJsonAsync<List<ComboResponse>>("/api/v1/combos");
+        Assert.Multiple(() =>
+        {
+            Assert.That(lista!.Any(c => c.Name == "do-user"), Is.True);
+            Assert.That(lista!.Any(c => c.Name == "global-1"), Is.True); // global do teste Crud
+        });
+    }
+
+    [Test]
+    public async Task GetEStatus_Inexistente_404()
+    {
+        var user = await SignUpAsync("Ghost", "ghost@combo.local", "senha123");
+        UseToken(user.Token);
+        var get = await _client.GetAsync("/api/v1/combos/nope");
+        var status = await _client.GetAsync("/api/v1/combos/nope/status");
+        var del = await _client.DeleteAsync("/api/v1/combos/nope");
+        Assert.Multiple(() =>
+        {
+            Assert.That(get.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(status.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        });
+    }
+
+    [Test]
+    public async Task Update_TrocaCampos_Conflito_EValidacao()
+    {
+        var user = await SignUpAsync("Updater", "updater@combo.local", "senha123");
+        UseToken(user.Token);
+        var a = await (await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "combo-a", models: ["fake:1"])))
+            .Content.ReadFromJsonAsync<ComboResponse>();
+        var b = await (await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "combo-b", models: ["fake:1"])))
+            .Content.ReadFromJsonAsync<ComboResponse>();
+
+        // PUT feliz: troca nome, estratégia e itens.
+        var put = await _client.PutAsJsonAsync($"/api/v1/combos/{a!.Id}",
+            NewCombo(name: "combo-a2", strategy: "round-robin",
+                models: ["m1", "m2"]) with { Enabled = false });
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var updated = await put.Content.ReadFromJsonAsync<ComboResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(updated!.Name, Is.EqualTo("combo-a2"));
+            Assert.That(updated.Strategy, Is.EqualTo("round-robin"));
+            Assert.That(updated.Items, Is.EqualTo(new[] { "m1", "m2" }));
+            Assert.That(updated.Enabled, Is.False);
+        });
+
+        // PUT com nome de outro combo → 409.
+        var dup = await _client.PutAsJsonAsync($"/api/v1/combos/{a.Id}",
+            NewCombo(name: "combo-b", models: ["fake:1"]));
+        Assert.That(dup.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+
+        // PUT inválido → 400; PUT em combo alheio → 404.
+        var bad = await _client.PutAsJsonAsync($"/api/v1/combos/{a.Id}",
+            NewCombo() with { Items = [] });
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var other = await SignUpAsync("UpdOther", "updother@combo.local", "senha123");
+        UseToken(other.Token);
+        var foreign = await _client.PutAsJsonAsync($"/api/v1/combos/{b!.Id}",
+            NewCombo(name: "invadido", models: ["fake:1"]));
+        Assert.That(foreign.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Delete_Remove_EGetRetorna404()
+    {
+        var user = await SignUpAsync("Deleter", "deleter@combo.local", "senha123");
+        UseToken(user.Token);
+        var combo = await (await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "pra-apagar", models: ["fake:1"])))
+            .Content.ReadFromJsonAsync<ComboResponse>();
+
+        var del = await _client.DeleteAsync($"/api/v1/combos/{combo!.Id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var gone = await _client.GetAsync($"/api/v1/combos/{combo.Id}");
+        Assert.That(gone.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Validate_LimitesENomeInvalidos()
+    {
+        var user = await SignUpAsync("Val", "val@combo.local", "senha123");
+        UseToken(user.Token);
+        var nomeVazio = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: " ", models: ["fake:1"]));
+        var rpmZero = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(models: ["fake:1"]) with { RequestsPerMinute = 0 });
+        var tpmZero = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(models: ["fake:1"]) with { TokensPerMinute = 0 });
+        var itemVazio = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(models: [" "]));
+        Assert.Multiple(() =>
+        {
+            Assert.That(nomeVazio.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(rpmZero.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(tpmZero.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+            Assert.That(itemVazio.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        });
+    }
 }

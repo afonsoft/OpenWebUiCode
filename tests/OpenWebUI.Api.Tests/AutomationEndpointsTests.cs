@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
 using OpenWebUI.Application.Contracts;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -12,6 +13,7 @@ namespace OpenWebUI.Api.Tests;
 /// mockado, run failed não bloqueando agenda e validação do schedule.
 /// </summary>
 [TestFixture, IsolateEnvironment]
+[NonParallelizable] // popula o home global isolado e invalida o cache de Scan
 public class AutomationEndpointsTests
 {
     private WebApplicationFactory<Program> _factory = null!;
@@ -357,6 +359,80 @@ public class AutomationEndpointsTests
             Assert.That(run!.Status, Is.EqualTo("failed"));
             Assert.That(run.Error, Does.Contain("skill-inexistente-xyz"));
         });
+    }
+
+    [Test]
+    public async Task RunNow_Skill_Ok_MontaPromptDaSkill()
+    {
+        // Skill no home global isolado da suíte (SPEC-20261016-global-agents-scope).
+        var skillDir = Path.Join(TestHomeIsolation.Home, ".agents", "skills", "hidrate");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Join(skillDir, "SKILL.md"), """
+            ---
+            name: hidrate
+            description: Lembrete de hidratação
+            ---
+            Você é um coach de hidratação. MARCADOR-SKILL-42.
+            """);
+        SkillDiscoveryService.Invalidate("");
+
+        var user = await SignUpAsync("SkillOk", "skillok@auto.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with
+            {
+                ActionKind = "skill",
+                ActionJson = "{\"skill\":\"hidrate\",\"args\":\"2 copos\"}",
+            });
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+
+        var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+        var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(run!.Status, Is.EqualTo("ok"), run!.Error);
+            Assert.That(run.ActionKind, Is.EqualTo("skill"));
+            Assert.That(run.ChatId, Is.Not.Null);
+        });
+        var chat = await _client.GetFromJsonAsync<ChatResponse>($"/api/v1/chats/{run!.ChatId}");
+        Assert.That(chat!.Messages[0].Content, Does.Contain("MARCADOR-SKILL-42"));
+    }
+
+    [Test]
+    public async Task RunNow_Mcp_ServidorInexistente_Failed()
+    {
+        var user = await SignUpAsync("Mcper", "mcper@auto.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with
+            {
+                ActionKind = "mcp",
+                ActionJson = "{\"server\":\"env:nao-existe\",\"tool\":\"qualquer\"}",
+            });
+        var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+
+        var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+        var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(run!.Status, Is.EqualTo("failed"));
+            Assert.That(run.Error, Does.Contain("env:nao-existe"));
+        });
+    }
+
+    [Test]
+    public async Task Create_Webhook_UrlInvalida_Retorna400()
+    {
+        var user = await SignUpAsync("HookVal", "hookval@auto.local", "senha123");
+        UseToken(user.Token);
+        var bad = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with
+            {
+                ActionKind = "webhook",
+                ActionJson = "{\"url\":\"não-é-url\"}",
+            });
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
     [Test]

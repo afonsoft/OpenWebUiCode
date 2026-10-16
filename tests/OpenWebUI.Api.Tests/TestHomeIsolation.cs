@@ -14,6 +14,9 @@ public class TestHomeIsolation
 {
     private static string _home = null!;
 
+    /// <summary>Home isolado da suíte — testes podem popular <c>.agents/*</c> aqui.</summary>
+    internal static string Home => _home;
+
     [OneTimeSetUp]
     public void SetUp()
     {
