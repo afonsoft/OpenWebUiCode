@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using OpenWebUI.Domain;
 using McpTool = ModelContextProtocol.Client.McpClientTool;
@@ -23,14 +25,26 @@ namespace OpenWebUI.Infrastructure.Services;
 /// </summary>
 public partial class McpClientService(
     AppDbContext db,
-    HybridCache cache)
+    HybridCache cache,
+    SkillDiscoveryService? skills = null,
+    ILogger<McpClientService>? logger = null)
 {
 
     /// <summary>Prefixo interno de URL das tools virtuais MCP.</summary>
     public const string VirtualUrlPrefix = "mcp://";
 
+    /// <summary>Prefixo de id de servidor declarado em <c>.agents/mcp.json</c> (não cadastrado via UI).</summary>
+    public const string EnvServerIdPrefix = "env:";
+
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ToolsCacheTtl = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan EnvSyncTtl = TimeSpan.FromSeconds(120);
+
+    // Valores literais de env dos servers env:* (resolvidos na sync; o DB
+    // persiste só os NOMES em EnvJson — valores ficam em memória e são
+    // repovoados a cada boot/sync, RF-006 global-agents-scope).
+    private static readonly ConcurrentDictionary<string, Dictionary<string, string?>> EnvLiterals = new();
+    private static readonly ConcurrentDictionary<string, DateTimeOffset> EnvSyncAt = new();
 
     private static readonly HybridCacheEntryOptions CacheOptions = new()
     {
@@ -176,7 +190,7 @@ public partial class McpClientService(
                 Name = server.Name,
                 Command = server.Command!,
                 Arguments = ParseStringList(server.ArgsJson),
-                EnvironmentVariables = LoadEnvAllowList(server.EnvJson),
+                EnvironmentVariables = LoadEnv(server),
                 InheritEnvironmentVariables = false,
             })
             : new HttpClientTransport(new HttpClientTransportOptions
@@ -192,15 +206,27 @@ public partial class McpClientService(
 
     /// <summary>
     /// Só os nomes listados em EnvJson são lidos do ambiente e passados ao
-    /// processo — valores nunca persistidos (permit-list, RF-004).
+    /// processo — valores nunca persistidos (permit-list, RF-004). Servers
+    /// <c>env:*</c> mesclam os literais declarados no <c>mcp.json</c>
+    /// (resolvidos na sync, mantidos em memória apenas).
     /// </summary>
-    private static Dictionary<string, string?> LoadEnvAllowList(string? envJson)
+    private static Dictionary<string, string?> LoadEnv(McpServer server)
     {
         var env = new Dictionary<string, string?>();
-        foreach (var name in ParseStringList(envJson).Where(n => !string.IsNullOrWhiteSpace(n)))
+        foreach (var name in ParseStringList(server.EnvJson).Where(n => !string.IsNullOrWhiteSpace(n)))
         {
             env[name] = Environment.GetEnvironmentVariable(name);
         }
+
+        if (server.Id.StartsWith(EnvServerIdPrefix, StringComparison.Ordinal)
+            && EnvLiterals.TryGetValue(server.Id, out var literals))
+        {
+            foreach (var (k, v) in literals)
+            {
+                env[k] = v;
+            }
+        }
+
         return env;
     }
 
@@ -297,6 +323,120 @@ public partial class McpClientService(
             return [];
         }
     }
+
+    /// <summary>
+    /// Materializa os servidores declarados em <c>~/.agents/mcp.json</c> +
+    /// <c>{workdir}/.agents/mcp.json</c> (SPEC-20261016-global-agents-scope
+    /// RF-006): upsert de linhas <c>env:{id}</c> (globais, <c>UserId</c>
+    /// null), desativa as não mais declaradas e re-descobre suas tools como
+    /// <c>mcp://</c> virtuais. Throttle de 120s por workdir — o refresh
+    /// conecta de fato a cada server. Falhas de um server viram
+    /// <see cref="McpServer.LastError"/>, nunca quebram a run.
+    /// </summary>
+    /// <param name="workdir">Workdir do repo vinculado (null = só o global).</param>
+    /// <param name="ct">Cancelamento.</param>
+    /// <returns>Quantidade de tools materializadas.</returns>
+    public async Task<int> SyncEnvServersAsync(string? workdir, CancellationToken ct = default)
+    {
+        if (skills is null)
+        {
+            return 0;
+        }
+
+        var throttleKey = workdir ?? "";
+        if (EnvSyncAt.TryGetValue(throttleKey, out var last)
+            && DateTimeOffset.UtcNow - last < EnvSyncTtl)
+        {
+            return 0;
+        }
+        EnvSyncAt[throttleKey] = DateTimeOffset.UtcNow;
+
+        var config = skills.LoadMcpServers(workdir);
+        foreach (var w in config.Warnings)
+        {
+            logger?.LogWarning("mcp.json: {Warning}", w);
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var rows = new List<McpServer>();
+        foreach (var def in config.Servers)
+        {
+            var id = EnvServerIdPrefix + def.Id;
+            var envNames = new List<string>();
+            var envValues = new Dictionary<string, string?>();
+            foreach (var (k, v) in def.Env)
+            {
+                envNames.Add(k);
+                envValues[k] = ResolveEnvRef(v);
+            }
+            EnvLiterals[id] = envValues;
+
+            var row = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id, ct);
+            if (row is null)
+            {
+                row = new McpServer { Id = id, CreatedAt = now };
+                db.McpServers.Add(row);
+            }
+
+            row.Name = def.Id;
+            row.Transport = def.Transport;
+            row.Command = def.Command;
+            row.ArgsJson = JsonSerializer.Serialize(def.Args, JsonOptions);
+            row.EnvJson = JsonSerializer.Serialize(envNames, JsonOptions);
+            row.Url = def.Url;
+            row.HeadersJson = JsonSerializer.Serialize(def.Headers, JsonOptions);
+            row.UserId = null;
+            row.Enabled = true;
+            row.UpdatedAt = now;
+            rows.Add(row);
+        }
+
+        var declared = rows.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
+        var stale = await db.McpServers
+            .Where(s => s.Id.StartsWith(EnvServerIdPrefix) && !declared.Contains(s.Id))
+            .ToListAsync(ct);
+        foreach (var s in stale)
+        {
+            s.Enabled = false;
+            s.UpdatedAt = now;
+            EnvLiterals.TryRemove(s.Id, out _);
+        }
+
+        await db.SaveChangesAsync(ct);
+        await cache.RemoveByTagAsync("mcp", ct);
+
+        var materialized = 0;
+        foreach (var row in rows)
+        {
+            try
+            {
+                materialized += await RefreshToolsAsync(row, ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                logger?.LogWarning(
+                    "Servidor MCP env:{Id} falhou no refresh: {Error}", row.Name, ex.Message);
+            }
+        }
+
+        return materialized;
+    }
+
+    /// <summary>
+    /// Resolve referências <c>${VAR}</c>/<c>{env:VAR}</c>/<c>$VAR</c> de
+    /// <c>mcp.json</c> lendo o ambiente do processo; demais valores passam
+    /// como literais (mantidos só em memória).
+    /// </summary>
+    internal static string? ResolveEnvRef(string value)
+    {
+        var m = EnvRefRegex().Match(value);
+        return m.Success
+            ? Environment.GetEnvironmentVariable(m.Groups["v"].Value)
+            : value;
+    }
+
+    [GeneratedRegex(@"^\$\{(?<v>[A-Za-z_][A-Za-z0-9_]*)\}$|^\{env:(?<v>[A-Za-z_][A-Za-z0-9_]*)\}$|^\$(?<v>[A-Za-z_][A-Za-z0-9_]*)$")]
+    private static partial Regex EnvRefRegex();
 
     /// <summary>
     /// Obtém um servidor MCP por id com cache de 30s (hot path do

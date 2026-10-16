@@ -1,12 +1,29 @@
 using System.Collections.Concurrent;
 using System.Text;
+using System.Text.Json;
 
 namespace OpenWebUI.Infrastructure.Services;
 
 /// <summary>Entrada descoberta no repositório (skill ou command markdown).</summary>
+/// <param name="Scope"><c>project</c> (workdir vinculado) ou <c>global</c> (<c>~/.agents</c> etc.).</param>
 public sealed record RepoEntry(
     string Name, string Description, string Path, string Body,
-    string? Agent = null, string? Model = null, bool Subtask = false);
+    string? Agent = null, string? Model = null, bool Subtask = false,
+    string Scope = "project");
+
+/// <summary>Servidor MCP declarado em <c>.agents/mcp.json</c> (global ou do projeto).</summary>
+public sealed record AgentsMcpServer(
+    string Id, string Transport, string? Command, List<string> Args,
+    Dictionary<string, string> Env, string? Url,
+    Dictionary<string, string> Headers, string SourceFile);
+
+/// <summary>Resultado do parse dos arquivos <c>mcp.json</c> (erros viram warnings, nunca lançam).</summary>
+public sealed record AgentsMcpConfig(
+    IReadOnlyList<AgentsMcpServer> Servers, IReadOnlyList<string> Warnings)
+{
+    /// <summary>Configuração vazia (nenhum arquivo encontrado).</summary>
+    public static readonly AgentsMcpConfig Empty = new([], []);
+}
 
 /// <summary>Resultado do scan: skills + commands já deduplicados por nome.</summary>
 public sealed record RepoScanResult(
@@ -40,6 +57,7 @@ public sealed class SkillDiscoveryService
     private static readonly ConcurrentDictionary<string, (DateTimeOffset At, RepoScanResult Result)> Cache =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // Raízes do projeto em ordem de precedência (primeiro nome vence).
     private static readonly string[] SkillRoots =
     [
         ".claude/skills", ".agents/skills", ".devin/skills",
@@ -51,25 +69,54 @@ public sealed class SkillDiscoveryService
         ".opencode/command", ".claude/commands", ".agents/commands",
     ];
 
+    // Raízes globais em ordem de precedência (SPEC-20261016-global-agents-
+    // scope RF-001): .agents é a fonte canônica; .claude/.config/opencode
+    // são compatibilidade com os catálogos já instalados do usuário.
+    private static readonly string[] GlobalSkillRoots =
+    [
+        ".agents/skills", ".claude/skills", ".config/opencode/skills",
+    ];
+
+    private static readonly string[] GlobalCommandRoots =
+    [
+        ".agents/commands", ".claude/commands", ".config/opencode/commands",
+    ];
+
     private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
     {
         ".git", "bin", "obj", "node_modules",
     };
 
     /// <summary>Invalida o cache de um workdir (rebind ou troca de branch).</summary>
-    public static void Invalidate(string workdir) => Cache.TryRemove(workdir, out _);
-
-    /// <summary>Scan do workdir (com cache TTL 60s). Nunca lança por arquivo ruim.</summary>
-    public RepoScanResult Scan(string workdir)
+    public static void Invalidate(string workdir)
     {
-        if (Cache.TryGetValue(workdir, out var hit) && DateTimeOffset.UtcNow - hit.At < Ttl)
+        foreach (var key in Cache.Keys.Where(k => k.StartsWith(workdir + "|", StringComparison.Ordinal)))
+        {
+            Cache.TryRemove(key, out _);
+        }
+    }
+
+    /// <summary>
+    /// Scan do workdir + escopo global <c>~/.agents</c> (com cache TTL 60s).
+    /// <paramref name="workdir"/> null/sem repo → só o escopo global
+    /// (RF-007). Nunca lança por arquivo ruim.
+    /// </summary>
+    /// <param name="workdir">Diretório de trabalho do repo vinculado (ou null).</param>
+    /// <param name="includeGlobal">Inclui skills/commands de <c>$HOME/.agents</c> etc.</param>
+    /// <param name="home">Override do home (testes); default <c>UserProfile</c>.</param>
+    public RepoScanResult Scan(
+        string? workdir, bool includeGlobal = true, string? home = null)
+    {
+        var key = $"{workdir ?? ""}|{includeGlobal}|{home ?? ""}";
+        if (Cache.TryGetValue(key, out var hit) && DateTimeOffset.UtcNow - hit.At < Ttl)
         {
             return hit.Result;
         }
 
         var result = new RepoScanResult(
-            ScanSkills(workdir), ScanCommands(workdir));
-        Cache[workdir] = (DateTimeOffset.UtcNow, result);
+            ScanSkills(workdir, includeGlobal, home),
+            ScanCommands(workdir, includeGlobal, home));
+        Cache[key] = (DateTimeOffset.UtcNow, result);
         return result;
     }
 
@@ -114,26 +161,92 @@ public sealed class SkillDiscoveryService
         return sb.Length == 0 ? null : sb.ToString();
     }
 
-    private static IReadOnlyList<RepoEntry> ScanSkills(string workdir) =>
-        ScanRoots(workdir, SkillRoots, "SKILL.md", filePerEntry: true);
+    private static IReadOnlyList<RepoEntry> ScanSkills(
+        string? workdir, bool includeGlobal, string? home) =>
+        ScanRoots(RootsInPrecedenceOrder(
+            workdir, SkillRoots, includeGlobal ? GlobalSkillRoots : null, home),
+            "SKILL.md", filePerEntry: true);
 
-    private static IReadOnlyList<RepoEntry> ScanCommands(string workdir) =>
-        ScanRoots(workdir, CommandRoots, "*.md", filePerEntry: false);
+    private static IReadOnlyList<RepoEntry> ScanCommands(
+        string? workdir, bool includeGlobal, string? home) =>
+        ScanRoots(RootsInPrecedenceOrder(
+            workdir, CommandRoots, includeGlobal ? GlobalCommandRoots : null, home),
+            "*.md", filePerEntry: false);
 
     /// <summary>
-    /// Varre as raízes em ordem de precedência. <paramref name="filePerEntry"/>:
-    /// true = cada arquivo é SKILL.md e o nome vem do diretório-pai;
-    /// false = cada *.md é um command cujo nome vem do basename do arquivo.
+    /// Lista (dir, scope, baseDir) na ordem de varredura baixa→alta
+    /// precedência: globais primeiro (invertidas — a canônica vem por
+    /// último), depois as do projeto invertidas (o primeiro item de
+    /// <paramref name="projectRoots"/>, maior precedência, é varrido por
+    /// último). Dedup "último nome vence" materializa a precedência.
+    /// </summary>
+    private static List<(string Dir, string Scope, string Base)> RootsInPrecedenceOrder(
+        string? workdir, string[] projectRoots, string[]? globalRoots, string? home)
+    {
+        var roots = new List<(string Dir, string Scope, string Base)>();
+        if (globalRoots is not null && ResolveHome(home) is { } h)
+        {
+            for (var i = globalRoots.Length - 1; i >= 0; i--)
+            {
+                roots.Add((Path.Join(h, globalRoots[i]), "global", h));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(workdir))
+        {
+            for (var i = projectRoots.Length - 1; i >= 0; i--)
+            {
+                roots.Add((
+                    Path.Join(workdir, projectRoots[i].Replace('/', Path.DirectorySeparatorChar)),
+                    "project", workdir));
+            }
+        }
+
+        return roots;
+    }
+
+    /// <summary>
+    /// Seam de teste: substitui a resolução do home do escopo global.
+    /// Produção nunca seta — o default é <c>UserProfile</c>/<c>HOME</c>.
+    /// </summary>
+    internal static Func<string?>? HomeResolver { get; set; }
+
+    private static string? ResolveHome(string? home)
+    {
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            return home;
+        }
+
+        if (HomeResolver?.Invoke() is { } resolved && resolved.Length > 0)
+        {
+            return resolved;
+        }
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(profile))
+        {
+            profile = Environment.GetEnvironmentVariable("HOME");
+        }
+
+        return string.IsNullOrWhiteSpace(profile) ? null : profile;
+    }
+
+    /// <summary>
+    /// Varre as raízes (já ordenadas baixa→alta precedência). Mesmo nome:
+    /// a ocorrência mais recente substitui a anterior (última fonte vence —
+    /// RF-002). <paramref name="filePerEntry"/>: true = SKILL.md cujo nome
+    /// vem do diretório-pai; false = *.md cujo nome vem do basename.
     /// </summary>
     private static List<RepoEntry> ScanRoots(
-        string workdir, string[] roots, string pattern, bool filePerEntry)
+        List<(string Dir, string Scope, string Base)> roots,
+        string pattern, bool filePerEntry)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var items = new List<RepoEntry>();
         var visited = 0;
-        foreach (var root in roots)
+        foreach (var (dir, scope, baseDir) in roots)
         {
-            var dir = Path.Join(workdir, root.Replace('/', Path.DirectorySeparatorChar));
             if (!Directory.Exists(dir) || IsReparsePoint(dir))
             {
                 continue;
@@ -146,15 +259,135 @@ public sealed class SkillDiscoveryService
                     return items;
                 }
 
-                var entry = TryParse(workdir, file, filePerEntry);
-                if (entry is not null && seen.Add(entry.Name))
+                var entry = TryParse(file, filePerEntry, scope, baseDir);
+                if (entry is null)
                 {
+                    continue;
+                }
+
+                if (index.TryGetValue(entry.Name, out var at))
+                {
+                    items[at] = entry;
+                }
+                else
+                {
+                    index[entry.Name] = items.Count;
                     items.Add(entry);
                 }
             }
         }
 
         return items;
+    }
+
+    /// <summary>
+    /// Lê <c>{home}/.agents/mcp.json</c> + <c>{workdir}/.agents/mcp.json</c>
+    /// (RF-006) no formato <c>{"mcpServers": {id: {command|url, ...}}}</c>.
+    /// Projeto sobrescreve global por id. Arquivo malformado → warning,
+    /// nunca exceção.
+    /// </summary>
+    public AgentsMcpConfig LoadMcpServers(string? workdir, string? home = null)
+    {
+        var servers = new Dictionary<string, AgentsMcpServer>(StringComparer.OrdinalIgnoreCase);
+        var warnings = new List<string>();
+        foreach (var file in new[]
+        {
+            ResolveHome(home) is { } h ? Path.Join(h, ".agents", "mcp.json") : null,
+            string.IsNullOrWhiteSpace(workdir)
+                ? null : Path.Join(workdir, ".agents", "mcp.json"),
+        })
+        {
+            if (file is null)
+            {
+                continue;
+            }
+
+            foreach (var s in ParseMcpJson(file, warnings))
+            {
+                servers[s.Id] = s;
+            }
+        }
+
+        return new AgentsMcpConfig(servers.Values.ToList(), warnings);
+    }
+
+    private static List<AgentsMcpServer> ParseMcpJson(string file, List<string> warnings)
+    {
+        var parsed = new List<AgentsMcpServer>();
+        JsonDocument doc;
+        try
+        {
+            if (!File.Exists(file) || new FileInfo(file).Length is 0 or > MaxFileBytes)
+            {
+                return parsed;
+            }
+
+            doc = JsonDocument.Parse(File.ReadAllText(file));
+        }
+        catch (IOException) { return parsed; }
+        catch (UnauthorizedAccessException) { return parsed; }
+        catch (JsonException ex)
+        {
+            warnings.Add($"{file}: mcp.json inválido ({ex.Message}).");
+            return parsed;
+        }
+
+        using (doc)
+        {
+            if (!doc.RootElement.TryGetProperty("mcpServers", out var map)
+                || map.ValueKind != JsonValueKind.Object)
+            {
+                return parsed;
+            }
+
+            foreach (var prop in map.EnumerateObject())
+            {
+                var e = prop.Value;
+                if (e.ValueKind != JsonValueKind.Object)
+                {
+                    warnings.Add($"{file}: server '{prop.Name}' ignorado (não é objeto).");
+                    continue;
+                }
+
+                var command = Str(e, "command");
+                var url = Str(e, "url");
+                if (!string.IsNullOrWhiteSpace(command))
+                {
+                    parsed.Add(new AgentsMcpServer(
+                        prop.Name, "stdio", command, StrList(e, "args"), StrMap(e, "env"),
+                        null, [], file));
+                }
+                else if (!string.IsNullOrWhiteSpace(url))
+                {
+                    parsed.Add(new AgentsMcpServer(
+                        prop.Name, "http", null, [], [], url, StrMap(e, "headers"), file));
+                }
+                else
+                {
+                    warnings.Add($"{file}: server '{prop.Name}' sem 'command' nem 'url' — ignorado.");
+                }
+            }
+        }
+
+        return parsed;
+
+        static string? Str(JsonElement e, string prop) =>
+            e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString() : null;
+
+        static List<string> StrList(JsonElement e, string prop) =>
+            e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Array
+                ? v.EnumerateArray()
+                    .Where(i => i.ValueKind == JsonValueKind.String)
+                    .Select(i => i.GetString()!).ToList()
+                : [];
+
+        static Dictionary<string, string> StrMap(JsonElement e, string prop) =>
+            e.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.Object
+                ? v.EnumerateObject()
+                    .Where(p => p.Value.ValueKind == JsonValueKind.String)
+                    .ToDictionary(p => p.Name, p => p.Value.GetString()!)
+                : [];
     }
 
     /// <summary>Enumera arquivos recursivamente sem seguir symlink/reparse point.</summary>
@@ -189,8 +422,13 @@ public sealed class SkillDiscoveryService
         return found;
     }
 
-    /// <summary>Parse de um arquivo: frontmatter YAML mínimo + corpo (≤64KB).</summary>
-    private static RepoEntry? TryParse(string workdir, string file, bool filePerEntry)
+    /// <summary>
+    /// Parse de um arquivo: frontmatter YAML mínimo + corpo (≤64KB).
+    /// Entries globais carregam o caminho absoluto (fora do workdir);
+    /// de projeto, o relativo ao workdir.
+    /// </summary>
+    private static RepoEntry? TryParse(
+        string file, bool filePerEntry, string scope, string baseDir)
     {
         FileInfo info;
         try
@@ -224,13 +462,15 @@ public sealed class SkillDiscoveryService
         var description = fm.GetValueOrDefault("description")
             ?? FirstLine(body)
             ?? string.Empty;
+        var path = scope == "global" ? file : Relative(baseDir, file);
         return new RepoEntry(
-            name.Trim(), description.Trim(), Relative(workdir, file), body.Trim(),
+            name.Trim(), description.Trim(), path, body.Trim(),
             Agent: fm.GetValueOrDefault("agent"),
             Model: fm.GetValueOrDefault("model"),
             Subtask: fm.GetValueOrDefault("subtask") is { } s
                 && (s.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    || s.Equals("agent", StringComparison.OrdinalIgnoreCase)));
+                    || s.Equals("agent", StringComparison.OrdinalIgnoreCase)),
+            Scope: scope);
     }
 
     /// <summary>Frontmatter mínimo: bloco <c>---\nkey: value\n---</c> no topo.</summary>

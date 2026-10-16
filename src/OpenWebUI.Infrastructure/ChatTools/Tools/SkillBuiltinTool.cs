@@ -18,9 +18,10 @@ public sealed class SkillBuiltinTool(
 
     /// <inheritdoc />
     public string Description =>
-        "Load a repository skill by name (SKILL.md under .claude/.agents/" +
-        ".devin/.opencode/skills dirs) — call to pull the repo's own " +
-        "conventions/runbooks into context before following them.";
+        "Load a skill by name (SKILL.md under ~/.agents/skills, " +
+        "~/.claude/skills or the repo's .claude/.agents/.devin/.opencode/" +
+        "skills dirs) — call to pull project/global conventions/runbooks " +
+        "into context before following them.";
 
     /// <inheritdoc />
     public string ParametersJson => """
@@ -41,7 +42,9 @@ public sealed class SkillBuiltinTool(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
         var name = args.TryGetProperty("name", out var n) ? n.GetString() : null;
-        var scan = skills.Scan(context.WorkspacePath);
+        // RF-007: sem workdir (chat sem repo) o scan cai no escopo global.
+        var scan = skills.Scan(
+            string.IsNullOrWhiteSpace(context.WorkspacePath) ? null : context.WorkspacePath);
         var hidden = await overlay.HiddenSkillNamesAsync(context.UserId, ct);
         var visible = scan.Skills
             .Where(s => !hidden.Contains(s.Name)).ToList();

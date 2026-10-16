@@ -82,7 +82,7 @@ public static class PermissionRuleset
         "code_interpreter", "job_list", "job_output", "job_kill",
         "worktree_diff", "worktree_merge", "plan_exit", "delegate_task",
         "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
-        "lsp_definition", "lsp_references", "lsp_hover", "skill",
+        "lsp_definition", "lsp_references", "lsp_hover",
     };
 
     public static PermissionDecision Evaluate(

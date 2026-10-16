@@ -38,6 +38,7 @@ public sealed class ChatRunExecutor(
     ContextCompactionService compaction,
     ContextBoundaryService boundaries,
     RunAdvisorService advisor,
+    McpClientService mcp,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
@@ -215,6 +216,19 @@ public sealed class ChatRunExecutor(
             if (request.ToolIds is { Count: > 0 })
             {
                 await PublishPhaseAsync(run, "loading_tools", null);
+
+                // .agents/mcp.json (global + projeto) materializa servers
+                // env:* no boot da run (SPEC-20261016-global-agents-scope
+                // RF-006). Falha de sync nunca quebra a run.
+                try
+                {
+                    await mcp.SyncEnvServersAsync(
+                        await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct), ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Run {RunId}: sync de .agents/mcp.json falhou — ignorado.", run.Id);
+                }
             }
             var tools = request.ToolIds is { Count: > 0 }
                 ? await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct)

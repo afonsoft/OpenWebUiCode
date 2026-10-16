@@ -124,11 +124,12 @@ public sealed record LspRenameResponse(
 /// <param name="DisabledByAdmin">Se o admin desligou a skill globalmente (deny absoluto).</param>
 public sealed record RepoSkillItemResponse(
     string Name, string Description, string Source, string Path,
-    bool Enabled = true, bool DisabledByAdmin = false);
+    bool Enabled = true, bool DisabledByAdmin = false, string Scope = "project");
 
 /// <summary>Skill do repositório com corpo markdown completo.</summary>
 public sealed record RepoSkillDetailResponse(
-    string Name, string Description, string Source, string Path, string Content);
+    string Name, string Description, string Source, string Path, string Content,
+    string Scope = "project");
 
 /// <summary>Command markdown do repositório (<c>.opencode/command</c> etc.).</summary>
 /// <param name="Agent">Agente-alvo declarado no frontmatter (informativo).</param>
@@ -136,12 +137,12 @@ public sealed record RepoSkillDetailResponse(
 /// <param name="Subtask">Se o command declara execução em subtask (informativo).</param>
 public sealed record RepoCommandItemResponse(
     string Name, string Description, string? Agent, string? Model,
-    bool Subtask, string Source, string Path);
+    bool Subtask, string Source, string Path, string Scope = "project");
 
 /// <summary>Command do repositório com corpo (template <c>$1..$N</c>/<c>$ARGUMENTS</c>).</summary>
 public sealed record RepoCommandDetailResponse(
     string Name, string Description, string? Agent, string? Model,
-    bool Subtask, string Source, string Path, string Content);
+    bool Subtask, string Source, string Path, string Content, string Scope = "project");
 
 /// <summary>Item da listagem de checkpoints do workdir (S6 checkpoints-revert).</summary>
 /// <param name="Hash">Identificador do checkpoint (commit na ref oculta ou id de manifesto).</param>
