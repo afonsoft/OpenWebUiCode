@@ -147,16 +147,21 @@ public class AgentPersonaTests
         ctx.Response.Close();
     }
 
-    /// <summary>ToolIds serializados na run mais recente (whitelist do guardrail).</summary>
-    private async Task<string> RunToolIdsAsync()
+    /// <summary>
+    /// ToolIds serializados na run indicada (whitelist do guardrail).
+    /// Buscar "a mais recente por CreatedAt" é ambíguo — CreatedAt tem
+    /// resolução de segundos e a run do teste anterior do fixture pode
+    /// empatar e vencer a ordenação.
+    /// </summary>
+    private async Task<string> RunToolIdsAsync(string runId)
     {
         await using var db = new AppDbContext(
             new DbContextOptionsBuilder<AppDbContext>()
                 .UseSqlite($"Data Source={_dbPath}").Options);
         var json = await db.ChatRuns
-            .OrderByDescending(r => r.CreatedAt)
+            .Where(r => r.Id == runId)
             .Select(r => r.RequestJson)
-            .FirstAsync();
+            .SingleAsync();
         using var doc = JsonDocument.Parse(json);
         return doc.RootElement.TryGetProperty("toolIds", out var t)
             ? t.GetRawText()
@@ -286,6 +291,8 @@ public class AgentPersonaTests
             $"/api/v1/agent-personas/{persona.Id}/message",
             new PersonaMessageRequest("apague o arquivo x.txt", null));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var resultado = await response.Content
+            .ReadFromJsonAsync<PersonaMessageResponse>();
 
         var body = _chatBodies.Last();
         Assert.Multiple(() =>
@@ -300,7 +307,7 @@ public class AgentPersonaTests
 
         // O whitelist do guardrail é o ToolIds serializado na run — prova
         // que file_read entra no conjunto strict antes do filtro de modo.
-        var toolIds = await RunToolIdsAsync();
+        var toolIds = await RunToolIdsAsync(resultado!.RunId!);
         Assert.Multiple(() =>
         {
             Assert.That(toolIds, Does.Contain("builtin:file_read"));
@@ -315,13 +322,15 @@ public class AgentPersonaTests
         var persona = await CriarPersonaAsync("basic-persona", "basic");
         while (_chatBodies.TryDequeue(out _)) { }
 
-        await _client.PostAsJsonAsync(
+        var response = await _client.PostAsJsonAsync(
             $"/api/v1/agent-personas/{persona.Id}/message",
             new PersonaMessageRequest("oi", null));
+        var resultado = await response.Content
+            .ReadFromJsonAsync<PersonaMessageResponse>();
 
         // basic libera mutações no whitelist — a negação das tools de
         // execução acontece no guardrail, e a de workspace no modo chat.
-        var toolIds = await RunToolIdsAsync();
+        var toolIds = await RunToolIdsAsync(resultado!.RunId!);
         Assert.Multiple(() =>
         {
             Assert.That(toolIds, Does.Not.Contain("builtin:shell_exec"));
