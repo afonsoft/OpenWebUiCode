@@ -1191,6 +1191,71 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("Memories");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ModelCombo", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("RequestsPerMinute")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RoundRobinCursor")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Strategy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("TokensPerMinute")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("ModelCombos");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.ModelComboItem", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ComboId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComboId", "Position");
+
+                    b.ToTable("ModelComboItems");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.ModelEntry", b =>
                 {
                     b.Property<string>("Id")
@@ -1750,6 +1815,15 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Navigation("Collection");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ModelComboItem", b =>
+                {
+                    b.HasOne("OpenWebUI.Domain.ModelCombo", null)
+                        .WithMany("Items")
+                        .HasForeignKey("ComboId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.OAuthAccount", b =>
                 {
                     b.HasOne("OpenWebUI.Domain.User", "User")
@@ -1801,6 +1875,11 @@ namespace OpenWebUI.Infrastructure.Migrations
             modelBuilder.Entity("OpenWebUI.Domain.KnowledgeCollection", b =>
                 {
                     b.Navigation("Files");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.ModelCombo", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.User", b =>

@@ -39,6 +39,7 @@ public sealed class ChatRunExecutor(
     ContextBoundaryService boundaries,
     RunAdvisorService advisor,
     McpClientService mcp,
+    ComboService combos,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
@@ -106,6 +107,40 @@ public sealed class ChatRunExecutor(
         var sinceCheckpoint = 0;
         IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
         var sw = Stopwatch.StartNew();
+
+        // combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada tentativa
+        // resolve o modelo efetivo; falha transitória ANTES do primeiro delta
+        // (content vazio ⇒ nenhum SSE parcial foi emitido) → report + próximo
+        // candidato. Cancelamento nunca queima cooldown.
+        var comboRef = request.Model.StartsWith(ComboService.Prefix, StringComparison.Ordinal)
+            ? request.Model[ComboService.Prefix.Length..]
+            : null;
+        var comboAttemptsLeft = 1;
+    combo_resolve:
+        if (comboRef is not null)
+        {
+            ComboPick pick;
+            try
+            {
+                pick = await combos.ResolveAsync(comboRef, run.UserId, ct);
+            }
+            catch (ComboUnavailableException cue)
+            {
+                var comboError = cue.RetryAt is { } retryAt
+                    ? $"{cue.Code} (retry após {retryAt})"
+                    : cue.Code;
+                broadcaster.Publish(run.Id,
+                    $"data: {JsonSerializer.Serialize(new { error = comboError })}");
+                await FailAsync(run, comboError, ct);
+                broadcaster.Publish(run.Id, "data: [DONE]");
+                return;
+            }
+
+            comboAttemptsLeft = Math.Max(1, pick.Candidates);
+            request = request with { Model = pick.ModelId };
+            broadcaster.Publish(run.Id,
+                $"event: combo\ndata: {JsonSerializer.Serialize(new { combo = pick.ComboId, model = pick.ModelId }, JsonOptions)}");
+        }
 
         try
         {
@@ -418,6 +453,11 @@ public sealed class ChatRunExecutor(
             // marcador — a mensagem precisa já estar persistida.
             await FinishAsync(run, content.ToString(), ct, toolMessages: toolMessages);
             broadcaster.Publish(run.Id, "data: [DONE]");
+            if (comboRef is not null)
+            {
+                await combos.ReportAsync(comboRef, request.Model, ok: true,
+                    ct: CancellationToken.None);
+            }
             logger.LogInformation(
                 "Run {RunId} concluída em {Elapsed}ms: {Chars} chars, {ToolMessages} msgs de tool.",
                 run.Id, sw.ElapsedMilliseconds, content.Length,
@@ -434,6 +474,24 @@ public sealed class ChatRunExecutor(
         }
         catch (Exception ex)
         {
+            // Combo: falha transitória sem nenhum delta emitido → report e
+            // retenta com o próximo candidato (content vazio garante que o
+            // cliente ainda não viu resposta parcial).
+            if (comboRef is not null
+                && ex is (HttpRequestException or TaskCanceledException)
+                && content.Length == 0)
+            {
+                await combos.ReportAsync(comboRef, request.Model, ok: false,
+                    ct: CancellationToken.None);
+                if (--comboAttemptsLeft > 0)
+                {
+                    logger.LogWarning(
+                        "Run {RunId}: modelo {Model} do combo {Combo} falhou — próximo candidato.",
+                        run.Id, request.Model, comboRef);
+                    goto combo_resolve;
+                }
+            }
+
             // Qualquer falha fecha a run como failed — uma exceção que escapasse
             // deixaria a run eternamente "running" (o dispatcher só loga).
             // InvalidOperationException loga com stack: foi a silenciar

@@ -78,7 +78,8 @@ public class AutomationService(
     NotificationService notifications,
     SkillDiscoveryService? skills = null,
     McpClientService? mcp = null,
-    IHttpClientFactory? httpFactory = null)
+    IHttpClientFactory? httpFactory = null,
+    ComboService? combos = null)
 {
     /// <summary>Cap do resumo de output gravado no <see cref="AutomationRun"/>.</summary>
     private const int MaxOutputChars = 4096;
@@ -373,12 +374,14 @@ public class AutomationService(
             UpdatedAt = now,
         };
 
-        var reply = await providers.CompleteAsync(
-            new ChatCompletionRequest(
-                modelId,
-                [new ChatCompletionMessage("user", prompt)],
-                Stream: false),
-            automation.UserId, ct);
+        var reply = modelId.StartsWith(ComboService.Prefix, StringComparison.Ordinal)
+            ? await CompleteWithComboAsync(automation, prompt, modelId, ct)
+            : await providers.CompleteAsync(
+                new ChatCompletionRequest(
+                    modelId,
+                    [new ChatCompletionMessage("user", prompt)],
+                    Stream: false),
+                automation.UserId, ct);
 
         var position = chat.Messages.Count == 0 ? 0 : chat.Messages.Max(m => m.Position) + 1;
         var userMsg = new ChatMessage
@@ -408,6 +411,43 @@ public class AutomationService(
         }
 
         return new(ChatId: chat.Id);
+    }
+
+    /// <summary>
+    /// Completa via <c>combo:{id}</c> (RF-003 SPEC-20261016-model-combos):
+    /// resolve o efetivo, reporta falha transitória e tenta o próximo
+    /// candidato. Sem streaming, retry nunca duplica saída.
+    /// </summary>
+    private async Task<string> CompleteWithComboAsync(
+        Automation automation, string prompt, string comboRef, CancellationToken ct)
+    {
+        if (combos is null)
+        {
+            throw new InvalidOperationException("ComboService indisponível.");
+        }
+
+        for (var attempt = 0; ; attempt++)
+        {
+            var pick = await combos.ResolveAsync(comboRef, automation.UserId, ct);
+            try
+            {
+                var reply = await providers.CompleteAsync(
+                    new ChatCompletionRequest(
+                        pick.ModelId,
+                        [new ChatCompletionMessage("user", prompt)],
+                        Stream: false),
+                    automation.UserId, ct);
+                await combos.ReportAsync(pick.ComboId, pick.ModelId, ok: true,
+                    ct: CancellationToken.None);
+                return reply;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                && attempt + 1 < pick.Candidates)
+            {
+                await combos.ReportAsync(pick.ComboId, pick.ModelId, ok: false,
+                    ct: CancellationToken.None);
+            }
+        }
     }
 
     /// <summary>Reagenda a próxima execução de uma automação.</summary>

@@ -1114,6 +1114,64 @@ public class AutomationHook
     public long? LastFiredAt { get; set; }
 }
 
+/// <summary>
+/// Combo de modelos com failover (SPEC-20261016-model-combos RF-001):
+/// grupo nomeado de modelos ordenados com estratégia de resolução,
+/// rate limit compartilhado e cooldown por falha reportada. Referenciado
+/// como <c>combo:{Id}</c> onde um modelo é aceito.
+/// </summary>
+public class ModelCombo
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono do combo; null = global (só admin cria).</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>Nome único por dono.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Estratégia: <c>priority</c> | <c>round-robin</c> | <c>priority-round-robin</c>.</summary>
+    public string Strategy { get; set; } = "priority";
+
+    /// <summary>Teto de requisições por minuto do combo (janela deslizante); null = sem limite.</summary>
+    public int? RequestsPerMinute { get; set; }
+
+    /// <summary>Teto de tokens por minuto do combo; null = sem limite.</summary>
+    public int? TokensPerMinute { get; set; }
+
+    /// <summary>Indica se o combo aceita resoluções.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Cursor persistido do round-robin (RF-002 — "persiste em kv").</summary>
+    public int RoundRobinCursor { get; set; }
+
+    /// <summary>Itens ordenados do combo.</summary>
+    public List<ModelComboItem> Items { get; set; } = [];
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>Modelo participante de um <see cref="ModelCombo"/>, ordenado por <see cref="Position"/>.</summary>
+public class ModelComboItem
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Combo ao qual o item pertence.</summary>
+    public string ComboId { get; set; } = string.Empty;
+
+    /// <summary>Id do modelo/provider (ex.: <c>gpt-4o</c>, <c>ollama:llama3</c>).</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>Ordem de prioridade dentro do combo (menor primeiro).</summary>
+    public int Position { get; set; }
+}
+
 /// <summary>Banner de aviso exibido no topo do app (CRUD admin).</summary>
 public class Banner
 {

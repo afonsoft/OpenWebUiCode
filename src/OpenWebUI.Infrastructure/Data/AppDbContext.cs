@@ -95,6 +95,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Webhooks de automação (disparam runs no chat vinculado).</summary>
     public DbSet<AutomationHook> AutomationHooks => Set<AutomationHook>();
 
+    /// <summary>Combos de modelos com failover (SPEC-20261016-model-combos).</summary>
+    public DbSet<ModelCombo> ModelCombos => Set<ModelCombo>();
+
+    /// <summary>Itens (modelos ordenados) dos combos.</summary>
+    public DbSet<ModelComboItem> ModelComboItems => Set<ModelComboItem>();
+
     /// <summary>Configurações chave-valor.</summary>
     public DbSet<ConfigEntry> ConfigEntries => Set<ConfigEntry>();
 
@@ -292,6 +298,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(h => h.ChatId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ModelCombo>(entity =>
+        {
+            entity.HasKey(c => c.Id);
+            entity.HasIndex(c => new { c.UserId, c.Name }).IsUnique();
+            entity.HasMany(c => c.Items)
+                .WithOne()
+                .HasForeignKey(i => i.ComboId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ModelComboItem>(entity =>
+        {
+            entity.HasKey(i => i.Id);
+            entity.HasIndex(i => new { i.ComboId, i.Position });
         });
 
         modelBuilder.Entity<ConfigEntry>(entity =>

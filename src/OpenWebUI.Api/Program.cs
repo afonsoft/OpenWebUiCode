@@ -34,6 +34,7 @@ builder.Services.AddScoped<ProviderService>();
 builder.Services.AddScoped<ProviderCapabilityService>();
 builder.Services.AddHostedService<ProviderCapabilityBootstrapper>();
 builder.Services.AddScoped<AutomationService>();
+builder.Services.AddScoped<ComboService>();
 builder.Services.AddHostedService<AutomationScheduler>();
 builder.Services.AddScoped<MemorySyncService>();
 builder.Services.AddHostedService<MemorySyncScheduler>();
@@ -507,6 +508,7 @@ static void MapFeatureEndpoints(WebApplication app)
 {
     app.MapImageEndpoints();
     app.MapAutomationEndpoints();
+    app.MapComboEndpoints();
     app.MapAutomationHookEndpoints();
     app.MapN8nEndpoints();
     app.MapVideoEndpoints();
