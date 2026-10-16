@@ -365,7 +365,8 @@ public class AutomationEndpointsTests
     public async Task RunNow_Skill_Ok_MontaPromptDaSkill()
     {
         // Skill no home global isolado da suíte (SPEC-20261016-global-agents-scope).
-        var skillDir = Path.Join(TestHomeIsolation.Home, ".agents", "skills", "hidrate");
+        var skillsRoot = Path.Join(TestHomeIsolation.Home, ".agents", "skills");
+        var skillDir = Path.Join(skillsRoot, "hidrate");
         Directory.CreateDirectory(skillDir);
         File.WriteAllText(Path.Join(skillDir, "SKILL.md"), """
             ---
@@ -376,27 +377,37 @@ public class AutomationEndpointsTests
             """);
         SkillDiscoveryService.Invalidate("");
 
-        var user = await SignUpAsync("SkillOk", "skillok@auto.local", "senha123");
-        UseToken(user.Token);
-        var created = await _client.PostAsJsonAsync("/api/v1/automations",
-            NewAutomation() with
-            {
-                ActionKind = "skill",
-                ActionJson = "{\"skill\":\"hidrate\",\"args\":\"2 copos\"}",
-            });
-        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
-        var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
-        Assert.Multiple(() =>
+        try
         {
-            Assert.That(run!.Status, Is.EqualTo("ok"), run!.Error);
-            Assert.That(run.ActionKind, Is.EqualTo("skill"));
-            Assert.That(run.ChatId, Is.Not.Null);
-        });
-        var chat = await _client.GetFromJsonAsync<ChatResponse>($"/api/v1/chats/{run!.ChatId}");
-        Assert.That(chat!.Messages[0].Content, Does.Contain("MARCADOR-SKILL-42"));
+            var user = await SignUpAsync("SkillOk", "skillok@auto.local", "senha123");
+            UseToken(user.Token);
+            var created = await _client.PostAsJsonAsync("/api/v1/automations",
+                NewAutomation() with
+                {
+                    ActionKind = "skill",
+                    ActionJson = "{\"skill\":\"hidrate\",\"args\":\"2 copos\"}",
+                });
+            Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+
+            var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+            var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+            Assert.Multiple(() =>
+            {
+                Assert.That(run!.Status, Is.EqualTo("ok"), run!.Error);
+                Assert.That(run.ActionKind, Is.EqualTo("skill"));
+                Assert.That(run.ChatId, Is.Not.Null);
+            });
+            var chat = await _client.GetFromJsonAsync<ChatResponse>($"/api/v1/chats/{run!.ChatId}");
+            Assert.That(chat!.Messages[0].Content, Does.Contain("MARCADOR-SKILL-42"));
+        }
+        finally
+        {
+            // O home isolado é compartilhado — remove a skill e derruba o
+            // cache para não vazar para os fixtures seguintes.
+            try { Directory.Delete(skillDir, recursive: true); } catch (IOException) { }
+            SkillDiscoveryService.Invalidate("");
+        }
     }
 
     [Test]
