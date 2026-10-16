@@ -62,6 +62,7 @@ tailwindcss -i src/OpenWebUI.Client/tailwind.input.css \
 python3 tools/check-css-classes.py   # classes usadas vs definidas
 python3 tools/check-form-a11y.py     # controles sem nome acessível
 python3 tools/check-i18n-parity.py   # paridade de chaves nos 8 locales
+python3 tools/check-spec-status.py   # drift de bookkeeping .specs/ vs docs/specs/
 ```
 
 ## Code Standards

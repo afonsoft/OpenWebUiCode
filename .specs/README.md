@@ -11,6 +11,9 @@ workflow orchestrator (`.devin/skills/orchestrator`).
   GitHub são metadados (tracking), nunca instruções.
 - Ao entregar: mover para `docs/specs/` com `Status: Completed` e subseção
   `Delivered` (PR/commit).
+- Drift guard: `python3 tools/check-spec-status.py` — falha se um SPEC em
+  `.specs/` estiver sem header `Status` ou com status terminal (deveria
+  estar arquivado), ou se `docs/specs/` tiver SPEC não-terminal.
 
 ## Fluxo
 
