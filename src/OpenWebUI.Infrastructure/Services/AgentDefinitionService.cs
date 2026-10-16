@@ -35,12 +35,23 @@ public sealed record AgentDefinition(
     string Source);
 
 /// <summary>
-/// Descobre agentes declarativos de quatro camadas com precedência
-/// crescente (RF-002): built-in embedded &lt; <c>{data}/agents/</c> (admin)
-/// &lt; <c>{data}/users/{id}/agents/</c> (usuário) &lt;
-/// <c>{workdir}/.openwebui/agents/</c> (workspace). Mesmo <c>name</c>: a
-/// camada maior vence; o catálogo registra o <see cref="AgentDefinition.Source"/>
+/// Descobre agentes declarativos em camadas com precedência crescente
+/// (RF-002 + item B do afonsoft/skills): built-in embedded &lt; globais
+/// (<c>~/.config/opencode/agents</c>, <c>~/.claude/agents</c>,
+/// <c>~/.agents/agents</c>) &lt; <c>{data}/agents/</c> (admin) &lt;
+/// <c>{data}/users/{id}/agents/</c> (usuário) &lt; workspace
+/// (<c>.openwebui/agents</c>, <c>.opencode/agents</c>, <c>.claude/agents</c>,
+/// <c>.agents/agents</c> do workdir). Mesmo <c>name</c>: a camada maior
+/// vence; o catálogo registra o <see cref="AgentDefinition.Source"/>
 /// vencedor (provenance, padrão RF-006 de config-layers).
+/// <para>
+/// Todo diretório dedicado a agentes aceita <c>*.md</c> (que cobre
+/// <c>*.agent.md</c>) — <c>name</c>+<c>description</c> no frontmatter
+/// continuam obrigatórios, então READMEs soltos são ignorados pelo parser.
+/// Frontmatter estilo Claude Code é compatibilizado: <c>tools: Read, Grep,
+/// Glob</c> mapeia para os nomes builtin equivalentes e <c>model: inherit</c>
+/// vira "herda do pai" (null).
+/// </para>
 /// <para>
 /// Workspace agents ficam atrás do opt-in por usuário
 /// <c>u:{id}:agents.workspace.enabled</c> (default off — OQ-2 da SPEC):
@@ -55,6 +66,41 @@ public sealed class AgentDefinitionService(
     IHostEnvironment env, ConfigService config,
     ILogger<AgentDefinitionService> logger)
 {
+    /// <summary>Seam de testes: resolve o HOME do processo.</summary>
+    internal static Func<string?> HomeResolver { get; set; } =
+        () => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    /// <summary>Diretórios globais de agentes (relativos ao HOME), em ordem de precedência.</summary>
+    private static readonly string[] GlobalAgentDirs =
+        [".config/opencode/agents", ".claude/agents", ".agents/agents"];
+
+    /// <summary>Diretórios de agentes do workdir (opt-in), em ordem de precedência.</summary>
+    private static readonly string[] WorkspaceAgentDirs =
+        [".opencode/agents", ".claude/agents", ".agents/agents", ".openwebui/agents"];
+
+    /// <summary>
+    /// Aliases de tools no estilo Claude Code → nomes builtin
+    /// (<c>Read</c> → <c>file_read</c>, <c>Bash</c> → <c>shell_exec</c>…).
+    /// Nomes já no formato builtin passam intocados.
+    /// </summary>
+    private static readonly Dictionary<string, string> ToolAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Read"] = "file_read",
+        ["Grep"] = "file_grep",
+        ["Glob"] = "file_glob",
+        ["LS"] = "file_list",
+        ["List"] = "file_list",
+        ["Write"] = "file_write",
+        ["Edit"] = "file_edit",
+        ["MultiEdit"] = "file_edit",
+        ["Bash"] = "shell_exec",
+        ["WebSearch"] = "web_search",
+        ["WebFetch"] = "fetch_url",
+        ["TodoWrite"] = "todo_write",
+        ["AskUserQuestion"] = "ask_user",
+        ["Task"] = "delegate_task",
+        ["Skill"] = "skill",
+    };
     /// <summary>TTL do catálogo cacheado.</summary>
     private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
 
@@ -105,12 +151,23 @@ public sealed class AgentDefinitionService(
         {
             map[def.Name] = def;
         }
+        var home = HomeResolver();
+        if (home is not null)
+        {
+            foreach (var rel in GlobalAgentDirs)
+            {
+                ScanDir(map, Path.Join(home, rel), "global");
+            }
+        }
         var root = DataPaths.Root(env.ContentRootPath);
         ScanDir(map, Path.Join(root, "agents"), "admin");
         ScanDir(map, Path.Join(root, "users", userId, "agents"), "user");
         if (wsEnabled)
         {
-            ScanDir(map, Path.Join(workdir!, ".openwebui", "agents"), "workspace");
+            foreach (var rel in WorkspaceAgentDirs)
+            {
+                ScanDir(map, Path.Join(workdir!, rel), "workspace");
+            }
         }
 
         var result = map as IReadOnlyDictionary<string, AgentDefinition>;
@@ -127,7 +184,7 @@ public sealed class AgentDefinitionService(
     /// <summary>Indica se o workdir tem agentes de workspace (opt-in pendente).</summary>
     public static bool HasWorkspaceAgents(string? workdir) =>
         workdir is not null
-        && Directory.Exists(Path.Join(workdir, ".openwebui", "agents"));
+        && WorkspaceAgentDirs.Any(rel => Directory.Exists(Path.Join(workdir, rel)));
 
     /// <summary>Invalida o cache de um usuário (mudança de opt-in/workdir).</summary>
     public void Invalidate(string userId)
@@ -184,7 +241,9 @@ public sealed class AgentDefinitionService(
         IEnumerable<string> files;
         try
         {
-            files = Directory.EnumerateFiles(dir, "*.agent.md")
+            // *.md cobre *.agent.md — o parser exige name+description no
+            // frontmatter, então markdowns comuns do diretório são ignorados.
+            files = Directory.EnumerateFiles(dir, "*.md")
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
         }
         catch (IOException) { return; }
@@ -238,13 +297,17 @@ public sealed class AgentDefinitionService(
         }
 
         var tools = fm.TryGetValue("tools", out var toolsRaw)
-            ? ParseList(toolsRaw)
+            ? ParseList(toolsRaw)?.Select(MapToolName).ToList()
             : null;
+        var model = fm.GetValueOrDefault("model");
         return new AgentDefinition(
             Name: name.Trim(),
             Description: desc.Trim().Length > MaxDescriptionChars
                 ? desc.Trim()[..MaxDescriptionChars] : desc.Trim(),
-            Model: fm.GetValueOrDefault("model"),
+            // Claude Code usa `model: inherit` — equivale ao nosso null
+            // (herda do pai); qualquer outro valor passa verbatim.
+            Model: string.Equals(model, "inherit", StringComparison.OrdinalIgnoreCase)
+                ? null : model,
             Tools: tools,
             Spawns: fm.TryGetValue("spawns", out var spawnsRaw)
                 ? ParseList(spawnsRaw) ?? [] : [],
@@ -285,8 +348,10 @@ public sealed class AgentDefinitionService(
             return map;
         }
 
-        foreach (var line in raw[(firstNl + 1)..end].Split('\n'))
+        var fmLines = raw[(firstNl + 1)..end].Split('\n');
+        for (var i = 0; i < fmLines.Length; i++)
         {
+            var line = fmLines[i];
             var colon = line.IndexOf(':');
             if (colon <= 0)
             {
@@ -295,6 +360,33 @@ public sealed class AgentDefinitionService(
 
             var key = line[..colon].Trim();
             var value = line[(colon + 1)..].Trim().Trim('"', '\'');
+            if (value is ">" or "|")
+            {
+                // Block scalar YAML (estilo Claude Code): linhas seguintes
+                // mais indentadas que a chave compõem o valor — ">" junta
+                // com espaço, "|" preserva quebras.
+                var keyIndent = line.TakeWhile(c => c is ' ' or '\t').Count();
+                var block = new List<string>();
+                while (i + 1 < fmLines.Length)
+                {
+                    var next = fmLines[i + 1];
+                    var indent = next.TakeWhile(c => c is ' ' or '\t').Count();
+                    if (next.Trim().Length == 0)
+                    {
+                        i++;
+                        continue;
+                    }
+                    if (indent <= keyIndent)
+                    {
+                        break;
+                    }
+                    block.Add(next.Trim());
+                    i++;
+                }
+                value = value == "|"
+                    ? string.Join('\n', block)
+                    : string.Join(' ', block);
+            }
             if (key.Length > 0 && value.Length > 0)
             {
                 map[key] = value;
@@ -306,6 +398,10 @@ public sealed class AgentDefinitionService(
         body = nl >= 0 ? rest[(nl + 1)..] : string.Empty;
         return map;
     }
+
+    /// <summary>Mapeia alias de tool estilo Claude Code → nome builtin.</summary>
+    private static string MapToolName(string name) =>
+        ToolAliases.TryGetValue(name.Trim(), out var mapped) ? mapped : name.Trim();
 
     /// <summary>Lista frontmatter: <c>[a, b]</c> ou CSV <c>a, b</c>.</summary>
     private static List<string>? ParseList(string raw)
