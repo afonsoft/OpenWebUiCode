@@ -14,7 +14,7 @@ namespace OpenWebUI.Infrastructure.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
 
             modelBuilder.Entity("OpenWebUI.Domain.AgentMemory", b =>
                 {
@@ -132,6 +132,16 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ActionJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActionKind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
@@ -151,6 +161,10 @@ namespace OpenWebUI.Infrastructure.Migrations
 
                     b.Property<long?>("NextRunAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("PermissionMode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Prompt")
                         .IsRequired()
@@ -222,6 +236,10 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ActionKind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("AutomationId")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -234,6 +252,9 @@ namespace OpenWebUI.Infrastructure.Migrations
 
                     b.Property<long>("FinishedAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Output")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("StartedAt")
                         .HasColumnType("INTEGER");

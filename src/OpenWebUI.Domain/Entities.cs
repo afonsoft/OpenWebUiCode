@@ -1015,6 +1015,22 @@ public class Automation
     /// <summary>Indica se a automação está habilitada.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// Tipo de ação disparada (SPEC-20261016-automation-actions):
+    /// <c>prompt</c> (default) | <c>skill</c> | <c>mcp</c> | <c>reminder</c>
+    /// | <c>webhook</c>.
+    /// </summary>
+    public string ActionKind { get; set; } = "prompt";
+
+    /// <summary>Payload JSON da ação, validado por <see cref="ActionKind"/>.</summary>
+    public string? ActionJson { get; set; }
+
+    /// <summary>Modo de permissão da ação: <c>default</c> | <c>auto</c> | <c>bypass</c>.</summary>
+    public string PermissionMode { get; set; } = "default";
+
+    /// <summary>Chat reutilizado pelas execuções, quando configurado.</summary>
+    public string? ChatId { get; set; }
+
     /// <summary>Próxima execução agendada (epoch seconds, UTC).</summary>
     public long? NextRunAt { get; set; }
 
@@ -1042,6 +1058,12 @@ public class AutomationRun
 
     /// <summary>Resultado: ok ou failed.</summary>
     public string Status { get; set; } = "ok";
+
+    /// <summary>Ação executada (cópia de <see cref="Automation.ActionKind"/> no disparo).</summary>
+    public string ActionKind { get; set; } = "prompt";
+
+    /// <summary>Resumo do output da ação (capado a 4KB), quando aplicável.</summary>
+    public string? Output { get; set; }
 
     /// <summary>Mensagem de erro quando Status = failed.</summary>
     public string? Error { get; set; }

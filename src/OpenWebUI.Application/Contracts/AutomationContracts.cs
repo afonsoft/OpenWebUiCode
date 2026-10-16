@@ -1,6 +1,10 @@
 namespace OpenWebUI.Application.Contracts;
 
 /// <summary>Automação exibida na lista do usuário.</summary>
+/// <param name="ActionKind">prompt | skill | mcp | reminder | webhook (RF-001).</param>
+/// <param name="ActionJson">Payload da ação (skill/mcp/reminder/webhook).</param>
+/// <param name="PermissionMode">default | auto | bypass — futuro gate de tools.</param>
+/// <param name="ChatId">Chat reutilizado nas execuções; nulo cria chat novo.</param>
 public sealed record AutomationResponse(
     string Id,
     string Name,
@@ -13,7 +17,11 @@ public sealed record AutomationResponse(
     bool Enabled,
     long? NextRunAt,
     long CreatedAt,
-    long UpdatedAt);
+    long UpdatedAt,
+    string ActionKind = "prompt",
+    string? ActionJson = null,
+    string PermissionMode = "default",
+    string? ChatId = null);
 
 /// <summary>Criação/atualização de automação.</summary>
 /// <param name="ScheduleKind">interval | daily | weekly | once.</param>
@@ -22,6 +30,10 @@ public sealed record AutomationResponse(
 /// <param name="Weekday">0-6 domingo..sábado em UTC (kind=weekly).</param>
 /// <param name="RunAt">Execução única em epoch seconds UTC (kind=once).</param>
 /// <param name="InMinutes">Execução única daqui a N minutos (kind=once, alternativa a RunAt).</param>
+/// <param name="ActionKind">prompt | skill | mcp | reminder | webhook; default "prompt".</param>
+/// <param name="ActionJson">Payload validado por ActionKind (skill/mcp/reminder/webhook).</param>
+/// <param name="PermissionMode">default | auto | bypass.</param>
+/// <param name="ChatId">Chat a reutilizar nas execuções.</param>
 public sealed record AutomationUpsertRequest(
     string Name,
     string Prompt,
@@ -32,9 +44,15 @@ public sealed record AutomationUpsertRequest(
     int? Weekday,
     bool? Enabled,
     long? RunAt = null,
-    int? InMinutes = null);
+    int? InMinutes = null,
+    string? ActionKind = null,
+    string? ActionJson = null,
+    string? PermissionMode = null,
+    string? ChatId = null);
 
 /// <summary>Execução registrada de uma automação.</summary>
+/// <param name="ActionKind">Tipo de ação executada.</param>
+/// <param name="Output">Saída capada (4 KiB) do caller (mcp/webhook/reminder).</param>
 public sealed record AutomationRunResponse(
     string Id,
     string AutomationId,
@@ -43,7 +61,9 @@ public sealed record AutomationRunResponse(
     string? Error,
     string? ChatId,
     long StartedAt,
-    long FinishedAt);
+    long FinishedAt,
+    string ActionKind = "prompt",
+    string? Output = null);
 
 /// <summary>Webhook de automação vinculado a um chat (RF-021).</summary>
 public sealed record AutomationHookResponse(
