@@ -117,38 +117,12 @@ public class MemorySyncService(
         var complete = true;
         foreach (var chat in chats)
         {
-            // RF-001/AC: papel `memory` (SPEC-20261013-model-roles) primeiro;
-            // sem papel configurado cai no primeiro modelo do chat.
-            var model = await roles.ResolveAsync(
-                "memory", userId, FirstModel(chat.ModelsJson) ?? string.Empty, ct);
-            var transcript = BuildTranscript(chat);
-            if (string.IsNullOrWhiteSpace(model) || transcript is null)
-            {
-                continue;
-            }
-
-            string reply;
-            try
-            {
-                reply = await providers.CompleteAsync(
-                    new ChatCompletionRequest(
-                        model,
-                        [new ChatCompletionMessage("user", DistillPrompt + transcript)],
-                        Stream: false),
-                    userId, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            if (!await DistillChatAsync(userId, chat, ct))
             {
                 // Provider fora: não avança o watermark — retenta no próximo tick.
                 complete = false;
-                logger.LogWarning(ex, "memsync: provider falhou no chat {ChatId}", chat.Id);
                 break;
             }
-            if (string.IsNullOrWhiteSpace(reply))
-            {
-                continue;
-            }
-            await UpsertAutoMemoryAsync(userId, chat, reply.Trim(), ct);
         }
 
         if (complete)
@@ -167,6 +141,50 @@ public class MemorySyncService(
             db.AgentMemories.RemoveRange(stale);
         }
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Destila um chat em memória <c>auto:{título}</c> (SPEC-20261016-
+    /// session-maintenance RF-002 — reusado pela poda de retenção).
+    /// Devolve <c>true</c> quando o chat pode seguir (destilado ou nada a
+    /// destilar); <c>false</c> só quando o provider falhou — quem chama NÃO
+    /// deve apagar o chat nesse caso.
+    /// </summary>
+    public async Task<bool> DistillChatAsync(
+        string userId, Chat chat, CancellationToken ct)
+    {
+        // RF-001/AC: papel `memory` (SPEC-20261013-model-roles) primeiro;
+        // sem papel configurado cai no primeiro modelo do chat.
+        var model = await roles.ResolveAsync(
+            "memory", userId, FirstModel(chat.ModelsJson) ?? string.Empty, ct);
+        var transcript = BuildTranscript(chat);
+        if (string.IsNullOrWhiteSpace(model) || transcript is null)
+        {
+            return true;
+        }
+
+        string reply;
+        try
+        {
+            reply = await providers.CompleteAsync(
+                new ChatCompletionRequest(
+                    model,
+                    [new ChatCompletionMessage("user", DistillPrompt + transcript)],
+                    Stream: false),
+                userId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "memsync: provider falhou no chat {ChatId}", chat.Id);
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(reply))
+        {
+            return true;
+        }
+
+        await UpsertAutoMemoryAsync(userId, chat, reply.Trim(), ct);
+        return true;
     }
 
     private async Task UpsertAutoMemoryAsync(

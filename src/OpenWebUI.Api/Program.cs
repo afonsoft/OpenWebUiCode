@@ -509,6 +509,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapImageEndpoints();
     app.MapAutomationEndpoints();
     app.MapComboEndpoints();
+    app.MapMaintenanceEndpoints();
     app.MapAutomationHookEndpoints();
     app.MapN8nEndpoints();
     app.MapVideoEndpoints();
