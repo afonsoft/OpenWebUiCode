@@ -22,9 +22,11 @@ namespace OpenWebUI.Api.Tests;
 /// workspace, <c>delegate_task(agent:…)</c> e <c>agent_catalog</c>.
 /// </summary>
 [TestFixture]
+[NonParallelizable] // muta AgentDefinitionService.HomeResolver (estático)
 public class AgentDefinitionsTests
 {
     private string _root = null!;
+    private string _fakeHome = null!;
     private string _dbPath = null!;
     private ServiceProvider _provider = null!;
     private RecordingDispatcher _dispatcher = null!;
@@ -35,6 +37,11 @@ public class AgentDefinitionsTests
         _root = Path.Join(Path.GetTempPath(), $"owui-agents-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_root);
         _dbPath = Path.Join(_root, "test.db");
+        // Isola o catálogo do HOME real da máquina (~/.agents pode ter
+        // agentes instalados): cada teste parte de um home vazio.
+        _fakeHome = Path.Join(_root, "fake-home");
+        Directory.CreateDirectory(_fakeHome);
+        AgentDefinitionService.HomeResolver = () => _fakeHome;
 
         var services = new ServiceCollection();
         services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={_dbPath}"));
@@ -73,10 +80,19 @@ public class AgentDefinitionsTests
         db.Database.EnsureCreated();
         db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
         db.SaveChanges();
+        // O cache do catálogo é estático (60s TTL): sem invalidar, o
+        // catálogo de outro teste/fixture vaza pela chave "u1|".
+        _provider.GetRequiredService<AgentDefinitionService>().Invalidate("u1");
     }
 
     [TearDown]
-    public void TearDown() => _provider.Dispose();
+    public void TearDown()
+    {
+        _provider.Dispose();
+        // Restaura para o home isolado da suíte (GlobalHomeIsolation), não
+        // para o real — senão fixtures posteriores herdariam ~/.claude real.
+        AgentDefinitionService.HomeResolver = () => TestInfra.IsolatedHome;
+    }
 
     private AppDbContext NewDb() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
@@ -201,6 +217,156 @@ public class AgentDefinitionsTests
             Assert.That(after["ws-agent"].Source, Is.EqualTo("workspace"));
             Assert.That(after["ws-agent"].Tools, Is.EqualTo(new[] { "*" }));
         });
+    }
+
+    // ---------------- Item B: dirs globais + *.md + compat Claude ----------------
+
+    [Test]
+    public async Task Discovery_Globais_VarremDirsDoHomeSemWorkdir()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        WriteAgent(Path.Join(_fakeHome, ".agents", "agents"), "g.agent.md", """
+            ---
+            name: global-agent
+            description: do ~/.agents/agents
+            ---
+            corpo
+            """);
+        WriteAgent(Path.Join(_fakeHome, ".claude", "agents"), "c.md", """
+            ---
+            name: claude-agent
+            description: do ~/.claude/agents (.md comum)
+            ---
+            corpo
+            """);
+
+        var catalog = await svc.ListAsync("u1", null, default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(catalog["global-agent"].Source, Is.EqualTo("global"));
+            Assert.That(catalog["claude-agent"].Source, Is.EqualTo("global"));
+        });
+    }
+
+    [Test]
+    public async Task Discovery_Precedencia_ProjetoVenceGlobal_GlobalVenceBuiltin()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        var workdir = Path.Join(_root, "workdir");
+        WriteAgent(Path.Join(_fakeHome, ".agents", "agents"), "x.md", """
+            ---
+            name: code-reviewer
+            description: versão global
+            ---
+            prompt global
+            """);
+        WriteAgent(Path.Join(workdir, ".claude", "agents"), "x.md", """
+            ---
+            name: code-reviewer
+            description: versão do projeto
+            ---
+            prompt projeto
+            """);
+        await Config().SetAsync("u:u1:agents.workspace.enabled", true, default);
+        svc.Invalidate("u1");
+
+        var catalog = await svc.ListAsync("u1", workdir, default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(catalog["code-reviewer"].Description,
+                Is.EqualTo("versão do projeto"));
+            Assert.That(catalog["code-reviewer"].Source, Is.EqualTo("workspace"));
+        });
+
+        // Sem workspace no caminho: a versão global sombreia o builtin.
+        var noWs = await svc.ListAsync("u1", null, default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(noWs["code-reviewer"].Description, Is.EqualTo("versão global"));
+            Assert.That(noWs["code-reviewer"].Source, Is.EqualTo("global"));
+        });
+    }
+
+    [Test]
+    public async Task Discovery_ClaudeDir_WorkspaceGatedPorOptIn()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        var workdir = Path.Join(_root, "workdir");
+        WriteAgent(Path.Join(workdir, ".claude", "agents"), "plan.md", """
+            ---
+            name: plan
+            description: planejador do repo
+            ---
+            corpo
+            """);
+
+        Assert.That(AgentDefinitionService.HasWorkspaceAgents(workdir), Is.True);
+        var catalog = await svc.ListAsync("u1", workdir, default);
+        Assert.That(catalog.ContainsKey("plan"), Is.False);
+
+        await Config().SetAsync("u:u1:agents.workspace.enabled", true, default);
+        svc.Invalidate("u1");
+        var after = await svc.ListAsync("u1", workdir, default);
+        Assert.That(after["plan"].Source, Is.EqualTo("workspace"));
+    }
+
+    [Test]
+    public async Task Parse_ClaudeFrontmatter_MapaToolsEModelInherit()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        var def = svc.TryParse("""
+            ---
+            name: plan
+            description: planeja antes de codar
+            tools: Read, Grep, Glob
+            model: inherit
+            ---
+            Você é um planejador.
+            """, "plan.md", "global");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(def, Is.Not.Null);
+            Assert.That(def!.Tools,
+                Is.EqualTo(new[] { "file_read", "file_grep", "file_glob" }));
+            Assert.That(def.Model, Is.Null);
+        });
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Parse_BlockScalar_DescriptionDobrada()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        var def = svc.TryParse("""
+            ---
+            name: plan
+            description: >
+              Agente de planejamento que quebra
+              tarefas grandes em passos.
+            tools: Read
+            ---
+            corpo
+            """, "plan.md", "global");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(def, Is.Not.Null);
+            Assert.That(def!.Description,
+                Does.Contain("planejamento").And.Contain("passos."));
+            Assert.That(def.Description, Does.Not.Contain(">"));
+            Assert.That(def.Tools, Is.EqualTo(new[] { "file_read" }));
+        });
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Parse_MarkdownSemFrontmatter_SegueIgnorado()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        Assert.That(svc.TryParse("# README\nsó texto", "README.md", "global"), Is.Null);
+        await Task.CompletedTask;
     }
 
     // ---------------- agent_catalog (RF-004) ----------------

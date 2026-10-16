@@ -1,6 +1,7 @@
 using System.Collections;
 using NUnit.Framework;
 using NUnit.Framework.Interfaces;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -9,6 +10,17 @@ namespace OpenWebUI.Api.Tests;
 /// </summary>
 internal static class TestInfra
 {
+    /// <summary>
+    /// HOME fake compartilhado da suíte: <c>AgentDefinitionService</c> varre
+    /// <c>~/.claude/agents</c>/<c>~/.agents/agents</c>/<c>~/.config/opencode/agents</c>
+    /// — na máquina real existem agentes instalados que sombreariam os
+    /// builtins (<c>code-reviewer</c> etc.) e quebrariam fixtures. O
+    /// <see cref="GlobalHomeIsolation"/> aponta o resolver para este dir
+    /// (vazio) durante toda a execução.
+    /// </summary>
+    public static readonly string IsolatedHome =
+        Path.Join(Path.GetTempPath(), $"owui-test-home-{Guid.NewGuid():N}");
+
     /// <summary>Caminho novo para um SQLite temporário de teste.</summary>
     public static string NewDbPath(string prefix) =>
         Path.Join(Path.GetTempPath(), $"{prefix}-{Guid.NewGuid():N}.db");
@@ -51,6 +63,25 @@ internal static class TestInfra
             Environment.SetEnvironmentVariable("ConnectionStrings__Default", previous);
             DeleteDb(path);
         }
+    }
+}
+
+/// <summary>
+/// Isolamento de HOME para a suíte inteira: aponta
+/// <see cref="AgentDefinitionService.HomeResolver"/> para
+/// <see cref="TestInfra.IsolatedHome"/> (vazio) antes de qualquer teste, para
+/// que agentes globais reais do usuário (<c>~/.claude/agents</c> etc.) não
+/// vazem para o catálogo. Fixtures que precisam de conteúdo global usam um
+/// subdir próprio e restauram para este dir no TearDown.
+/// </summary>
+[SetUpFixture]
+public sealed class GlobalHomeIsolation
+{
+    [OneTimeSetUp]
+    public void SetUp()
+    {
+        Directory.CreateDirectory(TestInfra.IsolatedHome);
+        AgentDefinitionService.HomeResolver = () => TestInfra.IsolatedHome;
     }
 }
 
