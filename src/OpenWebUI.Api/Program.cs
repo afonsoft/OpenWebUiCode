@@ -109,6 +109,8 @@ builder.Services.AddScoped<VapidKeyService>();
 builder.Services.AddScoped<IWebPushSender, WebPushSender>();
 builder.Services.AddScoped<IChatRunNotifier, SignalRChatRunNotifier>();
 builder.Services.AddScoped<IChatRunNotifier, WebPushChatRunNotifier>();
+builder.Services.AddScoped<IChatRunNotifier, PersonaTurnNotifier>();
+builder.Services.AddScoped<PersonaDispatchService>();
 builder.Services.AddHttpClient("webpush");
 
 // Tools built-in do chat (SPEC-20261007-chat-agent-tools): registro
@@ -512,6 +514,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapComboEndpoints();
     app.MapMaintenanceEndpoints();
     app.MapExternalAgentEndpoints();
+    app.MapAgentPersonaEndpoints();
     app.MapAutomationHookEndpoints();
     app.MapN8nEndpoints();
     app.MapVideoEndpoints();

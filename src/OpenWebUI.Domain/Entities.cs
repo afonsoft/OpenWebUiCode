@@ -1477,3 +1477,105 @@ public class McpServer
     /// <summary>Última atualização (epoch seconds).</summary>
     public long UpdatedAt { get; set; }
 }
+
+/// <summary>
+/// Persona de agente acionável externamente (SPEC-20261016-agent-personas-
+/// channels RF-001): identidade nomeada com system prompt, modelo (ou
+/// <c>combo:{id}</c>) e nível de guardrails — o mesmo agente atende no
+/// chat, numa automação ou no endpoint <c>/message</c> (canal webhook).
+/// </summary>
+public class AgentPersona
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono da persona (isolamento por usuário).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Nome de exibição.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>System prompt base injetado a cada turno.</summary>
+    public string SystemPrompt { get; set; } = string.Empty;
+
+    /// <summary>Modelo de geração — id, nome ou referência <c>combo:{id}</c>.</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Nível de guardrails: <c>none</c> (todas as tools habilitadas),
+    /// <c>basic</c> (sem tools de execução) ou <c>strict</c> (somente
+    /// tools de leitura + instrução de confirmação no system).
+    /// </summary>
+    public string GuardrailLevel { get; set; } = "basic";
+
+    /// <summary>Allowlist extra de tools (JSON array); null = conjunto do guardrail.</summary>
+    public string? ToolsJson { get; set; }
+
+    /// <summary>Se a persona atende mensagens (false → 404 no dispatch).</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Sessão lógica de uma persona por canal (RF-003): o par
+/// (<see cref="PersonaId"/>, <see cref="ChatKey"/>) aponta para o chat que
+/// acumula os turnos daquele canal (ex.: <c>webhook:contato-42</c>).
+/// </summary>
+public class AgentPersonaSession
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Persona dona da sessão.</summary>
+    public string PersonaId { get; set; } = string.Empty;
+
+    /// <summary>Chave lógica do canal (default <c>"default"</c>).</summary>
+    public string ChatKey { get; set; } = "default";
+
+    /// <summary>Chat subjacente onde as mensagens/turnos persistem.</summary>
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Última atividade (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Turno auditável de uma persona (RF-004): entrada, saída e status de
+/// cada mensagem de canal, capado a 200 por persona. O
+/// <see cref="RunId"/> é preenchido no dispatch; <see cref="OutText"/>/
+/// <see cref="Status"/> ao término da run (IChatRunNotifier).
+/// </summary>
+public class AgentTurn
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Persona dona do turno.</summary>
+    public string PersonaId { get; set; } = string.Empty;
+
+    /// <summary>Run que produziu a resposta.</summary>
+    public string? RunId { get; set; }
+
+    /// <summary>Chave lógica do canal de origem.</summary>
+    public string ChatKey { get; set; } = "default";
+
+    /// <summary>Canal de entrada (ex.: <c>webhook</c>).</summary>
+    public string Channel { get; set; } = "webhook";
+
+    /// <summary>Texto recebido (capado a 4KB).</summary>
+    public string InText { get; set; } = string.Empty;
+
+    /// <summary>Texto respondido ou erro (capado a 4KB).</summary>
+    public string? OutText { get; set; }
+
+    /// <summary><c>running</c> | status terminal da run.</summary>
+    public string Status { get; set; } = "running";
+
+    /// <summary>Início do turno (epoch seconds).</summary>
+    public long Timestamp { get; set; }
+}
