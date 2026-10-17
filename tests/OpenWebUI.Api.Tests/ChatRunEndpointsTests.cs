@@ -29,6 +29,12 @@ public class ChatRunEndpointsTests
     {
         _dbPath = Path.Join(Path.GetTempPath(), $"openwebui-runs-{Guid.NewGuid():N}.db");
         Environment.SetEnvironmentVariable("ConnectionStrings__Default", $"Data Source={_dbPath}");
+        // Sem provider real nos testes deste fixture: as runs usam o Ollama
+        // default (localhost:11434) e falham por transporte. Uma tentativa só
+        // mantém o comportamento de falha rápida — sem o backoff de ~35s da
+        // política de resiliência (SPEC-20261016-provider-resilience).
+        Environment.SetEnvironmentVariable("Providers__MaxAttempts", "1");
+        Environment.SetEnvironmentVariable("Providers__MaxConsecutiveTimeouts", "1");
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
 
@@ -48,6 +54,8 @@ public class ChatRunEndpointsTests
     {
         _client.Dispose();
         _factory.Dispose();
+        Environment.SetEnvironmentVariable("Providers__MaxAttempts", null);
+        Environment.SetEnvironmentVariable("Providers__MaxConsecutiveTimeouts", null);
         if (File.Exists(_dbPath))
         {
             TestInfra.DeleteDb(_dbPath);

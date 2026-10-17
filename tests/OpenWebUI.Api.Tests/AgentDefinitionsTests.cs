@@ -53,6 +53,8 @@ public class AgentDefinitionsTests
         services.AddScoped<ConfigService>();
         services.AddScoped<WorkspaceRepoService>();
         services.AddScoped<ProviderService>();
+        services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
         services.AddScoped<UserConfigOverlayService>();
         services.AddScoped<AgentDefinitionService>();
         services.AddScoped<ToolOutputService>();

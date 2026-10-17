@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using OpenWebUI.Application.Contracts;
 
@@ -19,8 +20,14 @@ public class ProviderService(
     IHttpClientFactory httpClientFactory,
     ConfigService config,
     ILogger<ProviderService> logger,
-    HybridCache cache)
+    HybridCache cache,
+    IConfiguration cfg)
 {
+    /// <summary>Limites de retry lidos de <c>Providers:*</c>
+    /// (SPEC-20261016-provider-resilience).</summary>
+    public RetryPolicyOptions RetryOptions { get; } =
+        RetryPolicyOptions.FromConfig(cfg);
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     // Cache curto da lista de modelos: sem ele, cada mensagem de chat
@@ -469,7 +476,7 @@ public class ProviderService(
             }
             using var response = await httpClientFactory.CreateClient()
                 .SendAsync(httpRequest, ct);
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessOrProviderErrorAsync(response, ct);
             json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         }
         else
@@ -480,7 +487,7 @@ public class ProviderService(
                 payload.ToJsonString(), Encoding.UTF8, "application/json");
             using var response = await httpClientFactory.CreateClient().PostAsync(
                 $"{TrimSlash(baseUrl)}/api/chat", content, ct);
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessOrProviderErrorAsync(response, ct);
             json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         }
 
@@ -550,7 +557,8 @@ public class ProviderService(
         }
 
         return new ProviderCompletion(content, calls, callsJson, reasoning,
-            ParseUsage(json, openAi));
+            ParseUsage(json, openAi),
+            FinishReason: firstChoice?["finish_reason"]?.GetValue<string>());
     }
 
     /// <summary>
@@ -657,12 +665,15 @@ public class ProviderService(
                 _ => await StreamOllamaToolsAsync(request, connections, payload, onDelta, onReasoning, ct),
             };
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException
+            || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
             // Falha de transporte/setup antes da resposta — o chamador
-            // refaz a rodada buffered. Erros mid-stream chegam aqui também,
-            // mas o texto já emitido é reenviado inteiro no fallback: melhor
-            // duplicar do que perder a rodada.
+            // refaz a rodada buffered. Erros mid-stream chegam aqui também
+            // (timeout do HttpClient com o ct da run íntegro conta como
+            // stream morto; cancelamento do usuário propaga): o texto já
+            // emitido vira mensagem assistant parcial e a reposição pede
+            // continuação (RF-006) em vez de recomeçar.
             return null;
         }
     }
@@ -697,7 +708,7 @@ public class ProviderService(
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         if (!string.Equals(response.Content.Headers.ContentType?.MediaType,
                 "text/event-stream", StringComparison.OrdinalIgnoreCase))
@@ -929,7 +940,8 @@ public class ProviderService(
 
         var callsJson = SerializeToolCallsEcho(calls);
         return new ProviderCompletion(
-            content.ToString(), calls, callsJson, Usage: streamUsage);
+            content.ToString(), calls, callsJson, Usage: streamUsage,
+            FinishReason: finishReason);
     }
 
     /// <summary>Buffer de uma tool_call fragmentada no stream OpenAI.</summary>
@@ -1139,7 +1151,7 @@ public class ProviderService(
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -1147,6 +1159,7 @@ public class ProviderService(
         var content = new StringBuilder();
         var callNodes = new List<JsonNode>();
         ProviderUsage? usage = null;
+        string? doneReason = null;
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -1194,6 +1207,12 @@ public class ProviderService(
             {
                 callNodes.AddRange(calls.Select(c => c!.DeepClone()));
             }
+            // done_reason da linha final do Ollama ("stop"/"length") — RF-003
+            // do provider-resilience: continuação automática em truncamento.
+            if (node?["done_reason"]?.GetValue<string>() is { Length: > 0 } dr)
+            {
+                doneReason = dr;
+            }
         }
 
         var callsJson = new JsonArray(callNodes.ToArray());
@@ -1215,7 +1234,8 @@ public class ProviderService(
         }
 
         return new ProviderCompletion(
-            content.ToString(), parsed, callsJson.ToJsonString(), Usage: usage);
+            content.ToString(), parsed, callsJson.ToJsonString(), Usage: usage,
+            FinishReason: doneReason);
     }
 
     private async Task<string> ResolveProviderAsync(
@@ -1524,7 +1544,8 @@ public class ProviderService(
         }
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
-            reasoning.Length > 0 ? reasoning.ToString() : null);
+            reasoning.Length > 0 ? reasoning.ToString() : null,
+            FinishReason: json?["stop_reason"]?.GetValue<string>());
     }
 
     private async Task<string> CompleteAnthropicAsync(
@@ -1534,7 +1555,7 @@ public class ProviderService(
         var payload = BuildAnthropicPayload(request, stream: false);
         using var httpRequest = NewAnthropicRequest(connection, payload);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         return ParseAnthropicResponse(json).Content;
     }
@@ -1546,7 +1567,7 @@ public class ProviderService(
         var payload = BuildAnthropicPayload(request, stream: false);
         using var httpRequest = NewAnthropicRequest(connection, payload);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         return ParseAnthropicResponse(json);
     }
@@ -1605,7 +1626,7 @@ public class ProviderService(
         using var httpRequest = NewAnthropicRequest(connection, payload);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
@@ -1662,7 +1683,7 @@ public class ProviderService(
         using var httpRequest = NewAnthropicRequest(connection, payload);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
@@ -1670,6 +1691,7 @@ public class ProviderService(
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
         var openTools = new Dictionary<int, (string Id, string Name, StringBuilder Args)>();
+        string? stopReason = null;
 
         await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
         {
@@ -1734,9 +1756,18 @@ public class ProviderService(
                     },
                 });
             }
+            else if (eventName == "message_delta"
+                && data?["delta"]?["stop_reason"]?.GetValue<string>() is { Length: > 0 } sr)
+            {
+                // message_delta carrega stop_reason ("end_turn"/"max_tokens") —
+                // "max_tokens" sinaliza truncamento para a continuação RF-003.
+                stopReason = sr;
+            }
         }
 
-        return new ProviderCompletion(content.ToString(), calls, callsJson.ToJsonString());
+        return new ProviderCompletion(
+            content.ToString(), calls, callsJson.ToJsonString(),
+            FinishReason: stopReason);
     }
 
     // ---------------- Google AI Studio (Gemini API) ----------------
@@ -1994,7 +2025,9 @@ public class ProviderService(
         }
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
-            reasoning.Length > 0 ? reasoning.ToString() : null);
+            reasoning.Length > 0 ? reasoning.ToString() : null,
+            FinishReason: json?["candidates"] is JsonArray { Count: > 0 } fc
+                ? fc[0]?["finishReason"]?.GetValue<string>() : null);
     }
 
     private async Task<string> CompleteGoogleAsync(
@@ -2004,7 +2037,7 @@ public class ProviderService(
         var payload = BuildGooglePayload(request);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         return ParseGoogleResponse(json).Content;
     }
@@ -2016,7 +2049,7 @@ public class ProviderService(
         var payload = BuildGooglePayload(request);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         return ParseGoogleResponse(json);
     }
@@ -2032,7 +2065,7 @@ public class ProviderService(
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
@@ -2083,16 +2116,22 @@ public class ProviderService(
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
         var content = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
+        string? finishReason = null;
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
+            if (data?["candidates"] is JsonArray { Count: > 0 } cand
+                && cand[0]?["finishReason"]?.GetValue<string>() is { Length: > 0 } fr)
+            {
+                finishReason = fr;
+            }
             var parts = data?["candidates"] is JsonArray { Count: > 0 } c
                 ? c[0]?["content"]?["parts"]?.AsArray()
                 : null;
@@ -2143,7 +2182,9 @@ public class ProviderService(
             }
         }
 
-        return new ProviderCompletion(content.ToString(), calls, callsJson.ToJsonString());
+        return new ProviderCompletion(
+            content.ToString(), calls, callsJson.ToJsonString(),
+            FinishReason: finishReason);
     }
 
     /// <summary>
@@ -2270,7 +2311,7 @@ public class ProviderService(
             payload.ToJsonString(), Encoding.UTF8, "application/json");
         using var response = await httpClientFactory.CreateClient().PostAsync(
             $"{TrimSlash(baseUrl)}/api/chat", content, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         return json?["message"]?["content"]?.GetValue<string>() ?? string.Empty;
@@ -2294,7 +2335,7 @@ public class ProviderService(
         }
 
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         return json?["choices"] is JsonArray { Count: > 0 } arr
@@ -2335,7 +2376,7 @@ public class ProviderService(
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -2425,7 +2466,7 @@ public class ProviderService(
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -2555,6 +2596,41 @@ public class ProviderService(
     }
 
     private static string TrimSlash(string url) => url.TrimEnd('/');
+
+    /// <summary>
+    /// Garante sucesso ou lança <see cref="ProviderHttpException"/> com
+    /// <c>Retry-After</c> e recorte do corpo (SPEC-20261016-provider-
+    /// resilience): o motor de retry precisa do header e da assinatura de
+    /// context-overflow que o <c>EnsureSuccessStatusCode</c> descartava.
+    /// </summary>
+    private static async Task EnsureSuccessOrProviderErrorAsync(
+        HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        string? body = null;
+        try
+        {
+            body = await response.Content.ReadAsStringAsync(ct);
+            if (body.Length > ProviderHttpException.MaxBodyChars)
+            {
+                body = body[..ProviderHttpException.MaxBodyChars];
+            }
+        }
+        catch (Exception)
+        {
+            body = null;
+        }
+
+        var ra = response.Headers.RetryAfter;
+        TimeSpan? retryAfter = ra?.Delta
+            ?? (ra?.Date is { } when && when > DateTimeOffset.UtcNow
+                ? when - DateTimeOffset.UtcNow : null);
+        throw new ProviderHttpException(response.StatusCode, retryAfter, body);
+    }
 }
 
 /// <summary>Resultado de uma completion com suporte a tool_calls.</summary>
@@ -2571,7 +2647,13 @@ public sealed record ProviderCompletion(
     /// <summary>Uso de tokens reportado pelo provider (RF-004 do SPEC
     /// agent-steps-usage); null quando o provider não informa — nunca
     /// estimado.</param>
-    ProviderUsage? Usage = null);
+    ProviderUsage? Usage = null,
+    /// <summary>Motivo de parada reportado pelo provider (OpenAI
+    /// <c>finish_reason</c>, Ollama <c>done_reason</c>, Anthropic
+    /// <c>stop_reason</c>, Google <c>finishReason</c>) — <c>length</c>/
+    /// <c>max_tokens</c>/<c>MAX_TOKENS</c> sinalizam resposta truncada para a
+    /// continuação automática (SPEC-20261016-provider-resilience RF-003).</param>
+    string? FinishReason = null);
 
 /// <summary>Uso de tokens de uma completion (OpenAI usage / Ollama eval_count).</summary>
 /// <param name="PromptTokens">Tokens do prompt (prompt_eval_count no Ollama).</param>

@@ -51,7 +51,8 @@ public class RoutineToolTests
 
     private static ProviderService NewProviders(AppDbContext db) =>
         new(new FailFactory(), new ConfigService(db, TestCache.Create()),
-            NullLogger<ProviderService>.Instance, TestCache.Create());
+            NullLogger<ProviderService>.Instance, TestCache.Create(),
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
     private static NotificationService NewNotifications(AppDbContext db) =>
         new(new FailFactory(), db, NullLogger<NotificationService>.Instance);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Endpoints;
@@ -518,7 +519,22 @@ public static class ChatPipeline
         /// chamado no início de cada round com (step 1-based, maxSteps)
         /// — o executor emite no evento de fase <c>generating</c>.
         /// </summary>
-        Func<int, int, CancellationToken, Task>? OnStepAsync = null);
+        Func<int, int, CancellationToken, Task>? OnStepAsync = null,
+        /// <summary>
+        /// Backoff de retry transitório (SPEC-20261016-provider-resilience
+        /// RF-002): recebe (tentativa 1-based, delay planejado, motivo) e
+        /// é responsável por publicar a fase <c>retrying</c>, esperar o
+        /// delay respeitando cancelamento/pausa e só então retornar — a
+        /// chamada ao provider sai depois do retorno.
+        /// </summary>
+        Func<int, TimeSpan, string, CancellationToken, Task>? OnRetryingAsync = null,
+        /// <summary>
+        /// Compactação de emergência por context-overflow do provider
+        /// (RF-004): recebe a janela atual do loop e a escala de tail
+        /// (70%/50%/35%) e devolve a janela compactada — null quando a
+        /// compactação não é possível e a run deve falhar.
+        /// </summary>
+        Func<IReadOnlyList<ChatCompletionMessage>, double, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>?>>? OnOverflowCompactAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -561,6 +577,91 @@ public static class ChatPipeline
         var toolMessages = new List<ChatCompletionMessage>();
         var stepUsages = new List<RoundUsage>();
 
+        // SPEC-20261016-provider-resilience: retry com backoff nas chamadas
+        // de completion (RF-001/005), continuação em finish=length (RF-003,
+        // até 3 seguidas) e overflow → compact → retry com tail progressivo
+        // 70%/50%/35% (RF-004, até 3x por run).
+        const int maxLengthContinuations = 3;
+        var overflowRetries = 0;
+        var lengthContinuations = 0;
+        var continuedAnswer = new StringBuilder();
+
+        async Task<ProviderCompletion> CompleteResilientAsync(
+            Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
+            string? uid)
+        {
+            var timeouts = 0;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    return await CompleteRoundAsync(
+                        providers, makeRequest(messages), callbacks, ct, uid);
+                }
+                catch (Exception ex)
+                    when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+                {
+                    if (ProviderRetryPolicy.IsContextOverflow(ex))
+                    {
+                        var compacted = overflowRetries < OverflowTargets.Length
+                            && callbacks?.OnOverflowCompactAsync is { } compact
+                            ? await compact(messages, OverflowTargets[overflowRetries], ct)
+                            : null;
+                        if (compacted is not { Count: > 0 })
+                        {
+                            throw new InvalidOperationException(
+                                "context-overflow: o provedor rejeitou o contexto "
+                                + "e a janela não pôde ser reduzida o suficiente.", ex);
+                        }
+                        overflowRetries++;
+                        messages.Clear();
+                        messages.AddRange(compacted);
+                        log?.LogWarning(
+                            "Context-overflow do provider: janela compactada para "
+                            + "~{Tail}% do tail ({Attempt}/3) e retentando.",
+                            (int)(OverflowTargets[overflowRetries - 1] * 100),
+                            overflowRetries);
+                        continue;
+                    }
+
+                    timeouts = ex is TaskCanceledException or TimeoutException
+                        ? timeouts + 1 : 0;
+                    var decision = ProviderRetryPolicy.Decide(
+                        ex, attempt, timeouts, options: providers.RetryOptions);
+                    if (!decision.Retry)
+                    {
+                        var code = decision.Reason switch
+                        {
+                            ProviderRetryReason.RateLimit => "rate-limit",
+                            ProviderRetryReason.Timeout => "provider-timeout",
+                            ProviderRetryReason.ServerError => "server-error",
+                            _ => null,
+                        };
+                        if (code is not null)
+                        {
+                            throw new InvalidOperationException(
+                                $"{code}: a chamada ao provedor falhou após "
+                                + $"{attempt + 1} tentativa(s).", ex);
+                        }
+                        throw;
+                    }
+                    log?.LogWarning(
+                        "Completion falhou ({Reason}, tentativa {Attempt}/{Max}) — retry em {Delay}ms.",
+                        decision.Reason, attempt + 1, providers.RetryOptions.MaxAttempts,
+                        (int)decision.Delay.TotalMilliseconds);
+                    if (callbacks?.OnRetryingAsync is { } onRetry)
+                    {
+                        await onRetry(attempt + 1, decision.Delay,
+                            decision.Reason.ToString(), ct);
+                    }
+                    else
+                    {
+                        await Task.Delay(decision.Delay, ct);
+                    }
+                }
+            }
+        }
+
         for (var round = 0; round < maxRounds; round++)
         {
             if (callbacks?.OnRoundBoundaryAsync is not null)
@@ -571,6 +672,7 @@ public static class ChatPipeline
                     messages.AddRange(steered);
                     // Steer zera o teto: o turno recomeça do input novo.
                     round = -1;
+                    lengthContinuations = 0;
                     continue;
                 }
             }
@@ -597,23 +699,52 @@ public static class ChatPipeline
             // de bater no teto sem aviso. A mensagem sintética não vira
             // ChatMessage persistida (só vive no request desta rodada).
             var lastStep = round == maxRounds - 1;
-            var roundRequest = lastStep
-                ? request with
-                {
-                    Messages = [..messages, new ChatCompletionMessage(
-                        "user", MaxStepsPrompt)],
-                    Tools = null,
-                }
-                : request with { Messages = messages };
-            var step = await CompleteRoundAsync(
-                providers, roundRequest, callbacks, ct,
-                userId ?? builtinContext?.UserId);
+            Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRoundRequest =
+                lastStep
+                    ? msgs => request with
+                    {
+                        Messages = [..msgs, new ChatCompletionMessage(
+                            "user", MaxStepsPrompt)],
+                        Tools = null,
+                    }
+                    : msgs => request with { Messages = msgs };
+            var step = await CompleteResilientAsync(
+                makeRoundRequest, userId ?? builtinContext?.UserId);
             stepCount++;
             if (step.Usage is { } usage)
             {
                 stepUsages.Add(new RoundUsage(stepCount,
                     usage.PromptTokens, usage.CompletionTokens,
                     usage.ReasoningTokens));
+            }
+
+            // RF-003: resposta truncada (finish_reason=length) recebe um
+            // pedido sintético de continuação e o loop segue — até 3
+            // continuações seguidas, depois erro output-limit. O texto
+            // truncado vai como mensagem assistant para o modelo completar
+            // sem repetir; só conta quando não há tool calls.
+            if (ProviderRetryPolicy.IsLengthFinish(step.FinishReason)
+                && step.ToolCalls.Count == 0)
+            {
+                if (lengthContinuations >= maxLengthContinuations)
+                {
+                    throw new InvalidOperationException(
+                        "output-limit: a resposta do modelo continua truncada "
+                        + $"após {maxLengthContinuations} continuações.");
+                }
+                lengthContinuations++;
+                continuedAnswer.Append(step.Content);
+                log?.LogWarning(
+                    "Round {Round} truncado (finish_reason={FinishReason}) — "
+                    + "continuação automática {N}/{Max} injetada.",
+                    round + 1, step.FinishReason,
+                    lengthContinuations, maxLengthContinuations);
+                var truncatedAssistant = new ChatCompletionMessage(
+                    "assistant", step.Content);
+                messages.Add(truncatedAssistant);
+                toolMessages.Add(truncatedAssistant);
+                messages.Add(new ChatCompletionMessage("user", LengthContinuePrompt));
+                continue;
             }
             if (step.ToolCalls.Count == 0)
             {
@@ -658,7 +789,7 @@ public static class ChatPipeline
                     continue;
                 }
                 return new ToolLoopOutcome(
-                    step.Content, toolMessages, stepUsages, stepCount);
+                    continuedAnswer + step.Content, toolMessages, stepUsages, stepCount);
             }
 
             var assistantMessage = new ChatCompletionMessage(
@@ -722,8 +853,8 @@ public static class ChatPipeline
         log?.LogWarning(
             "Tool loop atingiu o teto de {Max} rounds — resposta final sem tools.",
             maxRounds);
-        var final = await CompleteRoundAsync(
-            providers, request with { Messages = messages, Tools = null }, callbacks, ct,
+        var final = await CompleteResilientAsync(
+            msgs => request with { Messages = msgs, Tools = null },
             userId ?? builtinContext?.UserId);
         stepCount++;
         if (final.Usage is { } finalUsage)
@@ -733,7 +864,7 @@ public static class ChatPipeline
                 finalUsage.ReasoningTokens));
         }
         return new ToolLoopOutcome(
-            final.Content, toolMessages, stepUsages, stepCount);
+            continuedAnswer + final.Content, toolMessages, stepUsages, stepCount);
     }
 
     /// <summary>
@@ -746,6 +877,25 @@ public static class ChatPipeline
         "Você atingiu o número máximo de passos desta execução — este é o "
         + "último. Sem novas tool calls: resuma o que foi feito, o estado "
         + "atual e os próximos passos sugeridos.";
+
+    /// <summary>Prompt sintético de continuação em resposta truncada
+    /// (SPEC-20261016-provider-resilience RF-003): nunca persistido como
+    /// mensagem do usuário — só vive no histórico do request.</summary>
+    public const string LengthContinuePrompt =
+        "Sua resposta anterior foi cortada pelo limite de saída. "
+        + "Continue exatamente de onde parou, sem repetir nada do que "
+        + "já escreveu.";
+
+    /// <summary>Prompt sintético de continuação quando o stream morre depois
+    /// do primeiro delta (RF-006, padrão CONTINUE_AFTER_INCOMPLETE_STREAM
+    /// do opencode): a chamada de reposição pede continuar sem repetir.</summary>
+    public const string StreamBreakPrompt =
+        "A resposta anterior foi interrompida por uma falha de transporte. "
+        + "Continue de onde parou, sem repetir o conteúdo já enviado.";
+
+    /// <summary>Escalas progressivas do tail preservado na compactação por
+    /// overflow (RF-004): 70% → 50% → 35% antes do erro final.</summary>
+    private static readonly double[] OverflowTargets = [0.7, 0.5, 0.35];
 
     /// <summary>Sobe o teto de <c>max_tokens</c> no retry de round vazio —
     /// backends com default baixo (ex.: Cloudflare ~256) deixam o modelo de
@@ -796,14 +946,36 @@ public static class ChatPipeline
         {
             request = request with { Tools = await announce(ct) };
         }
+        // RF-006 (SPEC-20261016-provider-resilience): texto parcial do stream
+        // rastreado aqui — se o stream morrer depois de emitir conteúdo, a
+        // reposição buffered pede continuação em vez de recomeçar o texto.
+        var partial = new StringBuilder();
+        Func<string, CancellationToken, Task>? trackedDelta =
+            callbacks?.OnDeltaAsync is { } onDelta
+                ? async (piece, t) =>
+                {
+                    partial.Append(piece);
+                    await onDelta(piece, t);
+                }
+                : null;
         var step = await providers.CompleteWithToolsStreamingAsync(
-            request, callbacks?.OnDeltaAsync, callbacks?.OnReasoningAsync, userId, ct);
+            request, trackedDelta ?? callbacks?.OnDeltaAsync,
+            callbacks?.OnReasoningAsync, userId, ct);
         if (step is not null)
         {
             return step;
         }
 
-        var buffered = await providers.CompleteWithToolsAsync(request, userId, ct);
+        var buffered = await providers.CompleteWithToolsAsync(
+            partial.Length > 0
+                ? request with
+                {
+                    Messages = [..request.Messages,
+                        new ChatCompletionMessage("assistant", partial.ToString()),
+                        new ChatCompletionMessage("user", StreamBreakPrompt)],
+                }
+                : request,
+            userId, ct);
         if (buffered.Content.Length > 0 && callbacks?.OnDeltaAsync is not null)
         {
             await callbacks.OnDeltaAsync(buffered.Content, ct);
