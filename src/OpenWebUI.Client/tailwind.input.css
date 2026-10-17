@@ -6,6 +6,7 @@
 @source './**/*.js';
 
 @source not '../../docs/**';
+@source not '../../.specs/**';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
