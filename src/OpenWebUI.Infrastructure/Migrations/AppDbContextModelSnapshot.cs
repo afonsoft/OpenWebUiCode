@@ -841,11 +841,17 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Error")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("HeartbeatAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("MetaJson")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Model")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OwnerInstance")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ParentRunId")
@@ -878,6 +884,36 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasIndex("UserId", "CreatedAt");
 
                     b.ToTable("ChatRuns");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.ChatRunEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Seq")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "Seq");
+
+                    b.ToTable("ChatRunEvents");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.ChatRunSteer", b =>

@@ -534,7 +534,27 @@ public static class ChatPipeline
         /// (70%/50%/35%) e devolve a janela compactada — null quando a
         /// compactação não é possível e a run deve falhar.
         /// </summary>
-        Func<IReadOnlyList<ChatCompletionMessage>, double, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>?>>? OnOverflowCompactAsync = null);
+        Func<IReadOnlyList<ChatCompletionMessage>, double, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>?>>? OnOverflowCompactAsync = null,
+        /// <summary>
+        /// Checkpoint de loop-state no topo de cada round
+        /// (SPEC-20261016-run-recovery RF-002): recebe o estado completo —
+        /// janela, tail de tools, contadores — para o evento
+        /// <c>snapshot</c> durável.
+        /// </summary>
+        Func<RunLoopCheckpoint, CancellationToken, Task>? OnCheckpointAsync = null,
+        /// <summary>
+        /// Completion do round recebida (SPEC-20261016-run-recovery RF-001):
+        /// o executor grava <c>step_finished</c> com os ids das tool calls —
+        /// na retomada eles viram o conjunto de calls a liquidar.
+        /// </summary>
+        Func<int, ProviderCompletion, CancellationToken, Task>? OnStepFinishedAsync = null,
+        /// <summary>
+        /// Mensagens apendadas ao histórico dentro do round
+        /// (SPEC-20261016-run-recovery RF-001): <paramref name="addedToMessages"/>
+        /// entra na janela e <paramref name="addedToToolMessages"/> também
+        /// no tail de tools persistido — o replay repõe ambos.
+        /// </summary>
+        Func<IReadOnlyList<ChatCompletionMessage>, IReadOnlyList<ChatCompletionMessage>, CancellationToken, Task>? OnMessagesAddedAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -556,7 +576,8 @@ public static class ChatPipeline
         string? userId = null,
         Microsoft.Extensions.Logging.ILogger? log = null,
         int? maxSteps = null,
-        int maxParallelTools = 4)
+        int maxParallelTools = 4,
+        RunLoopCheckpoint? resume = null)
     {
         // Teto global default do tool loop (SPEC-20261016-agent-steps-usage
         // RF-001): 5 → 25 agora que agents podem declarar `steps:` próprios.
@@ -571,12 +592,19 @@ public static class ChatPipeline
         // OmniRoute ~256 tokens) deixam o modelo de raciocínio sem orçamento
         // para responder — o retry de round vazio sobe o teto.
         const int retryMaxTokens = 8192;
-        var emptyRounds = 0;
-        var stepCount = 0;
+        var emptyRounds = resume?.EmptyRounds ?? 0;
+        var stepCount = resume?.StepCount ?? 0;
         var request = effective;
-        var messages = effective.Messages.ToList();
-        var toolMessages = new List<ChatCompletionMessage>();
-        var stepUsages = new List<RoundUsage>();
+        // SPEC-20261016-run-recovery RF-003: com <paramref name="resume"/> a
+        // janela, o tail de tools e os contadores vêm do estado reconstruído
+        // — o turno entra direto no round indicado pelo planner.
+        var messages = (resume?.Messages ?? effective.Messages).ToList();
+        var toolMessages = resume?.ToolMessages.ToList()
+            ?? new List<ChatCompletionMessage>();
+        var stepUsages = resume?.StepUsages
+            .Select(u => new RoundUsage(
+                u.Step, u.PromptTokens, u.CompletionTokens, u.ReasoningTokens))
+            .ToList() ?? new List<RoundUsage>();
 
         // SPEC-20261016-provider-resilience: retry com backoff nas chamadas
         // de completion (RF-001/005), continuação em finish=length (RF-003,
@@ -584,8 +612,8 @@ public static class ChatPipeline
         // 70%/50%/35% (RF-004, até 3x por run).
         const int maxLengthContinuations = 3;
         var overflowRetries = 0;
-        var lengthContinuations = 0;
-        var continuedAnswer = new StringBuilder();
+        var lengthContinuations = resume?.LengthContinuations ?? 0;
+        var continuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? "");
 
         async Task<ProviderCompletion> CompleteResilientAsync(
             Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
@@ -663,7 +691,7 @@ public static class ChatPipeline
             }
         }
 
-        for (var round = 0; round < maxRounds; round++)
+        for (var round = resume?.Round ?? 0; round < maxRounds; round++)
         {
             if (callbacks?.OnRoundBoundaryAsync is not null)
             {
@@ -686,6 +714,19 @@ public static class ChatPipeline
                 {
                     messages.AddRange(notes);
                 }
+            }
+            // RF-002 run-recovery: snapshot do estado do loop no topo do
+            // round (steers/notas já aplicados) — em restart a run retoma
+            // deste ponto, rediz o call do modelo e liquida calls órfãs.
+            if (callbacks?.OnCheckpointAsync is not null)
+            {
+                await callbacks.OnCheckpointAsync(new RunLoopCheckpoint(
+                    round, messages, toolMessages, stepCount,
+                    stepUsages.Select(u => new StepUsage(
+                        u.Step, u.PromptTokens, u.CompletionTokens,
+                        u.ReasoningTokens)).ToList(),
+                    emptyRounds, lengthContinuations,
+                    continuedAnswer.ToString()), ct);
             }
             if (callbacks?.OnStepAsync is not null)
             {
@@ -718,6 +759,12 @@ public static class ChatPipeline
                     usage.PromptTokens, usage.CompletionTokens,
                     usage.ReasoningTokens));
             }
+            // RF-001 run-recovery: o step_finished registra os ids das tool
+            // calls — órfãs na retomada recebem resultado sintético.
+            if (callbacks?.OnStepFinishedAsync is not null)
+            {
+                await callbacks.OnStepFinishedAsync(round, step, ct);
+            }
 
             // RF-003: resposta truncada (finish_reason=length) recebe um
             // pedido sintético de continuação e o loop segue — até 3
@@ -744,7 +791,15 @@ public static class ChatPipeline
                     "assistant", step.Content);
                 messages.Add(truncatedAssistant);
                 toolMessages.Add(truncatedAssistant);
-                messages.Add(new ChatCompletionMessage("user", LengthContinuePrompt));
+                var continuePrompt = new ChatCompletionMessage(
+                    "user", LengthContinuePrompt);
+                messages.Add(continuePrompt);
+                if (callbacks?.OnMessagesAddedAsync is not null)
+                {
+                    await callbacks.OnMessagesAddedAsync(
+                        [truncatedAssistant, continuePrompt],
+                        [truncatedAssistant], ct);
+                }
                 continue;
             }
             if (step.ToolCalls.Count == 0)
@@ -782,11 +837,16 @@ public static class ChatPipeline
                         "Round {Round} retornou vazio (sem content nem tool calls) — "
                         + "auto-continue {Empty}/{Max} injetado.",
                         round + 1, emptyRounds, maxEmptyRounds);
-                    messages.Add(new ChatCompletionMessage(
+                    var nudge = new ChatCompletionMessage(
                         "user",
                         "Sua resposta anterior veio vazia (sem texto nem tool calls). "
                         + "Responda agora de forma direta — ou chame a tool "
-                        + "apropriada — sem reiniciar o raciocínio."));
+                        + "apropriada — sem reiniciar o raciocínio.");
+                    messages.Add(nudge);
+                    if (callbacks?.OnMessagesAddedAsync is not null)
+                    {
+                        await callbacks.OnMessagesAddedAsync([nudge], [], ct);
+                    }
                     continue;
                 }
                 return new ToolLoopOutcome(
@@ -797,6 +857,11 @@ public static class ChatPipeline
                 "assistant", step.Content, ToolCallsJson: step.ToolCallsJson);
             messages.Add(assistantMessage);
             toolMessages.Add(assistantMessage);
+            if (callbacks?.OnMessagesAddedAsync is not null)
+            {
+                await callbacks.OnMessagesAddedAsync(
+                    [assistantMessage], [assistantMessage], ct);
+            }
 
             log?.LogInformation(
                 "Tool loop round {Round}/{Max}: {Count} call(s) ({Names}).",
