@@ -204,14 +204,24 @@ public sealed class ContextCompactionService(
     /// <param name="force">Quando true, ignora o limiar de tamanho — usado
     /// pelo pedido de nova janela do agente (<c>new_context</c>,
     /// SPEC-20261013-agent-context-management RF-004).</param>
+    /// <param name="tailScale">Escala do tail preservado (0–1]: o retry de
+    /// context-overflow do provider-resilience compacta com alvos
+    /// progressivos 70%→50%→35% do tail normal (RF-004).</param>
     public async Task<bool> MaybeCompactAsync(
         string chatId, IReadOnlyList<ChatCompletionMessage> history,
         string model, CancellationToken ct, string? userId = null,
-        bool force = false)
+        bool force = false, double tailScale = 1.0)
     {
         try
         {
             var t = await ThresholdsAsync(ct);
+            if (tailScale < 1.0)
+            {
+                t = new Thresholds(
+                    t.TotalChars,
+                    Math.Max(4, (int)(t.TailMessages * tailScale)),
+                    Math.Max(2000, (int)(t.TailChars * tailScale)));
+            }
             var total = history.Sum(m => (m.Content?.Length ?? 0) + (m.ToolCallsJson?.Length ?? 0));
             if (!force && total <= t.TotalChars)
             {

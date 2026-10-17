@@ -32,6 +32,9 @@ public class ProviderServiceTests
     private readonly ConcurrentQueue<RecordedRequest> _requests = new();
     private readonly ConcurrentDictionary<string, (int Status, string Body, int DelayMs)> _routes = new();
     private readonly ConcurrentDictionary<string, ConcurrentQueue<(int Status, string Body, int DelayMs)>> _routeQueues = new();
+    // Headers extras por rota (ex.: Retry-After) — aplicados a qualquer
+    // resposta do path, seja da fila ou da rota fixa.
+    private readonly ConcurrentDictionary<string, Dictionary<string, string>> _routeHeaders = new();
 
     private sealed record RecordedRequest(
         string Path, string? Authorization, string Body,
@@ -68,6 +71,7 @@ public class ProviderServiceTests
     {
         _routes.Clear();
         _routeQueues.Clear();
+        _routeHeaders.Clear();
         _requests.Clear();
         _clientTimeout = null;
     }
@@ -201,13 +205,32 @@ public class ProviderServiceTests
                     ? route : (404, "{}", 0);
             }
             var (status, payload, delayMs) = routeValue;
+            var bytes = Encoding.UTF8.GetBytes(payload);
+            // Status -1: chunked, escreve o payload parcial já, segura a
+            // conexão por delayMs e aborta — stream morto no meio dos deltas
+            // (o timeout do client dispara com o ReadLineAsync pendente).
+            if (status == -1)
+            {
+                ctx.Response.ContentType = "text/event-stream";
+                ctx.Response.SendChunked = true;
+                await ctx.Response.OutputStream.WriteAsync(bytes, ct);
+                await ctx.Response.OutputStream.FlushAsync(ct);
+                await Task.Delay(Math.Max(250, delayMs), ct);
+                try { ctx.Response.Abort(); } catch (ObjectDisposedException) { }
+                return;
+            }
             if (delayMs > 0)
             {
                 await Task.Delay(delayMs, ct);
             }
-
-            var bytes = Encoding.UTF8.GetBytes(payload);
             ctx.Response.StatusCode = status;
+            if (_routeHeaders.TryGetValue(path, out var extraHeaders))
+            {
+                foreach (var (name, value) in extraHeaders)
+                {
+                    ctx.Response.Headers[name] = value;
+                }
+            }
             // Payload SSE (`data:`/`event:`) sai como text/event-stream:
             // o stream OpenAI+tools só entra no caminho streamed com esse
             // content-type — os demais parsers não olham o header.
@@ -434,14 +457,20 @@ public class ProviderServiceTests
 
         await Assert.MultipleAsync(async () =>
         {
-            await Assert.ThrowsAsync<HttpRequestException>(async () =>
-                await svc.CompleteAsync(Req("m1", connection: "ollama")));
-            await Assert.ThrowsAsync<HttpRequestException>(async () =>
-                await svc.CompleteAsync(Req("g", connection: "openai")));
-            await Assert.ThrowsAsync<HttpRequestException>(async () =>
-                await svc.CompleteWithToolsAsync(Req("m1", connection: "ollama")));
-            await Assert.ThrowsAsync<HttpRequestException>(async () =>
-                await DrainAsync(svc.StreamCompletionAsync(Req("g", connection: "openai"))));
+            // ProviderHttpException é HttpRequestException — InstanceOf por
+            // ser o tipo concreto lançado desde provider-resilience.
+            await Assert.ThatAsync(
+                async () => await svc.CompleteAsync(Req("m1", connection: "ollama")),
+                Throws.InstanceOf<HttpRequestException>());
+            await Assert.ThatAsync(
+                async () => await svc.CompleteAsync(Req("g", connection: "openai")),
+                Throws.InstanceOf<HttpRequestException>());
+            await Assert.ThatAsync(
+                async () => await svc.CompleteWithToolsAsync(Req("m1", connection: "ollama")),
+                Throws.InstanceOf<HttpRequestException>());
+            await Assert.ThatAsync(
+                async () => await DrainAsync(svc.StreamCompletionAsync(Req("g", connection: "openai"))),
+                Throws.InstanceOf<HttpRequestException>());
         });
     }
 
@@ -1717,6 +1746,77 @@ public class ProviderServiceTests
         public HttpClient CreateClient(string name) => new();
     }
 
+    // Respostas sequenciadas sem HttpListener (provider-resilience RF-006):
+    // o 1º request devolve um stream que morre no meio dos deltas.
+    private sealed class SeqHandler(List<string> bodies,
+        params Func<HttpRequestMessage, HttpResponseMessage>[] steps)
+        : HttpMessageHandler
+    {
+        private int _calls;
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.Content is not null)
+            {
+                bodies.Add(await request.Content.ReadAsStringAsync(ct));
+            }
+            return steps[Math.Min(_calls++, steps.Length - 1)](request);
+        }
+    }
+
+    private sealed class SeqFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler);
+    }
+
+    /// <summary>Stream que entrega <paramref name="head"/> e depois lança —
+    /// simula conexão morta no meio de um SSE sem [DONE].</summary>
+    private sealed class DieStream(string head) : Stream
+    {
+        private readonly byte[] _bytes = Encoding.UTF8.GetBytes(head);
+        private int _pos;
+
+        private int Feed(Span<byte> buffer)
+        {
+            var n = Math.Min(buffer.Length, _bytes.Length - _pos);
+            _bytes.AsSpan(_pos, n).CopyTo(buffer);
+            _pos += n;
+            return n;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            _pos < _bytes.Length
+                ? Feed(buffer.AsSpan(offset, count))
+                : throw new IOException("connection reset by peer");
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken ct = default) =>
+            _pos < _bytes.Length
+                ? ValueTask.FromResult(Feed(buffer.Span))
+                : throw new IOException("connection reset by peer");
+
+        public override Task<int> ReadAsync(
+            byte[] buffer, int offset, int count, CancellationToken ct) =>
+            Task.FromResult(Read(buffer, offset, count));
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => _pos;
+            set => throw new NotSupportedException();
+        }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+        public override void Write(byte[] b, int o, int c) =>
+            throw new NotSupportedException();
+    }
+
     private ToolExecutor NewExecutor() =>
         new(_db, new StubHttpClientFactory(),
             new PythonToolExecutor(new ConfigurationBuilder().Build()),
@@ -2177,5 +2277,412 @@ public class ProviderServiceTests
             Assert.That(ProviderService.ParseUsage(vazio, openAi: true), Is.Null);
         });
         await Task.CompletedTask;
+    }
+
+    // ---- Provider-resilience (SPEC-20261016): backoff, 429/Retry-After,
+    // finish=length, context-overflow→compact, stream morto e cancel ----
+
+    private static string Sse(string content, string finishReason = "stop") =>
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\""
+        + content + "\"},\"finish_reason\":\"" + finishReason + "\"}]}\n\n"
+        + "data: [DONE]\n\n";
+
+    private const string OverflowBody =
+        "{\"error\":{\"message\":\"context_length_exceeded: this model's "
+        + "maximum context length is 8192 tokens — reduce the length.\"}}";
+
+    [Test]
+    public void RetryPolicy_Decide_ScheduleExataEClassificacao()
+    {
+        var rl = new ProviderHttpException(HttpStatusCode.TooManyRequests, null, "{}");
+        var se = new ProviderHttpException(HttpStatusCode.InternalServerError, null, "{}");
+
+        Assert.Multiple(() =>
+        {
+            // Backoff 2s→4s→8s→cap10s, sem jitter para delays exatos.
+            Assert.That(ProviderRetryPolicy.Decide(rl, 0, 0, jitter: false).Delay,
+                Is.EqualTo(TimeSpan.FromSeconds(2)));
+            Assert.That(ProviderRetryPolicy.Decide(rl, 1, 0, jitter: false).Delay,
+                Is.EqualTo(TimeSpan.FromSeconds(4)));
+            Assert.That(ProviderRetryPolicy.Decide(rl, 2, 0, jitter: false).Delay,
+                Is.EqualTo(TimeSpan.FromSeconds(8)));
+            Assert.That(ProviderRetryPolicy.Decide(rl, 3, 0, jitter: false).Delay,
+                Is.EqualTo(TimeSpan.FromSeconds(10)));
+            // 6ª tentativa (attempt=5) não retenta — orçamento esgotado.
+            Assert.That(ProviderRetryPolicy.Decide(rl, 5, 0, jitter: false).Retry,
+                Is.False);
+            Assert.That(ProviderRetryPolicy.Decide(se, 0, 0).Reason,
+                Is.EqualTo(ProviderRetryReason.ServerError));
+        });
+    }
+
+    [Test]
+    public void RetryPolicy_Decide_RetryAfterViraPisoECapa15Min()
+    {
+        var curto = new ProviderHttpException(
+            HttpStatusCode.TooManyRequests, TimeSpan.FromSeconds(5), "{}");
+        var longo = new ProviderHttpException(
+            HttpStatusCode.TooManyRequests, TimeSpan.FromMinutes(20), "{}");
+
+        Assert.Multiple(() =>
+        {
+            // Retry-After=5s > base 2s → piso de 5s.
+            Assert.That(ProviderRetryPolicy.Decide(curto, 0, 0, jitter: false).Delay,
+                Is.EqualTo(TimeSpan.FromSeconds(5)));
+            // 20min capado em 15min.
+            Assert.That(ProviderRetryPolicy.Decide(longo, 0, 0, jitter: false).Delay,
+                Is.EqualTo(ProviderRetryPolicy.MaxRetryAfter));
+        });
+    }
+
+    [Test]
+    public void RetryPolicy_Decide_TimeoutCap3EnaoRetentavel()
+    {
+        var tce = new TaskCanceledException();
+        var bad = new ProviderHttpException(
+            HttpStatusCode.BadRequest, null, "{\"error\":\"invalid\"}");
+        var ovf = new ProviderHttpException(
+            HttpStatusCode.BadRequest, null, OverflowBody);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ProviderRetryPolicy.Decide(tce, 0, 3, jitter: false).Retry, Is.True);
+            // 4º timeout consecutivo encerra a chamada.
+            Assert.That(ProviderRetryPolicy.Decide(tce, 0, 4, jitter: false).Retry, Is.False);
+            Assert.That(ProviderRetryPolicy.Classify(tce),
+                Is.EqualTo(ProviderRetryReason.Timeout));
+            // 400 genérico nunca retenta.
+            Assert.That(ProviderRetryPolicy.Classify(bad),
+                Is.EqualTo(ProviderRetryReason.NonRetryable));
+            // 400 com assinatura de janela cheia → caminho de compactação.
+            Assert.That(ProviderRetryPolicy.IsContextOverflow(ovf), Is.True);
+            Assert.That(ProviderRetryPolicy.Classify(ovf),
+                Is.EqualTo(ProviderRetryReason.ContextOverflow));
+            Assert.That(ProviderRetryPolicy.IsLengthFinish("length"), Is.True);
+            Assert.That(ProviderRetryPolicy.IsLengthFinish("MAX_TOKENS"), Is.True);
+            Assert.That(ProviderRetryPolicy.IsLengthFinish("stop"), Is.False);
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_429ComRetryAfter_RespeitaDelayEPublicaRetrying()
+    {
+        // Stream 429 → fallback buffered 429 (lança) → retry honrando o
+        // Retry-After=5s do mock → 3ª request responde 200 SSE.
+        _routeQueues["/chat/completions"] = new(
+            [(429, "{}", 0), (429, "{}", 0), (200, Sse("recuperado"), 0)]);
+        _routeHeaders["/chat/completions"] = new() { ["Retry-After"] = "5" };
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var retries = new List<(int Attempt, TimeSpan Delay, string Reason)>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnRetryingAsync: (attempt, delay, reason, _) =>
+            {
+                retries.Add((attempt, delay, reason));
+                return Task.CompletedTask; // sem dormir — delay fica registrado
+            });
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, callbacks, userId: "u1", log: NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo("recuperado"));
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(3));
+            Assert.That(retries, Has.Count.EqualTo(1));
+            Assert.That(retries[0].Reason, Is.EqualTo("RateLimit"));
+            Assert.That(retries[0].Attempt, Is.EqualTo(1));
+            // Backoff puro seria ~2s; o piso de 5s (±25% → ≥3.75s) prova o
+            // Retry-After sendo honrado.
+            Assert.That(retries[0].Delay, Is.GreaterThan(TimeSpan.FromSeconds(3)));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_429Persistente_FalhaRateLimitApos6()
+    {
+        _routes["/chat/completions"] = (429, "{}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var retries = 0;
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnRetryingAsync: (_, _, _, _) =>
+            {
+                retries++;
+                return Task.CompletedTask;
+            });
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ChatPipeline.RunToolLoopAsync(
+                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+                default, callbacks, userId: "u1", log: NullLogger.Instance));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex!.Message, Does.Contain("rate-limit"));
+            // 6 tentativas × (stream + buffered) = 12 requests; 5 retryings.
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(12));
+            Assert.That(retries, Is.EqualTo(5));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_ServerError5xx_RetentaAteResponder()
+    {
+        _routeQueues["/chat/completions"] = new(
+            [(500, "{}", 0), (500, "{}", 0), (200, Sse("de volta"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var reasons = new List<string>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnRetryingAsync: (_, _, reason, _) =>
+            {
+                reasons.Add(reason);
+                return Task.CompletedTask;
+            });
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, callbacks, userId: "u1", log: NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo("de volta"));
+            Assert.That(reasons, Is.EqualTo(new[] { "ServerError" }));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_FinishLength_ContinuaEConcatena()
+    {
+        _routeQueues["/chat/completions"] = new(
+            [(200, Sse("parte1", "length"), 0), (200, Sse("parte2"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, new ChatPipeline.ToolLoopCallbacks(),
+            userId: "u1", log: NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo("parte1parte2"));
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(2));
+            // A parte truncada vira mensagem assistant no histórico do loop.
+            Assert.That(
+                outcome.ToolMessages.Any(m =>
+                    m.Role == "assistant" && m.Content == "parte1"), Is.True);
+            // O 2º request carrega o prompt de continuação.
+            Assert.That(
+                _requests.Last(r => r.Path == "/chat/completions").Body,
+                Does.Contain("Continue exatamente de onde parou"));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_Length3Seguidas_OutputLimit()
+    {
+        _routes["/chat/completions"] = (200, Sse("bla", "length"), 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ChatPipeline.RunToolLoopAsync(
+                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+                default, new ChatPipeline.ToolLoopCallbacks(),
+                userId: "u1", log: NullLogger.Instance));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex!.Message, Does.Contain("output-limit"));
+            // Round truncado + 3 continuações truncadas → 4 requests, erro.
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(4));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_ContextOverflow_CompactaComTailProgressivo()
+    {
+        // 2 overflows (stream+buffered cada) depois 200 — as duas primeiras
+        // compactações usam tail 70% e 50%.
+        _routeQueues["/chat/completions"] = new(
+            [(400, OverflowBody, 0), (400, OverflowBody, 0),
+             (400, OverflowBody, 0), (400, OverflowBody, 0),
+             (200, Sse("apos compactar"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var scales = new List<double>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnOverflowCompactAsync: (history, scale, _) =>
+            {
+                scales.Add(scale);
+                return Task.FromResult<IReadOnlyList<ChatCompletionMessage>?>(
+                    [new ChatCompletionMessage("user", "janela reduzida")]);
+            });
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, callbacks, userId: "u1", log: NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo("apos compactar"));
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(5));
+            Assert.That(scales, Is.EqualTo(new[] { 0.7, 0.5 }));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_ContextOverflow_SemCompactacao_Falha()
+    {
+        _routes["/chat/completions"] = (400, OverflowBody, 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnOverflowCompactAsync: (_, _, _) =>
+                Task.FromResult<IReadOnlyList<ChatCompletionMessage>?>(null));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ChatPipeline.RunToolLoopAsync(
+                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+                default, callbacks, userId: "u1", log: NullLogger.Instance));
+
+        Assert.That(ex!.Message, Does.Contain("context-overflow"));
+    }
+
+    [Test]
+    public async Task RunToolLoop_OverflowEsgotado_ContextOverflow()
+    {
+        _routes["/chat/completions"] = (400, OverflowBody, 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var scales = new List<double>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnOverflowCompactAsync: (history, scale, _) =>
+            {
+                scales.Add(scale);
+                return Task.FromResult<IReadOnlyList<ChatCompletionMessage>?>(
+                    [new ChatCompletionMessage("user", "janela reduzida")]);
+            });
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ChatPipeline.RunToolLoopAsync(
+                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+                default, callbacks, userId: "u1", log: NullLogger.Instance));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex!.Message, Does.Contain("context-overflow"));
+            // 4 overflows (stream+buffered cada) → 8 requests; 3 compactações.
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(8));
+            Assert.That(scales, Is.EqualTo(new[] { 0.7, 0.5, 0.35 }));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_TimeoutsConsecutivos_ProviderTimeout()
+    {
+        // Resposta mais lenta que o timeout do client → TaskCanceledException
+        // a cada chamada; o 4º timeout consecutivo encerra.
+        _clientTimeout = TimeSpan.FromMilliseconds(100);
+        _routes["/chat/completions"] = (200, Sse("nunca"), 600);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var retries = 0;
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnRetryingAsync: (_, _, _, _) =>
+            {
+                retries++;
+                return Task.CompletedTask;
+            });
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ChatPipeline.RunToolLoopAsync(
+                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+                default, callbacks, userId: "u1", log: NullLogger.Instance));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex!.Message, Does.Contain("provider-timeout"));
+            // Cada tentativa = stream (TCE engolido) + buffered (TCE lançado).
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(8));
+            Assert.That(retries, Is.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_CancelamentoDuranteBackoff_Imediato()
+    {
+        _routes["/chat/completions"] = (429, "{}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        using var cts = new CancellationTokenSource();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnRetryingAsync: (_, delay, _, t) =>
+            {
+                cts.Cancel();
+                // Delay com o ct da run — cancela na hora, não espera o backoff.
+                return Task.Delay(delay, t);
+            });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.ThatAsync(
+            () => ChatPipeline.RunToolLoopAsync(
+                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+                cts.Token, callbacks, userId: "u1", log: NullLogger.Instance),
+            Throws.InstanceOf<OperationCanceledException>());
+        Assert.That(sw.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
+    }
+
+    [Test]
+    public async Task RunToolLoop_StreamMorreAposDelta_PedeContinuacao()
+    {
+        // Stream morre depois do delta "parte" (sem [DONE]) — a reposição
+        // buffered carrega a parte como assistant + prompt de continuação.
+        var bodies = new List<string>();
+        var handler = new SeqHandler(bodies,
+            _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new DieStream(
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"parte\"}}]}\n\n"))
+                { Headers = { ContentType = new("text/event-stream") } },
+            },
+            _ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"choices\":[{\"message\":{\"content\":\" resto\"}}]}"),
+            });
+        var service = new ProviderService(
+            new SeqFactory(handler), _config,
+            NullLogger<ProviderService>.Instance, TestCache.Create());
+        await SetConnectionsAsync([], ["http://provider.invalid"], ["k"]);
+
+        var deltas = new List<string>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnDeltaAsync: (piece, _) =>
+            {
+                deltas.Add(piece);
+                return Task.CompletedTask;
+            });
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), service,
+            default, callbacks, userId: "u1", log: NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo(" resto"));
+            Assert.That(deltas, Is.EqualTo(new[] { "parte", " resto" }));
+            // Continuação: a parte vai como assistant + prompt de stream-break.
+            Assert.That(bodies[1], Does.Contain("parte"));
+            Assert.That(bodies[1], Does.Contain("falha de transporte"));
+        });
     }
 }

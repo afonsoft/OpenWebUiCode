@@ -330,6 +330,32 @@ public sealed class ChatRunExecutor(
                         currentMaxSteps = max;
                         return Task.CompletedTask;
                     },
+                    // RF-002 provider-resilience: fase "retrying" com
+                    // tentativa/atraso/motivo + backoff que respeita pausa —
+                    // a chamada ao provider só sai depois do resume.
+                    OnRetryingAsync: async (attempt, delay, reason, t) =>
+                    {
+                        await pauses.WaitIfPausedAsync(run.Id, t);
+                        await PublishPhaseAsync(run, "retrying",
+                            $"{reason} (tentativa {attempt}, {Math.Max(1, (int)delay.TotalMilliseconds)}ms)");
+                        await Task.Delay(delay, t);
+                        await pauses.WaitIfPausedAsync(run.Id, t);
+                    },
+                    // RF-004 provider-resilience: rejeição de janela cheia
+                    // → compacta o histórico do loop com tail progressivo e
+                    // devolve a janela reduzida; null = sem como reduzir.
+                    OnOverflowCompactAsync: async (history, tailScale, t) =>
+                    {
+                        var didCompact = await compaction.MaybeCompactAsync(
+                            run.ChatId, history, effective.Model, t, run.UserId,
+                            force: true, tailScale: tailScale);
+                        if (!didCompact)
+                        {
+                            return null;
+                        }
+                        await PublishPhaseAsync(run, "compacting", null);
+                        return await compaction.ApplyAsync(run.ChatId, history, t);
+                    },
                     OnCallAsync: (call, t) => PublishToolCallAsync(run, call),
                     GateAsync: (call, t) => GateToolCallAsync(
                         run, tools, call, builtinContext, t),
@@ -448,25 +474,59 @@ public sealed class ChatRunExecutor(
                 // ficava no "Pensando…" estático até o primeiro token.
                 await PublishPhaseAsync(run, "generating", null);
                 var answered = false;
-                await foreach (var line in providers.StreamCompletionAsync(effective, run.UserId, ct))
+                // RF-001 provider-resilience: o stream do chat sem tools
+                // também retenta falhas transitórias — enquanto nenhum delta
+                // de conteúdo saiu (content vazio garante idempotência do
+                // recomeço; depois do primeiro delta a run falha como antes).
+                var plainAttempt = 0;
+                var plainTimeouts = 0;
+                while (true)
                 {
-                    await pauses.WaitIfPausedAsync(run.Id, ct);
-                    var processed = ModelFilterService.ProcessSseLine(line, outletRules);
-                    broadcaster.Publish(run.Id, processed);
-                    AccumulateDelta(processed, content);
-                    // "answering" no 1º delta de conteúdo real — reasoning
-                    // não conta (AccumulateDelta só anexa delta.content).
-                    if (!answered && content.Length > 0)
+                    try
                     {
-                        answered = true;
-                        await PublishPhaseAsync(run, "answering", null);
+                        await foreach (var line in providers.StreamCompletionAsync(
+                            effective, run.UserId, ct))
+                        {
+                            await pauses.WaitIfPausedAsync(run.Id, ct);
+                            var processed = ModelFilterService.ProcessSseLine(line, outletRules);
+                            broadcaster.Publish(run.Id, processed);
+                            AccumulateDelta(processed, content);
+                            // "answering" no 1º delta de conteúdo real — reasoning
+                            // não conta (AccumulateDelta só anexa delta.content).
+                            if (!answered && content.Length > 0)
+                            {
+                                answered = true;
+                                await PublishPhaseAsync(run, "answering", null);
+                            }
+                            sinceCheckpoint += processed.Length;
+                            if (sinceCheckpoint >= CheckpointBytes)
+                            {
+                                run.PartialContent = content.ToString();
+                                await db.SaveChangesAsync(CancellationToken.None);
+                                sinceCheckpoint = 0;
+                            }
+                        }
+                        break;
                     }
-                    sinceCheckpoint += processed.Length;
-                    if (sinceCheckpoint >= CheckpointBytes)
+                    catch (Exception ex)
+                        when (!(ex is OperationCanceledException && ct.IsCancellationRequested)
+                            && content.Length == 0)
                     {
-                        run.PartialContent = content.ToString();
-                        await db.SaveChangesAsync(CancellationToken.None);
-                        sinceCheckpoint = 0;
+                        plainTimeouts = ex is TaskCanceledException or TimeoutException
+                            ? plainTimeouts + 1 : 0;
+                        var decision = ProviderRetryPolicy.Decide(
+                            ex, plainAttempt, plainTimeouts);
+                        if (!decision.Retry)
+                        {
+                            throw;
+                        }
+                        plainAttempt++;
+                        await pauses.WaitIfPausedAsync(run.Id, ct);
+                        await PublishPhaseAsync(run, "retrying",
+                            $"{decision.Reason} (tentativa {plainAttempt}, "
+                            + $"{Math.Max(1, (int)decision.Delay.TotalMilliseconds)}ms)");
+                        await Task.Delay(decision.Delay, ct);
+                        await pauses.WaitIfPausedAsync(run.Id, ct);
                     }
                 }
             }
