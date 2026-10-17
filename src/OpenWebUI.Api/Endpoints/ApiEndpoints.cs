@@ -360,7 +360,8 @@ public static class ApiEndpoints
                     Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id));
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct,
-                    builtinContext: builtinContext, userId: user.Id);
+                    builtinContext: builtinContext, userId: user.Id,
+                    maxSteps: await config.GetAsync("agentLoop.maxRounds", 25, ct));
                 if (outcome?.FinalContent is { } finished)
                 {
                     foreach (var (regex, replacement) in outletRules)

@@ -32,7 +32,10 @@ public sealed record AgentDefinition(
     IReadOnlyList<string> Skills,
     bool Blocking,
     string SystemPrompt,
-    string Source);
+    string Source,
+    /// <summary>Teto de steps declarado no frontmatter (<c>steps:</c>);
+    /// null = teto global (<c>agentLoop.maxRounds</c>).</summary>
+    int? Steps = null);
 
 /// <summary>
 /// Descobre agentes declarativos em camadas com precedência crescente
@@ -319,7 +322,12 @@ public sealed class AgentDefinitionService(
             Blocking: !fm.TryGetValue("blocking", out var blockingRaw)
                 || !blockingRaw.Equals("false", StringComparison.OrdinalIgnoreCase),
             SystemPrompt: prompt,
-            Source: source);
+            Source: source,
+            // `steps` por agent (SPEC-20261016-agent-steps-usage RF-001):
+            // inteiro positivo; 0/negativo/inválido → null (default).
+            Steps: fm.TryGetValue("steps", out var stepsRaw)
+                && int.TryParse(stepsRaw, out var steps) && steps > 0
+                ? steps : null);
     }
 
     /// <summary>

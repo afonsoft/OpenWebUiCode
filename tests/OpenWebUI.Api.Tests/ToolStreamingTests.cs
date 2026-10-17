@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using OpenWebUI.Api.Runs;
 using OpenWebUI.Application.Contracts;
+using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
@@ -132,16 +134,21 @@ public class ToolStreamingTests
                 // "tools" no payload o mock responde NDJSON com
                 // message.thinking — o provider traduz para
                 // delta.reasoning (canal separado do content).
+                // Todas as respostas reportam usage (prompt_eval_count/
+                // eval_count) — a run agrega em meta.usage por step
+                // (SPEC-20261016-agent-steps-usage RF-004).
                 json = !body.Contains("\"tools\"", StringComparison.Ordinal)
                     ? "{\"message\":{\"role\":\"assistant\","
                         + "\"thinking\":\"raciocinio interno\","
-                        + "\"content\":\"resposta final\"},\"done\":true}"
+                        + "\"content\":\"resposta final\"},\"done\":true,"
+                        + "\"prompt_eval_count\":10,\"eval_count\":5}"
                 // Segunda chamada do loop: histórico já tem role=tool.
                 // Casa pelo nome exato anunciado no tools spec (builtin_{name}) —
                 // substring solta colide com o system prompt padrão (que cita
                 // "ask_user") e desviava TODA run para o braço errado.
                 : body.Contains("\"tool_call_id\"", StringComparison.Ordinal)
-                    ? "{\"message\":{\"role\":\"assistant\",\"content\":\"resposta pós-tool\"}}"
+                    ? "{\"message\":{\"role\":\"assistant\",\"content\":\"resposta pós-tool\"},"
+                        + "\"done\":true,\"prompt_eval_count\":10,\"eval_count\":5}"
                     // SPEC-20261016-question-forms: prompt "multi-form" dispara
                     // a forma questions[] (3 itens: single, multiple, livre).
                     : body.Contains("builtin_ask_user", StringComparison.Ordinal)
@@ -226,11 +233,12 @@ public class ToolStreamingTests
     }
 
     private async Task<ChatRunResponse> EnfileirarAsync(
-        string chatId, string content, IReadOnlyList<string>? toolIds = null)
+        string chatId, string content, IReadOnlyList<string>? toolIds = null,
+        string model = "fake:1")
     {
         var response = await _client.PostAsJsonAsync(
             $"/api/v1/chats/{chatId}/messages",
-            new EnqueueChatRunRequest(content, "fake:1", ToolIds: toolIds));
+            new EnqueueChatRunRequest(content, model, ToolIds: toolIds));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
             await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<ChatRunResponse>())!;
@@ -534,6 +542,97 @@ public class ToolStreamingTests
             Assert.That(eventos.Any(e => e.Event == "tool_result"
                     && e.Data.Contains("resultado-eco")), Is.True,
                 "tool não executou após aprovação");
+        });
+    }
+
+    // ---- agent-steps-usage (SPEC-20261016) ----
+
+    [Test]
+    public async Task Run_UsageAgregada_MetaUsageECustoESseSteps()
+    {
+        var auth = await SignUpAsync("UsageA", "usagea@tools.local");
+        UseToken(auth.Token);
+        // ModelEntry com custo para "fake:1" → costUsd no meta da run.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.ModelEntries.Add(new ModelEntry
+            {
+                UserId = "public",
+                Name = "fake:1",
+                BaseModelId = "fake:1",
+                MetaJson = """{"cost":{"input":1.0,"output":2.0}}""",
+            });
+            await db.SaveChangesAsync();
+        }
+        var toolId = await CriarToolAsync();
+        var chat = await CriarChatAsync();
+
+        var run = await EnfileirarAsync(chat.Id, "executa com usage", [toolId]);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        var eventos = await LerStreamAteFecharAsync(chat.Id, run.Id, cts.Token);
+        var final = await AguardarFinalAsync(_client, chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+
+        // SSE: generating carrega step/maxSteps (RF-006) — 1 e 2 de 25.
+        var generating = eventos
+            .Where(e => e.Event == "status" && e.Data.Contains("generating"))
+            .Select(e => JsonDocument.Parse(e.Data).RootElement)
+            .Where(e => e.TryGetProperty("step", out var s)
+                && s.ValueKind == JsonValueKind.Number)
+            .ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(generating, Has.Count.GreaterThanOrEqualTo(2));
+            Assert.That(
+                generating.Select(e => e.GetProperty("step").GetInt32()),
+                Is.EquivalentTo(new[] { 1, 2 }));
+            Assert.That(generating.All(
+                e => e.GetProperty("maxSteps").GetInt32() == 25), Is.True);
+        });
+
+        // meta.usage (RF-004/RF-005): 2 steps executados; só o step final
+        // reportou usage → agregado de 10/5 + perStep com 1 entrada.
+        Assert.That(final.Meta, Is.Not.Null);
+        var usage = final.Meta!.Value.GetProperty("usage");
+        Assert.Multiple(() =>
+        {
+            Assert.That(usage.GetProperty("steps").GetInt32(), Is.EqualTo(2));
+            Assert.That(usage.GetProperty("promptTokens").GetInt32(), Is.EqualTo(10));
+            Assert.That(usage.GetProperty("completionTokens").GetInt32(), Is.EqualTo(5));
+            Assert.That(usage.TryGetProperty("reasoningTokens", out _), Is.False);
+            var perStep = usage.GetProperty("perStep");
+            Assert.That(perStep.GetArrayLength(), Is.EqualTo(1));
+            Assert.That(perStep[0].GetProperty("step").GetInt32(), Is.EqualTo(2));
+            // custo = 10*1.0/1M + 5*2.0/1M = 0.00002 USD.
+            Assert.That(usage.GetProperty("costUsd").GetDouble(),
+                Is.EqualTo(0.00002).Within(1e-9));
+        });
+    }
+
+    [Test]
+    public async Task Run_SemModelCost_MetaSemCostUsd()
+    {
+        // Sem ModelEntry para o modelo da run: usage agregado presente,
+        // costUsd omitido (RF-005 — custo parcial/ausente nunca inventa 0).
+        var auth = await SignUpAsync("UsageB", "usageb@tools.local");
+        UseToken(auth.Token);
+        var toolId = await CriarToolAsync();
+        var chat = await CriarChatAsync();
+
+        var run = await EnfileirarAsync(
+            chat.Id, "sem custo", [toolId], model: "nobiling:1");
+        var final = await AguardarFinalAsync(_client, chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+
+        Assert.That(final.Meta, Is.Not.Null);
+        var usage = final.Meta!.Value.GetProperty("usage");
+        Assert.Multiple(() =>
+        {
+            Assert.That(usage.GetProperty("steps").GetInt32(), Is.EqualTo(2));
+            Assert.That(usage.GetProperty("promptTokens").GetInt32(), Is.EqualTo(10));
+            Assert.That(usage.TryGetProperty("costUsd", out _), Is.False);
         });
     }
 

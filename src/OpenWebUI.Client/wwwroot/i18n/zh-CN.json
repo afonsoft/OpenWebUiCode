@@ -538,6 +538,7 @@
   "chat.status_paused": "已暂停",
   "chat.status_thinking": "…",
   "chat.status_writing": "…",
+  "chat.status_step": "步骤 {{step}}/{{max}}",
   "chat.progress.preparing_context": "正在准备上下文…",
   "chat.progress.compacting": "正在压缩上下文…",
   "chat.progress.searching_web": "正在搜索网络…",

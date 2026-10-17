@@ -549,7 +549,37 @@ public class ProviderService(
             callsJson = SerializeToolCallsEcho(calls);
         }
 
-        return new ProviderCompletion(content, calls, callsJson, reasoning);
+        return new ProviderCompletion(content, calls, callsJson, reasoning,
+            ParseUsage(json, openAi));
+    }
+
+    /// <summary>
+    /// Extrai o uso de tokens da resposta (RF-004 SPEC-20261016-agent-
+    /// steps-usage): OpenAI <c>usage.{prompt_tokens,completion_tokens,
+    /// completion_tokens_details.reasoning_tokens}</c>; Ollama
+    /// <c>{prompt_eval_count,eval_count}</c> (buffered ou linha
+    /// <c>done:true</c> do NDJSON). Ausente → null (nunca estima).
+    /// </summary>
+    internal static ProviderUsage? ParseUsage(JsonNode? root, bool openAi)
+    {
+        if (openAi)
+        {
+            var u = root?["usage"];
+            if (u?["prompt_tokens"]?.GetValue<int>() is not { } prompt)
+            {
+                return null;
+            }
+            var completion = u["completion_tokens"]?.GetValue<int>() ?? 0;
+            var reasoning = u["completion_tokens_details"]?["reasoning_tokens"]
+                ?.GetValue<int>();
+            return new ProviderUsage(prompt, completion, reasoning);
+        }
+
+        var promptEval = root?["prompt_eval_count"]?.GetValue<int>();
+        var eval = root?["eval_count"]?.GetValue<int>();
+        return promptEval is null && eval is null
+            ? null
+            : new ProviderUsage(promptEval ?? 0, eval ?? 0);
     }
 
     /// <summary>Limpa markup DSML (DeepSeek) de content/reasoning de uma
@@ -712,6 +742,7 @@ public class ProviderService(
         var sawDsmlMarker = false;
         string? finishReason = null;
         string? upstreamModel = null;
+        ProviderUsage? streamUsage = null;
 
         while (await reader.ReadLineAsync(ct) is { } line)
         {
@@ -753,6 +784,12 @@ public class ProviderService(
             if (choice?["finish_reason"]?.GetValue<string>() is { Length: > 0 } fr)
             {
                 finishReason = fr;
+            }
+            // Chunk final com stream_options.include_usage traz usage
+            // sem choices (SPEC-20261016-agent-steps-usage RF-004).
+            if (node?["usage"] is not null)
+            {
+                streamUsage = ParseUsage(node, openAi: true);
             }
             var piece = delta?["content"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(piece))
@@ -891,7 +928,8 @@ public class ProviderService(
         }
 
         var callsJson = SerializeToolCallsEcho(calls);
-        return new ProviderCompletion(content.ToString(), calls, callsJson);
+        return new ProviderCompletion(
+            content.ToString(), calls, callsJson, Usage: streamUsage);
     }
 
     /// <summary>Buffer de uma tool_call fragmentada no stream OpenAI.</summary>
@@ -1108,6 +1146,7 @@ public class ProviderService(
 
         var content = new StringBuilder();
         var callNodes = new List<JsonNode>();
+        ProviderUsage? usage = null;
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -1145,6 +1184,12 @@ public class ProviderService(
                 await onReasoning(thought, ct);
             }
 
+            // Linha final done:true carrega prompt_eval_count/eval_count
+            // (SPEC-20261016-agent-steps-usage RF-004).
+            if (ParseUsage(node, openAi: false) is { } lineUsage)
+            {
+                usage = lineUsage;
+            }
             if (node?["message"]?["tool_calls"] is JsonArray { Count: > 0 } calls)
             {
                 callNodes.AddRange(calls.Select(c => c!.DeepClone()));
@@ -1169,7 +1214,8 @@ public class ProviderService(
                 name, argsJson));
         }
 
-        return new ProviderCompletion(content.ToString(), parsed, callsJson.ToJsonString());
+        return new ProviderCompletion(
+            content.ToString(), parsed, callsJson.ToJsonString(), Usage: usage);
     }
 
     private async Task<string> ResolveProviderAsync(
@@ -2174,6 +2220,12 @@ public class ProviderService(
             ["stream"] = stream,
         };
 
+        // OpenAI só envia `usage` no stream quando pedido (RF-004).
+        if (stream && provider == ProviderTypes.OpenAi)
+        {
+            payload["stream_options"] = new JsonObject { ["include_usage"] = true };
+        }
+
         if (request.Tools is { Count: > 0 })
         {
             payload["tools"] = new JsonArray(request.Tools
@@ -2515,7 +2567,18 @@ public sealed record ProviderCompletion(
     /// <summary>Raciocínio do modelo (reasoning/thinking) quando o provider
     /// o expõe — nunca faz parte de <paramref name="Content"/>: vai para o
     /// canal próprio do stream e não deve ser persistido na mensagem.</param>
-    string? Reasoning = null);
+    string? Reasoning = null,
+    /// <summary>Uso de tokens reportado pelo provider (RF-004 do SPEC
+    /// agent-steps-usage); null quando o provider não informa — nunca
+    /// estimado.</param>
+    ProviderUsage? Usage = null);
+
+/// <summary>Uso de tokens de uma completion (OpenAI usage / Ollama eval_count).</summary>
+/// <param name="PromptTokens">Tokens do prompt (prompt_eval_count no Ollama).</param>
+/// <param name="CompletionTokens">Tokens gerados (eval_count no Ollama).</param>
+/// <param name="ReasoningTokens">Tokens de reasoning quando discriminados.</param>
+public sealed record ProviderUsage(
+    int PromptTokens, int CompletionTokens, int? ReasoningTokens = null);
 
 /// <summary>Chamada de função normalizada (Ollama/OpenAI).</summary>
 /// <param name="Id">Id da chamada (echo em tool_call_id).</param>

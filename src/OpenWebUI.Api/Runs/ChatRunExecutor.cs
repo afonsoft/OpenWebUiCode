@@ -304,13 +304,31 @@ public sealed class ChatRunExecutor(
                         .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
                         .ToList(),
                 };
+                // Teto de steps da run (SPEC-20261016-agent-steps-usage
+                // RF-001): min(agent.steps do kv da sub-run,
+                // agentLoop.maxRounds global — default 25).
+                var agentSteps = await config.GetAsync<int?>(
+                    $"r:{run.Id}:agent.steps", null, ct);
+                var maxSteps = Math.Min(agentSteps ?? int.MaxValue,
+                    await config.GetAsync("agentLoop.maxRounds", 25, ct));
+                var currentStep = 0;
+                var currentMaxSteps = 0;
                 var callbacks = new ChatPipeline.ToolLoopCallbacks(
                     // Checkpoint de pausa em cada iteração do loop (RF-013):
                     // fase nova só começa depois do resume.
                     OnPhaseAsync: async (phase, label, t) =>
                     {
                         await pauses.WaitIfPausedAsync(run.Id, t);
-                        await PublishPhaseAsync(run, phase, label);
+                        // generating carrega {step,maxSteps} (RF-006).
+                        await PublishPhaseAsync(run, phase, label,
+                            phase == "generating" ? currentStep : null,
+                            phase == "generating" ? currentMaxSteps : null);
+                    },
+                    OnStepAsync: (step, max, t) =>
+                    {
+                        currentStep = step;
+                        currentMaxSteps = max;
+                        return Task.CompletedTask;
                     },
                     OnCallAsync: (call, t) => PublishToolCallAsync(run, call),
                     GateAsync: (call, t) => GateToolCallAsync(
@@ -414,8 +432,12 @@ public sealed class ChatRunExecutor(
                     });
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct, callbacks,
-                    builtinContext, run.UserId, logger);
+                    builtinContext, run.UserId, logger, maxSteps);
                 toolMessages = outcome?.ToolMessages;
+                if (outcome is not null)
+                {
+                    await ApplyUsageMetaAsync(run, outcome, ct);
+                }
             }
             else
             {
@@ -516,10 +538,11 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>Publica o evento <c>status</c> de fase no stream da run.</summary>
-    private Task PublishPhaseAsync(ChatRun run, string phase, string? label)
+    private Task PublishPhaseAsync(ChatRun run, string phase, string? label,
+        int? step = null, int? maxSteps = null)
     {
         broadcaster.Publish(run.Id,
-            $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent(phase, label), JsonOptions)}");
+            $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent(phase, label, step, maxSteps), JsonOptions)}");
         return Task.CompletedTask;
     }
 
@@ -1430,10 +1453,91 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>
-    /// Grava as mensagens do loop de tools (assistant com ToolCallsJson +
-    /// respostas role=tool) e a mensagem final do assistant no chat, e
-    /// finaliza a run.
+    /// Persiste <c>run.MetaJson.usage</c> (SPEC-20261016-agent-steps-usage
+    /// RF-004/RF-005): steps executados sempre; tokens só quando o provider
+    /// reportou; <c>costUsd</c> quando <c>ModelEntry.MetaJson.cost</c> tem
+    /// input+output (USD por 1M tokens). Ausência é omitida, nunca zero
+    /// inventado.
     /// </summary>
+    private async Task ApplyUsageMetaAsync(
+        ChatRun run, ChatPipeline.ToolLoopOutcome outcome, CancellationToken ct)
+    {
+        if (outcome.TotalSteps <= 0)
+        {
+            return;
+        }
+
+        var usages = outcome.StepUsages ?? [];
+        var meta = new Dictionary<string, object?>
+        {
+            ["steps"] = outcome.TotalSteps,
+        };
+        if (usages.Count > 0)
+        {
+            meta["promptTokens"] = usages.Sum(u => u.PromptTokens);
+            meta["completionTokens"] = usages.Sum(u => u.CompletionTokens);
+            var reasoning = usages.Sum(u => u.ReasoningTokens ?? 0);
+            if (usages.Any(u => u.ReasoningTokens is not null))
+            {
+                meta["reasoningTokens"] = reasoning;
+            }
+            meta["perStep"] = usages.Select(u => new Dictionary<string, object?>
+            {
+                ["step"] = u.Step,
+                ["promptTokens"] = u.PromptTokens,
+                ["completionTokens"] = u.CompletionTokens,
+                ["reasoningTokens"] = u.ReasoningTokens,
+            }).ToList();
+
+            if (await ModelCostAsync(run.Model, run.UserId,
+                    usages.Sum(u => u.PromptTokens),
+                    usages.Sum(u => u.CompletionTokens), ct) is { } cost)
+            {
+                meta["costUsd"] = Math.Round(cost, 6);
+            }
+        }
+
+        run.MetaJson = JsonSerializer.Serialize(
+            new Dictionary<string, object?> { ["usage"] = meta }, JsonOptions);
+    }
+
+    /// <summary>
+    /// Custo estimado da run (RF-005): <c>ModelEntry.MetaJson</c>
+    /// <c>{"cost":{"input":x,"output":y"}}</c> em USD/1M tokens. Só com os
+    /// dois campos — custo parcial é omitido (edge case do SPEC).
+    /// </summary>
+    private async Task<double?> ModelCostAsync(
+        string model, string userId,
+        int promptTokens, int completionTokens, CancellationToken ct)
+    {
+        var metaJson = await db.ModelEntries.AsNoTracking()
+            .Where(m => (m.Id == model || m.Name == model || m.BaseModelId == model)
+                && (m.UserId == userId || m.UserId == "public"))
+            .Select(m => m.MetaJson)
+            .FirstOrDefaultAsync(ct);
+        if (metaJson is null)
+        {
+            return null;
+        }
+        try
+        {
+            var meta = JsonSerializer.Deserialize<JsonElement>(metaJson);
+            if (meta.TryGetProperty("cost", out var cost)
+                && cost.TryGetProperty("input", out var input)
+                && cost.TryGetProperty("output", out var output)
+                && input.TryGetDouble(out var inRate)
+                && output.TryGetDouble(out var outRate))
+            {
+                return promptTokens * inRate / 1_000_000d
+                    + completionTokens * outRate / 1_000_000d;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return null;
+    }
+
     private async Task FinishAsync(
         ChatRun run, string content, CancellationToken ct, string? status = null,
         IReadOnlyList<ChatCompletionMessage>? toolMessages = null)

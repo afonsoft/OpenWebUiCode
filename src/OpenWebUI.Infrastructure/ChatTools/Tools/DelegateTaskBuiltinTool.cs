@@ -405,6 +405,13 @@ public sealed class DelegateTaskBuiltinTool(
             await config.SetAsync($"r:{childRun.Id}:agent.depth", 0, ct);
         }
 
+        // Teto de steps do agente (SPEC-20261016-agent-steps-usage RF-001):
+        // kv da sub-run — o executor resolve min(steps, agentLoop.maxRounds).
+        if (agent?.Steps is { } agentSteps)
+        {
+            await config.SetAsync($"r:{childRun.Id}:agent.steps", agentSteps, ct);
+        }
+
         // SPEC-20261010-chat-repo-binding: o filho herda o binding POR CHAT
         // do pai (não o global). SPEC-15: herda repo/branch mas com
         // worktree próprio — subtarefa não escreve no worktree do pai.

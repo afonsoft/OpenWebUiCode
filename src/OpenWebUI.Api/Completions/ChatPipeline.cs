@@ -453,7 +453,18 @@ public static class ChatPipeline
     /// </summary>
     public sealed record ToolLoopOutcome(
         string? FinalContent,
-        IReadOnlyList<ChatCompletionMessage> ToolMessages);
+        IReadOnlyList<ChatCompletionMessage> ToolMessages,
+        /// <summary>Uso reportado pelo provider por step
+        /// (SPEC-20261016-agent-steps-usage RF-004) — só os steps cujo
+        /// provider informou usage aparecem; nunca estimado.</summary>
+        IReadOnlyList<RoundUsage>? StepUsages = null,
+        /// <summary>Completions executadas no loop (steps totais — inclui
+        /// rounds sem usage reportado).</summary>
+        int TotalSteps = 0);
+
+    /// <summary>Uso de tokens de um step do loop (índice 1-based).</summary>
+    public sealed record RoundUsage(
+        int Step, int PromptTokens, int CompletionTokens, int? ReasoningTokens);
 
     /// <summary>
     /// Callbacks do loop de tools para streaming/gate
@@ -501,13 +512,22 @@ public static class ChatPipeline
         /// topo de cada round e anexadas ao histórico <em>sem</em> zerar o
         /// teto — são avisos (ex.: conselho do advisor), não input do usuário.
         /// </summary>
-        Func<CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnContextNotesAsync = null);
+        Func<CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnContextNotesAsync = null,
+        /// <summary>
+        /// Contador de step (SPEC-20261016-agent-steps-usage RF-006):
+        /// chamado no início de cada round com (step 1-based, maxSteps)
+        /// — o executor emite no evento de fase <c>generating</c>.
+        /// </summary>
+        Func<int, int, CancellationToken, Task>? OnStepAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
-    /// (sem tool_calls) ou teto de 5 iterações. <paramref name="callbacks"/>
-    /// recebe os eventos de fase/call/gate/resultado (runs desacopladas
-    /// emitem no SSE; o endpoint legado passa null — tools invisíveis lá).
+    /// (sem tool_calls) ou teto de <paramref name="maxSteps"/> iterações
+    /// (default 25 — SPEC-20261016-agent-steps-usage RF-001; agents com
+    /// <c>steps:</c> chegam já clampados pelo caller).
+    /// <paramref name="callbacks"/> recebe os eventos de fase/call/gate/
+    /// resultado (runs desacopladas emitem no SSE; o endpoint legado passa
+    /// null — tools invisíveis lá).
     /// </summary>
     public static async Task<ToolLoopOutcome?> RunToolLoopAsync(
         ChatCompletionRequest effective,
@@ -518,9 +538,13 @@ public static class ChatPipeline
         ToolLoopCallbacks? callbacks = null,
         BuiltinToolContext? builtinContext = null,
         string? userId = null,
-        Microsoft.Extensions.Logging.ILogger? log = null)
+        Microsoft.Extensions.Logging.ILogger? log = null,
+        int? maxSteps = null)
     {
-        const int maxRounds = 5;
+        // Teto global default do tool loop (SPEC-20261016-agent-steps-usage
+        // RF-001): 5 → 25 agora que agents podem declarar `steps:` próprios.
+        const int defaultMaxRounds = 25;
+        var maxRounds = Math.Clamp(maxSteps ?? defaultMaxRounds, 1, 100);
         // Rodadas vazias (só reasoning, sem content nem tool_calls) não
         // encerram a run em silêncio: o modelo leva um nudge e tenta de
         // novo — autonomia para continuar o pensamento sem esperar o
@@ -531,9 +555,11 @@ public static class ChatPipeline
         // para responder — o retry de round vazio sobe o teto.
         const int retryMaxTokens = 8192;
         var emptyRounds = 0;
+        var stepCount = 0;
         var request = effective;
         var messages = effective.Messages.ToList();
         var toolMessages = new List<ChatCompletionMessage>();
+        var stepUsages = new List<RoundUsage>();
 
         for (var round = 0; round < maxRounds; round++)
         {
@@ -558,13 +584,37 @@ public static class ChatPipeline
                     messages.AddRange(notes);
                 }
             }
+            if (callbacks?.OnStepAsync is not null)
+            {
+                await callbacks.OnStepAsync(round + 1, maxRounds, ct);
+            }
             if (callbacks?.OnPhaseAsync is not null)
             {
                 await callbacks.OnPhaseAsync("generating", null, ct);
             }
+            // Último step permitido (RF-002): round roda sem tools e com o
+            // prompt de wrap-up — o modelo se encerra graciosamente em vez
+            // de bater no teto sem aviso. A mensagem sintética não vira
+            // ChatMessage persistida (só vive no request desta rodada).
+            var lastStep = round == maxRounds - 1;
+            var roundRequest = lastStep
+                ? request with
+                {
+                    Messages = [..messages, new ChatCompletionMessage(
+                        "user", MaxStepsPrompt)],
+                    Tools = null,
+                }
+                : request with { Messages = messages };
             var step = await CompleteRoundAsync(
-                providers, request with { Messages = messages }, callbacks, ct,
+                providers, roundRequest, callbacks, ct,
                 userId ?? builtinContext?.UserId);
+            stepCount++;
+            if (step.Usage is { } usage)
+            {
+                stepUsages.Add(new RoundUsage(stepCount,
+                    usage.PromptTokens, usage.CompletionTokens,
+                    usage.ReasoningTokens));
+            }
             if (step.ToolCalls.Count == 0)
             {
                 // Antes de ficar ociosa, promove mensagens queued (SPEC-20261010).
@@ -607,7 +657,8 @@ public static class ChatPipeline
                         + "apropriada — sem reiniciar o raciocínio."));
                     continue;
                 }
-                return new ToolLoopOutcome(step.Content, toolMessages);
+                return new ToolLoopOutcome(
+                    step.Content, toolMessages, stepUsages, stepCount);
             }
 
             var assistantMessage = new ChatCompletionMessage(
@@ -664,15 +715,37 @@ public static class ChatPipeline
             }
         }
 
-        // Teto de iterações atingido: resposta final sem tools.
+        // Teto de iterações atingido: o último round já rodou sem tools e
+        // com wrap-up — chegar aqui significa que o modelo insistiu em
+        // tool_calls mesmo anunciadas nenhuma (ex.: markup DSML sintetizado).
+        // Uma rodada final toolless garante encerramento com texto.
         log?.LogWarning(
             "Tool loop atingiu o teto de {Max} rounds — resposta final sem tools.",
             maxRounds);
         var final = await CompleteRoundAsync(
             providers, request with { Messages = messages, Tools = null }, callbacks, ct,
             userId ?? builtinContext?.UserId);
-        return new ToolLoopOutcome(final.Content, toolMessages);
+        stepCount++;
+        if (final.Usage is { } finalUsage)
+        {
+            stepUsages.Add(new RoundUsage(stepCount,
+                finalUsage.PromptTokens, finalUsage.CompletionTokens,
+                finalUsage.ReasoningTokens));
+        }
+        return new ToolLoopOutcome(
+            final.Content, toolMessages, stepUsages, stepCount);
     }
+
+    /// <summary>
+    /// Prompt sintético do último step (SPEC-20261016-agent-steps-usage
+    /// RF-002, padrão MAX_STEPS_PROMPT do opencode): injetado como
+    /// mensagem <c>user</c> no request da rodada final — nunca persistido
+    /// no histórico do chat.
+    /// </summary>
+    public const string MaxStepsPrompt =
+        "Você atingiu o número máximo de passos desta execução — este é o "
+        + "último. Sem novas tool calls: resuma o que foi feito, o estado "
+        + "atual e os próximos passos sugeridos.";
 
     /// <summary>Sobe o teto de <c>max_tokens</c> no retry de round vazio —
     /// backends com default baixo (ex.: Cloudflare ~256) deixam o modelo de

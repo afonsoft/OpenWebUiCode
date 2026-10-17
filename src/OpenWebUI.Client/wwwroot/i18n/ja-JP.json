@@ -538,6 +538,7 @@
   "chat.status_paused": "一時停止中",
   "chat.status_thinking": "えています…",
   "chat.status_writing": "をいています…",
+  "chat.status_step": "ステップ {{step}}/{{max}}",
   "chat.progress.preparing_context": "コンテキストを準備中…",
   "chat.progress.compacting": "コンテキストを圧縮中…",
   "chat.progress.searching_web": "ウェブを検索中…",
