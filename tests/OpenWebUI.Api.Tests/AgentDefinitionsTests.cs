@@ -157,6 +157,43 @@ public class AgentDefinitionsTests
         await Task.CompletedTask;
     }
 
+    // ---------------- steps (SPEC-20261016-agent-steps-usage) ----------------
+
+    [Test]
+    public async Task Parse_Steps_Positivo_Aceito()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        var def = svc.TryParse("""
+            ---
+            name: pesquisador
+            description: com teto
+            steps: 8
+            ---
+            corpo
+            """, "x.agent.md", "user");
+
+        Assert.That(def!.Steps, Is.EqualTo(8));
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Parse_Steps_ZeroNegativoEInvalido_Ignorados()
+    {
+        var svc = _provider.GetRequiredService<AgentDefinitionService>();
+        foreach (var raw in new[] { "0", "-3", "abc", "2.5" })
+        {
+            var def = svc.TryParse(
+                $"---\nname: a{raw.GetHashCode():x}\ndescription: d\nsteps: {raw}\n---\ncorpo",
+                "x.agent.md", "user");
+            Assert.That(def!.Steps, Is.Null, $"steps={raw} devia ser ignorado");
+        }
+        // Ausente também é null.
+        var sem = svc.TryParse("---\nname: semsteps\ndescription: d\n---\ncorpo",
+            "x.agent.md", "user");
+        Assert.That(sem!.Steps, Is.Null);
+        await Task.CompletedTask;
+    }
+
     // ---------------- Discovery + precedência (RF-002) ----------------
 
     [Test]
@@ -592,6 +629,34 @@ public class AgentDefinitionsTests
             Assert.That(spawns, Is.EqualTo("researcher,code-reviewer"));
             Assert.That(depth, Is.EqualTo(1));
         });
+    }
+
+    [Test]
+    public async Task Delegate_FilhoComSteps_GravaTetoEmKv()
+    {
+        // steps do frontmatter do agente viram teto da sub-run via kv
+        // r:{child}:agent.steps (SPEC-20261016-agent-steps-usage RF-001).
+        WriteAgent(Path.Join(DataRoot, "users", "u1", "agents"), "s.agent.md", """
+            ---
+            name: delimitado
+            description: com teto próprio
+            steps: 7
+            ---
+            corpo
+            """);
+        var (parentRun, tool) = await SeedParentRunAsync();
+        var ctx = new BuiltinToolContext("u1", parentRun.ChatId, parentRun.Id, _root, _root);
+        var args = System.Text.Json.JsonDocument.Parse(
+            """{"agent":"delimitado","prompt":"x","wait":false}""").RootElement;
+
+        await tool.ExecuteAsync(args, ctx, default);
+
+        await using var db = NewDb();
+        var childRun = await db.ChatRuns.AsNoTracking()
+            .Where(r => r.ParentRunId == parentRun.Id).SingleAsync();
+        var steps = await Config().GetAsync<int?>(
+            $"r:{childRun.Id}:agent.steps", null, default);
+        Assert.That(steps, Is.EqualTo(7));
     }
 
     // ---------------- delegate_task: bordas ----------------

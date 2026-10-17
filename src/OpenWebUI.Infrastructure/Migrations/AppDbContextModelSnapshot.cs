@@ -841,6 +841,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Error")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("MetaJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Model")
                         .IsRequired()
                         .HasColumnType("TEXT");

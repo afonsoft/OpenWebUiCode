@@ -2570,6 +2570,15 @@
                             _statusLabel = _hasDeltas
                                 ? L["chat.status_writing"]
                                 : _thinkingLabel;
+                            // Badge N/M do tool loop (SPEC-20261016-agent-
+                            // steps-usage RF-006): step atual / teto da run.
+                            if (phase.Status.Step is { } step
+                                && phase.Status.MaxSteps is { } max)
+                            {
+                                _statusLabel += " · " + L.T("chat.status_step",
+                                    ("step", step.ToString()),
+                                    ("max", max.ToString()));
+                            }
                             break;
                         case "answering":
                             _statusLabel = L["chat.status_writing"];

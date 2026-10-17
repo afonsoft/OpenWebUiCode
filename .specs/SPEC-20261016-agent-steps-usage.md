@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-agent-steps-usage` |
 | Ticket | [#405](https://github.com/afonsoft/open-webui/issues/405) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Fonte | análise opencode v2.0.31 (`agent` `steps` + `llm.ts:226-244` toolChoice none no último step; `session/usage.ts` custo por step) |
 
 ## 1. User Story
@@ -72,11 +72,11 @@ O teto do tool loop é `maxRounds=5` global fixo (`ChatPipeline.cs:523`) e o mod
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** agent com `steps: 3` **when** a run consome 3 rounds com tools **then** o 3º round roda sem tools + prompt de wrap-up.
-- [ ] **Given** steer do usuário no meio **when** promovido **then** contador volta a 1.
-- [ ] **Given** provider com usage **when** run termina **then** `run.Meta.usage` agrega tokens por step e total.
-- [ ] **Given** `ModelEntry.Meta.cost` presente **when** usage existe **then** `costUsd` calculado e exposto.
-- [ ] **Given** provider sem usage **when** run termina **then** `usage.steps` presente, campos de token omitidos (sem valor inventado).
+- [x] **Given** agent com `steps: 3` **when** a run consome 3 rounds com tools **then** o 3º round roda sem tools + prompt de wrap-up.
+- [x] **Given** steer do usuário no meio **when** promovido **then** contador volta a 1.
+- [x] **Given** provider com usage **when** run termina **then** `run.Meta.usage` agrega tokens por step e total.
+- [x] **Given** `ModelEntry.Meta.cost` presente **when** usage existe **then** `costUsd` calculado e exposto.
+- [x] **Given** provider sem usage **when** run termina **then** `usage.steps` presente, campos de token omitidos (sem valor inventado).
 
 **Edge cases:**
 
@@ -88,12 +88,12 @@ O teto do tool loop é `maxRounds=5` global fixo (`ChatPipeline.cs:523`) e o mod
 
 ## 7. Task Plan
 
-- [ ] **T1 —** `AgentDefinition.Steps` + parse + validação.
-- [ ] **T2 —** Loop: resolução de max por run + wrap-up round (Tools=null + prompt).
-- [ ] **T3 —** Captura de usage no `ProviderCompletion` (stream + buffered) + persistência em `run.Meta`.
-- [ ] **T4 —** Cost calc + exposição no endpoint.
-- [ ] **T5 —** SSE `{step,maxSteps}` + UI mínima (badge).
-- [ ] **T6 —** Testes + build; DoD; PR.
+- [x] **T1 —** `AgentDefinition.Steps` + parse + validação.
+- [x] **T2 —** Loop: resolução de max por run + wrap-up round (Tools=null + prompt).
+- [x] **T3 —** Captura de usage no `ProviderCompletion` (stream + buffered) + persistência em `run.Meta`.
+- [x] **T4 —** Cost calc + exposição no endpoint.
+- [x] **T5 —** SSE `{step,maxSteps}` + UI mínima (badge).
+- [x] **T6 —** Testes + build; DoD; PR.
 
 **7.1 Validation strategy:** unit tests (steps resolve, cost calc, reset) + integration run com usage fake; ≥80%.
 
@@ -106,9 +106,9 @@ O teto do tool loop é `maxRounds=5` global fixo (`ChatPipeline.cs:523`) e o mod
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-006 implementados e testados.
-- [ ] Critérios da seção 6 verdes.
-- [ ] build/test verdes.
+- [x] RF-001..RF-006 implementados e testados.
+- [x] Critérios da seção 6 verdes.
+- [x] build/test verdes.
 
 ## Open Questions / Pending Ambiguity
 

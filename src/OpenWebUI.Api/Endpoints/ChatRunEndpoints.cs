@@ -690,7 +690,25 @@ public static class ChatRunEndpoints
     private static ChatRunResponse ToResponse(ChatRun run) => new(
         run.Id, run.ChatId, run.Status, run.Model,
         run.PartialContent, run.Error,
-        run.CreatedAt, run.StartedAt, run.CompletedAt, run.ParentRunId);
+        run.CreatedAt, run.StartedAt, run.CompletedAt, run.ParentRunId,
+        ParseMeta(run.MetaJson));
+
+    /// <summary>MetaJson → elemento (null quando ausente/corrompido).</summary>
+    private static JsonElement? ParseMeta(string? metaJson)
+    {
+        if (string.IsNullOrEmpty(metaJson))
+        {
+            return null;
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<JsonElement>(metaJson, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>Ids de anexo persistidos na mensagem (FilesJson → FileIds; null/ausente → null).</summary>
     private static List<string>? ParseFileIds(string? filesJson)

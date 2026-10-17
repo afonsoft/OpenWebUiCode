@@ -304,6 +304,13 @@ public class ChatRun
     public string? Error { get; set; }
 
     /// <summary>
+    /// Metadados da run em JSON (SPEC-20261016-agent-steps-usage RF-004/005):
+    /// <c>{"usage":{"steps":N,"promptTokens":…,"completionTokens":…,
+    /// "costUsd":…,"perStep":[…]}}</c> — tokens só quando o provider reporta.
+    /// </summary>
+    public string? MetaJson { get; set; }
+
+    /// <summary>
     /// Run pai quando esta run foi spawnada por <c>delegate_task</c>
     /// (SPEC-20261010-runs-hierarchy); <see langword="null"/> = run raiz.
     /// </summary>

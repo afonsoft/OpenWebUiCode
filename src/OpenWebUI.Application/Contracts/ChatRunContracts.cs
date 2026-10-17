@@ -50,7 +50,10 @@ public sealed record ChatRunResponse(
     long CreatedAt,
     long? StartedAt,
     long? CompletedAt,
-    string? ParentRunId = null);
+    string? ParentRunId = null,
+    /// <summary>Metadados da run (SPEC-20261016-agent-steps-usage):
+    /// <c>usage.steps/promptTokens/completionTokens/costUsd/perStep</c>.</summary>
+    JsonElement? Meta = null);
 
 /// <summary>
 /// Item da lista consolidada de runs do usuário
@@ -94,7 +97,13 @@ public sealed record RunToolResultEvent(
 /// <c>generating</c> | <c>running_tool</c> | <c>awaiting_approval</c>;
 /// <paramref name="Label"/> é o texto exibido no chip de status.
 /// </summary>
-public sealed record RunPhaseEvent(string Phase, string? Label);
+public sealed record RunPhaseEvent(
+    string Phase, string? Label,
+    /// <summary>Step atual do tool loop (SPEC-20261016-agent-steps-usage
+    /// RF-006) — presente na fase <c>generating</c>.</summary>
+    int? Step = null,
+    /// <summary>Teto de steps resolvido da run (min agent.steps/global).</summary>
+    int? MaxSteps = null);
 
 /// <summary>
 /// Evento SSE <c>approval_asked</c> (RF-003): a run pausou aguardando

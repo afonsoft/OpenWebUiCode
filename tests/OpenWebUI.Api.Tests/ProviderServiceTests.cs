@@ -1782,7 +1782,8 @@ public class ProviderServiceTests
 
         var outcome = await ChatPipeline.RunToolLoopAsync(
             ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, callbacks, userId: "u1", log: NullLogger.Instance);
+            default, callbacks, userId: "u1", log: NullLogger.Instance,
+            maxSteps: 5);
 
         Assert.Multiple(() =>
         {
@@ -1994,5 +1995,187 @@ public class ProviderServiceTests
             Assert.That(
                 _requests.Count(r => r.Path == "/chat/completions"), Is.EqualTo(4));
         });
+    }
+
+    // ---- SPEC-20261016-agent-steps-usage: steps, wrap-up e usage ----
+
+    [Test]
+    public async Task RunToolLoop_MaxSteps2_UltimoRoundSemToolsEComWrapUp()
+    {
+        // maxSteps=2: a 2ª rodada já vai sem "tools" no payload e com a
+        // mensagem sintética de wrap-up — o modelo se encerra em vez de
+        // bater no teto (RF-002).
+        _routeQueues["/chat/completions"] = new();
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"minha_tool\",\"arguments\":\"{}\"}}]}}]}\n\n" +
+            "data: [DONE]\n\n", 0));
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"wrap final\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0));
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, userId: "u1", log: NullLogger.Instance, maxSteps: 2);
+
+        var bodies = _requests.Where(r => r.Path == "/chat/completions")
+            .Select(r => r.Body).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(bodies, Has.Count.EqualTo(2));
+            Assert.That(bodies[0], Does.Contain("\"tools\""));
+            Assert.That(bodies[1], Does.Not.Contain("\"tools\""));
+            Assert.That(bodies[1], Does.Contain("passos desta execu"));
+            Assert.That(outcome!.FinalContent, Is.EqualTo("wrap final"));
+            Assert.That(outcome.TotalSteps, Is.EqualTo(2));
+            Assert.That(
+                outcome.ToolMessages.Count(m => m.Role == "tool"), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_UsageReportado_AcumulaPorStep()
+    {
+        // Chunk final com usage (stream_options.include_usage) → cada
+        // round registra tokens no outcome (RF-004).
+        _routeQueues["/chat/completions"] = new();
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"minha_tool\",\"arguments\":\"{}\"}}]}}]}\n\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":4}}\n\n" +
+            "data: [DONE]\n\n", 0));
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fim\"}}]}\n\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":8,\"completion_tokens_details\":{\"reasoning_tokens\":3}}}\n\n" +
+            "data: [DONE]\n\n", 0));
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.TotalSteps, Is.EqualTo(2));
+            Assert.That(outcome.StepUsages, Has.Count.EqualTo(2));
+            Assert.That(outcome.StepUsages![0].PromptTokens, Is.EqualTo(10));
+            Assert.That(outcome.StepUsages[1].CompletionTokens, Is.EqualTo(8));
+            Assert.That(outcome.StepUsages[1].ReasoningTokens, Is.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_SemUsage_StepsPresenteTokensOmitidos()
+    {
+        // Provider sem usage: TotalSteps conta as rodadas, StepUsages
+        // fica vazio — nada é inventado (AC do SPEC).
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.TotalSteps, Is.EqualTo(1));
+            Assert.That(outcome.StepUsages, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_SteerResetaContador_DeMaxSteps()
+    {
+        // Steer na fronteira zera o teto (RF-003): com maxSteps=2 o
+        // contador recomeça — total de 3 completions (1 pré-steer + 2).
+        _routeQueues["/chat/completions"] = new();
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"minha_tool\",\"arguments\":\"{}\"}}]}}]}\n\n" +
+            "data: [DONE]\n\n", 0));
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c2\",\"type\":\"function\",\"function\":{\"name\":\"minha_tool\",\"arguments\":\"{}\"}}]}}]}\n\n" +
+            "data: [DONE]\n\n", 0));
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"pos-steer\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0));
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        // Steer só na segunda fronteira (depois da 1ª completion) — a
+        // primeira chamada do boundary acontece antes de qualquer round.
+        var boundaries = 0;
+        var steered = false;
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnRoundBoundaryAsync: (idle, _) =>
+            {
+                if (idle || steered || ++boundaries < 2)
+                {
+                    return Task.FromResult<IReadOnlyList<ChatCompletionMessage>>([]);
+                }
+                steered = true;
+                return Task.FromResult<IReadOnlyList<ChatCompletionMessage>>(
+                    [new ChatCompletionMessage("user", "steer")]);
+            });
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
+            default, callbacks, userId: "u1", log: NullLogger.Instance,
+            maxSteps: 2);
+
+        Assert.Multiple(() =>
+        {
+            // r0 toolcall → steer reseta → r0' toolcall → r1' (last) wrap-up.
+            Assert.That(
+                _requests.Count(r => r.Path == "/chat/completions"), Is.EqualTo(3));
+            Assert.That(outcome!.FinalContent, Is.EqualTo("pos-steer"));
+            Assert.That(outcome.TotalSteps, Is.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_UsageChunkFinal_CapturadoNoResult()
+    {
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"oi\"}}]}\n\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":7}}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Usage, Is.Not.Null);
+            Assert.That(result.Usage!.PromptTokens, Is.EqualTo(42));
+            Assert.That(result.Usage.CompletionTokens, Is.EqualTo(7));
+            // E o payload pediu stream_options.include_usage.
+            var sent = JsonNode.Parse(
+                _requests.Last(r => r.Path == "/chat/completions").Body)!;
+            Assert.That(
+                sent["stream_options"]?["include_usage"]?.GetValue<bool>(),
+                Is.True);
+        });
+    }
+
+    [Test]
+    public async Task ParseUsage_OllamaEOpenAi_Shapes()
+    {
+        var ollama = JsonNode.Parse(
+            "{\"done\":true,\"prompt_eval_count\":11,\"eval_count\":6}")!;
+        var openai = JsonNode.Parse(
+            "{\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"completion_tokens_details\":{\"reasoning_tokens\":2}}}")!;
+        var vazio = JsonNode.Parse("{\"done\":false}")!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ProviderService.ParseUsage(ollama, openAi: false),
+                Is.EqualTo(new ProviderUsage(11, 6, null)));
+            Assert.That(ProviderService.ParseUsage(openai, openAi: true),
+                Is.EqualTo(new ProviderUsage(10, 5, 2)));
+            Assert.That(ProviderService.ParseUsage(vazio, openAi: false), Is.Null);
+            Assert.That(ProviderService.ParseUsage(vazio, openAi: true), Is.Null);
+        });
+        await Task.CompletedTask;
     }
 }

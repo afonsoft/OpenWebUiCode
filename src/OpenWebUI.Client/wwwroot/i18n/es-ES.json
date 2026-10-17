@@ -538,6 +538,7 @@
   "chat.status_paused": "en pausa",
   "chat.status_thinking": "Pensando…",
   "chat.status_writing": "Escribiendo respuesta…",
+  "chat.status_step": "paso {{step}}/{{max}}",
   "chat.progress.preparing_context": "Preparando contexto…",
   "chat.progress.compacting": "Compactando contexto…",
   "chat.progress.searching_web": "Buscando en la web…",
