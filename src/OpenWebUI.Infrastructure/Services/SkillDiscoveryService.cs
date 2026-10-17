@@ -9,7 +9,7 @@ namespace OpenWebUI.Infrastructure.Services;
 public sealed record RepoEntry(
     string Name, string Description, string Path, string Body,
     string? Agent = null, string? Model = null, bool Subtask = false,
-    string Scope = "project");
+    string Scope = "project", string? Mode = null);
 
 /// <summary>Servidor MCP declarado em <c>.agents/mcp.json</c> (global ou do projeto).</summary>
 public sealed record AgentsMcpServer(
@@ -469,8 +469,11 @@ public sealed class SkillDiscoveryService
             Model: fm.GetValueOrDefault("model"),
             Subtask: fm.GetValueOrDefault("subtask") is { } s
                 && (s.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    || s.Equals("agent", StringComparison.OrdinalIgnoreCase)),
-            Scope: scope);
+                    || s.Equals("agent", StringComparison.OrdinalIgnoreCase))
+                || fm.GetValueOrDefault("subagent") is { } sa
+                && sa.Equals("true", StringComparison.OrdinalIgnoreCase),
+            Scope: scope,
+            Mode: fm.GetValueOrDefault("mode"));
     }
 
     /// <summary>Frontmatter mínimo: bloco <c>---\nkey: value\n---</c> no topo.</summary>

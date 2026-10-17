@@ -23,7 +23,9 @@ public sealed record EnqueueChatRunRequest(
     IReadOnlyDictionary<string, object>? Params = null,
     bool? WebSearch = null,
     IReadOnlyList<string>? MentionPaths = null,
-    string? ForkFromMessageId = null);
+    string? ForkFromMessageId = null,
+    string? Command = null,
+    string? CommandArgs = null);
 
 /// <summary>Payload do POST de steer/queue numa run viva (SPEC-20261010-steer-queue).</summary>
 /// <param name="Message">Texto injetado como mensagem do usuário na run.</param>
