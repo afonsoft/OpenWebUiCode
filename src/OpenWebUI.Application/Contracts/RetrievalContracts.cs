@@ -1,7 +1,7 @@
 namespace OpenWebUI.Application.Contracts;
 
 /// <summary>Configuração de retrieval persistida (admin).</summary>
-/// <param name="Engine">Engine de web search: none | searxng | duckduckgo | tavily | brave.</param>
+/// <param name="Engine">Engine de web search: none | auto | searxng | duckduckgo | tavily | brave | google_pse | jina | exa | kagi | perplexity. <c>auto</c> faz failover entre providers com credencial (SPEC-20261016-websearch-failover).</param>
 /// <param name="SearxngBaseUrl">URL base do SearXNG (quando engine=searxng).</param>
 /// <param name="TopK">Top-K do retrieval.</param>
 /// <param name="ChunkSize">Tamanho do chunk.</param>
