@@ -457,4 +457,80 @@ public class ComboEndpointsTests
             Assert.That(itemVazio.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
         });
     }
+
+    // ---- cobertura de estratégia/estado no ComboService ----
+
+    [Test]
+    public async Task Resolve_PriorityRoundRobin_RotacionaNoGrupo()
+    {
+        var user = await SignUpAsync("Prr", "prr@combo.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/combos",
+            new ComboUpsertRequest("prr", "priority-round-robin",
+            [
+                new ComboItemRequest("g0-a", 0),
+                new ComboItemRequest("g0-b", 0),
+                new ComboItemRequest("g1-a", 1),
+            ]));
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+        var combo = await created.Content.ReadFromJsonAsync<ComboResponse>();
+
+        var service = ScopedService();
+        var picks = new List<string>();
+        for (var i = 0; i < 3; i++)
+        {
+            picks.Add((await service.ResolveAsync(combo!.Id, user.User.Id)).ModelId);
+        }
+        Assert.Multiple(() =>
+        {
+            // Grupo de menor posição {g0-a,g0-b} rotaciona; g1-a nunca sai.
+            Assert.That(picks.Distinct().Order(), Is.EqualTo(new[] { "g0-a", "g0-b" }));
+            Assert.That(picks.Distinct().Count(), Is.EqualTo(2));
+        });
+
+        // Status expõe o próximo do grupo via PeekRoundRobinInGroup.
+        var status = await _client.GetFromJsonAsync<ComboStatusResponse>(
+            $"/api/v1/combos/{combo!.Id}/status");
+        Assert.That(status!.EffectiveModel, Does.StartWith("g0-"));
+    }
+
+    [Test]
+    public async Task Resolve_ComboDesabilitado_ComboDisabled()
+    {
+        var user = await SignUpAsync("Disab", "disab@combo.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "desligado", models: ["fake:1"]) with { Enabled = false });
+        var combo = await created.Content.ReadFromJsonAsync<ComboResponse>();
+
+        var ex = await CatchComboAsync(
+            () => ScopedService().ResolveAsync(combo!.Id, user.User.Id));
+        Assert.That(ex!.Code, Is.EqualTo("combo-disabled"));
+    }
+
+    [Test]
+    public async Task Report_OkComTokens_SomaJanela_ERetryCapado()
+    {
+        var user = await SignUpAsync("Reporter", "reporter@combo.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "rep", models: ["fake:1"]));
+        var combo = await created.Content.ReadFromJsonAsync<ComboResponse>();
+
+        var service = ScopedService();
+        await service.ResolveAsync(combo!.Id, user.User.Id);
+        await service.ReportAsync(combo.Id, "fake:1", ok: true, tokens: 777);
+        await service.ReportAsync(combo.Name, "fake:1", ok: false,
+            retryAfter: TimeSpan.FromMinutes(30)); // > cap 5min → clampa
+
+        var status = await _client.GetFromJsonAsync<ComboStatusResponse>(
+            $"/api/v1/combos/{combo.Id}/status");
+        Assert.Multiple(() =>
+        {
+            Assert.That(status!.WindowTokens, Is.GreaterThanOrEqualTo(777));
+            var cd = status.Cooldowns.Single(c => c.ModelId == "fake:1");
+            var limite = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds();
+            Assert.That(cd.Until, Is.LessThanOrEqualTo(limite + 10));
+        });
+    }
 }
