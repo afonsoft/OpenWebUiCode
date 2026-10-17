@@ -103,6 +103,34 @@ public sealed class ChatRunExecutor(
             return;
         }
 
+        // Marcadores de command (SPEC-20261016-commands-v2 RF-004/RF-005):
+        // Params["mode"|"agent"|"subagent"] no RequestJson aplicam overrides
+        // por run sem tocar o chat.
+        var commandMode = ParamStr(request.Params, "mode");
+        var commandAgent = ParamStr(request.Params, "agent");
+        if (ParamBool(request.Params, "subagent"))
+        {
+            await SpawnCommandSubagentAsync(run, request, user, ct);
+            return;
+        }
+        if (commandAgent is not null)
+        {
+            using var agentScope = scopes.CreateScope();
+            var agentSvc = agentScope.ServiceProvider
+                .GetRequiredService<AgentDefinitionService>();
+            var agentWorkdir = await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct);
+            if (await agentSvc.FindAsync(user.Id, agentWorkdir, commandAgent, ct)
+                    is { } def
+                && !string.IsNullOrWhiteSpace(def.SystemPrompt))
+            {
+                request = request with
+                {
+                    Messages = [new ChatCompletionMessage("system", def.SystemPrompt),
+                        .. request.Messages],
+                };
+            }
+        }
+
         var content = new StringBuilder();
         var sinceCheckpoint = 0;
         IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
@@ -196,8 +224,9 @@ public sealed class ChatRunExecutor(
 
             // Modo do agente do chat (SPEC-20261009 RF-001): plan/build
             // guia o prompt e o spec de tools anunciado. SPEC-15: build
-            // sem repositório vinculado cai para chat.
-            var chatMode = await EffectiveModeAsync(run.ChatId, ct);
+            // sem repositório vinculado cai para chat. Override por run
+            // (commands-v2 RF-004) vem de Params["mode"].
+            var chatMode = await EffectiveModeAsync(run.ChatId, commandMode, ct);
 
             // Busca web/arquivos anunciados antes do enrich — o usuário vê
             // "Pesquisando na web…" em vez de uma tela parada.
@@ -363,7 +392,8 @@ public sealed class ChatRunExecutor(
                     // promove a build já na próxima chamada do modelo.
                     AnnounceToolsAsync: async t =>
                     {
-                        var mode = await EffectiveModeAsync(run.ChatId, t);
+                        var mode = await EffectiveModeAsync(
+                            run.ChatId, commandMode, t);
                         return tools
                             .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool))
                             .Select(tool => JsonSerializer.Deserialize<JsonElement>(tool.SpecJson))
@@ -855,14 +885,97 @@ public sealed class ChatRunExecutor(
     /// <see cref="PermissionRuleset.ChatMode"/> (tools de workspace nem
     /// entram no spec anunciado ao provider).
     /// </summary>
-    private async Task<string> EffectiveModeAsync(string chatId, CancellationToken ct)
+    private async Task<string> EffectiveModeAsync(
+        string chatId, string? overrideMode, CancellationToken ct)
     {
-        var mode = PermissionRuleset.Normalize(await db.Chats.AsNoTracking()
+        var mode = PermissionRuleset.Normalize(overrideMode ?? await db.Chats.AsNoTracking()
             .Where(c => c.Id == chatId)
             .Select(c => c.Mode).FirstOrDefaultAsync(ct));
         return mode == PermissionRuleset.BuildMode
             && await repos.GetChatBindingAsync(chatId, ct) is null
                 ? PermissionRuleset.ChatMode : mode;
+    }
+
+    /// <summary>Lê marcador string de <c>Params</c> (valores chegam como
+    /// <see cref="JsonElement"/> depois do round-trip por RequestJson).</summary>
+    private static string? ParamStr(
+        IReadOnlyDictionary<string, object>? p, string key) =>
+        p is not null && p.TryGetValue(key, out var v)
+            ? v is JsonElement je
+                ? je.ValueKind == JsonValueKind.String ? je.GetString() : null
+                : v?.ToString()
+            : null;
+
+    /// <summary>Lê marcador bool de <c>Params</c> (JsonElement True).</summary>
+    private static bool ParamBool(
+        IReadOnlyDictionary<string, object>? p, string key) =>
+        p is not null && p.TryGetValue(key, out var v)
+        && (v is JsonElement je ? je.ValueKind == JsonValueKind.True
+            : v is bool b && b);
+
+    /// <summary>
+    /// Command <c>subagent:true</c> (SPEC-20261016-commands-v2 RF-005): a
+    /// run-mãe só enfileira a filha (chat filho + ParentRunId) e completa —
+    /// o término da filha chega ao feed do chat-pai pelo marcador de sub-run
+    /// já existente (mesmo contrato de <c>delegate_task</c>).
+    /// </summary>
+    private async Task SpawnCommandSubagentAsync(
+        ChatRun run, ChatCompletionRequest request,
+        User user, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var title = request.Messages.LastOrDefault(m => m.Role == "user")
+            ?.Content ?? string.Empty;
+        title = title.Length > 80 ? title[..80] + "…" : title;
+
+        var childChat = new Chat
+        {
+            UserId = run.UserId,
+            Title = $"cmd-subagent: {title}",
+            ParentChatId = run.ChatId,
+            ModelsJson = JsonSerializer.Serialize(new[] { run.Model }),
+            ApprovalPreset = await db.Chats.AsNoTracking()
+                .Where(c => c.Id == run.ChatId)
+                .Select(c => c.ApprovalPreset).FirstOrDefaultAsync(ct)
+                ?? "approve-mutations",
+            Mode = PermissionRuleset.BuildMode,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        childChat.Messages.Add(new ChatMessage
+        {
+            ChatId = childChat.Id, Role = "user",
+            Content = title, Position = 0, Timestamp = now,
+        });
+        db.Chats.Add(childChat);
+
+        var childRequest = request with { Params = null };
+        var childRun = new ChatRun
+        {
+            ChatId = childChat.Id,
+            UserId = run.UserId,
+            Model = run.Model,
+            RequestJson = JsonSerializer.Serialize(childRequest, JsonOptions),
+            ParentRunId = run.Id,
+            CreatedAt = now,
+        };
+        db.ChatRuns.Add(childRun);
+        await db.SaveChangesAsync(ct);
+
+        // Herda o binding por chat do pai (subtarefa ganha worktree próprio).
+        if (await repos.GetChatBindingAsync(run.ChatId, ct) is { } binding)
+        {
+            await repos.SetChatBindingAsync(
+                childChat.Id,
+                repos.InheritChatBinding(childChat.Id, binding), ct);
+        }
+
+        using var scope = scopes.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ChatRunDispatcher>()
+            .Enqueue(childRun.Id);
+        await FinishAsync(
+            run, $"Sub-agente enfileirado para o command — run `{childRun.Id}`.", ct);
+        broadcaster.Publish(run.Id, "data: [DONE]");
     }
 
     /// <summary>apply_patch pode chegar como builtin por nome legado — cobre o nome cru.</summary>

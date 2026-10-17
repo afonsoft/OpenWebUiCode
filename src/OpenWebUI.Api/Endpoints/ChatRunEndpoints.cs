@@ -48,6 +48,10 @@ public static class ChatRunEndpoints
         ChatRunDispatcher dispatcher,
         ContextBoundaryService boundaries,
         BranchService branches,
+        WorkspaceRepoService repos,
+        RepoCommandService commands,
+        AgentDefinitionService agentDefs,
+        ConfigService config,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -65,6 +69,44 @@ public static class ChatRunEndpoints
         if (chat is null)
         {
             return Results.NotFound(new { detail = "Chat não encontrado." });
+        }
+
+        // SPEC-20261016-commands-v2 RF-003/RF-004: submit via command — o
+        // servidor expande o template (a mensagem persistida mostra o texto
+        // final) e aplica overrides de agent/mode/model declarados no
+        // frontmatter. Erros de validação voltam 400; command ausente, 404.
+        AgentDefinition? commandAgentDef = null;
+        string? commandMode = null;
+        var commandSubagent = false;
+        if (!string.IsNullOrWhiteSpace(request.Command))
+        {
+            var workdir = await repos.ResolveWorkdirAsync(user.Id, chat.Id, ct);
+            var (expanded, cmdError) = await commands.ExpandAsync(
+                user.Id, workdir, request.Command, request.CommandArgs, ct);
+            if (expanded is null)
+            {
+                return cmdError is null
+                    ? Results.NotFound(new
+                        { detail = $"Command '{request.Command}' não encontrado." })
+                    : Results.BadRequest(new { detail = cmdError });
+            }
+            if (cmdError is not null)
+            {
+                return Results.BadRequest(new { detail = cmdError });
+            }
+
+            if (expanded.Agent is { } agentName)
+            {
+                commandAgentDef = await agentDefs.FindAsync(
+                    user.Id, workdir, agentName, ct);
+            }
+            request = request with
+            {
+                Content = expanded.Prompt,
+                Model = expanded.Model ?? commandAgentDef?.Model ?? request.Model,
+            };
+            commandMode = expanded.Mode;
+            commandSubagent = expanded.Subagent;
         }
 
         // Ramificação atômica (RF-004): ativa o alvo como leaf — resumindo o
@@ -145,10 +187,34 @@ public static class ChatRunEndpoints
                 m.Role, m.Content, m.ToolCallId, m.ToolCallsJson,
                 FileIds: ParseFileIds(m.FilesJson)))
             .ToList();
+        // Overrides do command viram marcadores no request serializado —
+        // o executor resolve mode/agent/subagent por run (chat intocado).
+        var runParams = request.Params;
+        if (commandMode is not null || commandAgentDef is not null || commandSubagent)
+        {
+            var p = runParams is null
+                ? new Dictionary<string, object>()
+                : new Dictionary<string, object>(runParams);
+            if (commandMode is not null)
+            {
+                p["mode"] = commandMode;
+            }
+            if (commandAgentDef is not null)
+            {
+                p["agent"] = commandAgentDef.Name;
+            }
+            if (commandSubagent)
+            {
+                p["subagent"] = true;
+            }
+            runParams = p;
+        }
+
         var completionRequest = new ChatCompletionRequest(
             request.Model, history, Stream: true,
-            FileIds: request.FileIds, Params: request.Params,
-            ToolIds: request.ToolIds, WebSearch: request.WebSearch,
+            FileIds: request.FileIds, Params: runParams,
+            ToolIds: request.ToolIds ?? commandAgentDef?.Tools,
+            WebSearch: request.WebSearch,
             MentionPaths: request.MentionPaths);
 
         var run = new ChatRun
@@ -161,6 +227,19 @@ public static class ChatRunEndpoints
         };
         db.ChatRuns.Add(run);
         await db.SaveChangesAsync(ct);
+
+        // Constraints de delegação/steps do agente do command — mesmo
+        // contrato kv que delegate_task usa para sub-runs.
+        if (commandAgentDef is { } cad)
+        {
+            await config.SetAsync(
+                $"r:{run.Id}:agent.spawns", string.Join(",", cad.Spawns), ct);
+            await config.SetAsync($"r:{run.Id}:agent.depth", cad.MaxDepth, ct);
+            if (cad.Steps is { } steps)
+            {
+                await config.SetAsync($"r:{run.Id}:agent.steps", steps, ct);
+            }
+        }
 
         dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: ToResponse(run));

@@ -144,6 +144,16 @@ public sealed record RepoCommandDetailResponse(
     string Name, string Description, string? Agent, string? Model,
     bool Subtask, string Source, string Path, string Content, string Scope = "project");
 
+/// <summary>Request de expansão de um command (SPEC-20261016-commands-v2 RF-003).</summary>
+/// <param name="Args">Argumentos crus — <c>$ARGUMENTS</c> recebe a linha inteira.</param>
+public sealed record RepoCommandExpandRequest(string? Args);
+
+/// <summary>Resultado da expansão: prompt final + overrides declarados.</summary>
+/// <param name="Mode"><c>plan|build|chat</c> — de <c>mode:</c> ou <c>agent:</c> literal.</param>
+/// <param name="Subagent"><c>subagent:true</c> do frontmatter → run filha.</param>
+public sealed record RepoCommandExpandResponse(
+    string Prompt, string? Agent, string? Model, string? Mode, bool Subagent);
+
 /// <summary>Item da listagem de checkpoints do workdir (S6 checkpoints-revert).</summary>
 /// <param name="Hash">Identificador do checkpoint (commit na ref oculta ou id de manifesto).</param>
 /// <param name="Turn">Turno da run que gerou o snapshot (0 = pré-run).</param>
