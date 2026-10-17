@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-session-maintenance` |
 | Ticket | [#411](https://github.com/afonsoft/open-webui/issues/411) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `tool/maintenance.ts` + commits `e4b6ac49` (synthesize sessions to memory before purge, retention config, auto vacuum) |
 
 ## 1. User Story
@@ -57,18 +57,18 @@
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** chat de 40d sem pin e `chatDays=30` **when** tick **then** destilado→memória→deletado; `status` reflete contadores.
-- [ ] **Given** destilação falha (provider down) **when** tick **then** chat permanece, erro logado, run segue para os demais.
-- [ ] **Given** chat pinado/com run ativa/com workspace **when** tick **then** intacto.
-- [ ] **Given** `dryRun` **when** POST **then** retorna candidatos sem deletar nada.
-- [ ] **Given** `chatDays=0` **when** tick **then** poda de chats desligada (só ops).
+- [x] **Given** chat de 40d sem pin e `chatDays=30` **when** tick **then** destilado→memória→deletado; `status` reflete contadores.
+- [x] **Given** destilação falha (provider down) **when** tick **then** chat permanece, erro logado, run segue para os demais.
+- [x] **Given** chat pinado/com run ativa/com workspace **when** tick **then** intacto.
+- [x] **Given** `dryRun` **when** POST **then** retorna candidatos sem deletar nada.
+- [x] **Given** `chatDays=0` **when** tick **then** poda de chats desligada (só ops).
 
 ## 7. Task Plan
 
-- [ ] **T1 —** Extrair `DistillChatAsync` público do MemorySyncService.
-- [ ] **T2 —** RetentionService: poda elegível+destilação em lotes + stats persistidas (kv).
-- [ ] **T3 —** Endpoints status/run + dryRun + guards.
-- [ ] **T4 —** Testes: elegibilidade, falha-de-destilação, dryRun, status.
+- [x] **T1 —** Extrair `DistillChatAsync` público do MemorySyncService.
+- [x] **T2 —** RetentionService: poda elegível+destilação em lotes + stats persistidas (kv).
+- [x] **T3 —** Endpoints status/run + dryRun + guards.
+- [x] **T4 —** Testes: elegibilidade, falha-de-destilação, dryRun, status.
 
 **7.1 Validation strategy:** integration tests com SQLite (chats seedados em idades variadas), provider fake para destilação.
 
@@ -80,4 +80,11 @@
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-006 verdes; build+test limpos; spec-status ok; docstring de config documentada.
+- [x] RF-001..RF-006 verdes; build+test limpos; spec-status ok; docstring de config documentada.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #418 (cadeia #421) · 7a2bb4265 |
+| Issue | https://github.com/afonsoft/open-webui/issues/411 |

@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-external-agent-registry` |
 | Ticket | [#412](https://github.com/afonsoft/open-webui/issues/412) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `core/src/external-agent-{registry,detect,skill}.ts` + `docs/agents/batuta-external-agents.md` |
 
 ## 1. User Story
@@ -59,18 +59,18 @@
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** `claude` no PATH **when** `/detect` **then** `installed:true`; sem binário → `false`.
-- [ ] **Given** toggle enable+detectado **when** PUT **then** `~/.claude/skills/openwebui-cli/SKILL.md` existe; disable remove.
-- [ ] **Given** `delegate_task agent:"ext:claude"` **when** aprovado **then** executa bin headless e devolve stdout.
-- [ ] **Given** binário some após detecção **when** delegate **then** erro legível `agente externo indisponível`.
-- [ ] **Given** PATH vazio **when** detect **then** todos `installed:false`, sem exceção.
+- [x] **Given** `claude` no PATH **when** `/detect` **then** `installed:true`; sem binário → `false`.
+- [x] **Given** toggle enable+detectado **when** PUT **then** `~/.claude/skills/openwebui-cli/SKILL.md` existe; disable remove.
+- [x] **Given** `delegate_task agent:"ext:claude"` **when** aprovado **then** executa bin headless e devolve stdout.
+- [x] **Given** binário some após detecção **when** delegate **then** erro legível `agente externo indisponível`.
+- [x] **Given** PATH vazio **when** detect **then** todos `installed:false`, sem exceção.
 
 ## 7. Task Plan
 
-- [ ] **T1 —** Registry + `ExternalAgentService` (detect PATH + cache).
-- [ ] **T2 —** Skill ponte: template SKILL.md + install/remove + endpoints.
-- [ ] **T3 —** `delegate_task` `ext:{id}` → shell headless confinado.
-- [ ] **T4 —** Testes: PATH fake, skill install/remove, delegate com bin fake (script shell).
+- [x] **T1 —** Registry + `ExternalAgentService` (detect PATH + cache).
+- [x] **T2 —** Skill ponte: template SKILL.md + install/remove + endpoints.
+- [x] **T3 —** `delegate_task` `ext:{id}` → shell headless confinado.
+- [x] **T4 —** Testes: PATH fake, skill install/remove, delegate com bin fake (script shell).
 
 **7.1 Validation strategy:** unit tests com PATH injetável e binários stub (shell scripts); integration no endpoint.
 
@@ -82,4 +82,11 @@
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-005 verdes; build+test limpos; spec-status ok.
+- [x] RF-001..RF-005 verdes; build+test limpos; spec-status ok.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #419 (cadeia #421) · 7a2bb4265 |
+| Issue | https://github.com/afonsoft/open-webui/issues/412 |

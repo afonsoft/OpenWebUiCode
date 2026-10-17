@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-websearch-failover` |
 | Ticket | [#406](https://github.com/afonsoft/open-webui/issues/406) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (docs `/websearch` — provider `random` + retry em outro provider no 429 com cooldown `Retry-After|60s`) |
 
 ## 1. User Story
@@ -60,17 +60,17 @@ Sem endpoints novos. Config: `websearch.provider=auto`.
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** `auto` com tavily+brave configurados e tavily 429 **when** `web_search` executa **then** brave responde e o resultado indica failover.
-- [ ] **Given** tavily em cooldown **when** nova busca **then** nem tenta tavily.
-- [ ] **Given** todos cooling **when** busca **then** erro `all-providers-cooling` com próximo retry.
-- [ ] **Given** provider fixo (não auto) falha **when** busca **then** comportamento atual (erro direto — auto é opt-in).
+- [x] **Given** `auto` com tavily+brave configurados e tavily 429 **when** `web_search` executa **then** brave responde e o resultado indica failover.
+- [x] **Given** tavily em cooldown **when** nova busca **then** nem tenta tavily.
+- [x] **Given** todos cooling **when** busca **then** erro `all-providers-cooling` com próximo retry.
+- [x] **Given** provider fixo (não auto) falha **when** busca **then** comportamento atual (erro direto — auto é opt-in).
 
 ## 7. Task Plan
 
-- [ ] **T1 —** Detecção de 429/`Retry-After`/timeout nas implementações + cooldown map.
-- [ ] **T2 —** Seleção `auto` + loop de tentativas com skip.
-- [ ] **T3 —** Marcação de provider/failover no output.
-- [ ] **T4 —** Testes (fake HttpMessageHandler 429→ok, cooldown, esgotamento); build; DoD; PR.
+- [x] **T1 —** Detecção de 429/`Retry-After`/timeout nas implementações + cooldown map.
+- [x] **T2 —** Seleção `auto` + loop de tentativas com skip.
+- [x] **T3 —** Marcação de provider/failover no output.
+- [x] **T4 —** Testes (fake HttpMessageHandler 429→ok, cooldown, esgotamento); build; DoD; PR.
 
 **7.1 Validation strategy:** unit tests da seleção/cooldown + integration tool; ≥80%.
 
@@ -82,6 +82,13 @@ Sem endpoints novos. Config: `websearch.provider=auto`.
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-004 implementados e testados.
-- [ ] Critérios da seção 6 verdes.
-- [ ] build/test verdes.
+- [x] RF-001..RF-004 implementados e testados.
+- [x] Critérios da seção 6 verdes.
+- [x] build/test verdes.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #424 · 4c457fc54 |
+| Issue | https://github.com/afonsoft/open-webui/issues/406 |

@@ -7,7 +7,7 @@
 | Feature | `ide-visual-validation` |
 | Type | `Tests` |
 | Repository | `/home/ubuntu/repos/open-webui` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Ticket | [#395](https://github.com/afonsoft/open-webui/issues/395) · Epic [#392](https://github.com/afonsoft/open-webui/issues/392) |
 | Fonte | `gap-analysis` run 2026-10-16 — gap `GAP-tests-ide-visual` (único item pendente do SPEC-20261011-ide-bundle) |
 
@@ -62,3 +62,10 @@
 - Explorer: árvore do repo bound `afonsoft/open-webui@main` (header correto). SCM: "Árvore de trabalho limpa" + "Rodar testes". Painel direito: abas Chat/PRs/Testes. Status bar: branch, problemas, UTF-8, LF. Editor CodeMirror (`.cm-editor`) montado no DOM. Mobile 390×844: layout responsivo (hamburger + activity bar colapsada).
 - Screenshots: `docs/screenshots/ide-visual-20261016/{ide-desktop,ide-editor,ide-mobile,ide-view-*}.png`.
 - Issue #395; SPEC `ide-bundle` arquivado como Completed em `docs/specs/`.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #396 · 2852ac095 · docs/screenshots/ide-visual-20261016/ |
+| Issue | https://github.com/afonsoft/open-webui/issues/392 |
