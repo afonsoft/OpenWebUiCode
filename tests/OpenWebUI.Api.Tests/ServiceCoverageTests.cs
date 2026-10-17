@@ -471,8 +471,11 @@ public class ServiceCoverageTests
     public async Task PtySession_ResizeInvalido_Noop()
     {
         var pty = new PtySession(Path.GetTempPath(), NullLogger<PtySession>.Instance);
-        await pty.ResizeAsync(0, 10);
-        await pty.ResizeAsync(1000, 1000);
+        await Assert.ThatAsync(async () =>
+        {
+            await pty.ResizeAsync(0, 10);
+            await pty.ResizeAsync(1000, 1000);
+        }, Throws.Nothing);
         await pty.DisposeAsync();
     }
 

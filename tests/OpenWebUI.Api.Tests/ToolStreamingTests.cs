@@ -1017,6 +1017,7 @@ public class ToolStreamingTests
 
         pauses.Forget("r2"); // fim da run: gate novo começa aberto
         await pauses.WaitIfPausedAsync("r2", CancellationToken.None);
+        Assert.Pass();
     }
 
     // ---- Pause/resume ponta a ponta ----
