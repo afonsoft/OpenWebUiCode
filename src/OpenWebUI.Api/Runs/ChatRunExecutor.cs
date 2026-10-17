@@ -40,6 +40,7 @@ public sealed class ChatRunExecutor(
     RunAdvisorService advisor,
     McpClientService mcp,
     ComboService combos,
+    RunEventWriter runEvents,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
@@ -100,6 +101,32 @@ public sealed class ChatRunExecutor(
         if (user is null)
         {
             await FailAsync(run, "Usuário da run não encontrado.", ct);
+            return;
+        }
+
+        // SPEC-20261016-run-recovery RF-003/004: run reivindicada pelo sweep
+        // com eventos duráveis → replay do último snapshot + delta. Sem
+        // snapshot válido o plano é null e a execução segue como nova.
+        var storedEvents = await db.ChatRunEvents.AsNoTracking()
+            .Where(e => e.RunId == run.Id)
+            .OrderBy(e => e.Seq)
+            .ToListAsync(ct);
+        var resumePlan = storedEvents.Count > 0
+            ? RunRecoveryPlanner.Replay(storedEvents)
+            : null;
+        if (resumePlan is null
+            && storedEvents.Any(e => e.Type == RunEventWriter.Types.Snapshot))
+        {
+            // RF-003 fallback: snapshot durável existe mas não desserializa
+            // — estado corrompido; interrompe em vez de re-executar sobre
+            // um histórico que não dá para reconstruir.
+            run.Status = ChatRunStatus.Interrupted;
+            run.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            run.Error ??= "Estado de retomada corrompido (snapshot ilegível).";
+            await db.SaveChangesAsync(CancellationToken.None);
+            broadcaster.Publish(run.Id,
+                $"data: {JsonSerializer.Serialize(new { error = run.Error })}");
+            broadcaster.Publish(run.Id, "data: [DONE]");
             return;
         }
 
@@ -242,6 +269,48 @@ public sealed class ChatRunExecutor(
                 };
             }
 
+            RunLoopCheckpoint? resumeSeed = null;
+            if (resumePlan is not null)
+            {
+                // RF-003/006 run-recovery: a janela reconstruída (base do
+                // snapshot + delta pós-snapshot + resultados sintéticos das
+                // calls órfãs) vira o histórico da run retomada; a nota de
+                // sistema fica visível para o modelo e a fase resumed
+                // reporta round/recuperados no SSE.
+                resumePlan.Messages.Add(new ChatCompletionMessage(
+                    "system",
+                    $"[run resumed after restart — {resumePlan.RecoveredTools} "
+                    + "tool results recovered]"));
+                effective = effective with { Messages = resumePlan.Messages };
+                resumeSeed = new RunLoopCheckpoint(
+                    resumePlan.Round, resumePlan.Messages,
+                    resumePlan.ToolMessages, resumePlan.StepCount,
+                    resumePlan.StepUsages, resumePlan.EmptyRounds,
+                    resumePlan.LengthContinuations,
+                    resumePlan.ContinuedAnswer);
+                await BumpResumeMetaAsync(run, resumePlan.LastSeq, ct);
+                await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                    new
+                    {
+                        note = $"run resumed after restart — "
+                            + $"{resumePlan.RecoveredTools} tool results recovered",
+                        round = resumePlan.Round,
+                        recovered = resumePlan.RecoveredTools,
+                    }, ct);
+                await PublishPhaseAsync(run, "resumed",
+                    $"round {resumePlan.Round} — {resumePlan.RecoveredTools} "
+                    + "tool results recuperados");
+            }
+            else
+            {
+                // Snapshot inicial (RF-002): toda run ativa ganha base de
+                // retomada — morte antes do primeiro round do loop ainda
+                // re-executa a partir do request enriquecido.
+                await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Snapshot,
+                    RunRecoveryPlanner.SerializeCheckpoint(new RunLoopCheckpoint(
+                        0, effective.Messages, [], 0, [], 0, 0, "")), ct);
+            }
+
             var outletRules = ModelFilterService.OutletRules(
                 ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()
                     .Where(m => m.IsActive && (m.Id == request.Model || m.Name == request.Model)
@@ -324,11 +393,13 @@ public sealed class ChatRunExecutor(
                             phase == "generating" ? currentStep : null,
                             phase == "generating" ? currentMaxSteps : null);
                     },
-                    OnStepAsync: (step, max, t) =>
+                    OnStepAsync: async (step, max, t) =>
                     {
                         currentStep = step;
                         currentMaxSteps = max;
-                        return Task.CompletedTask;
+                        await runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.StepStarted,
+                            new { round = step, maxSteps = max }, t);
                     },
                     // RF-002 provider-resilience: fase "retrying" com
                     // tentativa/atraso/motivo + backoff que respeita pausa —
@@ -356,7 +427,38 @@ public sealed class ChatRunExecutor(
                         await PublishPhaseAsync(run, "compacting", null);
                         return await compaction.ApplyAsync(run.ChatId, history, t);
                     },
-                    OnCallAsync: (call, t) => PublishToolCallAsync(run, call),
+                    OnCallAsync: async (call, t) =>
+                    {
+                        await PublishToolCallAsync(run, call);
+                        await runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.ToolCall,
+                            new
+                            {
+                                id = call.Id,
+                                name = call.Name,
+                                args = Scrub(Truncate(
+                                    call.ArgumentsJson ?? "", PreviewChars)),
+                            }, t);
+                    },
+                    // RF-002 run-recovery: estado do loop por fronteira.
+                    OnCheckpointAsync: (checkpoint, t) =>
+                        runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.Snapshot,
+                            RunRecoveryPlanner.SerializeCheckpoint(checkpoint), t),
+                    // RF-001/004: ids das calls do round — base do settle
+                    // de órfãs na retomada.
+                    OnStepFinishedAsync: (round, step, t) =>
+                        runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.StepFinished,
+                            new
+                            {
+                                round,
+                                calls = step.ToolCalls.Select(c => c.Id),
+                            }, t),
+                    OnMessagesAddedAsync: (added, toolAdded, t) =>
+                        runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.MessagesAdded,
+                            new { messages = added, toolMessages = toolAdded }, t),
                     GateAsync: (call, t) => GateToolCallAsync(
                         run, tools, call, builtinContext, t),
                     // Modo relido por rodada — o plan_exit aprovado
@@ -379,6 +481,16 @@ public sealed class ChatRunExecutor(
                     OnResultAsync: async (call, output, result, denied, t) =>
                     {
                         await PublishToolResultAsync(run, call, output, result, denied);
+                        // RF-001: tool_result é o fato que liquida a call na
+                        // retomada — gravação mandatória (SPEC run-recovery).
+                        await runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.ToolResult,
+                            new
+                            {
+                                callId = call.Id,
+                                output,
+                                denied,
+                            }, t);
                         lock (_recentTools)
                         {
                             _recentTools.Enqueue(
@@ -430,6 +542,10 @@ public sealed class ChatRunExecutor(
                         {
                             run.PartialContent = content.ToString();
                             await db.SaveChangesAsync(CancellationToken.None);
+                            await runEvents.AppendAsync(run.Id,
+                                RunEventWriter.Types.ContentDelta,
+                                new { content = content.ToString() },
+                                CancellationToken.None);
                             sinceCheckpoint = 0;
                         }
                     },
@@ -459,7 +575,7 @@ public sealed class ChatRunExecutor(
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct, callbacks,
                     builtinContext, run.UserId, logger, maxSteps,
-                    toolExecutor.MaxParallel);
+                    toolExecutor.MaxParallel, resumeSeed);
                 toolMessages = outcome?.ToolMessages;
                 if (outcome is not null)
                 {
@@ -504,6 +620,10 @@ public sealed class ChatRunExecutor(
                             {
                                 run.PartialContent = content.ToString();
                                 await db.SaveChangesAsync(CancellationToken.None);
+                                await runEvents.AppendAsync(run.Id,
+                                    RunEventWriter.Types.ContentDelta,
+                                    new { content = content.ToString() },
+                                    CancellationToken.None);
                                 sinceCheckpoint = 0;
                             }
                         }
@@ -600,12 +720,13 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>Publica o evento <c>status</c> de fase no stream da run.</summary>
-    private Task PublishPhaseAsync(ChatRun run, string phase, string? label,
+    private async Task PublishPhaseAsync(ChatRun run, string phase, string? label,
         int? step = null, int? maxSteps = null)
     {
         broadcaster.Publish(run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent(phase, label, step, maxSteps), JsonOptions)}");
-        return Task.CompletedTask;
+        await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Phase,
+            new { phase, label, step, maxSteps }, CancellationToken.None);
     }
 
     /// <summary>
@@ -1559,8 +1680,45 @@ public sealed class ChatRunExecutor(
             }
         }
 
-        run.MetaJson = JsonSerializer.Serialize(
-            new Dictionary<string, object?> { ["usage"] = meta }, JsonOptions);
+        var full = ReadMetaDict(run.MetaJson);
+        full["usage"] = meta;
+        run.MetaJson = JsonSerializer.Serialize(full, JsonOptions);
+    }
+
+    /// <summary>
+    /// Meta da retomada (SPEC-20261016-run-recovery RF-006):
+    /// <c>resumedCount</c> acumula restarts da run e <c>lastSeq</c> marca o
+    /// último evento aplicado — ambos expostos no response via MetaJson.
+    /// </summary>
+    private async Task BumpResumeMetaAsync(
+        ChatRun run, long lastSeq, CancellationToken ct)
+    {
+        var meta = ReadMetaDict(run.MetaJson);
+        var resumed = meta.TryGetValue("resumedCount", out var prev)
+            && prev is JsonElement el && el.TryGetInt32(out var n)
+                ? n : 0;
+        meta["resumedCount"] = resumed + 1;
+        meta["lastSeq"] = lastSeq;
+        run.MetaJson = JsonSerializer.Serialize(meta, JsonOptions);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>MetaJson → dicionário (vazio quando ausente/corrompido).</summary>
+    private static Dictionary<string, object?> ReadMetaDict(string? metaJson)
+    {
+        if (metaJson is null)
+        {
+            return new();
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(
+                metaJson, JsonOptions) ?? new();
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
     }
 
     /// <summary>
@@ -1608,6 +1766,19 @@ public sealed class ChatRunExecutor(
         run.Status = status ?? ChatRunStatus.Completed;
         run.CompletedAt = now;
         run.PartialContent = content;
+
+        // RF-006 run-recovery: lastSeq final no meta — posição do stream
+        // de eventos consultável pelo response da run.
+        var lastSeq = await db.ChatRunEvents.AsNoTracking()
+            .Where(e => e.RunId == run.Id)
+            .Select(e => (long?)e.Seq)
+            .MaxAsync(CancellationToken.None);
+        if (lastSeq is { } seq)
+        {
+            var meta = ReadMetaDict(run.MetaJson);
+            meta["lastSeq"] = seq;
+            run.MetaJson = JsonSerializer.Serialize(meta, JsonOptions);
+        }
 
         if (content.Length > 0 || toolMessages is { Count: > 0 })
         {

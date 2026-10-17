@@ -319,11 +319,49 @@ public class ChatRun
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 
-    /// <summary>Início da execução (epoch seconds); null enquanto queued.</summary>
+    /// <summary>Início da execução (epoch seconds); null enquanto ativa.</summary>
     public long? StartedAt { get; set; }
 
     /// <summary>Finalização (epoch seconds); null enquanto ativa.</summary>
     public long? CompletedAt { get; set; }
+
+    /// <summary>
+    /// Instância que claima a execução (SPEC-20261016-run-recovery RF-005):
+    /// guid por processo — outra instância não resume run com heartbeat fresco.
+    /// </summary>
+    public string? OwnerInstance { get; set; }
+
+    /// <summary>Último heartbeat de execução (epoch seconds) — RF-005.</summary>
+    public long? HeartbeatAt { get; set; }
+}
+
+/// <summary>
+/// Evento durável de uma run (SPEC-20261016-run-recovery RF-001) — append-only:
+/// <c>step_started</c>, <c>content_delta</c> (agregado), <c>tool_call</c>,
+/// <c>tool_result</c>, <c>step_finished</c>, <c>phase</c>, <c>note</c> e
+/// <c>snapshot</c> (loop-state por fronteira de round, RF-002). O seq é
+/// monotônico por run e a reconstrução usa último snapshot + eventos
+/// posteriores; nunca há update/delete.
+/// </summary>
+public class ChatRunEvent
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Run dona do evento.</summary>
+    public string RunId { get; set; } = string.Empty;
+
+    /// <summary>Sequência monotônica por run (1..N).</summary>
+    public long Seq { get; set; }
+
+    /// <summary>Tipo do evento (<c>snapshot</c>, <c>tool_call</c>…).</summary>
+    public string Type { get; set; } = string.Empty;
+
+    /// <summary>Payload JSON do evento (segredos já mascarados).</summary>
+    public string PayloadJson { get; set; } = string.Empty;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
 }
 
 /// <summary>

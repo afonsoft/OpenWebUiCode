@@ -30,6 +30,13 @@ public sealed class ChatRunDispatcher(
     /// <summary>Máximo padrão de runs executando em paralelo (override via ChatRuns:MaxConcurrent).</summary>
     public const int MaxConcurrent = 4;
 
+    /// <summary>
+    /// Identidade do processo (SPEC-20261016-run-recovery RF-005): cada
+    /// instância gera um guid no boot — uma run com heartbeat fresco de
+    /// outro dono nunca é retomada aqui.
+    /// </summary>
+    private static readonly string InstanceId = Guid.NewGuid().ToString("N");
+
     private readonly System.Threading.Channels.Channel<string> _queue =
         System.Threading.Channels.Channel.CreateUnbounded<string>();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _chatLocks = new();
@@ -71,8 +78,20 @@ public sealed class ChatRunDispatcher(
         await Task.WhenAll(workers);
     }
 
-    /// <summary>Marca runs órfãs de restart como interrupted no boot.</summary>
-    private async Task SweepOrphansAsync(CancellationToken ct)
+    /// <summary>
+    /// Sweep de runs órfãs no boot (SPEC-20261016-run-recovery RF-003/005):
+    /// <list type="bullet">
+    /// <item>queued → re-enfileiradas (a fila é em memória e morre com o
+    /// processo) — nunca começaram, execução normal;</item>
+    /// <item>paused → mantidas (pausa é estado do usuário);</item>
+    /// <item>running com heartbeat fresco de <em>outra</em> instância →
+    /// intocadas (dono vivo);</item>
+    /// <item>running stale com snapshot de loop-state → reivindicadas
+    /// (OwnerInstance + heartbeat) e re-enfileiradas para retomada;</item>
+    /// <item>running stale sem eventos → interrupted (legado).</item>
+    /// </list>
+    /// </summary>
+    public async Task SweepOrphansAsync(CancellationToken ct)
     {
         try
         {
@@ -87,16 +106,74 @@ public sealed class ChatRunDispatcher(
                 return;
             }
 
+            var runningIds = orphans
+                .Where(r => r.Status == ChatRunStatus.Running)
+                .Select(r => r.Id)
+                .ToList();
+            var resumable = runningIds.Count == 0
+                ? []
+                : await db.ChatRunEvents.AsNoTracking()
+                    .Where(e => runningIds.Contains(e.RunId)
+                        && e.Type == RunEventWriter.Types.Snapshot)
+                    .Select(e => e.RunId)
+                    .Distinct()
+                    .ToListAsync(ct);
+            var resumableSet = resumable.ToHashSet();
+            var staleAfter = configuration.GetValue(
+                "ChatRuns:ResumeStaleSeconds", 60);
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            foreach (var orphan in orphans)
+            var requeue = new List<string>();
+            var resumed = 0;
+            var interrupted = 0;
+
+            foreach (var run in orphans)
             {
-                orphan.Status = ChatRunStatus.Interrupted;
-                orphan.CompletedAt = now;
-                orphan.Error ??= "Servidor reiniciado durante a execução.";
+                if (run.Status == ChatRunStatus.Paused)
+                {
+                    continue;
+                }
+                if (run.Status == ChatRunStatus.Queued)
+                {
+                    requeue.Add(run.Id);
+                    continue;
+                }
+                // running: heartbeat fresco de QUALQUER dono = run viva
+                // (esta instância ou outra) — nunca retomar algo em
+                // execução. Stale/dono morto → avalia retomada abaixo.
+                var alive = run.OwnerInstance is { Length: > 0 }
+                    && run.HeartbeatAt is { } hb
+                    && now - hb < staleAfter;
+                if (alive)
+                {
+                    continue;
+                }
+                if (!resumableSet.Contains(run.Id))
+                {
+                    run.Status = ChatRunStatus.Interrupted;
+                    run.CompletedAt = now;
+                    run.Error ??= "Servidor reiniciado durante a execução.";
+                    interrupted++;
+                    continue;
+                }
+                run.OwnerInstance = InstanceId;
+                run.HeartbeatAt = now;
+                resumed++;
+                requeue.Add(run.Id);
             }
 
             await db.SaveChangesAsync(ct);
-            logger.LogWarning("Runs órfãs marcadas como interrupted no boot: {Count}", orphans.Count);
+            // Enfileirar só depois do claim persistido — o worker valida
+            // OwnerInstance == esta instância para runs já running.
+            foreach (var runId in requeue)
+            {
+                _queue.Writer.TryWrite(runId);
+            }
+            if (resumed > 0 || interrupted > 0)
+            {
+                logger.LogWarning(
+                    "Sweep de runs órfãs: {Resumed} retomadas, {Interrupted} interrupted, {Requeued} re-enfileiradas.",
+                    resumed, interrupted, requeue.Count);
+            }
         }
         catch (Exception ex)
         {
@@ -129,7 +206,11 @@ public sealed class ChatRunDispatcher(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var run = await db.ChatRuns.FirstOrDefaultAsync(r => r.Id == runId, stoppingToken);
-        if (run is null || run.Status != ChatRunStatus.Queued)
+        // RF-005 run-recovery: além de queued o worker pega runs running
+        // reivindicadas por esta instância no sweep (retomada pós-restart).
+        var claimedResume = run?.Status == ChatRunStatus.Running
+            && run.OwnerInstance == InstanceId;
+        if (run is null || !(run.Status == ChatRunStatus.Queued || claimedResume))
         {
             return;
         }
@@ -140,18 +221,25 @@ public sealed class ChatRunDispatcher(
         try
         {
             // Stop pode ter chegado enquanto aguardava o lock.
-            if (run.Status != ChatRunStatus.Queued)
+            if (!(run.Status == ChatRunStatus.Queued
+                || (run.Status == ChatRunStatus.Running
+                    && run.OwnerInstance == InstanceId)))
             {
                 return;
             }
 
             run.Status = ChatRunStatus.Running;
-            run.StartedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            run.StartedAt ??= DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            run.OwnerInstance = InstanceId;
+            run.HeartbeatAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             await db.SaveChangesAsync(stoppingToken);
             broadcaster.Publish(runId, "event: status\ndata: {\"status\":\"running\"}");
 
             using var runCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             _runCancels[runId] = runCts;
+            using var heartbeatCts = CancellationTokenSource
+                .CreateLinkedTokenSource(runCts.Token);
+            var heartbeat = HeartbeatLoopAsync(runId, heartbeatCts.Token);
             try
             {
                 var executor = scope.ServiceProvider.GetRequiredService<ChatRunExecutor>();
@@ -162,12 +250,59 @@ public sealed class ChatRunDispatcher(
                 _runCancels.TryRemove(runId, out _);
                 pauses.Forget(runId);
                 broadcaster.Complete(runId);
+                await heartbeatCts.CancelAsync();
+                try
+                {
+                    await heartbeat;
+                }
+                catch (OperationCanceledException)
+                {
+                }
                 await NotifyRunFinishedAsync(scope.ServiceProvider, run);
             }
         }
         finally
         {
             chatLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Heartbeat de ownership (SPEC-20261016-run-recovery RF-005): a cada
+    /// <c>ChatRuns:HeartbeatSeconds</c> (15s) grava o timestamp na run —
+    /// um heartbeat fresco impede que outra instância a retome.
+    /// </summary>
+    private async Task HeartbeatLoopAsync(string runId, CancellationToken ct)
+    {
+        var interval = TimeSpan.FromSeconds(
+            Math.Max(1, configuration.GetValue("ChatRuns:HeartbeatSeconds", 15)));
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await db.ChatRuns
+                    .Where(r => r.Id == runId
+                        && (r.Status == ChatRunStatus.Running
+                            || r.Status == ChatRunStatus.Paused))
+                    .ExecuteUpdateAsync(s => s.SetProperty(
+                        r => r.HeartbeatAt,
+                        DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+                        CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Heartbeat da run {RunId} falhou.", runId);
+            }
         }
     }
 
