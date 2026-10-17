@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261017-settings-ux-redesign` |
 | Ticket | [#437](https://github.com/afonsoft/open-webui/issues/437) |
-| Status | `Approved` |
+| Status | `Delivered` |
 | Fonte | pedido do usuário: melhorar telas de configurações (admin + usuário), usabilidade mobile, botões salvar, categorização e cobertura das features implementadas |
 
 ## 1. User Story
