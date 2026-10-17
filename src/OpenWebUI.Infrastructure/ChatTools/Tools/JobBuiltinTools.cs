@@ -37,6 +37,9 @@ public sealed class JobListBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -98,6 +101,9 @@ public sealed class JobOutputBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

@@ -126,6 +126,26 @@ public class ToolExecutor(
                 StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>Cap de concorrência de um batch de calls paralelizáveis
+    /// (<c>BuiltinTools:MaxParallel</c>, default 4 — RF-006 do SPEC
+    /// parallel-tool-calls).</summary>
+    public int MaxParallel => builtins.MaxParallel;
+
+    /// <summary>
+    /// A call <paramref name="functionName"/> resolve para uma built-in
+    /// marcada <see cref="IBuiltinChatTool.SafeInParallel"/> e habilitada no
+    /// contexto? Tools de DB/HTTP/MCP/python e desconhecidas → false —
+    /// sequenciais (classificação conservadora, RF-001/RF-003).
+    /// </summary>
+    public bool IsSafeInParallel(IReadOnlyList<Tool> tools, string functionName)
+    {
+        var tool = FindTool(tools, functionName);
+        return tool?.Url?.StartsWith(
+            BuiltinToolRegistry.UrlPrefix, StringComparison.OrdinalIgnoreCase) == true
+            && builtins.IsSafeInParallel(
+                tool.Url[BuiltinToolRegistry.UrlPrefix.Length..]);
+    }
+
     /// <summary>
     /// Executa a tool pelo nome da função chamada e retorna o texto do
     /// resultado (truncado) ou mensagem de erro para o modelo, mais o
