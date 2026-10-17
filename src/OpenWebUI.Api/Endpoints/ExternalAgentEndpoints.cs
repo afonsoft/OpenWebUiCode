@@ -1,3 +1,4 @@
+using OpenWebUI.Application.Contracts;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
@@ -56,5 +57,3 @@ public static class ExternalAgentEndpoints
     }
 }
 
-/// <summary>Toggle de seleção de um agente externo.</summary>
-public sealed record ExternalAgentSelectRequest(bool Enabled);

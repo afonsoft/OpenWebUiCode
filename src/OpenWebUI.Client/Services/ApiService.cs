@@ -1126,6 +1126,86 @@ public class ApiService(HttpClient http, AuthService auth)
             $"/api/v1/workspace/repo/commands/{Uri.EscapeDataString(name)}"
             + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
 
+    // ---------------- Agentes / combos / manutenção (settings UX) ----------------
+
+    /// <summary>Catálogo efetivo de agentes declarativos + flags de workspace.</summary>
+    public Task<AgentCatalogResponse?> GetAgentCatalogAsync() =>
+        SendAsync<AgentCatalogResponse>(HttpMethod.Get, "/api/v1/agents");
+
+    /// <summary>Liga/desliga o opt-in do usuário a agentes do workdir.</summary>
+    public async Task<bool> SetAgentWorkspaceEnabledAsync(bool enabled) =>
+        await SendAsync<StatusResponse>(HttpMethod.Put,
+            "/api/v1/agents/workspace-enabled",
+            new McpServerEnabledRequest(enabled)) is not null;
+
+    /// <summary>Detecção de agentes externos (CLIs no PATH) do usuário.</summary>
+    public async Task<List<ExternalAgentStatusResponse>> GetExternalAgentsAsync() =>
+        await SendAsync<List<ExternalAgentStatusResponse>>(HttpMethod.Get,
+            "/api/v1/external-agents/detect") ?? [];
+
+    /// <summary>Seleciona/deseleciona um agente externo como executor.</summary>
+    public async Task<bool> SetExternalAgentSelectedAsync(string id, bool enabled) =>
+        await SendAsync<bool>(HttpMethod.Put,
+            $"/api/v1/external-agents/{Uri.EscapeDataString(id)}/selected",
+            new ExternalAgentSelectRequest(enabled));
+
+    /// <summary>Personas de agente do usuário (CRUD em /api/v1/agent-personas).</summary>
+    public async Task<List<AgentPersonaResponse>> GetAgentPersonasAsync() =>
+        await SendAsync<List<AgentPersonaResponse>>(HttpMethod.Get,
+            "/api/v1/agent-personas/") ?? [];
+
+    /// <summary>Cria uma persona de agente.</summary>
+    public Task<AgentPersonaResponse?> CreateAgentPersonaAsync(AgentPersonaUpsertRequest request) =>
+        SendAsync<AgentPersonaResponse>(HttpMethod.Post, "/api/v1/agent-personas/", request);
+
+    /// <summary>Atualiza uma persona de agente.</summary>
+    public Task<AgentPersonaResponse?> UpdateAgentPersonaAsync(string id, AgentPersonaUpsertRequest request) =>
+        SendAsync<AgentPersonaResponse>(HttpMethod.Put,
+            $"/api/v1/agent-personas/{Uri.EscapeDataString(id)}", request);
+
+    /// <summary>Remove uma persona de agente.</summary>
+    public async Task<bool> DeleteAgentPersonaAsync(string id) =>
+        await SendAsync<StatusResponse>(HttpMethod.Delete,
+            $"/api/v1/agent-personas/{Uri.EscapeDataString(id)}") is not null;
+
+    /// <summary>Combos de modelo do usuário (+ globais do admin).</summary>
+    public async Task<List<ComboResponse>> GetCombosAsync() =>
+        await SendAsync<List<ComboResponse>>(HttpMethod.Get, "/api/v1/combos/") ?? [];
+
+    /// <summary>Cria um combo de modelo.</summary>
+    public Task<ComboResponse?> CreateComboAsync(ComboUpsertRequest request) =>
+        SendAsync<ComboResponse>(HttpMethod.Post, "/api/v1/combos/", request);
+
+    /// <summary>Atualiza um combo de modelo.</summary>
+    public Task<ComboResponse?> UpdateComboAsync(string id, ComboUpsertRequest request) =>
+        SendAsync<ComboResponse>(HttpMethod.Put,
+            $"/api/v1/combos/{Uri.EscapeDataString(id)}", request);
+
+    /// <summary>Remove um combo de modelo.</summary>
+    public async Task<bool> DeleteComboAsync(string id) =>
+        await SendAsync<StatusResponse>(HttpMethod.Delete,
+            $"/api/v1/combos/{Uri.EscapeDataString(id)}") is not null;
+
+    /// <summary>Status runtime de um combo (modelo efetivo + cooldowns).</summary>
+    public Task<ComboStatusResponse?> GetComboStatusAsync(string id) =>
+        SendAsync<ComboStatusResponse>(HttpMethod.Get,
+            $"/api/v1/combos/{Uri.EscapeDataString(id)}/status");
+
+    /// <summary>Status da manutenção de sessões (último ciclo + próxima execução).</summary>
+    public Task<MaintenanceStatusResponse?> GetMaintenanceStatusAsync() =>
+        SendAsync<MaintenanceStatusResponse>(HttpMethod.Get,
+            "/api/v1/maintenance/status");
+
+    /// <summary>Dispara um ciclo de manutenção sob demanda (admin).</summary>
+    public Task<MaintenanceCycleResponse?> RunMaintenanceAsync(bool dryRun) =>
+        SendAsync<MaintenanceCycleResponse>(HttpMethod.Post,
+            "/api/v1/maintenance/run", new MaintenanceRunRequest(dryRun));
+
+    /// <summary>Grava a janela de retenção de chats em dias (admin).</summary>
+    public async Task<bool> SetMaintenanceChatDaysAsync(int chatDays) =>
+        await SendAsync<bool>(HttpMethod.Put,
+            "/api/v1/maintenance/config", new MaintenanceConfigRequest(chatDays));
+
     /// <summary>
     /// Expande um command no servidor (SPEC-20261016-commands-v2): interpola
     /// <c>$ARGUMENTS</c>/<c>$N</c>, avalia <c>!`shell`</c> (quando o servidor

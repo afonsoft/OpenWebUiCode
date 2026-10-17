@@ -96,5 +96,3 @@ public static class MaintenanceEndpoints
     }
 }
 
-/// <summary>Configuração da poda de chats (admin).</summary>
-public sealed record MaintenanceConfigRequest(int? ChatDays);

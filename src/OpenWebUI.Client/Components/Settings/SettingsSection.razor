@@ -1,0 +1,23 @@
+@* Seção nomeada dentro de uma tab de settings — header + descrição opcional + conteúdo. *@
+<section class="settings-section" id="@Id">
+    <h3 class="settings-section-title">@Title</h3>
+    @if (!string.IsNullOrEmpty(Description))
+    {
+        <p class="settings-section-desc">@Description</p>
+    }
+    @ChildContent
+</section>
+
+@code {
+    /// <summary>Âncora HTML opcional (ex.: "general-aparencia").</summary>
+    [Parameter] public string? Id { get; set; }
+
+    /// <summary>Título exibido no topo da seção.</summary>
+    [Parameter] public required string Title { get; set; }
+
+    /// <summary>Descrição curta logo abaixo do título (opcional).</summary>
+    [Parameter] public string? Description { get; set; }
+
+    /// <summary>Campos e ações da seção.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

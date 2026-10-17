@@ -21,13 +21,16 @@
                     <button class="modal-tab @(_tab == "account" ? "active" : "")" role="tab" aria-selected="@(_tab == "account")" @onclick='() => _tab = "account"'>@L["settings.account"]</button>
                     <button class="modal-tab @(_tab == "memories" ? "active" : "")" role="tab" aria-selected="@(_tab == "memories")" @onclick='() => _tab = "memories"'>@L["settings.memories"]</button>
                     <button class="modal-tab @(_tab == "notifications" ? "active" : "")" role="tab" aria-selected="@(_tab == "notifications")" @onclick='() => SelectTab("notifications")'>@L["settings.notifications"]</button>
-                    <button class="modal-tab @(_tab == "github" ? "active" : "")" role="tab" aria-selected="@(_tab == "github")" @onclick='() => SelectTab("github")'>@L["settings.github"]</button>
+                    <button class="modal-tab @(_tab == "integrations" ? "active" : "")" role="tab" aria-selected="@(_tab == "integrations")" @onclick='() => SelectTab("integrations")'>@L["settings.integrations"]</button>
                     <button class="modal-tab @(_tab == "models" ? "active" : "")" role="tab" aria-selected="@(_tab == "models")" @onclick='() => SelectTab("models")'>@L["settings.models"]</button>
+                    <button class="modal-tab @(_tab == "combos" ? "active" : "")" role="tab" aria-selected="@(_tab == "combos")" @onclick='() => SelectTab("combos")'>@L["settings.combos"]</button>
                     <button class="modal-tab @(_tab == "tools" ? "active" : "")" role="tab" aria-selected="@(_tab == "tools")" @onclick='() => SelectTab("tools")'>@L["settings.tools"]</button>
+                    <button class="modal-tab @(_tab == "agents" ? "active" : "")" role="tab" aria-selected="@(_tab == "agents")" @onclick='() => SelectTab("agents")'>@L["settings.agents"]</button>
                     @if (Auth.CurrentUser?.Role == "admin")
                     {
                         <button class="modal-tab @(_tab == "connections" ? "active" : "")" role="tab" aria-selected="@(_tab == "connections")" @onclick='() => _tab = "connections"'>@L["settings.connections"]</button>
-                        <button class="modal-tab @(_tab == "admin" ? "active" : "")" role="tab" aria-selected="@(_tab == "admin")" @onclick='() => _tab = "admin"'>@L["settings.admin"]</button>
+                        <button class="modal-tab @(_tab == "admin" ? "active" : "")" role="tab" aria-selected="@(_tab == "admin")" @onclick='() => SelectTab("admin")'>@L["settings.admin"]</button>
+                        <button class="modal-tab @(_tab == "maintenance" ? "active" : "")" role="tab" aria-selected="@(_tab == "maintenance")" @onclick='() => SelectTab("maintenance")'>@L["settings.maintenance"]</button>
                     }
                     <button class="modal-tab @(_tab == "about" ? "active" : "")" role="tab" aria-selected="@(_tab == "about")" @onclick='() => _tab = "about"'>@L["settings.about"]</button>
                 </div>
@@ -35,252 +38,361 @@
                 <div class="modal-body" role="tabpanel">
                 @if (_tab == "general")
                 {
-                    <div class="field">
-                        <label for="fld-1">@L["settings.theme"]</label>
-                        <select class="input" value="@Theme.Current" @onchange="OnThemeChanged" id="fld-1">
-                            <option value="system">@L["settings.theme_system"]</option>
-                            <option value="dark">@L["settings.theme_dark"]</option>
-                            <option value="light">@L["settings.theme_light"]</option>
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="fld-2">@L["settings.language"]</label>
-                        <select class="input" value="@L.Language" @onchange="OnLanguageChanged" id="fld-2">
-                            @foreach (var (lang, display) in L.Languages)
-                            {
-                                <option value="@lang">@display</option>
-                            }
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label for="fld-3">@L["settings.audio_engine"]</label>
-                        <select class="input" value="@_audioEngine" @onchange="OnAudioEngineChanged" id="fld-3">
-                            <option value="auto">@L["settings.audio_engine_auto"]</option>
-                            <option value="web-speech">Web Speech</option>
-                            <option value="server">@L["settings.audio_engine_server"]</option>
-                        </select>
-                    </div>
-                    @if (_ttsSupported || _sttSupported)
-                    {
+                    <SettingsSection Title="@L["settings.sec_appearance"]">
                         <div class="field">
-                            <label for="fld-4">@L["settings.audio_voice"]</label>
-                            <select class="input" value="@_audioVoice" @onchange="OnAudioVoiceChanged" disabled="@(!_ttsSupported)" id="fld-4">
-                                <option value="">@L["settings.audio_voice_default"]</option>
-                                @foreach (var v in _audioVoices)
+                            <label for="fld-1">@L["settings.theme"]</label>
+                            <select class="input" value="@Theme.Current" @onchange="OnThemeChanged" id="fld-1">
+                                <option value="system">@L["settings.theme_system"]</option>
+                                <option value="dark">@L["settings.theme_dark"]</option>
+                                <option value="light">@L["settings.theme_light"]</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="fld-2">@L["settings.language"]</label>
+                            <select class="input" value="@L.Language" @onchange="OnLanguageChanged" id="fld-2">
+                                @foreach (var (lang, display) in L.Languages)
                                 {
-                                    <option value="@v.Name">@v.Name (@v.Lang)</option>
+                                    <option value="@lang">@display</option>
                                 }
                             </select>
                         </div>
-                        <label class="check"><input type="checkbox" checked="@_audioAutoSend" @onchange="OnAutoSendChanged" disabled="@(!_sttSupported)" /> @L["settings.audio_autosend"]</label>
-                    }
-                    else
-                    {
-                        <div class="field-note">@L["settings.audio_unavailable"]</div>
-                    }
-                }
-                else if (_tab == "account")
-                {
-                    <div class="field">
-                        <label for="fld-5">@L["common.name"]</label>
-                        <input class="input" @bind="_name" id="fld-5" />
-                    </div>
-                    <div class="field">
-                        <label for="fld-6">@L["settings.profile_url"]</label>
-                        <input class="input" @bind="_profileImage" placeholder="https://…" id="fld-6" />
-                    </div>
-                    <button class="auth-submit" @onclick="SaveProfileAsync">@L["settings.save_profile"]</button>
-
-                    <hr class="modal-sep" />
-
-                    <div class="field">
-                        <label for="fld-7">@L["settings.current_password"]</label>
-                        <input class="input" type="password" autocomplete="current-password" @bind="_currentPassword" id="fld-7" />
-                    </div>
-                    <div class="field">
-                        <label for="fld-8">@L["settings.new_password"]</label>
-                        <input class="input" type="password" autocomplete="new-password" @bind="_newPassword" id="fld-8" />
-                    </div>
-                    <button class="auth-submit" @onclick="ChangePasswordAsync">@L["settings.change_password"]</button>
-
-                    <hr class="modal-sep" />
-
-                    <div class="field">
-                        <label for="fld-9">@L["settings.api_key"]</label>
-                        @if (_apiKeyCreated is not null)
+                    </SettingsSection>
+                    <SettingsSection Title="@L["settings.sec_audio"]">
+                        <div class="field">
+                            <label for="fld-3">@L["settings.audio_engine"]</label>
+                            <select class="input" value="@_audioEngine" @onchange="OnAudioEngineChanged" id="fld-3">
+                                <option value="auto">@L["settings.audio_engine_auto"]</option>
+                                <option value="web-speech">Web Speech</option>
+                                <option value="server">@L["settings.audio_engine_server"]</option>
+                            </select>
+                        </div>
+                        @if (_ttsSupported || _sttSupported)
                         {
-                            <input class="input" readonly value="@_apiKeyCreated" id="fld-9" />
-                            <div class="field-note">@L["settings.api_key_copy_now"]</div>
-                        }
-                        else if (_apiKeyInfo is not null)
-                        {
-                            <div class="field-note">@L.T("settings.api_key_active_since", ("date", FormatDate(_apiKeyInfo.CreatedAt)))</div>
+                            <div class="field">
+                                <label for="fld-4">@L["settings.audio_voice"]</label>
+                                <select class="input" value="@_audioVoice" @onchange="OnAudioVoiceChanged" disabled="@(!_ttsSupported)" id="fld-4">
+                                    <option value="">@L["settings.audio_voice_default"]</option>
+                                    @foreach (var v in _audioVoices)
+                                    {
+                                        <option value="@v.Name">@v.Name (@v.Lang)</option>
+                                    }
+                                </select>
+                            </div>
+                            <label class="check"><input type="checkbox" checked="@_audioAutoSend" @onchange="OnAutoSendChanged" disabled="@(!_sttSupported)" /> @L["settings.audio_autosend"]</label>
                         }
                         else
                         {
-                            <div class="field-note">@L["settings.api_key_none"]</div>
+                            <div class="field-note">@L["settings.audio_unavailable"]</div>
                         }
-                        <div class="field-actions">
-                            <button class="msg-action" @onclick="CreateApiKeyAsync">@L["settings.generate_key"]</button>
-                            @if (_apiKeyInfo is not null || _apiKeyCreated is not null)
-                            {
-                                <button class="msg-action" @onclick="RevokeApiKeyAsync">@L["settings.revoke"]</button>
-                            }
+                    </SettingsSection>
+                }
+                else if (_tab == "account")
+                {
+                    <SettingsSection Title="@L["settings.sec_profile"]">
+                        <div class="field">
+                            <label for="fld-5">@L["common.name"]</label>
+                            <input class="input" @bind="_name" id="fld-5" />
                         </div>
-                    </div>
+                        <div class="field">
+                            <label for="fld-6">@L["settings.profile_url"]</label>
+                            <input class="input" @bind="_profileImage" placeholder="https://…" id="fld-6" />
+                        </div>
+                    </SettingsSection>
 
-                    <hr class="modal-sep" />
+                    <SettingsSection Title="@L["settings.sec_password"]" Description="@L["settings.password_hint"]">
+                        <div class="field">
+                            <label for="fld-7">@L["settings.current_password"]</label>
+                            <input class="input" type="password" autocomplete="current-password" @bind="_currentPassword" id="fld-7" />
+                        </div>
+                        <div class="field">
+                            <label for="fld-8">@L["settings.new_password"]</label>
+                            <input class="input" type="password" autocomplete="new-password" @bind="_newPassword" id="fld-8" />
+                        </div>
+                    </SettingsSection>
 
-                    <div class="field">
-                        <label for="fld-10">@L["settings.webhook_url"]</label>
-                        <input class="input" @bind="_webhookUrl" placeholder="https://…" id="fld-10" />
-                    </div>
-                    <div class="field">
-                        <div class="field-label">@L["settings.webhook_events"]</div>
-                        @foreach (var ev in WebhookEvents)
-                        {
-                            <label class="check"><input type="checkbox" checked="@_webhookEvents.Contains(ev)" @onchange="e => ToggleWebhookEvent(ev, e)" /> @ev</label>
-                        }
-                    </div>
-                    <label class="check"><input type="checkbox" @bind="_webhookEnabled" /> @L["settings.webhook_enabled"]</label>
-                    <div class="field-actions">
-                        <button class="msg-action" @onclick="SaveWebhookAsync">@L["common.save"]</button>
-                        <button class="msg-action" @onclick="TestWebhookAsync" disabled="@string.IsNullOrWhiteSpace(_webhookUrl)">@L["settings.webhook_test"]</button>
-                        <button class="msg-action" @onclick="DeleteWebhookAsync" disabled="@(_webhook is null)">@L["settings.webhook_remove"]</button>
-                    </div>
-                    @if (_webhookMessage is not null)
-                    {
-                        <div class="field-note">@_webhookMessage</div>
-                    }
-
-                    @if (_accountMessage is not null)
-                    {
-                        <div class="field-note">@_accountMessage</div>
-                    }
-                }
-                else if (_tab == "memories")
-                {
-                    <div class="field">
-                        <div class="field-label">@L["settings.memories_label"]</div>
-                        @if (_memories.Count == 0)
-                        {
-                            <div class="field-note">@L["settings.memories_empty"]</div>
-                        }
-                        @foreach (var memory in _memories)
-                        {
-                            <div class="memory-row">
-                                <span class="memory-text">@memory.Content</span>
-                                <button class="icon-mini" @onclick="() => DeleteMemoryAsync(memory)">×</button>
-                            </div>
-                        }
-                    </div>
-                    <div class="field">
-                        <label for="fld-11">@L["settings.add_memory"]</label>
-                        <input class="input" @bind="_newMemory" placeholder="@L["settings.add_memory_placeholder"]" id="fld-11" />
-                    </div>
-                    <button class="auth-submit" disabled="@string.IsNullOrWhiteSpace(_newMemory)"
-                            @onclick="AddMemoryAsync">@L["settings.add"]</button>
-
-                    <div class="field">
-                        <div class="field-label">@L["settings.memory_sync_label"]</div>
-                        <label class="check">
-                            <input type="checkbox" checked="@(_memSync?.Enabled == true)"
-                                   disabled="@(_memSync?.AdminDisabled == true)"
-                                   @onchange="OnMemSyncEnabledChanged" id="fld-memsync" />
-                            @L["settings.memory_sync_enabled"]
-                        </label>
-                        @if (_memSync?.AdminDisabled == true)
-                        {
-                            <div class="field-note">@L["settings.memory_sync_admin_locked"]</div>
-                        }
-                        @if (_memSync is not null)
-                        {
-                            <div class="flex gap-2 mb-2">
-                                <div class="field flex-1">
-                                    <label for="fld-memsync-int">@L["settings.memory_sync_interval"]</label>
-                                    <input class="input" type="number" min="1" max="168"
-                                           @bind="_memSyncInterval" id="fld-memsync-int" />
-                                </div>
-                                <div class="field flex-1">
-                                    <label for="fld-memsync-age">@L["settings.memory_sync_max_age"]</label>
-                                    <input class="input" type="number" min="1" max="365"
-                                           @bind="_memSyncMaxAge" id="fld-memsync-age" />
-                                </div>
-                            </div>
-                            <button class="auth-submit" @onclick="SaveMemSyncAsync">@L["common.save"]</button>
-                            <div class="field-note">@L["settings.memory_sync_hint"]</div>
-                        }
-                    </div>
-                }
-                else if (_tab == "notifications")
-                {
-                    <label class="check">
-                        <input type="checkbox" checked="@_notifyChatDone" @onchange="OnNotifyChatDoneChanged" />
-                        @L["settings.notify_chat_done"]
-                    </label>
-                    <label class="check">
-                        <input type="checkbox" checked="@_notifyBrowser" @onchange="OnNotifyBrowserChanged" />
-                        @L["settings.notify_browser"]
-                    </label>
-                    <label class="check">
-                        <input type="checkbox" checked="@_notifyPush" @onchange="OnNotifyPushChanged" />
-                        @L["settings.notify_push"]
-                    </label>
-                    @if (_notifyPermission is "denied" or "unsupported")
-                    {
-                        <p class="field-note text-red-600 dark:text-red-400">
-                            @L[_notifyPermission == "denied"
-                                ? "settings.notify_permission_denied"
-                                : "settings.notify_permission_unsupported"]
-                        </p>
-                    }
-                    <p class="field-note">@L["settings.notify_hint"]</p>
-                }
-                else if (_tab == "github")
-                {
-                    @if (_ghConfigured && _ghSource is not null)
-                    {
-                        <div class="field-note">
-                            @if (_ghSource == "global")
+                    <SettingsSection Title="@L["settings.sec_api_key"]">
+                        <div class="field">
+                            <label for="fld-9">@L["settings.api_key"]</label>
+                            @if (_apiKeyCreated is not null)
                             {
-                                <span>@L["settings.cfg_source_global"]</span>
+                                <input class="input" readonly value="@_apiKeyCreated" id="fld-9" />
+                                <div class="field-note">@L["settings.api_key_copy_now"]</div>
+                            }
+                            else if (_apiKeyInfo is not null)
+                            {
+                                <div class="field-note">@L.T("settings.api_key_active_since", ("date", FormatDate(_apiKeyInfo.CreatedAt)))</div>
                             }
                             else
                             {
-                                <span>@L["settings.cfg_source_user"]</span>
+                                <div class="field-note">@L["settings.api_key_none"]</div>
+                            }
+                            <div class="field-actions">
+                                <button class="button-sm" @onclick="CreateApiKeyAsync">@L["settings.generate_key"]</button>
+                                @if (_apiKeyInfo is not null || _apiKeyCreated is not null)
+                                {
+                                    <button class="button-sm danger-btn" @onclick="RevokeApiKeyAsync">@L["settings.revoke"]</button>
+                                }
+                            </div>
+                        </div>
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_webhook"]" Description="@L["settings.webhook_hint"]">
+                        <div class="field">
+                            <label for="fld-10">@L["settings.webhook_url"]</label>
+                            <input class="input" @bind="_webhookUrl" placeholder="https://…" id="fld-10" />
+                        </div>
+                        <div class="field">
+                            <div class="field-label">@L["settings.webhook_events"]</div>
+                            @foreach (var ev in WebhookEvents)
+                            {
+                                <label class="check"><input type="checkbox" checked="@_webhookEvents.Contains(ev)" @onchange="e => ToggleWebhookEvent(ev, e)" /> @ev</label>
                             }
                         </div>
-                    }
-                    <div class="field">
-                        <label for="gh-token">@L["settings.github_token"]</label>
-                        <input id="gh-token" class="input" type="password" autocomplete="off" spellcheck="false"
-                               placeholder="@L["settings.github_token_ph"]" @bind="_ghToken" />
-                        <div class="field-note">@L["settings.github_token_hint"]</div>
-                    </div>
-                    @if (_ghConfigured)
+                        <label class="check"><input type="checkbox" @bind="_webhookEnabled" /> @L["settings.webhook_enabled"]</label>
+                        <div class="field-actions">
+                            <button class="button-sm" @onclick="TestWebhookAsync" disabled="@string.IsNullOrWhiteSpace(_webhookUrl)">@L["settings.webhook_test"]</button>
+                            <button class="button-sm danger-btn" @onclick="DeleteWebhookAsync" disabled="@(_webhook is null)">@L["settings.webhook_remove"]</button>
+                        </div>
+                    </SettingsSection>
+
+                    <SettingsSaveBar Busy="@_accountSaving" Dirty="@AccountDirty"
+                                     Message="@AccountMessage"
+                                     OnSave="SaveAccountAsync" OnDiscard="DiscardAccountAsync" />
+                }
+                else if (_tab == "memories")
+                {
+                    <SettingsSection Title="@L["settings.sec_memories"]">
+                        <div class="field">
+                            <div class="field-label">@L["settings.memories_label"]</div>
+                            @if (_memories.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.memories_empty"]</div>
+                            }
+                            @foreach (var memory in _memories)
+                            {
+                                <div class="memory-row">
+                                    <span class="memory-text">@memory.Content</span>
+                                    <button class="icon-mini" @onclick="() => DeleteMemoryAsync(memory)">×</button>
+                                </div>
+                            }
+                        </div>
+                        <div class="field">
+                            <label for="fld-11">@L["settings.add_memory"]</label>
+                            <div class="flex gap-2">
+                                <input class="input flex-1" @bind="_newMemory" placeholder="@L["settings.add_memory_placeholder"]" id="fld-11" />
+                                <button class="primary-btn flex-none" disabled="@string.IsNullOrWhiteSpace(_newMemory)"
+                                        @onclick="AddMemoryAsync">@L["settings.add"]</button>
+                            </div>
+                        </div>
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_memsync"]">
+                        <div class="field">
+                            <label class="check">
+                                <input type="checkbox" checked="@(_memSync?.Enabled == true)"
+                                       disabled="@(_memSync?.AdminDisabled == true)"
+                                       @onchange="OnMemSyncEnabledChanged" id="fld-memsync" />
+                                @L["settings.memory_sync_enabled"]
+                            </label>
+                            @if (_memSync?.AdminDisabled == true)
+                            {
+                                <div class="field-note">@L["settings.memory_sync_admin_locked"]</div>
+                            }
+                            @if (_memSync is not null)
+                            {
+                                <div class="flex gap-2 mb-2">
+                                    <div class="field flex-1">
+                                        <label for="fld-memsync-int">@L["settings.memory_sync_interval"]</label>
+                                        <input class="input" type="number" min="1" max="168"
+                                               @bind="_memSyncInterval" id="fld-memsync-int" />
+                                    </div>
+                                    <div class="field flex-1">
+                                        <label for="fld-memsync-age">@L["settings.memory_sync_max_age"]</label>
+                                        <input class="input" type="number" min="1" max="365"
+                                               @bind="_memSyncMaxAge" id="fld-memsync-age" />
+                                    </div>
+                                </div>
+                                <div class="field-note">@L["settings.memory_sync_hint"]</div>
+                            }
+                        </div>
+                    </SettingsSection>
+
+                    @if (_memSync is not null)
                     {
-                        <div class="field-note">@L.T("settings.github_connected", ("login", _ghLogin ?? ""))</div>
-                        @if (_ghSource == "global")
-                        {
-                            <div class="field-note">@L["settings.github_inherited_note"]</div>
-                        }
+                        <SettingsSaveBar Busy="@_memSyncSaving" Dirty="@MemSyncDirty"
+                                         Message="@_memSyncMessage"
+                                         OnSave="SaveMemSyncAsync" OnDiscard="DiscardMemSync" />
                     }
-                    <div class="field-actions">
-                        <button type="button" class="auth-submit"
-                                disabled="@(_ghSaving || string.IsNullOrWhiteSpace(_ghToken))"
-                                @onclick="SaveGitHubTokenAsync">@L["common.save"]</button>
+                }
+                else if (_tab == "notifications")
+                {
+                    <SettingsSection Title="@L["settings.sec_notifications"]">
+                        <label class="check">
+                            <input type="checkbox" checked="@_notifyChatDone" @onchange="OnNotifyChatDoneChanged" />
+                            @L["settings.notify_chat_done"]
+                        </label>
+                        <label class="check">
+                            <input type="checkbox" checked="@_notifyBrowser" @onchange="OnNotifyBrowserChanged" />
+                            @L["settings.notify_browser"]
+                        </label>
+                        <label class="check">
+                            <input type="checkbox" checked="@_notifyPush" @onchange="OnNotifyPushChanged" />
+                            @L["settings.notify_push"]
+                        </label>
+                        @if (_notifyPermission is "denied" or "unsupported")
+                        {
+                            <p class="field-note text-red-600 dark:text-red-400">
+                                @L[_notifyPermission == "denied"
+                                    ? "settings.notify_permission_denied"
+                                    : "settings.notify_permission_unsupported"]
+                            </p>
+                        }
+                        <p class="field-note">@L["settings.notify_hint"]</p>
+                    </SettingsSection>
+                }
+                else if (_tab == "integrations")
+                {
+                    <SettingsSection Title="GitHub" Description="@L["settings.github_token_hint"]">
+                        @if (_ghConfigured && _ghSource is not null)
+                        {
+                            <div class="field-note">
+                                @if (_ghSource == "global")
+                                {
+                                    <span>@L["settings.cfg_source_global"]</span>
+                                }
+                                else
+                                {
+                                    <span>@L["settings.cfg_source_user"]</span>
+                                }
+                            </div>
+                        }
+                        <div class="field">
+                            <label for="gh-token">@L["settings.github_token"]</label>
+                            <input id="gh-token" class="input" type="password" autocomplete="off" spellcheck="false"
+                                   placeholder="@L["settings.github_token_ph"]" @bind="_ghToken" />
+                        </div>
                         @if (_ghConfigured)
                         {
-                            <button type="button" class="msg-action danger"
-                                    @onclick="RemoveGitHubTokenAsync">@L["settings.github_remove"]</button>
+                            <div class="field-note">@L.T("settings.github_connected", ("login", _ghLogin ?? ""))</div>
+                            @if (_ghSource == "global")
+                            {
+                                <div class="field-note">@L["settings.github_inherited_note"]</div>
+                            }
+                            <div class="field-actions">
+                                <button type="button" class="button-sm danger-btn"
+                                        @onclick="RemoveGitHubTokenAsync">@L["settings.github_remove"]</button>
+                            </div>
                         }
-                    </div>
-                    @if (_ghMessage is not null)
-                    {
-                        <div class="field-note">@_ghMessage</div>
-                    }
-                    <hr class="modal-sep" />
-                    <div class="field-note">@L["settings.github_repos_hint"]</div>
+                        <div class="field-note">@L["settings.github_repos_hint"]</div>
+                    </SettingsSection>
+
+                    <SettingsSection Title="MCP" Description="@L["settings.mcp_hint"]">
+                        @if (_userMcp is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var entry in _userMcp)
+                            {
+                                var isMine = entry.Source == "user";
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate">@entry.Server.Name</div>
+                                        <div class="text-xs text-gray-400">
+                                            @(isMine ? L["settings.cfg_source_user"] : L["settings.cfg_source_global"])
+                                            @if (entry.Server.LastError is { Length: > 0 } err)
+                                            {
+                                                <span> · @err</span>
+                                            }
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-2 flex-none items-center">
+                                        @if (isMine)
+                                        {
+                                            <button type="button" class="msg-action danger" disabled="@_mcpSaving"
+                                                    aria-label="@($"{entry.Server.Name} remove")"
+                                                    @onclick="() => DeleteUserMcpAsync(entry.Server.Id)">✕</button>
+                                        }
+                                        <button type="button" role="switch" aria-checked="@(entry.EnabledForMe ? "true" : "false")"
+                                                aria-label="@entry.Server.Name" disabled="@_mcpSaving"
+                                                class="flex h-11 w-14 flex-none items-center justify-center cursor-pointer disabled:opacity-50"
+                                                @onclick="() => ToggleUserMcpAsync(entry)">
+                                            <span class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors @(entry.EnabledForMe ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-700")">
+                                                <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform @(entry.EnabledForMe ? "translate-x-6" : "translate-x-1")"></span>
+                                            </span>
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                            @if (_userMcp.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.mcp_none"]</div>
+                            }
+                            @if (_mcpMessage is not null)
+                            {
+                                <div class="field-note">@_mcpMessage</div>
+                            }
+                            <div class="field mt-2">
+                                <div class="field-label">@L["settings.mcp_add"]</div>
+                                <div class="flex gap-2 flex-wrap">
+                                    <input class="input flex-1 min-w-32" @bind="_mcpName" aria-label="@L["settings.mcp_name_ph"]"
+                                           placeholder="@L["settings.mcp_name_ph"]" />
+                                    <input class="input flex-1 min-w-32" @bind="_mcpUrl" aria-label="@L["settings.mcp_url_ph"]"
+                                           placeholder="@L["settings.mcp_url_ph"]" />
+                                    <button class="primary-btn flex-none" disabled="@(_mcpSaving || string.IsNullOrWhiteSpace(_mcpName) || string.IsNullOrWhiteSpace(_mcpUrl))"
+                                            @onclick="AddUserMcpAsync">@L["common.add"]</button>
+                                </div>
+                            </div>
+                        }
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_hooks"]" Description="@L["settings.hooks_hint"]">
+                        @if (_hooks is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var hook in _hooks)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate">@hook.Name</div>
+                                        <div class="text-xs text-gray-400 truncate">@hook.Url</div>
+                                    </div>
+                                    <button type="button" class="msg-action danger" disabled="@_hooksBusy"
+                                            aria-label="@($"{hook.Name} remove")"
+                                            @onclick="() => DeleteHookAsync(hook.Id)">✕</button>
+                                </div>
+                            }
+                            @if (_hooks.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.hooks_none"]</div>
+                            }
+                            @if (_hooksMessage is not null)
+                            {
+                                <div class="field-note">@_hooksMessage</div>
+                            }
+                            <div class="field mt-2">
+                                <div class="field-label">@L["settings.hooks_add"]</div>
+                                <div class="flex gap-2">
+                                    <input class="input flex-1" @bind="_hookName" aria-label="@L["settings.hooks_name_ph"]"
+                                           placeholder="@L["settings.hooks_name_ph"]" />
+                                    <button class="primary-btn flex-none" disabled="@(_hooksBusy || string.IsNullOrWhiteSpace(_hookName))"
+                                            @onclick="CreateHookAsync">@L["common.add"]</button>
+                                </div>
+                            </div>
+                            <div class="field-note">
+                                <a href="/automations" class="underline">@L["settings.hooks_manage_automations"]</a>
+                            </div>
+                        }
+                    </SettingsSection>
+
+                    <SettingsSaveBar Busy="@_ghSaving" Dirty="@(!string.IsNullOrWhiteSpace(_ghToken))"
+                                     SaveDisabled="@string.IsNullOrWhiteSpace(_ghToken)"
+                                     Message="@(_ghMessage ?? _intMessage)"
+                                     OnSave="SaveIntegrationsAsync" OnDiscard="DiscardIntegrations" />
                 }
                 else if (_tab == "connections")
                 {
@@ -290,8 +402,7 @@
                     }
                     else
                     {
-                        <div class="field">
-                            <div class="field-label">@L["settings.ollama_connections"]</div>
+                        <SettingsSection Title="@L["settings.sec_ollama"]">
                             @foreach (var row in _ollamaRows)
                             {
                                 <div class="flex gap-2 mb-1 items-center">
@@ -301,50 +412,44 @@
                                 </div>
                             }
                             <button class="button-sm" @onclick="() => _ollamaRows.Add(new ConnectionRow())">@L["settings.add_connection"]</button>
-                        </div>
-                        <div class="field">
-                            <div class="field-label">@L["settings.openai_connections"]</div>
+                        </SettingsSection>
+                        <SettingsSection Title="@L["settings.sec_openai"]">
                             @foreach (var row in _openAiRows)
                             {
-                                <div class="flex gap-2 mb-1 items-center">
-                                    <input class="input w-40" @bind="row.Name" placeholder="@L["common.name"]" aria-label="@L["common.name"]" />
-                                    <input class="input flex-1" @bind="row.Url" placeholder="https://api.openai.com/v1" aria-label="URL" />
-                                    <input class="input w-48" type="password" @bind="row.Key" aria-label="API key"
+                                <div class="flex gap-2 mb-1 items-center flex-wrap">
+                                    <input class="input flex-1 min-w-32" @bind="row.Name" placeholder="@L["common.name"]" aria-label="@L["common.name"]" />
+                                    <input class="input flex-1 min-w-40" @bind="row.Url" placeholder="https://api.openai.com/v1" aria-label="URL" />
+                                    <input class="input flex-1 min-w-32" type="password" @bind="row.Key" aria-label="API key"
                                            placeholder="@(row.KeyConfigured ? L["settings.keys_keep"] : "API key")" />
                                     <button class="msg-action danger flex-none" aria-label="@L["common.delete"]" @onclick="() => _openAiRows.Remove(row)">✕</button>
                                 </div>
                             }
                             <button class="button-sm" @onclick="() => _openAiRows.Add(new ConnectionRow())">@L["settings.add_connection"]</button>
-                        </div>
-                        <div class="field">
-                            <div class="field-label">@L["settings.api_providers"]</div>
+                        </SettingsSection>
+                        <SettingsSection Title="@L["settings.sec_providers"]">
                             @foreach (var row in _providerRows)
                             {
-                                <div class="flex gap-2 mb-1 items-center flex-wrap sm:flex-nowrap">
-                                    <select class="input w-40 flex-none" @bind="row.Type" @bind:after="() => OnProviderTypeChanged(row)"
+                                <div class="flex gap-2 mb-1 items-center flex-wrap">
+                                    <select class="input flex-1 min-w-32" @bind="row.Type" @bind:after="() => OnProviderTypeChanged(row)"
                                             aria-label="@L["settings.provider_type"]">
                                         <option value="anthropic">@L["settings.provider_anthropic"]</option>
                                         <option value="google">@L["settings.provider_google"]</option>
                                     </select>
                                     <input class="input flex-1 min-w-40" @bind="row.Url" placeholder="@ProviderTypes.DefaultBaseUrl(row.Type)" aria-label="URL" />
-                                    <input class="input w-48" type="password" @bind="row.Key" aria-label="API key"
+                                    <input class="input flex-1 min-w-32" type="password" @bind="row.Key" aria-label="API key"
                                            placeholder="@(row.KeyConfigured ? L["settings.keys_keep"] : L["settings.api_key_required"])" />
                                     <button class="msg-action danger flex-none" aria-label="@L["common.delete"]" @onclick="() => _providerRows.Remove(row)">✕</button>
                                 </div>
                             }
                             <button class="button-sm" @onclick="AddProviderRow">@L["settings.add_provider"]</button>
-                        </div>
-                        @if (_saveMessage is not null)
-                        {
-                            <div class="field-note">@_saveMessage</div>
-                        }
-                        <button class="auth-submit" @onclick="SaveConnectionsAsync">@L["common.save"]</button>
+                        </SettingsSection>
+                        <SettingsSaveBar Busy="@_connSaving" Dirty="@ConnectionsDirty"
+                                         Message="@_saveMessage"
+                                         OnSave="SaveConnectionsAsync" OnDiscard="DiscardConnections" />
 
                         @if (Auth.CurrentUser?.Role == "admin")
                         {
-                            <hr />
-                            <div class="field">
-                                <div class="field-label">@L["settings.ollama_models"]</div>
+                            <SettingsSection Title="@L["settings.sec_ollama_models"]">
                                 @if (_ollamaModels is null)
                                 {
                                     <div class="field-note">@L["common.loading"]</div>
@@ -357,24 +462,24 @@
                                 {
                                     @foreach (var model in _ollamaModels)
                                     {
-                                        <div class="field" style="display:flex;align-items:center;justify-content:space-between">
-                                            <span>@model.Name</span>
-                                            <button class="button-sm" @onclick="() => DeleteOllamaModelAsync(model)">@L["common.delete"]</button>
+                                        <div class="flex items-center justify-between gap-2 min-h-11">
+                                            <span class="text-sm truncate">@model.Name</span>
+                                            <button class="button-sm flex-none" @onclick="() => DeleteOllamaModelAsync(model)">@L["common.delete"]</button>
                                         </div>
                                     }
                                 }
-                            </div>
-                            <div class="field">
-                                <input aria-label="@L["settings.pull_model_placeholder"]" class="input" @bind="_ollamaPullName"
-                                       placeholder="@L["settings.pull_model_placeholder"]" />
-                            </div>
-                            @if (_ollamaPullMessage is not null)
-                            {
-                                <div class="field-note">@_ollamaPullMessage</div>
-                            }
-                            <button class="auth-submit" disabled="@(_ollamaPulling || string.IsNullOrWhiteSpace(_ollamaPullName))"
-                                    @onclick="PullOllamaModelAsync">
-                                @(_ollamaPulling ? L["settings.pulling"] : L["settings.pull_model"])</button>
+                                <div class="flex gap-2 mt-2">
+                                    <input aria-label="@L["settings.pull_model_placeholder"]" class="input flex-1" @bind="_ollamaPullName"
+                                           placeholder="@L["settings.pull_model_placeholder"]" />
+                                    <button class="primary-btn flex-none" disabled="@(_ollamaPulling || string.IsNullOrWhiteSpace(_ollamaPullName))"
+                                            @onclick="PullOllamaModelAsync">
+                                        @(_ollamaPulling ? L["settings.pulling"] : L["settings.pull_model"])</button>
+                                </div>
+                                @if (_ollamaPullMessage is not null)
+                                {
+                                    <div class="field-note">@_ollamaPullMessage</div>
+                                }
+                            </SettingsSection>
                         }
                     }
                 }
@@ -390,9 +495,7 @@
                     }
                     else
                     {
-                        <div class="field">
-                            <div class="field-label">@L["settings.model_roles_section"]</div>
-                            <div class="field-note mb-2">@L["settings.model_roles_hint"]</div>
+                        <SettingsSection Title="@L["settings.model_roles_section"]" Description="@L["settings.model_roles_hint"]">
                             @foreach (var role in RoleKeys)
                             {
                                 <div class="flex items-center justify-between gap-2 min-h-11">
@@ -416,11 +519,11 @@
                                     </select>
                                 </div>
                             }
-                            @if (_byok is not null && _byok.Enabled)
-                            {
-                                <div class="field mt-2">
-                                    <div class="field-label">@L["settings.byok_section"]</div>
-                                    <div class="field-note mb-2">@L["settings.byok_hint"]</div>
+                        </SettingsSection>
+                        @if (_byok is not null && _byok.Enabled)
+                        {
+                            <SettingsSection Title="@L["settings.byok_section"]" Description="@L["settings.byok_hint"]">
+                                <div>
                                     @foreach (var provider in ByokProviders)
                                     {
                                         var has = _byok.Providers.Contains(provider);
@@ -451,8 +554,9 @@
                                         </div>
                                     }
                                 </div>
-                            }
-                        </div>
+                            </SettingsSection>
+                        }
+                        <SettingsSection Title="@L["settings.sec_catalog"]">
                         <div class="flex gap-2 mb-3">
                             <input class="input flex-1" @bind="_modelSearch" @bind:event="oninput"
                                    placeholder="@L["settings.models_search"]" aria-label="@L["settings.models_search"]" />
@@ -506,103 +610,310 @@
                         {
                             <div class="field-note">@L["models.none"]</div>
                         }
+                        </SettingsSection>
                     }
+                }
+                else if (_tab == "combos")
+                {
+                    <SettingsSection Title="@L["settings.sec_combos"]" Description="@L["settings.combos_hint"]">
+                        @if (_combos is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var combo in _combos)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate">@combo.Name
+                                            <span class="role-badge">@combo.Strategy</span>
+                                            @if (combo.UserId is null)
+                                            {
+                                                <span class="role-badge">@L["settings.cfg_source_global"]</span>
+                                            }
+                                        </div>
+                                        <div class="text-xs text-gray-400 truncate">@string.Join(" → ", combo.Items)</div>
+                                        @if (_comboStatus.TryGetValue(combo.Id, out var st) && st is not null)
+                                        {
+                                            <div class="text-xs text-gray-400">
+                                                @L.T("settings.combo_effective", ("model", st.EffectiveModel ?? "—"))
+                                                @if (st.Cooldowns.Count > 0)
+                                                {
+                                                    <span> · @L.T("settings.combo_cooldowns", ("count", st.Cooldowns.Count.ToString()))</span>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                    <div class="flex gap-1 flex-none items-center">
+                                        <button class="button-sm" disabled="@_comboSaving"
+                                                aria-label="@($"{combo.Name} status")"
+                                                @onclick="() => LoadComboStatusAsync(combo.Id)">↻</button>
+                                        @if (combo.UserId is not null)
+                                        {
+                                            <button class="button-sm" disabled="@_comboSaving"
+                                                    @onclick="() => EditCombo(combo)">@L["common.edit"]</button>
+                                            <button class="msg-action danger" disabled="@_comboSaving"
+                                                    aria-label="@($"{combo.Name} remove")"
+                                                    @onclick="() => DeleteComboAsync(combo.Id)">✕</button>
+                                        }
+                                        <button type="button" role="switch" aria-checked="@(combo.Enabled ? "true" : "false")"
+                                                aria-label="@combo.Name" disabled="@_comboSaving"
+                                                class="flex h-11 w-14 flex-none items-center justify-center cursor-pointer disabled:opacity-50"
+                                                @onclick="() => ToggleComboAsync(combo)">
+                                            <span class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors @(combo.Enabled ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-700")">
+                                                <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform @(combo.Enabled ? "translate-x-6" : "translate-x-1")"></span>
+                                            </span>
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                            @if (_combos.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.combos_none"]</div>
+                            }
+                        }
+                    </SettingsSection>
+
+                    <SettingsSection Title="@(_comboEditing is null ? L["settings.sec_combo_new"] : L.T("settings.combo_editing", ("name", _comboEditing.Name)))">
+                        <div class="field">
+                            <label for="combo-name">@L["common.name"]</label>
+                            <input class="input" id="combo-name" @bind="_comboName" placeholder="@L["settings.combo_name_ph"]" />
+                        </div>
+                        <div class="field">
+                            <label for="combo-strategy">@L["settings.combo_strategy"]</label>
+                            <select class="input" id="combo-strategy" @bind="_comboStrategy">
+                                <option value="priority">@L["settings.combo_strategy_priority"]</option>
+                                <option value="round-robin">@L["settings.combo_strategy_rr"]</option>
+                                <option value="priority-round-robin">@L["settings.combo_strategy_prr"]</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <div class="field-label">@L["settings.combo_models"]</div>
+                            @foreach (var item in _comboItems)
+                            {
+                                var idx = _comboItems.IndexOf(item);
+                                <div class="memory-row">
+                                    <span class="memory-text">@(idx + 1). @item</span>
+                                    <button class="icon-mini" aria-label="@($"{item} remove")"
+                                            @onclick="() => _comboItems.Remove(item)">×</button>
+                                </div>
+                            }
+                            <div class="flex gap-2 mt-1">
+                                <select class="input flex-1" @bind="_comboModelPick" aria-label="@L["settings.combo_models"]">
+                                    <option value="">@L["settings.combo_pick_model"]</option>
+                                    @foreach (var m in (_modelCatalog ?? []).OrderBy(m => m.Provider).ThenBy(m => m.Name))
+                                    {
+                                        <option value="@m.Id">@m.Provider: @m.Name</option>
+                                    }
+                                </select>
+                                <button class="button-sm flex-none" disabled="@string.IsNullOrWhiteSpace(_comboModelPick)"
+                                        @onclick="AddComboItem">@L["common.add"]</button>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            <div class="field flex-1">
+                                <label for="combo-rpm">@L["settings.combo_rpm"]</label>
+                                <input class="input" id="combo-rpm" type="number" min="0" @bind="_comboRpm" />
+                            </div>
+                            <div class="field flex-1">
+                                <label for="combo-tpm">@L["settings.combo_tpm"]</label>
+                                <input class="input" id="combo-tpm" type="number" min="0" @bind="_comboTpm" />
+                            </div>
+                        </div>
+                        @if (_comboEditing is not null)
+                        {
+                            <div class="field-actions">
+                                <button class="button-sm" @onclick="ResetComboForm">@L["common.cancel"]</button>
+                            </div>
+                        }
+                    </SettingsSection>
+
+                    <SettingsSaveBar Busy="@_comboSaving"
+                                     SaveDisabled="@(string.IsNullOrWhiteSpace(_comboName) || _comboItems.Count == 0)"
+                                     Message="@_combosMessage"
+                                     OnSave="SaveComboAsync" OnDiscard="ResetComboForm"
+                                     Dirty="@(_comboEditing is not null)" />
                 }
                 else if (_tab == "tools")
                 {
-                    <div class="field-label">@L["settings.tool_approvals_title"]</div>
-                    <div class="field-note">@L["settings.tool_approvals_hint"]</div>
-                    @if (_toolApprovals is null)
-                    {
-                        <div>@L["common.loading"]</div>
-                    }
-                    else
-                    {
-                        @if (_toolsMessage is not null)
+                    <SettingsSection Title="@L["settings.tool_approvals_title"]" Description="@L["settings.tool_approvals_hint"]">
+                        @if (_toolApprovals is null)
                         {
-                            <div class="field-note">@_toolsMessage</div>
+                            <div>@L["common.loading"]</div>
                         }
-                        @foreach (var tool in _toolApprovals)
+                        else
                         {
-                            <div class="flex items-center justify-between gap-2 min-h-11">
-                                <div class="min-w-0">
-                                    <div class="text-sm truncate font-mono">@tool.Name</div>
-                                    <div class="text-xs text-gray-400">@L[$"settings.tier_{tool.Tier}"]</div>
+                            @if (_toolsMessage is not null)
+                            {
+                                <div class="field-note">@_toolsMessage</div>
+                            }
+                            @foreach (var tool in _toolApprovals)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate font-mono">@tool.Name</div>
+                                        <div class="text-xs text-gray-400">@L[$"settings.tier_{tool.Tier}"]</div>
+                                    </div>
+                                    <select class="input flex-none" style="max-width: 9rem"
+                                            aria-label="@tool.Name" disabled="@_toolsSaving"
+                                            value="@(tool.Override ?? "")"
+                                            @onchange="e => SetToolOverrideAsync(tool.Name, e.Value?.ToString())">
+                                        <option value="">@L["settings.tool_override_default"]</option>
+                                        <option value="allow">@L["settings.tool_override_allow"]</option>
+                                        <option value="prompt">@L["settings.tool_override_prompt"]</option>
+                                        <option value="deny">@L["settings.tool_override_deny"]</option>
+                                    </select>
                                 </div>
-                                <select class="input flex-none" style="max-width: 9rem"
-                                        aria-label="@tool.Name" disabled="@_toolsSaving"
-                                        value="@(tool.Override ?? "")"
-                                        @onchange="e => SetToolOverrideAsync(tool.Name, e.Value?.ToString())">
-                                    <option value="">@L["settings.tool_override_default"]</option>
-                                    <option value="allow">@L["settings.tool_override_allow"]</option>
-                                    <option value="prompt">@L["settings.tool_override_prompt"]</option>
-                                    <option value="deny">@L["settings.tool_override_deny"]</option>
-                                </select>
-                            </div>
+                            }
                         }
-                    }
-
-                    <hr class="modal-sep" />
-                    <div class="field-label">@L["settings.mcp_section"]</div>
-                    <div class="field-note">@L["settings.mcp_hint"]</div>
-                    @if (_userMcp is null)
-                    {
-                        <div>@L["common.loading"]</div>
-                    }
-                    else
-                    {
-                        @if (_mcpMessage is not null)
+                    </SettingsSection>
+                }
+                else if (_tab == "agents")
+                {
+                    <SettingsSection Title="@L["settings.sec_agent_catalog"]" Description="@L["settings.agents_hint"]">
+                        @if (_agentCatalog is null)
                         {
-                            <div class="field-note">@_mcpMessage</div>
+                            <div>@L["common.loading"]</div>
                         }
-                        @foreach (var entry in _userMcp)
+                        else
                         {
-                            var isMine = entry.Source == "user";
-                            <div class="flex items-center justify-between gap-2 min-h-11">
-                                <div class="min-w-0">
-                                    <div class="text-sm truncate">@entry.Server.Name</div>
-                                    <div class="text-xs text-gray-400">
-                                        @(isMine ? L["settings.cfg_source_user"] : L["settings.cfg_source_global"])
-                                        @if (entry.Server.LastError is { Length: > 0 } err)
+                            @foreach (var agent in _agentCatalog.Agents)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate">@agent.Name
+                                            <span class="role-badge">@agent.Source</span>
+                                        </div>
+                                        <div class="text-xs text-gray-400 truncate">@agent.Description</div>
+                                        @if (agent.Model is not null)
                                         {
-                                            <span> · @err</span>
+                                            <div class="text-xs text-gray-400">@L.T("settings.agent_model", ("model", agent.Model))</div>
                                         }
                                     </div>
                                 </div>
-                                <div class="flex gap-2 flex-none items-center">
-                                    @if (isMine)
-                                    {
-                                        <button type="button" class="msg-action danger" disabled="@_mcpSaving"
-                                                aria-label="@($"{entry.Server.Name} remove")"
-                                                @onclick="() => DeleteUserMcpAsync(entry.Server.Id)">✕</button>
-                                    }
-                                    <button type="button" role="switch" aria-checked="@(entry.EnabledForMe ? "true" : "false")"
-                                            aria-label="@entry.Server.Name" disabled="@_mcpSaving"
+                            }
+                            @if (_agentCatalog.Agents.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.agents_empty"]</div>
+                            }
+                            @if (_agentCatalog.WorkspaceAgentsPresent)
+                            {
+                                <label class="toggle mt-2">
+                                    <input type="checkbox" checked="@_agentCatalog.WorkspaceOptIn"
+                                           disabled="@_agentsBusy"
+                                           @onchange="e => SetAgentWorkspaceAsync(e.Value is true)" />
+                                    @L["settings.agent_workspace_optin"]
+                                </label>
+                                <div class="field-note">@L["settings.agent_workspace_hint"]</div>
+                            }
+                            @if (_agentsMessage is not null)
+                            {
+                                <div class="field-note">@_agentsMessage</div>
+                            }
+                        }
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_agent_external"]" Description="@L["settings.ext_agents_hint"]">
+                        @if (_externalAgents is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var ext in _externalAgents)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate">@ext.Name
+                                            @if (ext.Installed && ext.Version is not null)
+                                            {
+                                                <span class="role-badge">@ext.Version</span>
+                                            }
+                                        </div>
+                                        <div class="text-xs text-gray-400">
+                                            @(ext.Installed
+                                                ? (ext.SkillInstalled ? L["settings.ext_skill_ok"] : L["settings.ext_skill_missing"])
+                                                : L["settings.ext_not_installed"])
+                                        </div>
+                                    </div>
+                                    <button type="button" role="switch" aria-checked="@(ext.Selected ? "true" : "false")"
+                                            aria-label="@ext.Name" disabled="@(_agentsBusy || !ext.Installed)"
                                             class="flex h-11 w-14 flex-none items-center justify-center cursor-pointer disabled:opacity-50"
-                                            @onclick="() => ToggleUserMcpAsync(entry)">
-                                        <span class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors @(entry.EnabledForMe ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-700")">
-                                            <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform @(entry.EnabledForMe ? "translate-x-6" : "translate-x-1")"></span>
+                                            @onclick="() => SetExternalSelectedAsync(ext.Id, !ext.Selected)">
+                                        <span class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors @(ext.Selected ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-700")">
+                                            <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform @(ext.Selected ? "translate-x-6" : "translate-x-1")"></span>
                                         </span>
                                     </button>
                                 </div>
-                            </div>
+                            }
                         }
-                        @if (_userMcp.Count == 0)
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_personas"]" Description="@L["settings.personas_hint"]">
+                        @if (_personas is null)
                         {
-                            <div class="field-note">@L["settings.mcp_none"]</div>
+                            <div>@L["common.loading"]</div>
                         }
-                        <div class="field mt-2">
-                            <div class="field-label">@L["settings.mcp_add"]</div>
-                            <div class="flex gap-2">
-                                <input class="input flex-1" @bind="_mcpName" aria-label="@L["settings.mcp_name_ph"]"
-                                       placeholder="@L["settings.mcp_name_ph"]" />
-                                <input class="input flex-1" @bind="_mcpUrl" aria-label="@L["settings.mcp_url_ph"]"
-                                       placeholder="@L["settings.mcp_url_ph"]" />
-                                <button class="button-sm flex-none" disabled="@(_mcpSaving || string.IsNullOrWhiteSpace(_mcpName) || string.IsNullOrWhiteSpace(_mcpUrl))"
-                                        @onclick="AddUserMcpAsync">@L["common.add"]</button>
-                            </div>
+                        else
+                        {
+                            @foreach (var persona in _personas)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate">@persona.Name
+                                            <span class="role-badge">@persona.ModelId</span>
+                                            @if (!persona.Enabled)
+                                            {
+                                                <span class="role-badge">@L["common.inactive"]</span>
+                                            }
+                                        </div>
+                                        <div class="text-xs text-gray-400 truncate">@persona.SystemPrompt</div>
+                                    </div>
+                                    <div class="flex items-center gap-1 flex-none">
+                                        <button class="msg-action" aria-label="@L["common.edit"]"
+                                                @onclick="() => EditPersona(persona)">✎</button>
+                                        <button class="msg-action danger" aria-label="@L["common.delete"]"
+                                                @onclick="() => DeletePersonaAsync(persona)">🗑</button>
+                                    </div>
+                                </div>
+                            }
+                            @if (_personas.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.personas_none"]</div>
+                            }
+                        }
+                        <div class="flex flex-col gap-2 w-full text-sm mt-2">
+                            <input aria-label="@L["settings.persona_name"]" class="input" @bind="_personaName"
+                                   placeholder="@(_personaEditing is null ? L["settings.persona_name"] : L.T("settings.persona_editing", ("name", _personaEditing)))" />
+                            @if (_modelCatalog is not null)
+                            {
+                                <select aria-label="@L["settings.combo_pick_model"]" class="input" @bind="_personaModel">
+                                    @foreach (var m in _modelCatalog)
+                                    {
+                                        <option value="@m.Id">@m.Id</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <input aria-label="@L["settings.combo_pick_model"]" class="input" @bind="_personaModel" placeholder="model id" />
+                            }
+                            <textarea aria-label="@L["settings.persona_prompt"]" class="input" rows="3"
+                                      @bind="_personaPrompt" placeholder="@L["settings.persona_prompt"]"></textarea>
+                            <label class="check"><input type="checkbox" @bind="_personaEnabled" /> @L["common.active"]</label>
+                            <SettingsSaveBar Busy="@_personaSaving"
+                                             SaveDisabled="@(string.IsNullOrWhiteSpace(_personaName) || string.IsNullOrWhiteSpace(_personaPrompt) || string.IsNullOrWhiteSpace(_personaModel))"
+                                             Message="@_personaMessage" OnSave="SavePersonaAsync" OnDiscard="ResetPersonaForm" />
                         </div>
-                    }
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_agent_links"]">
+                        <div class="flex flex-col gap-1">
+                            <a class="msg-action" href="/automations">@L["settings.link_automations"]</a>
+                            <a class="msg-action" href="/workspace/skills">@L["settings.link_skills"]</a>
+                        </div>
+                    </SettingsSection>
                 }
                 else if (_tab == "admin")
                 {
@@ -612,28 +923,30 @@
                     }
                     else
                     {
-                        <div class="field">
-                            <label for="fld-14">@L["settings.instance_name"]</label>
-                            <input class="input" @bind="_adminWebUiName" id="fld-14" />
-                        </div>
-                        <div class="field">
-                            <label for="fld-15">@L["settings.default_role"]</label>
-                            <select class="input" @bind="_adminDefaultRole" id="fld-15">
-                                <option value="pending">@L["settings.role_pending"]</option>
-                                <option value="user">@L["settings.role_user"]</option>
-                                <option value="admin">@L["settings.role_admin"]</option>
-                            </select>
-                        </div>
-                        <label class="check"><input type="checkbox" @bind="_adminEnableSignup" /> @L["settings.allow_signup"]</label>
-                        <label class="check"><input type="checkbox" @bind="_adminEnableLoginForm" /> @L["settings.allow_password_login"]</label>
-                        <label class="check"><input type="checkbox" @bind="_adminEnableApiKeys" /> @L["settings.allow_api_keys"]</label>
-                        <label class="check"><input type="checkbox" @bind="_adminEnableRating" /> @L["settings.enable_rating"]</label>
-                        <label class="check"><input type="checkbox" @bind="_adminEnableFolders" /> @L["settings.enable_folders"]</label>
-                        <label class="check"><input type="checkbox" @bind="_adminEnableMemories" /> @L["settings.enable_memories"]</label>
+                        <SettingsSection Title="@L["settings.sec_instance"]">
+                            <div class="field">
+                                <label for="fld-14">@L["settings.instance_name"]</label>
+                                <input class="input" @bind="_adminWebUiName" id="fld-14" />
+                            </div>
+                            <div class="field">
+                                <label for="fld-15">@L["settings.default_role"]</label>
+                                <select class="input" @bind="_adminDefaultRole" id="fld-15">
+                                    <option value="pending">@L["settings.role_pending"]</option>
+                                    <option value="user">@L["settings.role_user"]</option>
+                                    <option value="admin">@L["settings.role_admin"]</option>
+                                </select>
+                            </div>
+                            <label class="check"><input type="checkbox" @bind="_adminEnableSignup" /> @L["settings.allow_signup"]</label>
+                            <label class="check"><input type="checkbox" @bind="_adminEnableLoginForm" /> @L["settings.allow_password_login"]</label>
+                            <label class="check"><input type="checkbox" @bind="_adminEnableApiKeys" /> @L["settings.allow_api_keys"]</label>
+                            <label class="check"><input type="checkbox" @bind="_adminEnableRating" /> @L["settings.enable_rating"]</label>
+                            <label class="check"><input type="checkbox" @bind="_adminEnableFolders" /> @L["settings.enable_folders"]</label>
+                            <label class="check"><input type="checkbox" @bind="_adminEnableMemories" /> @L["settings.enable_memories"]</label>
 
-                        <div class="field-note">@L["settings.media_moved_to_integrations"]</div>
+                            <div class="field-note">@L["settings.media_moved_to_integrations"]</div>
+                        </SettingsSection>
 
-                        <div class="field"><strong>@L["settings.audio_admin_section"]</strong></div>
+                        <SettingsSection Title="@L["settings.audio_admin_section"]">
                         <div class="field">
                             <label for="fld-16">@L["settings.audio_tts_engine"]</label>
                             <select class="input" @bind="_ttsEngine" id="fld-16">
@@ -741,73 +1054,139 @@
                                 }
                             </div>
                         }
-                        <hr class="modal-sep" />
-                        <div class="field"><strong>@L["settings.webhook_admin_section"]</strong></div>
-                        <div class="field">
-                            <label for="fld-26">@L["settings.webhook_url"]</label>
-                            <input class="input" @bind="_adminWebhookUrl" placeholder="https://…" id="fld-26" />
-                        </div>
-                        <div class="field">
-                            <div class="field-label">@L["settings.webhook_events"]</div>
-                            @foreach (var ev in WebhookEvents)
-                            {
-                                <label class="check"><input type="checkbox" checked="@_adminWebhookEvents.Contains(ev)" @onchange="e => ToggleAdminWebhookEvent(ev, e)" /> @ev</label>
-                            }
-                        </div>
-                        <label class="check"><input type="checkbox" @bind="_adminWebhookEnabled" /> @L["settings.webhook_enabled"]</label>
-                        <div class="field-actions">
-                            <button class="msg-action" @onclick="SaveAdminWebhookAsync">@L["common.save"]</button>
-                            <button class="msg-action" @onclick="TestAdminWebhookAsync" disabled="@string.IsNullOrWhiteSpace(_adminWebhookUrl)">@L["settings.webhook_test"]</button>
-                            <button class="msg-action" @onclick="DeleteAdminWebhookAsync" disabled="@(_adminWebhook is null)">@L["settings.webhook_remove"]</button>
-                        </div>
-                        @if (_adminWebhookMessage is not null)
-                        {
-                            <div class="field-note">@_adminWebhookMessage</div>
-                        }
+                        </SettingsSection>
 
-                        <hr class="modal-sep" />
-                        <div class="field"><strong>@L["settings.admin_defaults_section"]</strong></div>
-                        <div class="field">
-                            <label for="admin-gh-token">@L["settings.admin_github_token"]</label>
-                            <input id="admin-gh-token" class="input" type="password" autocomplete="off" spellcheck="false"
-                                   placeholder="@L["settings.github_token_ph"]" @bind="_adminGhToken" />
-                            <div class="field-note">
-                                @if (_adminGhConfigured)
+                        <SettingsSection Title="@L["settings.webhook_admin_section"]">
+                            <div class="field">
+                                <label for="fld-26">@L["settings.webhook_url"]</label>
+                                <input class="input" @bind="_adminWebhookUrl" placeholder="https://…" id="fld-26" />
+                            </div>
+                            <div class="field">
+                                <div class="field-label">@L["settings.webhook_events"]</div>
+                                @foreach (var ev in WebhookEvents)
                                 {
-                                    @L.T("settings.github_connected", ("login", _adminGhLogin ?? ""))
-                                }
-                                else
-                                {
-                                    @L["settings.admin_github_hint"]
+                                    <label class="check"><input type="checkbox" checked="@_adminWebhookEvents.Contains(ev)" @onchange="e => ToggleAdminWebhookEvent(ev, e)" /> @ev</label>
                                 }
                             </div>
+                            <label class="check"><input type="checkbox" @bind="_adminWebhookEnabled" /> @L["settings.webhook_enabled"]</label>
                             <div class="field-actions">
-                                <button type="button" class="button-sm" disabled="@(_adminGhSaving || string.IsNullOrWhiteSpace(_adminGhToken))"
-                                        @onclick="SaveAdminGitHubAsync">@L["common.save"]</button>
+                                <button class="button-sm" @onclick="TestAdminWebhookAsync" disabled="@string.IsNullOrWhiteSpace(_adminWebhookUrl)">@L["settings.webhook_test"]</button>
+                                <button class="button-sm danger-btn" @onclick="DeleteAdminWebhookAsync" disabled="@(_adminWebhook is null)">@L["settings.webhook_remove"]</button>
+                            </div>
+                        </SettingsSection>
+
+                        <SettingsSection Title="@L["settings.admin_defaults_section"]">
+                            <div class="field">
+                                <label for="admin-gh-token">@L["settings.admin_github_token"]</label>
+                                <input id="admin-gh-token" class="input" type="password" autocomplete="off" spellcheck="false"
+                                       placeholder="@L["settings.github_token_ph"]" @bind="_adminGhToken" />
+                                <div class="field-note">
+                                    @if (_adminGhConfigured)
+                                    {
+                                        @L.T("settings.github_connected", ("login", _adminGhLogin ?? ""))
+                                    }
+                                    else
+                                    {
+                                        @L["settings.admin_github_hint"]
+                                    }
+                                </div>
                                 @if (_adminGhConfigured)
                                 {
-                                    <button type="button" class="msg-action danger" disabled="@_adminGhSaving"
-                                            @onclick="ClearAdminGitHubAsync">@L["settings.github_remove"]</button>
+                                    <div class="field-actions">
+                                        <button type="button" class="button-sm danger-btn" disabled="@_adminGhSaving"
+                                                @onclick="ClearAdminGitHubAsync">@L["settings.github_remove"]</button>
+                                    </div>
                                 }
                             </div>
-                        </div>
-                        <label class="check">
-                            <input type="checkbox" checked="@_adminByokEnabled"
-                                   @onchange="e => SetAdminByokAsync(e.Value is true)" />
-                            @L["settings.admin_byok_toggle"]
-                        </label>
-                        <div class="field-note">@L["settings.admin_byok_hint"]</div>
-                        @if (_adminCfgMessage is not null)
-                        {
-                            <div class="field-note">@_adminCfgMessage</div>
-                        }
+                            <label class="toggle">
+                                <input type="checkbox" checked="@_adminByokEnabled"
+                                       @onchange="e => SetAdminByokAsync(e.Value is true)" />
+                                @L["settings.admin_byok_toggle"]
+                            </label>
+                            <div class="field-note">@L["settings.admin_byok_hint"]</div>
+                            @if (_adminCfgMessage is not null)
+                            {
+                                <div class="field-note">@_adminCfgMessage</div>
+                            }
+                        </SettingsSection>
 
-                        @if (_adminMessage is not null)
-                        {
-                            <div class="field-note">@_adminMessage</div>
-                        }
-                        <button class="auth-submit" @onclick="SaveAdminAsync">@L["common.save"]</button>
+                        <SettingsSaveBar Busy="@_adminSaving" Dirty="@AdminDirty"
+                                         Message="@AdminMessage"
+                                         OnSave="SaveAdminTabAsync" OnDiscard="DiscardAdmin" />
                     }
+                }
+                else if (_tab == "maintenance")
+                {
+                    <SettingsSection Title="@L["settings.sec_maint_status"]">
+                        @if (_maintStatus is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            <div class="field">
+                                <div class="field-label">@L["settings.maint_last_run"]</div>
+                                <div class="text-sm">
+                                    @if (_maintStatus.LastRun is null)
+                                    {
+                                        @L["settings.maint_never"]
+                                    }
+                                    else
+                                    {
+                                        @FormatDate(_maintStatus.LastRun.FinishedAt)
+                                        <span class="field-note">
+                                            · @L.T("settings.maint_result",
+                                                ("chats", _maintStatus.LastRun.ChatsPurged.ToString()),
+                                                ("mems", _maintStatus.LastRun.MemoriesSynthesized.ToString()),
+                                                ("ops", _maintStatus.LastRun.OpsPurged.ToString()))
+                                            @(_maintStatus.LastRun.Vacuumed ? " · vacuum" : "")
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">@L["settings.maint_next_run"]</div>
+                                <div class="text-sm">
+                                    @(_maintStatus.NextRunAt is null ? L["common.inactive"] : FormatDate(_maintStatus.NextRunAt.Value))
+                                </div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">@L["settings.maint_db_size"]</div>
+                                <div class="text-sm">@FormatBytes(_maintStatus.DbSizeBytes)</div>
+                            </div>
+                        }
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_maint_retention"]" Description="@L["settings.maint_retention_hint"]">
+                        <div class="field">
+                            <label for="maint-days">@L["settings.maint_chat_days"]</label>
+                            <input class="input w-40" id="maint-days" type="number" min="0" max="3650" @bind="_maintChatDays" />
+                        </div>
+                    </SettingsSection>
+
+                    <SettingsSection Title="@L["settings.sec_maint_run"]" Description="@L["settings.maint_run_hint"]">
+                        <div class="field-actions">
+                            <button class="button-sm" disabled="@_maintBusy"
+                                    @onclick="() => RunMaintenanceAsync(true)">@L["settings.maint_run_dry"]</button>
+                            <button class="primary-btn" disabled="@_maintBusy"
+                                    @onclick="() => RunMaintenanceAsync(false)">
+                                @(_maintBusy ? L["settings.maint_running"] : L["settings.maint_run_now"])</button>
+                        </div>
+                        @if (_maintResult is not null)
+                        {
+                            <div class="field-note mt-2">
+                                @L.T("settings.maint_result",
+                                    ("chats", _maintResult.ChatsPurged.ToString()),
+                                    ("mems", _maintResult.MemoriesSynthesized.ToString()),
+                                    ("ops", _maintResult.OpsPurged.ToString()))
+                                @(_maintResult.DryRun ? $" · {L["settings.maint_dryrun"]}" : "")
+                            </div>
+                        }
+                    </SettingsSection>
+
+                    <SettingsSaveBar Busy="@_maintBusy" Dirty="@MaintDirty"
+                                     Message="@_maintMessage"
+                                     OnSave="SaveMaintenanceAsync" OnDiscard="DiscardMaintenance" />
                 }
                 else
                 {
@@ -838,13 +1217,50 @@
     private async Task SelectTab(string tab)
     {
         _tab = tab;
-        if (tab == "github")
+        if (tab == "integrations")
         {
             var gh = await Api.GetGitHubConfigAsync();
             _ghConfigured = gh?.Configured == true;
             _ghLogin = gh?.Login;
             _ghSource = gh?.Source;
             _ghMessage = null;
+            _intMessage = null;
+            await LoadUserMcpAsync();
+            await LoadHooksAsync();
+        }
+        if (tab == "combos")
+        {
+            _combosMessage = null;
+            var combosTask = Api.GetCombosAsync();
+            if (_modelCatalog is null)
+            {
+                await LoadModelCatalogAsync();
+            }
+            _combos = await combosTask;
+        }
+        if (tab == "agents")
+        {
+            _agentsMessage = null;
+            var catTask = Api.GetAgentCatalogAsync();
+            var extTask = Api.GetExternalAgentsAsync();
+            var personaTask = Api.GetAgentPersonasAsync();
+            if (_modelCatalog is null)
+            {
+                await LoadModelCatalogAsync();
+            }
+            await Task.WhenAll(catTask, extTask, personaTask);
+            _agentCatalog = catTask.Result;
+            _externalAgents = extTask.Result;
+            _personas = personaTask.Result;
+        }
+        if (tab == "maintenance")
+        {
+            _maintMessage = null;
+            _maintStatus = await Api.GetMaintenanceStatusAsync();
+            if (_maintStatus is not null)
+            {
+                _maintChatDays = _maintStatus.ChatDays;
+            }
         }
         if (tab == "models")
         {
@@ -854,7 +1270,6 @@
         if (tab == "tools")
         {
             await LoadToolApprovalsAsync();
-            await LoadUserMcpAsync();
         }
         if (tab == "admin")
         {
@@ -1473,6 +1888,8 @@
             _version = versionTask.Result?.Version;
             _name = Auth.CurrentUser?.Name ?? string.Empty;
             _profileImage = Auth.CurrentUser?.ProfileImageUrl ?? string.Empty;
+            _loadedName = _name;
+            _loadedImage = _profileImage;
             _apiKeyInfo = apiKeyTask.Result;
             _memories = memoriesTask.Result;
             _memSync = memSyncTask.Result;
@@ -1505,33 +1922,8 @@
             await Task.WhenAll(connectionsTask, adminConfigTask, ollamaTask);
 
             _connections = connectionsTask.Result;
-            if (_connections is not null)
-            {
-                _ollamaRows = _connections.OllamaBaseUrls
-                    .Select((url, i) => new ConnectionRow
-                    {
-                        Url = url,
-                        Name = _connections.OllamaNames?.ElementAtOrDefault(i) ?? string.Empty,
-                    })
-                    .ToList();
-                _openAiRows = _connections.OpenAiBaseUrls
-                    .Select((url, i) => new ConnectionRow
-                    {
-                        Url = url,
-                        Name = _connections.OpenAiNames?.ElementAtOrDefault(i) ?? string.Empty,
-                        KeyConfigured = _connections.OpenAiKeyConfigured.ElementAtOrDefault(i),
-                    })
-                    .ToList();
-                _providerRows = (_connections.Providers ?? [])
-                    .Select(p => new ProviderRow
-                    {
-                        Type = p.Type,
-                        Name = p.Name ?? string.Empty,
-                        Url = p.BaseUrl,
-                        KeyConfigured = p.KeyConfigured,
-                    })
-                    .ToList();
-            }
+            RebuildConnectionRows();
+            _connSnapshot = ConnectionsSnapshot();
 
             var adminConfig = adminConfigTask.Result;
             if (adminConfig is not null)
@@ -1578,6 +1970,8 @@
                 }
 
                 _adminLoaded = true;
+                _adminBaseline = CurrentAdminConfig();
+                _adminDirtySnapshot = AdminSnapshot();
             }
             await InvokeAsync(StateHasChanged);
         }
@@ -1777,8 +2171,11 @@
     /// <summary>Salva intervalo/janela do auto-sync (override do usuário).</summary>
     private async Task SaveMemSyncAsync()
     {
+        _memSyncSaving = true;
         var updated = await Api.SetMemorySyncAsync(
             new MemorySyncPrefs(null, _memSyncInterval, _memSyncMaxAge));
+        _memSyncSaving = false;
+        _memSyncMessage = updated is null ? L["settings.save_failed"] : L["settings.saved"];
         if (updated is not null)
         {
             _memSync = updated;
@@ -1846,8 +2243,10 @@
             .ToList();
 
         // Chaves deixadas em branco são preservadas pelo servidor.
+        _connSaving = true;
         var result = await Api.UpdateConnectionsAsync(
             new ConnectionsConfig(ollama, openAi, keys, ollamaNames, openAiNames, providerRows));
+        _connSaving = false;
         _saveMessage = result is null ? L["settings.save_failed"] : L["settings.saved"];
         _connections = result;
         if (result is not null)
@@ -1863,6 +2262,8 @@
                 _providerRows[i].KeyConfigured = result.Providers[i].KeyConfigured;
                 _providerRows[i].Key = string.Empty;
             }
+
+            _connSnapshot = ConnectionsSnapshot();
         }
     }
 
@@ -1990,6 +2391,521 @@
             yield return current;
         }
     }
+
+    // ── Save bars / dirty tracking (SPEC-20261017-settings-ux-redesign) ──
+    private string? _loadedName;
+    private string? _loadedImage;
+    private bool _accountSaving;
+    private bool _memSyncSaving;
+    private string? _memSyncMessage;
+    private bool _connSaving;
+    private string _connSnapshot = "[]";
+    private bool _adminSaving;
+    private AdminConfig? _adminBaseline;
+    private string _adminDirtySnapshot = string.Empty;
+    private string? _intMessage;
+
+    private bool WebhookDirty =>
+        _webhookUrl.Trim() != (_webhook?.Url ?? string.Empty)
+        || _webhookEnabled != (_webhook?.Enabled ?? true)
+        || !_webhookEvents.SetEquals(_webhook?.Events ?? []);
+
+    private bool AccountDirty =>
+        _name != (_loadedName ?? string.Empty)
+        || _profileImage != (_loadedImage ?? string.Empty)
+        || _currentPassword.Length > 0 || _newPassword.Length > 0
+        || WebhookDirty;
+
+    private string? AccountMessage => _accountMessage ?? _webhookMessage;
+
+    private bool MemSyncDirty => _memSync is not null
+        && (_memSyncInterval != _memSync.IntervalHours || _memSyncMaxAge != _memSync.MaxAgeDays);
+
+    /// <summary>Snapshot JSON das três listas de conexões para dirty tracking.</summary>
+    private string ConnectionsSnapshot() => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        o = _ollamaRows.Select(r => new { r.Name, r.Url, r.Key, r.KeyConfigured }),
+        a = _openAiRows.Select(r => new { r.Name, r.Url, r.Key, r.KeyConfigured }),
+        p = _providerRows.Select(r => new { r.Type, r.Name, r.Url, r.Key, r.KeyConfigured }),
+    });
+
+    private bool ConnectionsDirty => _connections is not null && _connSnapshot != ConnectionsSnapshot();
+
+    private string AdminSnapshot() => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        _adminWebUiName, _adminDefaultRole, _adminEnableSignup, _adminEnableLoginForm,
+        _adminEnableApiKeys, _adminEnableRating, _adminEnableFolders, _adminEnableMemories,
+        _ttsEngine, _ttsProvider, _ttsBaseUrl, _ttsModel, _ttsVoice,
+        _sttEngine, _sttProvider, _sttBaseUrl, _sttModel,
+        _adminWebhookUrl, _adminWebhookEnabled,
+        ev = string.Join(",", _adminWebhookEvents.OrderBy(x => x, StringComparer.Ordinal)),
+    });
+
+    private bool AdminDirty =>
+        (_adminDirtySnapshot.Length > 0 && _adminDirtySnapshot != AdminSnapshot())
+        || _adminGhToken.Length > 0;
+
+    private string? AdminMessage => _adminMessage ?? _adminWebhookMessage ?? _adminCfgMessage;
+
+    /// <summary>Save unificado da tab Account: perfil + senha (se preenchida) + webhook.</summary>
+    private async Task SaveAccountAsync()
+    {
+        _accountSaving = true;
+        _accountMessage = null;
+        _webhookMessage = null;
+        var ok = true;
+        if (_name != (_loadedName ?? string.Empty) || _profileImage != (_loadedImage ?? string.Empty))
+        {
+            var user = await Api.UpdateProfileAsync(_name.Trim(), _profileImage.Trim());
+            if (user is null)
+            {
+                ok = false;
+            }
+            else
+            {
+                await Auth.RefreshUserAsync();
+                _loadedName = _name;
+                _loadedImage = _profileImage;
+            }
+        }
+        if (_currentPassword.Length > 0 || _newPassword.Length > 0)
+        {
+            ok &= await Api.UpdatePasswordAsync(_currentPassword, _newPassword);
+            _currentPassword = string.Empty;
+            _newPassword = string.Empty;
+        }
+        if (WebhookDirty)
+        {
+            var saved = await Api.SaveWebhookAsync(new NotificationWebhookRequest(
+                _webhookUrl.Trim(), _webhookEvents.ToList(), _webhookEnabled));
+            _webhook = saved;
+            ok &= saved is not null;
+        }
+        _accountSaving = false;
+        _accountMessage = ok ? L["settings.saved"] : L["settings.save_failed"];
+    }
+
+    /// <summary>Descarta as edições da tab Account restaurando os baselines.</summary>
+    private void DiscardAccountAsync()
+    {
+        _name = _loadedName ?? string.Empty;
+        _profileImage = _loadedImage ?? string.Empty;
+        _currentPassword = string.Empty;
+        _newPassword = string.Empty;
+        _webhookUrl = _webhook?.Url ?? string.Empty;
+        _webhookEvents = _webhook?.Events.ToHashSet() ?? [];
+        _webhookEnabled = _webhook?.Enabled ?? true;
+        _accountMessage = null;
+        _webhookMessage = null;
+    }
+
+    /// <summary>Descarta as edições do auto-sync restaurando os valores persistidos.</summary>
+    private void DiscardMemSync()
+    {
+        if (_memSync is not null)
+        {
+            _memSyncInterval = _memSync.IntervalHours;
+            _memSyncMaxAge = _memSync.MaxAgeDays;
+        }
+        _memSyncMessage = null;
+    }
+
+    /// <summary>Save da tab Integrations: grava o token GitHub digitado.</summary>
+    private async Task SaveIntegrationsAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(_ghToken))
+        {
+            await SaveGitHubTokenAsync();
+        }
+    }
+
+    private void DiscardIntegrations()
+    {
+        _ghToken = string.Empty;
+        _ghMessage = null;
+        _intMessage = null;
+    }
+
+    /// <summary>Save unificado da tab Admin: instância+áudio + webhook + token GitHub.</summary>
+    private async Task SaveAdminTabAsync()
+    {
+        _adminSaving = true;
+        await SaveAdminAsync();
+        if (AdminWebhookDirty)
+        {
+            await SaveAdminWebhookAsync();
+        }
+        if (_adminGhToken.Length > 0)
+        {
+            await SaveAdminGitHubAsync();
+        }
+        _adminBaseline = CurrentAdminConfig();
+        _adminDirtySnapshot = AdminSnapshot();
+        _adminSaving = false;
+    }
+
+    private bool AdminWebhookDirty =>
+        _adminWebhookUrl.Trim() != (_adminWebhook?.Url ?? string.Empty)
+        || _adminWebhookEnabled != (_adminWebhook?.Enabled ?? true)
+        || !_adminWebhookEvents.SetEquals(_adminWebhook?.Events ?? []);
+
+    private AdminConfig CurrentAdminConfig() => new(
+        _adminEnableSignup,
+        _adminEnableLoginForm,
+        _adminEnableApiKeys,
+        _adminDefaultRole,
+        _adminEnableRating,
+        _adminEnableFolders,
+        _adminEnableMemories,
+        _adminWebUiName.Trim());
+
+    /// <summary>Restaura a tab Admin aos valores persistidos.</summary>
+    private void DiscardAdmin()
+    {
+        if (_adminBaseline is { } cfg)
+        {
+            _adminWebUiName = cfg.WebUiName;
+            _adminDefaultRole = cfg.DefaultUserRole;
+            _adminEnableSignup = cfg.EnableSignup;
+            _adminEnableLoginForm = cfg.EnableLoginForm;
+            _adminEnableApiKeys = cfg.EnableApiKeys;
+            _adminEnableRating = cfg.EnableMessageRating;
+            _adminEnableFolders = cfg.EnableFolders;
+            _adminEnableMemories = cfg.EnableMemories;
+        }
+        _adminWebhookUrl = _adminWebhook?.Url ?? string.Empty;
+        _adminWebhookEvents = _adminWebhook?.Events.ToHashSet() ?? [];
+        _adminWebhookEnabled = _adminWebhook?.Enabled ?? true;
+        _adminGhToken = string.Empty;
+        _adminMessage = null;
+        _adminWebhookMessage = null;
+        _adminCfgMessage = null;
+        _adminDirtySnapshot = AdminSnapshot();
+    }
+
+    /// <summary>Descarta edições de conexões reconstituindo as linhas do servidor.</summary>
+    private void DiscardConnections()
+    {
+        RebuildConnectionRows();
+        _connSnapshot = ConnectionsSnapshot();
+        _saveMessage = null;
+    }
+
+    private void RebuildConnectionRows()
+    {
+        if (_connections is null)
+        {
+            return;
+        }
+        _ollamaRows = _connections.OllamaBaseUrls
+            .Select((url, i) => new ConnectionRow
+            {
+                Url = url,
+                Name = _connections.OllamaNames?.ElementAtOrDefault(i) ?? string.Empty,
+            })
+            .ToList();
+        _openAiRows = _connections.OpenAiBaseUrls
+            .Select((url, i) => new ConnectionRow
+            {
+                Url = url,
+                Name = _connections.OpenAiNames?.ElementAtOrDefault(i) ?? string.Empty,
+                KeyConfigured = _connections.OpenAiKeyConfigured.ElementAtOrDefault(i),
+            })
+            .ToList();
+        _providerRows = (_connections.Providers ?? [])
+            .Select(p => new ProviderRow
+            {
+                Type = p.Type,
+                Name = p.Name ?? string.Empty,
+                Url = p.BaseUrl,
+                KeyConfigured = p.KeyConfigured,
+            })
+            .ToList();
+    }
+
+    // ── Hooks de automação (tab Integrations) ──
+    private List<AutomationHookResponse>? _hooks;
+    private string _hookName = string.Empty;
+    private bool _hooksBusy;
+    private string? _hooksMessage;
+
+    private async Task LoadHooksAsync()
+    {
+        _hooksMessage = null;
+        try
+        {
+            _hooks = await Api.GetAutomationHooksAsync();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _hooks = [];
+        }
+    }
+
+    private async Task CreateHookAsync()
+    {
+        _hooksBusy = true;
+        var created = await Api.CreateAutomationHookAsync(
+            new AutomationHookCreateRequest(_hookName.Trim(), null));
+        _hooksBusy = false;
+        if (created is null)
+        {
+            _hooksMessage = L["settings.save_failed"];
+            return;
+        }
+        _hookName = string.Empty;
+        await LoadHooksAsync();
+    }
+
+    private async Task DeleteHookAsync(string id)
+    {
+        _hooksBusy = true;
+        if (!await Api.DeleteAutomationHookAsync(id))
+        {
+            _hooksMessage = L["settings.save_failed"];
+        }
+        await LoadHooksAsync();
+        _hooksBusy = false;
+    }
+
+    // ── Agentes declarativos + externos (tab Agents) ──
+    private AgentCatalogResponse? _agentCatalog;
+    private List<ExternalAgentStatusResponse>? _externalAgents;
+    private bool _agentsBusy;
+    private string? _agentsMessage;
+
+    /// <summary>Opt-in do usuário a agentes declarados no workdir.</summary>
+    private async Task SetAgentWorkspaceAsync(bool enabled)
+    {
+        _agentsBusy = true;
+        if (!await Api.SetAgentWorkspaceEnabledAsync(enabled))
+        {
+            _agentsMessage = L["settings.save_failed"];
+        }
+        _agentCatalog = await Api.GetAgentCatalogAsync();
+        _agentsBusy = false;
+    }
+
+    /// <summary>Seleciona um agente externo como executor (instala a skill-ponte).</summary>
+    private async Task SetExternalSelectedAsync(string id, bool selected)
+    {
+        _agentsBusy = true;
+        if (!await Api.SetExternalAgentSelectedAsync(id, selected))
+        {
+            _agentsMessage = L["settings.save_failed"];
+        }
+        _externalAgents = await Api.GetExternalAgentsAsync();
+        _agentsBusy = false;
+    }
+
+    // ── Personas de agente (tab Agents) ──
+    private List<AgentPersonaResponse>? _personas;
+    private string? _personaEditing;
+    private string _personaName = string.Empty;
+    private string _personaModel = string.Empty;
+    private string _personaPrompt = string.Empty;
+    private bool _personaEnabled = true;
+    private bool _personaSaving;
+    private string? _personaMessage;
+
+    private void EditPersona(AgentPersonaResponse persona)
+    {
+        _personaEditing = persona.Id;
+        _personaName = persona.Name;
+        _personaModel = persona.ModelId;
+        _personaPrompt = persona.SystemPrompt;
+        _personaEnabled = persona.Enabled;
+        _personaMessage = null;
+    }
+
+    private void ResetPersonaForm()
+    {
+        _personaEditing = null;
+        _personaName = string.Empty;
+        _personaModel = _modelCatalog?.FirstOrDefault()?.Id ?? string.Empty;
+        _personaPrompt = string.Empty;
+        _personaEnabled = true;
+        _personaMessage = null;
+    }
+
+    /// <summary>Cria ou atualiza a persona em edição (upsert por id).</summary>
+    private async Task SavePersonaAsync()
+    {
+        _personaSaving = true;
+        var request = new AgentPersonaUpsertRequest(
+            _personaName.Trim(), _personaPrompt, _personaModel, null, null, _personaEnabled);
+        var saved = _personaEditing is null
+            ? await Api.CreateAgentPersonaAsync(request)
+            : await Api.UpdateAgentPersonaAsync(_personaEditing, request);
+        _personaMessage = saved is null ? L["settings.save_failed"] : L["settings.saved"];
+        if (saved is not null)
+        {
+            ResetPersonaForm();
+            _personaMessage = L["settings.saved"];
+            _personas = await Api.GetAgentPersonasAsync();
+        }
+        _personaSaving = false;
+    }
+
+    /// <summary>Remove uma persona do usuário.</summary>
+    private async Task DeletePersonaAsync(AgentPersonaResponse persona)
+    {
+        _personaSaving = true;
+        _personaMessage = await Api.DeleteAgentPersonaAsync(persona.Id)
+            ? L["settings.saved"]
+            : L["settings.save_failed"];
+        _personas = await Api.GetAgentPersonasAsync();
+        if (_personaEditing == persona.Id)
+        {
+            ResetPersonaForm();
+        }
+        _personaSaving = false;
+    }
+
+    // ── Combos de modelo (tab Combos) ──
+    private List<ComboResponse>? _combos;
+    private readonly Dictionary<string, ComboStatusResponse?> _comboStatus = new();
+    private ComboResponse? _comboEditing;
+    private string _comboName = string.Empty;
+    private string _comboStrategy = "priority";
+    private List<string> _comboItems = [];
+    private string _comboModelPick = string.Empty;
+    private int? _comboRpm;
+    private int? _comboTpm;
+    private bool _comboSaving;
+    private string? _combosMessage;
+
+    private void AddComboItem()
+    {
+        if (!string.IsNullOrWhiteSpace(_comboModelPick) && !_comboItems.Contains(_comboModelPick))
+        {
+            _comboItems.Add(_comboModelPick);
+        }
+        _comboModelPick = string.Empty;
+    }
+
+    private void EditCombo(ComboResponse combo)
+    {
+        _comboEditing = combo;
+        _comboName = combo.Name;
+        _comboStrategy = combo.Strategy;
+        _comboItems = [.. combo.Items];
+        _comboRpm = combo.RequestsPerMinute;
+        _comboTpm = combo.TokensPerMinute;
+    }
+
+    private void ResetComboForm()
+    {
+        _comboEditing = null;
+        _comboName = string.Empty;
+        _comboStrategy = "priority";
+        _comboItems = [];
+        _comboRpm = null;
+        _comboTpm = null;
+        _comboModelPick = string.Empty;
+    }
+
+    private async Task SaveComboAsync()
+    {
+        _comboSaving = true;
+        _combosMessage = null;
+        var request = new ComboUpsertRequest(
+            _comboName.Trim(),
+            _comboStrategy,
+            _comboItems.Select((m, i) => new ComboItemRequest(m, i)).ToList(),
+            _comboRpm is > 0 ? _comboRpm : null,
+            _comboTpm is > 0 ? _comboTpm : null,
+            Enabled: true);
+        var saved = _comboEditing is null
+            ? await Api.CreateComboAsync(request)
+            : await Api.UpdateComboAsync(_comboEditing.Id, request);
+        _combosMessage = saved is null ? L["settings.save_failed"] : L["settings.saved"];
+        if (saved is not null)
+        {
+            ResetComboForm();
+            _combos = await Api.GetCombosAsync();
+        }
+        _comboSaving = false;
+    }
+
+    private async Task ToggleComboAsync(ComboResponse combo)
+    {
+        _comboSaving = true;
+        var request = new ComboUpsertRequest(
+            combo.Name,
+            combo.Strategy,
+            combo.Items.Select((m, i) => new ComboItemRequest(m, i)).ToList(),
+            combo.RequestsPerMinute,
+            combo.TokensPerMinute,
+            Enabled: !combo.Enabled);
+        if (await Api.UpdateComboAsync(combo.Id, request) is null)
+        {
+            _combosMessage = L["settings.save_failed"];
+        }
+        _combos = await Api.GetCombosAsync();
+        _comboSaving = false;
+    }
+
+    private async Task DeleteComboAsync(string id)
+    {
+        _comboSaving = true;
+        if (!await Api.DeleteComboAsync(id))
+        {
+            _combosMessage = L["settings.save_failed"];
+        }
+        _combos = await Api.GetCombosAsync();
+        _comboSaving = false;
+    }
+
+    private async Task LoadComboStatusAsync(string id) =>
+        _comboStatus[id] = await Api.GetComboStatusAsync(id);
+
+    // ── Manutenção (tab Maintenance, admin) ──
+    private MaintenanceStatusResponse? _maintStatus;
+    private MaintenanceCycleResponse? _maintResult;
+    private int _maintChatDays;
+    private bool _maintBusy;
+    private string? _maintMessage;
+
+    private bool MaintDirty => _maintStatus is not null && _maintChatDays != _maintStatus.ChatDays;
+
+    private async Task RunMaintenanceAsync(bool dryRun)
+    {
+        _maintBusy = true;
+        _maintResult = await Api.RunMaintenanceAsync(dryRun);
+        _maintMessage = _maintResult is null ? L["settings.save_failed"] : null;
+        _maintStatus = await Api.GetMaintenanceStatusAsync();
+        _maintBusy = false;
+    }
+
+    private async Task SaveMaintenanceAsync()
+    {
+        _maintBusy = true;
+        var ok = await Api.SetMaintenanceChatDaysAsync(_maintChatDays);
+        _maintMessage = ok ? L["settings.saved"] : L["settings.save_failed"];
+        if (ok)
+        {
+            _maintStatus = await Api.GetMaintenanceStatusAsync();
+        }
+        _maintBusy = false;
+    }
+
+    private void DiscardMaintenance()
+    {
+        if (_maintStatus is not null)
+        {
+            _maintChatDays = _maintStatus.ChatDays;
+        }
+        _maintMessage = null;
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1L << 30 => $"{bytes / (double)(1L << 30):F1} GB",
+        >= 1L << 20 => $"{bytes / (double)(1L << 20):F1} MB",
+        >= 1L << 10 => $"{bytes / (double)(1L << 10):F1} KB",
+        _ => $"{bytes} B",
+    };
 
     private string FormatDate(long unixSeconds) =>
         L.FormatDate(DateTimeOffset.FromUnixTimeSeconds(unixSeconds).LocalDateTime);
