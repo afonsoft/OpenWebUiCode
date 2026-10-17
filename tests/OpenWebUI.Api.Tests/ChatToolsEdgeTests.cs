@@ -1,5 +1,8 @@
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.ChatTools.Tools;
@@ -796,7 +799,7 @@ public class ChatToolsEdgeTests
     public async Task FileRead_PaginacaoEErros()
     {
         var tool = new FileReadBuiltinTool(new HistoryResourceService(new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-                .UseSqlite("Data Source=:memory:").Options)));
+                .UseSqlite("Data Source=:memory:").Options)), NewToolOutputs());
         var content = string.Join('\n', Enumerable.Range(1, 10).Select(i => $"linha {i}"));
         File.WriteAllText(Path.Join(_workspace, "f.txt"), content);
 
@@ -867,7 +870,7 @@ public class ChatToolsEdgeTests
             await seed.SaveChangesAsync();
         }
 
-        var tool = new FileReadBuiltinTool(new HistoryResourceService(new AppDbContext(options)));
+        var tool = new FileReadBuiltinTool(new HistoryResourceService(new AppDbContext(options)), NewToolOutputs());
 
         // Transcript inteiro paginado.
         var r = await tool.ExecuteAsync(
@@ -1093,5 +1096,59 @@ public class ChatToolsEdgeTests
             Ctx(), default);
         Assert.That(File.ReadAllText(Path.Join(_workspace, "f.txt")),
             Is.EqualTo("ALFA B B gama"));
+    }
+
+    // ---------------- file_read × allowlist tool-output (SPEC-20261016) ----
+
+    [Test]
+    public async Task FileRead_PathGerenciado_LeToolOutput_ForaNega()
+    {
+        var outputs = NewToolOutputs();
+        var managedDir = Path.Join(_workspace, "data", "tool-output");
+        Directory.CreateDirectory(managedDir);
+        var managed = Path.Join(managedDir, "tool_ab12.txt");
+        await File.WriteAllTextAsync(managed, "linha-cheia-1\nlinha-cheia-2");
+
+        var tool = new FileReadBuiltinTool(new HistoryResourceService(
+            new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite("Data Source=:memory:").Options)), outputs);
+
+        // Path gerenciado → leitura direta.
+        var ok = await tool.ExecuteAsync(
+            Args($"{{\"path\":\"{managed}\"}}"), Ctx(), default);
+        Assert.That(ok.Text, Does.Contain("linha-cheia-1"));
+
+        // Fora da allowlist → negado (mesmo sendo absoluto válido).
+        var outside = Path.Join(_workspace, "data", "segredo.txt");
+        await File.WriteAllTextAsync(outside, "segredo");
+        var denied = await tool.ExecuteAsync(
+            Args($"{{\"path\":\"{outside}\"}}"), Ctx(), default);
+        Assert.That(denied.Text, Does.Contain("negado"));
+
+        // /etc/passwd — nunca passa (nem arquivo tool_*).
+        var passwd = await tool.ExecuteAsync(
+            Args("{\"path\":\"/etc/passwd\"}"), Ctx(), default);
+        Assert.That(passwd.Text, Does.Contain("negado"));
+    }
+
+    /// <summary>ToolOutputService com data-root isolada por teste.</summary>
+    private ToolOutputService NewToolOutputs()
+    {
+        var dbPath = Path.Join(_workspace, $"edge-{Guid.NewGuid():N}.db");
+        var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite($"Data Source={dbPath}").Options);
+        return new ToolOutputService(
+            new ConfigService(db, TestCache.Create()),
+            new StubEnv(_workspace),
+            NullLogger<ToolOutputService>.Instance);
+    }
+
+    private sealed class StubEnv(string root) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Test";
+        public string ApplicationName { get; set; } = "Tests";
+        public string ContentRootPath { get; set; } = root;
+        public IFileProvider ContentRootFileProvider { get; set; } =
+            new NullFileProvider();
     }
 }

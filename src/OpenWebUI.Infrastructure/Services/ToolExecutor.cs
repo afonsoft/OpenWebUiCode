@@ -26,7 +26,8 @@ public class ToolExecutor(
     PythonToolExecutor pythonExecutor,
     McpClientService mcp,
     BuiltinToolRegistry builtins,
-    ConfigService config)
+    ConfigService config,
+    ToolOutputService? toolOutputs = null)
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
     private const int MaxOutputChars = 4000;
@@ -178,6 +179,24 @@ public class ToolExecutor(
             JsonElement? result = outcome.Result is null
                 ? null
                 : JsonSerializer.SerializeToElement(outcome.Result);
+
+            // Bound genérico pós-execução (SPEC-20261016-tool-output-bounding):
+            // output grande vai para {data}/tool-output/ e o modelo recebe
+            // head+tail com o path. Tool que já devolveu `truncated:true`
+            // (ex.: shell_exec com cap próprio) não é re-truncada.
+            if (!outcome.Refused
+                && toolOutputs is not null
+                && !AlreadyTruncated(result))
+            {
+                var bound = await toolOutputs.BoundAsync(
+                    text, functionName, ct);
+                if (bound.Truncated)
+                {
+                    result = WithBoundMetadata(result, bound);
+                    text = bound.Text;
+                }
+            }
+
             return new(text, result);
         }
 
@@ -213,6 +232,39 @@ public class ToolExecutor(
         tool.RequiresApproval
         || !string.IsNullOrWhiteSpace(tool.Code)
         || McpClientService.ParseVirtualUrl(tool.Url) is not null;
+
+    /// <summary>Result já marca <c>truncated:true</c> (a tool aplicou cap próprio).</summary>
+    private static bool AlreadyTruncated(JsonElement? result)
+    {
+        if (result is not { } el || el.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        return el.TryGetProperty("truncated", out var t)
+            && t.ValueKind == JsonValueKind.True;
+    }
+
+    /// <summary>
+    /// Mescla os metadados do bound (<c>truncated</c>, <c>outputPath</c>,
+    /// <c>totalLines</c>, <c>totalBytes</c>) no Result existente.
+    /// </summary>
+    private static JsonElement WithBoundMetadata(
+        JsonElement? result, ToolOutputService.BoundResult bound)
+    {
+        var node = result is { } el && el.ValueKind == JsonValueKind.Object
+            ? System.Text.Json.Nodes.JsonObject.Create(el)
+            : new System.Text.Json.Nodes.JsonObject();
+        node!["truncated"] = true;
+        if (bound.OutputPath is { } p)
+        {
+            node["outputPath"] = p;
+        }
+
+        node["totalLines"] = bound.TotalLines;
+        node["totalBytes"] = bound.TotalBytes;
+        return JsonSerializer.SerializeToElement(node);
+    }
 
     /// <summary>Extrai o nome da função do spec da tool.</summary>
     public static string? FunctionName(Tool tool)

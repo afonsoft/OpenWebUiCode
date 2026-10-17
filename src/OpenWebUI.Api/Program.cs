@@ -40,6 +40,7 @@ builder.Services.AddHostedService<AutomationScheduler>();
 builder.Services.AddScoped<MemorySyncService>();
 builder.Services.AddHostedService<MemorySyncScheduler>();
 builder.Services.AddScoped<RetentionService>();
+builder.Services.AddScoped<ToolOutputService>();
 builder.Services.AddHostedService<RetentionScheduler>();
 builder.Services.AddScoped<OAuthService>();
 builder.Services.AddScoped<PermissionService>();
