@@ -42,6 +42,9 @@ public sealed class RunResultBuiltinTool(AppDbContext db, WorktreeService worktr
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

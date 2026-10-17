@@ -2685,4 +2685,262 @@ public class ProviderServiceTests
             Assert.That(bodies[1], Does.Contain("falha de transporte"));
         });
     }
+
+    // ---- Parallel tool calls (SPEC-20261016): grupos contíguos de
+    // SafeInParallel executam concorrentes, resultados na ordem das calls ----
+
+    private sealed class ConcurrencyProbe
+    {
+        private int _current;
+        public int Max;
+        public void Enter()
+        {
+            var c = Interlocked.Increment(ref _current);
+            if (c > Max)
+            {
+                Max = c;
+            }
+        }
+        public void Exit() => Interlocked.Decrement(ref _current);
+    }
+
+    private sealed class FakeReadTool(
+        string name, int delayMs, ConcurrencyProbe? probe = null,
+        bool throws = false) : IBuiltinChatTool
+    {
+        public string Name => name;
+        public string Description => "fake read";
+        public string ParametersJson => "{}";
+        public ApprovalTier Tier => ApprovalTier.Read;
+        public bool SafeInParallel => true;
+        public async Task<BuiltinToolResult> ExecuteAsync(
+            JsonElement args, BuiltinToolContext context, CancellationToken ct)
+        {
+            probe?.Enter();
+            try
+            {
+                await Task.Delay(delayMs, ct);
+                return throws
+                    ? throw new InvalidOperationException($"falhou-{name}")
+                    : new BuiltinToolResult($"ok-{name}");
+            }
+            finally
+            {
+                probe?.Exit();
+            }
+        }
+    }
+
+    private sealed class FakeMutatingTool(string name) : IBuiltinChatTool
+    {
+        public string Name => name;
+        public string Description => "fake write";
+        public string ParametersJson => "{}";
+        public ApprovalTier Tier => ApprovalTier.Write;
+        public Task<BuiltinToolResult> ExecuteAsync(
+            JsonElement args, BuiltinToolContext context, CancellationToken ct) =>
+            Task.FromResult(new BuiltinToolResult($"mut-{name}"));
+    }
+
+    private (ToolExecutor Executor, List<Tool> Tools) NewExecutorWith(
+        IReadOnlyList<IBuiltinChatTool> builtins, IConfiguration? cfg = null)
+    {
+        var registry = new BuiltinToolRegistry(
+            builtins, cfg ?? new ConfigurationBuilder().Build());
+        var executor = new ToolExecutor(_db, new StubHttpClientFactory(),
+            new PythonToolExecutor(new ConfigurationBuilder().Build()),
+            new McpClientService(_db, TestCache.Create()), registry, _config);
+        return (executor, builtins.Select(registry.ToSyntheticTool).ToList());
+    }
+
+    private static BuiltinToolContext TestCtx() =>
+        new("u1", null, null, Path.GetTempPath(), Path.GetTempPath());
+
+    private static string SseCalls(params string[] names) =>
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":["
+        + string.Join(",", names.Select((n, i) =>
+            "{\"index\":" + i + ",\"id\":\"c" + i
+            + "\",\"type\":\"function\",\"function\":{\"name\":\"" + n
+            + "\",\"arguments\":\"{}\"}}"))
+        + "]}}]}\n\ndata: [DONE]\n\n";
+
+    [Test]
+    public async Task RunToolLoop_BatchParalelo_ConcorrenciaEOrdem()
+    {
+        // 3 leituras num único round: executam concorrentes (max ≥2) e as
+        // tool messages saem na ordem exata das calls.
+        var probe = new ConcurrencyProbe();
+        IBuiltinChatTool[] builtins =
+        [
+            new FakeReadTool("t1", 250, probe),
+            new FakeReadTool("t2", 250, probe),
+            new FakeReadTool("t3", 250, probe),
+        ];
+        var (executor, tools) = NewExecutorWith(builtins);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCalls("builtin_t1", "builtin_t2", "builtin_t3"), 0),
+             (200, Sse("fim"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
+            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(probe.Max, Is.GreaterThanOrEqualTo(2),
+                "3 leituras sequenciais não chegariam a 2 em paralelo");
+            Assert.That(
+                outcome!.ToolMessages.Where(m => m.Role == "tool")
+                    .Select(m => m.Content).ToArray(),
+                Is.EqualTo(new[] { "ok-t1", "ok-t2", "ok-t3" }));
+            Assert.That(outcome.FinalContent, Is.EqualTo("fim"));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_BatchMisto_ParticaoContigua()
+    {
+        // [s1,s2,m1,s3,s4]: grupos {s1,s2} e {s3,s4} concorrentes, m1
+        // sequencial no meio — ordem de resultado = ordem das calls.
+        var probe = new ConcurrencyProbe();
+        IBuiltinChatTool[] builtins =
+        [
+            new FakeReadTool("s1", 200, probe),
+            new FakeReadTool("s2", 200, probe),
+            new FakeMutatingTool("m1"),
+            new FakeReadTool("s3", 200, probe),
+            new FakeReadTool("s4", 200, probe),
+        ];
+        var (executor, tools) = NewExecutorWith(builtins);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCalls(
+                "builtin_s1", "builtin_s2", "builtin_m1",
+                "builtin_s3", "builtin_s4"), 0),
+             (200, Sse("fim"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
+            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(probe.Max, Is.EqualTo(2),
+                "cada run contíguo de leituras chega a 2 concorrentes");
+            Assert.That(
+                outcome!.ToolMessages.Where(m => m.Role == "tool")
+                    .Select(m => m.Content).ToArray(),
+                Is.EqualTo(new[]
+                    { "ok-s1", "ok-s2", "mut-m1", "ok-s3", "ok-s4" }));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_DenyMidBatch_NaoCancelaIrmas()
+    {
+        // Gate nega a call do meio do grupo paralelo — as irmãs completam
+        // e o deny ocupa a posição da call.
+        var probe = new ConcurrencyProbe();
+        IBuiltinChatTool[] builtins =
+        [
+            new FakeReadTool("t1", 100, probe),
+            new FakeReadTool("t2", 100, probe),
+            new FakeReadTool("t3", 100, probe),
+        ];
+        var (executor, tools) = NewExecutorWith(builtins);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCalls("builtin_t1", "builtin_t2", "builtin_t3"), 0),
+             (200, Sse("fim"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            GateAsync: (call, _) => Task.FromResult(
+                call.Name == "builtin_t2"
+                    ? ToolGateDecision.Deny : ToolGateDecision.Allow));
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            callbacks, TestCtx(), userId: "u1", log: NullLogger.Instance,
+            maxSteps: 5);
+
+        var results = outcome!.ToolMessages.Where(m => m.Role == "tool")
+            .Select(m => m.Content).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(results, Has.Length.EqualTo(3));
+            Assert.That(results[0], Is.EqualTo("ok-t1"));
+            Assert.That(results[1], Does.Contain("negada"));
+            Assert.That(results[2], Is.EqualTo("ok-t3"));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_MaxParallelCap_NuncaPassaDoLimite()
+    {
+        var probe = new ConcurrencyProbe();
+        var builtins = Enumerable.Range(1, 5)
+            .Select(i => new FakeReadTool($"t{i}", 150, probe))
+            .Cast<IBuiltinChatTool>().ToArray();
+        var (executor, tools) = NewExecutorWith(builtins);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCalls([.. builtins.Select(b => $"builtin_{b.Name}")]), 0),
+             (200, Sse("fim"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
+            userId: "u1", log: NullLogger.Instance, maxSteps: 5,
+            maxParallelTools: 2);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(probe.Max, Is.EqualTo(2));
+            Assert.That(
+                outcome!.ToolMessages.Count(m => m.Role == "tool"),
+                Is.EqualTo(5));
+        });
+        // O cap também sai da config BuiltinTools:MaxParallel no registry.
+        var cfg = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?> { ["BuiltinTools:MaxParallel"] = "2" })
+            .Build();
+        Assert.That(new BuiltinToolRegistry([], cfg).MaxParallel, Is.EqualTo(2));
+        Assert.That(new BuiltinToolRegistry(
+            [], new ConfigurationBuilder().Build()).MaxParallel, Is.EqualTo(4));
+    }
+
+    [Test]
+    public async Task RunToolLoop_ParaleloUmaFalha_ErroNaPosicao()
+    {
+        var probe = new ConcurrencyProbe();
+        IBuiltinChatTool[] builtins =
+        [
+            new FakeReadTool("t1", 50, probe),
+            new FakeReadTool("t2", 50, probe, throws: true),
+            new FakeReadTool("t3", 50, probe),
+        ];
+        var (executor, tools) = NewExecutorWith(builtins);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCalls("builtin_t1", "builtin_t2", "builtin_t3"), 0),
+             (200, Sse("fim"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
+            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+
+        var results = outcome!.ToolMessages.Where(m => m.Role == "tool")
+            .Select(m => m.Content).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0], Is.EqualTo("ok-t1"));
+            Assert.That(results[1], Does.Contain("falhou-t2"));
+            Assert.That(results[2], Is.EqualTo("ok-t3"));
+        });
+    }
 }

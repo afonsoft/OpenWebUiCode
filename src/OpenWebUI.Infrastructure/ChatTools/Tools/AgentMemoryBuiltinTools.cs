@@ -174,6 +174,9 @@ public sealed class MemorySearchBuiltinTool(AppDbContext db, WorkspaceRepoServic
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(

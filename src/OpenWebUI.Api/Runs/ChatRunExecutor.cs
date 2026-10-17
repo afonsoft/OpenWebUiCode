@@ -458,7 +458,8 @@ public sealed class ChatRunExecutor(
                     });
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct, callbacks,
-                    builtinContext, run.UserId, logger, maxSteps);
+                    builtinContext, run.UserId, logger, maxSteps,
+                    toolExecutor.MaxParallel);
                 toolMessages = outcome?.ToolMessages;
                 if (outcome is not null)
                 {

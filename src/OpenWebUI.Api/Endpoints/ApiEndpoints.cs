@@ -361,7 +361,8 @@ public static class ApiEndpoints
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct,
                     builtinContext: builtinContext, userId: user.Id,
-                    maxSteps: await config.GetAsync("agentLoop.maxRounds", 25, ct));
+                    maxSteps: await config.GetAsync("agentLoop.maxRounds", 25, ct),
+                    maxParallelTools: toolExecutor.MaxParallel);
                 if (outcome?.FinalContent is { } finished)
                 {
                     foreach (var (regex, replacement) in outletRules)
