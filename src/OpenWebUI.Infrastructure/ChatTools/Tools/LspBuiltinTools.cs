@@ -30,6 +30,9 @@ public abstract class LspBuiltinToolBase(LspService lsp, WorkspaceRepoService re
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
 
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
     protected LspService Lsp { get; } = lsp;
 
     /// <summary>
