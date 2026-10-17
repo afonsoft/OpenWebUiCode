@@ -296,7 +296,8 @@ public class ConfigLayersTests
 
     private static ProviderService NewProviderService(ConfigService config) =>
         new(new StubHttpFactory(), config,
-            NullLogger<ProviderService>.Instance, TestCache.Create());
+            NullLogger<ProviderService>.Instance, TestCache.Create(),
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
     // ---------------- RF-006: repo-skills deny absoluto ----------------
 

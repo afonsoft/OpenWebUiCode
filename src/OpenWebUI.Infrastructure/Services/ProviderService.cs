@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using OpenWebUI.Application.Contracts;
 
@@ -19,8 +20,14 @@ public class ProviderService(
     IHttpClientFactory httpClientFactory,
     ConfigService config,
     ILogger<ProviderService> logger,
-    HybridCache cache)
+    HybridCache cache,
+    IConfiguration cfg)
 {
+    /// <summary>Limites de retry lidos de <c>Providers:*</c>
+    /// (SPEC-20261016-provider-resilience).</summary>
+    public RetryPolicyOptions RetryOptions { get; } =
+        RetryPolicyOptions.FromConfig(cfg);
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     // Cache curto da lista de modelos: sem ele, cada mensagem de chat

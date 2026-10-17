@@ -446,7 +446,8 @@ public class ServiceCoverageTests
         });
         var mc1 = TestCache.Create();
         var svc = new ProviderService(new StubFactory(handler), NewConfig(),
-            NullLogger<ProviderService>.Instance, mc1);
+            NullLogger<ProviderService>.Instance, mc1,
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
         var ollama = await svc.ListModelsForConnectionAsync("ollama", 0);
         Assert.That(ollama.Select(m => m.Id), Does.Contain("llama3"));

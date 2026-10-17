@@ -79,7 +79,8 @@ public class AutomationCallersTests
 
     private static ProviderService NewProviders(AppDbContext db) =>
         new(new FailFactory(), new ConfigService(db, TestCache.Create()),
-            NullLogger<ProviderService>.Instance, TestCache.Create());
+            NullLogger<ProviderService>.Instance, TestCache.Create(),
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
     /// <summary>Provider com conexão Ollama stub que responde "ok-reply".</summary>
     private static async Task<ProviderService> NewProvidersOkAsync(AppDbContext db)
@@ -88,7 +89,8 @@ public class AutomationCallersTests
         await config.SetAsync("connections",
             new ConnectionsConfig(["http://stub.local"], [], []));
         return new ProviderService(new OllamaFactory(), config,
-            NullLogger<ProviderService>.Instance, TestCache.Create());
+            NullLogger<ProviderService>.Instance, TestCache.Create(),
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
     }
 
     /// <summary>Ollama fake: /api/tags lista fake:1, /api/chat responde "ok-reply".</summary>

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 
 namespace OpenWebUI.Infrastructure.Services;
 
@@ -23,6 +24,30 @@ public enum ProviderRetryReason
 /// <summary>Decisão de uma tentativa: retentar, esperar quanto e por quê.</summary>
 public sealed record RetryDecision(
     bool Retry, TimeSpan Delay, ProviderRetryReason Reason);
+
+/// <summary>
+/// Limites da política de retry — configuráveis via
+/// <c>Providers:MaxAttempts</c> / <c>Providers:MaxConsecutiveTimeouts</c>
+/// (<c>Providers__MaxAttempts</c> por env). Testes sem provider real usam
+/// <c>MaxAttempts=1</c> para falhar rápido em vez de gastar o orçamento
+/// de retries contra um endpoint inalcançável.
+/// </summary>
+public sealed record RetryPolicyOptions(int MaxAttempts, int MaxConsecutiveTimeouts)
+{
+    /// <summary>Padrão de produção: 6 tentativas, 3 timeouts seguidos.</summary>
+    public static RetryPolicyOptions Default { get; } =
+        new(ProviderRetryPolicy.MaxAttempts, ProviderRetryPolicy.MaxConsecutiveTimeouts);
+
+    /// <summary>Lê os limites da configuração, caindo no padrão.</summary>
+    public static RetryPolicyOptions FromConfig(IConfiguration cfg)
+    {
+        var attempts = cfg.GetValue("Providers:MaxAttempts", ProviderRetryPolicy.MaxAttempts);
+        var timeouts = cfg.GetValue(
+            "Providers:MaxConsecutiveTimeouts", ProviderRetryPolicy.MaxConsecutiveTimeouts);
+        return new RetryPolicyOptions(
+            Math.Max(1, attempts), Math.Max(1, timeouts));
+    }
+}
 
 /// <summary>
 /// Política de retry das chamadas de completion (SPEC-20261016-provider-
@@ -103,8 +128,10 @@ public static class ProviderRetryPolicy
     /// jitter ±25% — testes de schedule passam false para delays exatos.
     /// </summary>
     public static RetryDecision Decide(
-        Exception ex, int attempt, int consecutiveTimeouts, bool jitter = true)
+        Exception ex, int attempt, int consecutiveTimeouts, bool jitter = true,
+        RetryPolicyOptions? options = null)
     {
+        var limits = options ?? RetryPolicyOptions.Default;
         var reason = Classify(ex);
         if (reason == ProviderRetryReason.ContextOverflow
             || reason == ProviderRetryReason.NonRetryable)
@@ -112,11 +139,11 @@ public static class ProviderRetryPolicy
             return new RetryDecision(false, TimeSpan.Zero, reason);
         }
         if (reason == ProviderRetryReason.Timeout
-            && consecutiveTimeouts > MaxConsecutiveTimeouts)
+            && consecutiveTimeouts > limits.MaxConsecutiveTimeouts)
         {
             return new RetryDecision(false, TimeSpan.Zero, reason);
         }
-        if (attempt + 1 >= MaxAttempts)
+        if (attempt + 1 >= limits.MaxAttempts)
         {
             return new RetryDecision(false, TimeSpan.Zero, reason);
         }

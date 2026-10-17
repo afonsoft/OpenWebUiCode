@@ -94,7 +94,7 @@ public class ProviderServiceTests
             // Cache novo por serviço: o cache de modelos (TTL 60s) é chaveado
             // pelo fingerprint das conexões — compartilhar entre testes faz um
             // teste ler a resposta em cache de outro.
-            TestCache.Create());
+            TestCache.Create(), new ConfigurationBuilder().Build());
 
     private Task SetConnectionsAsync(
         IReadOnlyList<string> ollama, IReadOnlyList<string> openAi, IReadOnlyList<string> keys) =>
@@ -2661,7 +2661,8 @@ public class ProviderServiceTests
             });
         var service = new ProviderService(
             new SeqFactory(handler), _config,
-            NullLogger<ProviderService>.Instance, TestCache.Create());
+            NullLogger<ProviderService>.Instance, TestCache.Create(),
+            new ConfigurationBuilder().Build());
         await SetConnectionsAsync([], ["http://provider.invalid"], ["k"]);
 
         var deltas = new List<string>();
