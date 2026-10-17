@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-question-forms` |
 | Ticket | [#414](https://github.com/afonsoft/open-webui/issues/414) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `opencode/src/question/index.ts` (ask multi-pergunta com options/tool attribution/reject) |
 
 ## 1. User Story
@@ -54,16 +54,16 @@ Evento `question_asked` payload: `{questions:[{question,header,options,multiple,
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** tool chamada com 3 perguntas **when** gate emite **then** form único com 3 blocos; resposta array alinhado.
-- [ ] **Given** `multiple:true` **when** usuário marca 2 opções **then** `answers[i]` = array com 2.
-- [ ] **Given** dismiss **when** resposta **then** modelo recebe texto de recusa, run continua.
-- [ ] **Given** forma singular antiga **when** chamada **then** comportamento idêntico ao atual (retrocompat).
+- [x] **Given** tool chamada com 3 perguntas **when** gate emite **then** form único com 3 blocos; resposta array alinhado.
+- [x] **Given** `multiple:true` **when** usuário marca 2 opções **then** `answers[i]` = array com 2.
+- [x] **Given** dismiss **when** resposta **then** modelo recebe texto de recusa, run continua.
+- [x] **Given** forma singular antiga **when** chamada **then** comportamento idêntico ao atual (retrocompat).
 
 ## 7. Task Plan
 
-- [ ] **T1 —** Schema/parsing multi-pergunta na tool + validações.
-- [ ] **T2 —** Evento/gate payload + UI form agrupado.
-- [ ] **T3 —** Reject + retrocompat + testes.
+- [x] **T1 —** Schema/parsing multi-pergunta na tool + validações.
+- [x] **T2 —** Evento/gate payload + UI form agrupado.
+- [x] **T3 —** Reject + retrocompat + testes.
 
 **7.1 Validation strategy:** unit tests de schema/serialização + teste do fluxo gate→resposta.
 
@@ -74,4 +74,11 @@ Evento `question_asked` payload: `{questions:[{question,header,options,multiple,
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-005 verdes; build+test limpos; spec-status ok; retrocompat coberta por teste.
+- [x] RF-001..RF-005 verdes; build+test limpos; spec-status ok; retrocompat coberta por teste.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #421 · 7a2bb4265 |
+| Issue | https://github.com/afonsoft/open-webui/issues/414 |

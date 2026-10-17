@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-model-combos` |
 | Ticket | [#410](https://github.com/afonsoft/open-webui/issues/410) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `opencode/src/combo/index.ts` (failover strategies + rate limit + report loop) |
 
 ## 1. User Story
@@ -60,19 +60,19 @@
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** combo [m1,m2] priority, m1 retorna 429 **when** run **then** report(m1,fail) e run segue em m2 com meta marcando ambos.
-- [ ] **Given** round-robin 3 modelos **when** 3 resolves **then** distribui 1/1/1.
-- [ ] **Given** todos em cooldown **when** resolve **then** `combo-exhausted` com `retryAt`.
-- [ ] **Given** `requestsPerMinute=1` e 2 runs seguidas **when** resolve **then** segunda → `combo-rate-limit`.
-- [ ] **Given** modelo efetivo falha no meio da run **when** report **then** próxima rodada usa outro modelo e SSE mostra `combo`+efetivo.
+- [x] **Given** combo [m1,m2] priority, m1 retorna 429 **when** run **then** report(m1,fail) e run segue em m2 com meta marcando ambos.
+- [x] **Given** round-robin 3 modelos **when** 3 resolves **then** distribui 1/1/1.
+- [x] **Given** todos em cooldown **when** resolve **then** `combo-exhausted` com `retryAt`.
+- [x] **Given** `requestsPerMinute=1` e 2 runs seguidas **when** resolve **then** segunda → `combo-rate-limit`.
+- [x] **Given** modelo efetivo falha no meio da run **when** report **then** próxima rodada usa outro modelo e SSE mostra `combo`+efetivo.
 
 ## 7. Task Plan
 
-- [ ] **T1 —** Entidades + migration + ComboService (resolve/report/cooldown/janela).
-- [ ] **T2 —** Resolução `combo:{id}` no pipeline/executor + report de falhas + meta.
-- [ ] **T3 —** Endpoints CRUD + status.
-- [ ] **T4 —** Picker do client (combo como opção de modelo).
-- [ ] **T5 —** Testes: estratégias, cooldown, rate limit, resolução na run.
+- [x] **T1 —** Entidades + migration + ComboService (resolve/report/cooldown/janela).
+- [x] **T2 —** Resolução `combo:{id}` no pipeline/executor + report de falhas + meta.
+- [x] **T3 —** Endpoints CRUD + status.
+- [x] **T4 —** Picker do client (combo como opção de modelo).
+- [x] **T5 —** Testes: estratégias, cooldown, rate limit, resolução na run.
 
 **7.1 Validation strategy:** unit tests com relógio injetável; integration com provider fake falhando.
 
@@ -84,4 +84,11 @@
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-006 verdes; build+test limpos; spec-status ok.
+- [x] RF-001..RF-006 verdes; build+test limpos; spec-status ok.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #417 (cadeia #421) · 7a2bb4265 |
+| Issue | https://github.com/afonsoft/open-webui/issues/410 |

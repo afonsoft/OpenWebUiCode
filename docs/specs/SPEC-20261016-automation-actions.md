@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-automation-actions` |
 | Ticket | [#409](https://github.com/afonsoft/open-webui/issues/409) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `core/src/schedule/runner.ts` + callers (`agentui/mcp/reminder/skill`) |
 
 ## 1. User Story
@@ -64,18 +64,18 @@
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** automação `skill` com `skill:"x"` **when** dispara **then** cria run cujo conteúdo injetado é o corpo da skill.
-- [ ] **Given** automação `reminder` **when** dispara **then** cria Notification sem chamar LLM.
-- [ ] **Given** automação `mcp` com server `env:calc` **when** dispara **then** `CallToolAsync` recebe tool+args e output vai ao AutomationRun.
-- [ ] **Given** automação `webhook` com URL mock **when** dispara **then** POST recebido; 500 → `status=error` e `NextRunAt` futuro.
-- [ ] **Given** actionJson malformado **when** `PUT` **then** 400 com campo inválido.
+- [x] **Given** automação `skill` com `skill:"x"` **when** dispara **then** cria run cujo conteúdo injetado é o corpo da skill.
+- [x] **Given** automação `reminder` **when** dispara **then** cria Notification sem chamar LLM.
+- [x] **Given** automação `mcp` com server `env:calc` **when** dispara **then** `CallToolAsync` recebe tool+args e output vai ao AutomationRun.
+- [x] **Given** automação `webhook` com URL mock **when** dispara **then** POST recebido; 500 → `status=error` e `NextRunAt` futuro.
+- [x] **Given** actionJson malformado **when** `PUT` **then** 400 com campo inválido.
 
 ## 7. Task Plan
 
-- [ ] **T1 —** Entidade/migration: `ActionKind`, `ActionJson`, `PermissionMode`, `ChatId?` reuse.
-- [ ] **T2 —** Dispatcher: switch por kind + callers skill/mcp/reminder/webhook.
-- [ ] **T3 —** Contratos/endpoints + validação.
-- [ ] **T4 —** Testes: callers unitários, dispatcher integration, migration.
+- [x] **T1 —** Entidade/migration: `ActionKind`, `ActionJson`, `PermissionMode`, `ChatId?` reuse.
+- [x] **T2 —** Dispatcher: switch por kind + callers skill/mcp/reminder/webhook.
+- [x] **T3 —** Contratos/endpoints + validação.
+- [x] **T4 —** Testes: callers unitários, dispatcher integration, migration.
 
 **7.1 Validation strategy:** unit tests por caller (server MCP e webhook fakes), integration no dispatcher com Automation seedada, migration test.
 
@@ -87,6 +87,13 @@
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-008 implementados e verdes.
-- [ ] `dotnet build`/`dotnet test` limpos; `check-spec-status.py` ok.
-- [ ] SSRF/validação cobertos por teste.
+- [x] RF-001..RF-008 implementados e verdes.
+- [x] `dotnet build`/`dotnet test` limpos; `check-spec-status.py` ok.
+- [x] SSRF/validação cobertos por teste.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #416 (cadeia #421) · 7a2bb4265 |
+| Issue | https://github.com/afonsoft/open-webui/issues/409 |

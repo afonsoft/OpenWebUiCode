@@ -7,7 +7,7 @@
 | Feature | `spec-status-sweep-r2` |
 | Type | `Docs/Process` |
 | Repository | `/home/ubuntu/repos/open-webui` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Ticket | [#393](https://github.com/afonsoft/open-webui/issues/393) · Epic [#392](https://github.com/afonsoft/open-webui/issues/392) |
 | Fonte | `gap-analysis` run 2026-10-16 — gap `GAP-doc-stale-specs-r2` (recorrência do GAP-doc-stale-specs do run 2026-10-10) |
 
@@ -68,3 +68,10 @@ Sweep anterior (SPEC-20261008-spec-status-reconciliation, Completed) resolveu um
 ## Delivered
 
 - Branch `docs/Devin-20261016-gap-analysis-r2`: 52 SPECs terminais movidos de `.specs/` → `docs/specs/` com `Status: Completed` + `Delivered`; `ide-bundle` permanece ativo aguardando #395; novo guard `tools/check-spec-status.py` (falha em: ativo sem header `Status`, terminal esquecido em `.specs/`, não-terminal em `docs/specs/`); convenção documentada em `.specs/README.md` e comando registrado em `CLAUDE.md`.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #396 · 2852ac095 |
+| Issue | https://github.com/afonsoft/open-webui/issues/392 |

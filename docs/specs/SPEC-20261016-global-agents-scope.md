@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-global-agents-scope` |
 | Ticket | [#399](https://github.com/afonsoft/open-webui/issues/399) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`skill/discovery.ts`, docs `/skills`, `/commands`) — pedido explícito do mantenedor: ler skills/tools/mcp/commands de `~/.agents` + `.agents` do projeto |
 
 ## 1. User Story
@@ -86,11 +86,11 @@
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** `~/.agents/skills/minha-skill/SKILL.md` existe e repo sem skill de mesmo nome **when** `GET .../skills` **then** aparece com `scope:"global"` e `builtin:skill` carrega seu corpo.
-- [ ] **Given** mesmo `name` em `~/.agents` e `.agents` do repo **when** `GET .../skills` **then** lista a do repo (`scope:"project"`).
-- [ ] **Given** `~/.agents/commands/deploy.md` **when** o usuário digita `/deploy x` no composer **then** o template interpolado entra no input.
-- [ ] **Given** `~/.agents/mcp.json` com um server stdio válido **when** uma run inicia **then** suas tools aparecem como `mcp_*` anunciadas.
-- [ ] **Given** chat sem repo vinculado **when** `GET .../skills?scope=global` **then** retorna skills globais.
+- [x] **Given** `~/.agents/skills/minha-skill/SKILL.md` existe e repo sem skill de mesmo nome **when** `GET .../skills` **then** aparece com `scope:"global"` e `builtin:skill` carrega seu corpo.
+- [x] **Given** mesmo `name` em `~/.agents` e `.agents` do repo **when** `GET .../skills` **then** lista a do repo (`scope:"project"`).
+- [x] **Given** `~/.agents/commands/deploy.md` **when** o usuário digita `/deploy x` no composer **then** o template interpolado entra no input.
+- [x] **Given** `~/.agents/mcp.json` com um server stdio válido **when** uma run inicia **then** suas tools aparecem como `mcp_*` anunciadas.
+- [x] **Given** chat sem repo vinculado **when** `GET .../skills?scope=global` **then** retorna skills globais.
 
 **Edge cases:**
 
@@ -103,13 +103,13 @@
 
 ## 7. Task Plan
 
-- [ ] **T1 —** `SkillDiscoveryService`: scan multi-escopo + `Scope` no resultado + dedup.
-- [ ] **T2 —** Endpoints `RepoSkillEndpoints`: `scope` no payload + filtro.
-- [ ] **T3 —** `SkillBuiltinTool` + description; chat-mode sem workspace usa global.
-- [ ] **T4 —** `.agents/mcp.json` reader + merge em `McpClientService` (refresh tools na primeira run).
-- [ ] **T5 —** Composer: commands globais no picker + label.
-- [ ] **T6 —** Testes NUnit: scan dedup/precedência, endpoint scope, mcp.json inválido, skill tool global.
-- [ ] **T7 —** `dotnet build` + `dotnet test`; DoD; PR.
+- [x] **T1 —** `SkillDiscoveryService`: scan multi-escopo + `Scope` no resultado + dedup.
+- [x] **T2 —** Endpoints `RepoSkillEndpoints`: `scope` no payload + filtro.
+- [x] **T3 —** `SkillBuiltinTool` + description; chat-mode sem workspace usa global.
+- [x] **T4 —** `.agents/mcp.json` reader + merge em `McpClientService` (refresh tools na primeira run).
+- [x] **T5 —** Composer: commands globais no picker + label.
+- [x] **T6 —** Testes NUnit: scan dedup/precedência, endpoint scope, mcp.json inválido, skill tool global.
+- [x] **T7 —** `dotnet build` + `dotnet test`; DoD; PR.
 
 **7.1 Validation strategy:** .NET — unit tests p/ regras (dedup, precedência, parse mcp.json), integration p/ endpoints; ≥80% cobertura nas novas linhas.
 
@@ -122,12 +122,19 @@
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-007 implementados.
-- [ ] Critérios da seção 6 cobertos por testes verdes.
-- [ ] `dotnet build` 0 erros/0 warnings; `dotnet test` verde.
-- [ ] `python3 tools/check-spec-status.py` ok.
-- [ ] Sem secrets/paths sensíveis em logs.
+- [x] RF-001..RF-007 implementados.
+- [x] Critérios da seção 6 cobertos por testes verdes.
+- [x] `dotnet build` 0 erros/0 warnings; `dotnet test` verde.
+- [x] `python3 tools/check-spec-status.py` ok.
+- [x] Sem secrets/paths sensíveis em logs.
 
 ## Open Questions / Pending Ambiguity
 
 - Nome do arquivo MCP: `mcp.json` (adotado; fallback `.agents/mcp.jsonc` se surgir demanda).
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #415 + #422 · 2dd6bf8ba |
+| Issue | https://github.com/afonsoft/open-webui/issues/399 |

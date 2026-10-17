@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-tool-output-bounding` |
 | Ticket | [#402](https://github.com/afonsoft/open-webui/issues/402) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`tool-output.ts`: bound genérico 2000 linhas/50KiB, output completo em arquivo gerenciado + path no resultado) |
 
 ## 1. User Story
@@ -71,11 +71,11 @@ Sem API nova. O resultado da tool carrega o marcador:
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** `file_grep` retorna 5.000 linhas **when** o resultado é materializado **then** o modelo recebe ≤2000 linhas + marcador com path e o arquivo existe em `tool-output/`.
-- [ ] **Given** output de 30 linhas **when** executa **then** passa intacto (`truncated:false`).
-- [ ] **Given** arquivo `tool_*.txt` com 8 dias **when** o cleanup roda **then** é removido.
-- [ ] **Given** modelo chama `file_read` no path retornado **when** a tool executa **then** lê o conteúdo completo.
-- [ ] **Given** `file_read` pede `/etc/passwd` **when** executa **then** nega (allowlist não abre FS arbitrário).
+- [x] **Given** `file_grep` retorna 5.000 linhas **when** o resultado é materializado **then** o modelo recebe ≤2000 linhas + marcador com path e o arquivo existe em `tool-output/`.
+- [x] **Given** output de 30 linhas **when** executa **then** passa intacto (`truncated:false`).
+- [x] **Given** arquivo `tool_*.txt` com 8 dias **when** o cleanup roda **then** é removido.
+- [x] **Given** modelo chama `file_read` no path retornado **when** a tool executa **then** lê o conteúdo completo.
+- [x] **Given** `file_read` pede `/etc/passwd` **when** executa **then** nega (allowlist não abre FS arbitrário).
 
 **Edge cases:**
 
@@ -87,11 +87,11 @@ Sem API nova. O resultado da tool carrega o marcador:
 
 ## 7. Task Plan
 
-- [ ] **T1 —** `ToolOutputService` (bound, head/tail, escrita atômica, cleanup).
-- [ ] **T2 —** Wire no `ToolExecutor.ExecuteAsync` pós-resultado.
-- [ ] **T3 —** `file_read` allowlist `{data}/tool-output/` (ou scheme).
-- [ ] **T4 —** Cleanup no boot + testes de retenção.
-- [ ] **T5 —** build+test; DoD; PR.
+- [x] **T1 —** `ToolOutputService` (bound, head/tail, escrita atômica, cleanup).
+- [x] **T2 —** Wire no `ToolExecutor.ExecuteAsync` pós-resultado.
+- [x] **T3 —** `file_read` allowlist `{data}/tool-output/` (ou scheme).
+- [x] **T4 —** Cleanup no boot + testes de retenção.
+- [x] **T5 —** build+test; DoD; PR.
 
 **7.1 Validation strategy:** unit tests do bound/atomic write/cleanup + integration `file_read` allowlist; ≥80%.
 
@@ -104,10 +104,17 @@ Sem API nova. O resultado da tool carrega o marcador:
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-005 implementados e testados.
-- [ ] Critérios da seção 6 verdes.
-- [ ] build/test verdes.
+- [x] RF-001..RF-005 implementados e testados.
+- [x] Critérios da seção 6 verdes.
+- [x] build/test verdes.
 
 ## Open Questions / Pending Ambiguity
 
 - Scrub antes ou depois de gravar? Decisão: antes — arquivo deve ser tão seguro quanto o que o modelo vê.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #423 · d3ffa5cd3 |
+| Issue | https://github.com/afonsoft/open-webui/issues/402 |

@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-agent-personas-channels` |
 | Ticket | [#413](https://github.com/afonsoft/open-webui/issues/413) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `opencode/src/agentui/index.ts` (personas com guardrails + dispatchChannelMessage + audit log por agente) |
 
 ## 1. User Story
@@ -59,18 +59,18 @@
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** persona com guardrail `strict` **when** message pede `file_write` **then** tool negada/ask — nunca executa.
-- [ ] **Given** duas mensagens com mesmo `chatKey` **when** POST **then** segunda enxerga contexto da primeira (mesma sessão).
-- [ ] **Given** 3 turnos **when** `/audit` **then** lista in+out por turno, mais recente primeiro.
-- [ ] **Given** persona desabilitada **when** POST **then** 404/410.
-- [ ] **Given** `wait=false` **when** POST **then** 202 + runId; run completando grava turno no audit.
+- [x] **Given** persona com guardrail `strict` **when** message pede `file_write` **then** tool negada/ask — nunca executa.
+- [x] **Given** duas mensagens com mesmo `chatKey` **when** POST **then** segunda enxerga contexto da primeira (mesma sessão).
+- [x] **Given** 3 turnos **when** `/audit` **then** lista in+out por turno, mais recente primeiro.
+- [x] **Given** persona desabilitada **when** POST **then** 404/410.
+- [x] **Given** `wait=false` **when** POST **then** 202 + runId; run completando grava turno no audit.
 
 ## 7. Task Plan
 
-- [ ] **T1 —** Entidades + migration + CRUD personas.
-- [ ] **T2 —** `PersonaDispatchService`: resolve sessão por chatKey → run com system/model/guardrails → audit.
-- [ ] **T3 —** Endpoints message/audit + auth + rate limit.
-- [ ] **T4 —** Testes: sessão contínua, guardrails, audit cap, auth.
+- [x] **T1 —** Entidades + migration + CRUD personas.
+- [x] **T2 —** `PersonaDispatchService`: resolve sessão por chatKey → run com system/model/guardrails → audit.
+- [x] **T3 —** Endpoints message/audit + auth + rate limit.
+- [x] **T4 —** Testes: sessão contínua, guardrails, audit cap, auth.
 
 **7.1 Validation strategy:** integration com provider fake; testes de permissão por GuardrailLevel.
 
@@ -82,4 +82,11 @@
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-006 verdes; build+test limpos; spec-status ok.
+- [x] RF-001..RF-006 verdes; build+test limpos; spec-status ok.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #420 (cadeia #421) · 7a2bb4265 |
+| Issue | https://github.com/afonsoft/open-webui/issues/413 |
