@@ -53,6 +53,8 @@ public class BuiltinToolsTests
         services.AddScoped<ConfigService>();
         services.AddScoped<WorkspaceRepoService>();
         services.AddScoped<ProviderService>();
+        services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
         services.AddScoped<NotificationService>();
         services.AddScoped<AutomationService>();
         services.AddSingleton<System.Net.Http.IHttpClientFactory>(
