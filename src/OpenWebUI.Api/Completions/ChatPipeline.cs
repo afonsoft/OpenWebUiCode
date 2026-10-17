@@ -534,7 +534,27 @@ public static class ChatPipeline
         /// (70%/50%/35%) e devolve a janela compactada — null quando a
         /// compactação não é possível e a run deve falhar.
         /// </summary>
-        Func<IReadOnlyList<ChatCompletionMessage>, double, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>?>>? OnOverflowCompactAsync = null);
+        Func<IReadOnlyList<ChatCompletionMessage>, double, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>?>>? OnOverflowCompactAsync = null,
+        /// <summary>
+        /// Checkpoint de loop-state no topo de cada round
+        /// (SPEC-20261016-run-recovery RF-002): recebe o estado completo —
+        /// janela, tail de tools, contadores — para o evento
+        /// <c>snapshot</c> durável.
+        /// </summary>
+        Func<RunLoopCheckpoint, CancellationToken, Task>? OnCheckpointAsync = null,
+        /// <summary>
+        /// Completion do round recebida (SPEC-20261016-run-recovery RF-001):
+        /// o executor grava <c>step_finished</c> com os ids das tool calls —
+        /// na retomada eles viram o conjunto de calls a liquidar.
+        /// </summary>
+        Func<int, ProviderCompletion, CancellationToken, Task>? OnStepFinishedAsync = null,
+        /// <summary>
+        /// Mensagens apendadas ao histórico dentro do round
+        /// (SPEC-20261016-run-recovery RF-001): <paramref name="addedToMessages"/>
+        /// entra na janela e <paramref name="addedToToolMessages"/> também
+        /// no tail de tools persistido — o replay repõe ambos.
+        /// </summary>
+        Func<IReadOnlyList<ChatCompletionMessage>, IReadOnlyList<ChatCompletionMessage>, CancellationToken, Task>? OnMessagesAddedAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -555,7 +575,9 @@ public static class ChatPipeline
         BuiltinToolContext? builtinContext = null,
         string? userId = null,
         Microsoft.Extensions.Logging.ILogger? log = null,
-        int? maxSteps = null)
+        int? maxSteps = null,
+        int maxParallelTools = 4,
+        RunLoopCheckpoint? resume = null)
     {
         // Teto global default do tool loop (SPEC-20261016-agent-steps-usage
         // RF-001): 5 → 25 agora que agents podem declarar `steps:` próprios.
@@ -570,12 +592,19 @@ public static class ChatPipeline
         // OmniRoute ~256 tokens) deixam o modelo de raciocínio sem orçamento
         // para responder — o retry de round vazio sobe o teto.
         const int retryMaxTokens = 8192;
-        var emptyRounds = 0;
-        var stepCount = 0;
+        var emptyRounds = resume?.EmptyRounds ?? 0;
+        var stepCount = resume?.StepCount ?? 0;
         var request = effective;
-        var messages = effective.Messages.ToList();
-        var toolMessages = new List<ChatCompletionMessage>();
-        var stepUsages = new List<RoundUsage>();
+        // SPEC-20261016-run-recovery RF-003: com <paramref name="resume"/> a
+        // janela, o tail de tools e os contadores vêm do estado reconstruído
+        // — o turno entra direto no round indicado pelo planner.
+        var messages = (resume?.Messages ?? effective.Messages).ToList();
+        var toolMessages = resume?.ToolMessages.ToList()
+            ?? new List<ChatCompletionMessage>();
+        var stepUsages = resume?.StepUsages
+            .Select(u => new RoundUsage(
+                u.Step, u.PromptTokens, u.CompletionTokens, u.ReasoningTokens))
+            .ToList() ?? new List<RoundUsage>();
 
         // SPEC-20261016-provider-resilience: retry com backoff nas chamadas
         // de completion (RF-001/005), continuação em finish=length (RF-003,
@@ -583,8 +612,8 @@ public static class ChatPipeline
         // 70%/50%/35% (RF-004, até 3x por run).
         const int maxLengthContinuations = 3;
         var overflowRetries = 0;
-        var lengthContinuations = 0;
-        var continuedAnswer = new StringBuilder();
+        var lengthContinuations = resume?.LengthContinuations ?? 0;
+        var continuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? "");
 
         async Task<ProviderCompletion> CompleteResilientAsync(
             Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
@@ -662,7 +691,7 @@ public static class ChatPipeline
             }
         }
 
-        for (var round = 0; round < maxRounds; round++)
+        for (var round = resume?.Round ?? 0; round < maxRounds; round++)
         {
             if (callbacks?.OnRoundBoundaryAsync is not null)
             {
@@ -685,6 +714,19 @@ public static class ChatPipeline
                 {
                     messages.AddRange(notes);
                 }
+            }
+            // RF-002 run-recovery: snapshot do estado do loop no topo do
+            // round (steers/notas já aplicados) — em restart a run retoma
+            // deste ponto, rediz o call do modelo e liquida calls órfãs.
+            if (callbacks?.OnCheckpointAsync is not null)
+            {
+                await callbacks.OnCheckpointAsync(new RunLoopCheckpoint(
+                    round, messages, toolMessages, stepCount,
+                    stepUsages.Select(u => new StepUsage(
+                        u.Step, u.PromptTokens, u.CompletionTokens,
+                        u.ReasoningTokens)).ToList(),
+                    emptyRounds, lengthContinuations,
+                    continuedAnswer.ToString()), ct);
             }
             if (callbacks?.OnStepAsync is not null)
             {
@@ -717,6 +759,12 @@ public static class ChatPipeline
                     usage.PromptTokens, usage.CompletionTokens,
                     usage.ReasoningTokens));
             }
+            // RF-001 run-recovery: o step_finished registra os ids das tool
+            // calls — órfãs na retomada recebem resultado sintético.
+            if (callbacks?.OnStepFinishedAsync is not null)
+            {
+                await callbacks.OnStepFinishedAsync(round, step, ct);
+            }
 
             // RF-003: resposta truncada (finish_reason=length) recebe um
             // pedido sintético de continuação e o loop segue — até 3
@@ -743,7 +791,15 @@ public static class ChatPipeline
                     "assistant", step.Content);
                 messages.Add(truncatedAssistant);
                 toolMessages.Add(truncatedAssistant);
-                messages.Add(new ChatCompletionMessage("user", LengthContinuePrompt));
+                var continuePrompt = new ChatCompletionMessage(
+                    "user", LengthContinuePrompt);
+                messages.Add(continuePrompt);
+                if (callbacks?.OnMessagesAddedAsync is not null)
+                {
+                    await callbacks.OnMessagesAddedAsync(
+                        [truncatedAssistant, continuePrompt],
+                        [truncatedAssistant], ct);
+                }
                 continue;
             }
             if (step.ToolCalls.Count == 0)
@@ -781,11 +837,16 @@ public static class ChatPipeline
                         "Round {Round} retornou vazio (sem content nem tool calls) — "
                         + "auto-continue {Empty}/{Max} injetado.",
                         round + 1, emptyRounds, maxEmptyRounds);
-                    messages.Add(new ChatCompletionMessage(
+                    var nudge = new ChatCompletionMessage(
                         "user",
                         "Sua resposta anterior veio vazia (sem texto nem tool calls). "
                         + "Responda agora de forma direta — ou chame a tool "
-                        + "apropriada — sem reiniciar o raciocínio."));
+                        + "apropriada — sem reiniciar o raciocínio.");
+                    messages.Add(nudge);
+                    if (callbacks?.OnMessagesAddedAsync is not null)
+                    {
+                        await callbacks.OnMessagesAddedAsync([nudge], [], ct);
+                    }
                     continue;
                 }
                 return new ToolLoopOutcome(
@@ -796,13 +857,23 @@ public static class ChatPipeline
                 "assistant", step.Content, ToolCallsJson: step.ToolCallsJson);
             messages.Add(assistantMessage);
             toolMessages.Add(assistantMessage);
+            if (callbacks?.OnMessagesAddedAsync is not null)
+            {
+                await callbacks.OnMessagesAddedAsync(
+                    [assistantMessage], [assistantMessage], ct);
+            }
 
             log?.LogInformation(
                 "Tool loop round {Round}/{Max}: {Count} call(s) ({Names}).",
                 round + 1, maxRounds, step.ToolCalls.Count,
                 string.Join(", ", step.ToolCalls.Select(c => c.Name)));
 
-            foreach (var call in step.ToolCalls)
+            // SPEC-20261016-parallel-tool-calls: o batch é partido em runs
+            // contíguos de paralelizáveis. Cada grupo executa em 3 fases —
+            // (1) fase/gate sequenciais na ordem, (2) execução concorrente
+            // com cap, (3) publicação sequencial na ordem. Calls mutáveis
+            // e grupos de 1 seguem o caminho sequencial de sempre.
+            async Task<ToolGateDecision> PrepareCallAsync(ProviderToolCall call)
             {
                 if (callbacks?.OnPhaseAsync is not null)
                 {
@@ -812,37 +883,118 @@ public static class ChatPipeline
                 {
                     await callbacks.OnCallAsync(call, ct);
                 }
-
-                var gate = callbacks?.GateAsync is not null
+                return callbacks?.GateAsync is not null
                     ? await callbacks.GateAsync(call, ct)
                     : ToolGateDecision.Allow;
-                var denied = !gate.Approved;
-                var callSw = Stopwatch.StartNew();
-                var outcome = denied
-                    ? new ToolExecutionOutcome(
+            }
+
+            async Task<ToolExecutionOutcome> ExecuteCallAsync(
+                ProviderToolCall call, ToolGateDecision gate, SemaphoreSlim? cap)
+            {
+                if (!gate.Approved)
+                {
+                    return new ToolExecutionOutcome(
                         string.IsNullOrWhiteSpace(gate.DenyMessage)
                             ? "Erro: execução negada pelo usuário."
-                            : $"Erro: execução negada pelo usuário: {gate.DenyMessage}")
-                    // ask_user e gates parecidos podem devolver o resultado
-                    // direto via ToolGateDecision.Output (RF-005).
-                    : gate.Output is { Length: > 0 } gateOutput
-                        ? new ToolExecutionOutcome(gateOutput)
-                        : await toolExecutor.ExecuteAsync(
-                            tools, call.Name, call.ArgumentsJson, builtinContext, ct);
+                            : $"Erro: execução negada pelo usuário: {gate.DenyMessage}");
+                }
+                // ask_user e gates parecidos podem devolver o resultado
+                // direto via ToolGateDecision.Output (RF-005).
+                if (gate.Output is { Length: > 0 } gateOutput)
+                {
+                    return new ToolExecutionOutcome(gateOutput);
+                }
+                if (cap is not null)
+                {
+                    await cap.WaitAsync(ct);
+                }
+                try
+                {
+                    return await toolExecutor.ExecuteAsync(
+                        tools, call.Name, call.ArgumentsJson, builtinContext, ct);
+                }
+                finally
+                {
+                    cap?.Release();
+                }
+            }
+
+            async Task PublishCallResultAsync(
+                ProviderToolCall call, ToolGateDecision gate,
+                ToolExecutionOutcome outcome, TimeSpan elapsed)
+            {
+                var denied = !gate.Approved;
                 var output = outcome.Text;
                 log?.LogInformation(
                     "Tool {Name}: {Elapsed}ms, denied={Denied}, output={Chars} chars.",
-                    call.Name, callSw.ElapsedMilliseconds, denied, output.Length);
-
+                    call.Name, (int)elapsed.TotalMilliseconds, denied, output.Length);
                 if (callbacks?.OnResultAsync is not null)
                 {
                     await callbacks.OnResultAsync(call, output, outcome.Result, denied, ct);
                 }
-
                 var toolMessage = new ChatCompletionMessage(
                     "tool", output, ToolCallId: call.Id);
                 messages.Add(toolMessage);
                 toolMessages.Add(toolMessage);
+            }
+
+            var calls = step.ToolCalls;
+            for (var k = 0; k < calls.Count;)
+            {
+                // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
+                var end = k;
+                while (end < calls.Count
+                    && toolExecutor.IsSafeInParallel(tools, calls[end].Name))
+                {
+                    end++;
+                }
+                if (end - k >= 2)
+                {
+                    var count = end - k;
+                    var gates = new ToolGateDecision[count];
+                    for (var g = 0; g < count; g++)
+                    {
+                        gates[g] = await PrepareCallAsync(calls[k + g]);
+                    }
+                    var outcomes = new ToolExecutionOutcome[count];
+                    var elapsed = new TimeSpan[count];
+                    var cap = new SemaphoreSlim(maxParallelTools);
+                    var groupSw = Stopwatch.StartNew();
+                    await Task.WhenAll(Enumerable.Range(0, count).Select(
+                        async g =>
+                        {
+                            var callSw = Stopwatch.StartNew();
+                            try
+                            {
+                                outcomes[g] = await ExecuteCallAsync(
+                                    calls[k + g], gates[g], cap);
+                            }
+                            catch (Exception ex)
+                            {
+                                outcomes[g] = new ToolExecutionOutcome(
+                                    $"Erro: execução falhou: {ex.Message}");
+                            }
+                            elapsed[g] = callSw.Elapsed;
+                        }));
+                    for (var g = 0; g < count; g++)
+                    {
+                        await PublishCallResultAsync(
+                            calls[k + g], gates[g], outcomes[g], elapsed[g]);
+                    }
+                    log?.LogInformation(
+                        "Batch paralelo: {Count} tools em {Elapsed}ms.",
+                        count, groupSw.ElapsedMilliseconds);
+                    k = end;
+                    continue;
+                }
+                // Call sequencial (mutável ou paralelizável sozinha).
+                var call = calls[k];
+                var callSw = Stopwatch.StartNew();
+                var gate = await PrepareCallAsync(call);
+                var outcome = await ExecuteCallAsync(call, gate, null);
+                callSw.Stop();
+                await PublishCallResultAsync(call, gate, outcome, callSw.Elapsed);
+                k = Math.Max(k + 1, end);
             }
         }
 

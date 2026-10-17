@@ -32,6 +32,9 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(
@@ -158,6 +161,9 @@ public sealed class FileReadBuiltinTool(
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -296,6 +302,9 @@ public sealed class FileGrepBuiltinTool(HistoryResourceService history) : IBuilt
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
@@ -443,6 +452,9 @@ public sealed class FileGlobBuiltinTool : IBuiltinChatTool
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public Task<BuiltinToolResult> ExecuteAsync(

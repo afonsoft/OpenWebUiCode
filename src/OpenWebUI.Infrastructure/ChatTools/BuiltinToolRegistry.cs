@@ -52,6 +52,26 @@ public sealed class BuiltinToolRegistry(IEnumerable<IBuiltinChatTool> tools, ICo
     public ApprovalTier? TierOfName(string name) =>
         _byName.TryGetValue(name, out var tool) ? tool.Tier : null;
 
+    /// <summary>Cap de concorrência do batch paralelo
+    /// (<c>BuiltinTools:MaxParallel</c>, default 4 — RF-006).</summary>
+    public int MaxParallel { get; } =
+        int.TryParse(configuration["BuiltinTools:MaxParallel"], out var cap)
+            ? Math.Max(1, cap) : 4;
+
+    /// <summary>A função <paramref name="functionName"/> (qualquer forma:
+    /// <c>name</c>, <c>builtin:name</c>, <c>builtin_name</c>) resolve para
+    /// uma built-in declarada <see cref="IBuiltinChatTool.SafeInParallel"/>?
+    /// Tools de DB/HTTP/MCP e nomes desconhecidos → false (sequencial).</summary>
+    public bool IsSafeInParallel(string functionName)
+    {
+        var bare = functionName.StartsWith(IdPrefix, StringComparison.OrdinalIgnoreCase)
+            ? functionName[IdPrefix.Length..]
+            : functionName.StartsWith(SpecPrefix, StringComparison.OrdinalIgnoreCase)
+                ? functionName[SpecPrefix.Length..]
+                : functionName;
+        return _byName.TryGetValue(bare, out var tool) && tool.SafeInParallel;
+    }
+
     /// <summary>
     /// Traduz os ToolIds do request: ids <c>builtin:{name}</c> viram
     /// <see cref="Tool"/> sintéticos; demais ids retornam para lookup no DB.

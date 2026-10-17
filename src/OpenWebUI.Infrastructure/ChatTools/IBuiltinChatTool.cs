@@ -67,6 +67,16 @@ public interface IBuiltinChatTool
     bool RequiresApproval => Tier != ApprovalTier.Read;
 
     /// <summary>
+    /// Se a tool é pura de leitura e pode executar concorrente com outras
+    /// paralelizáveis no mesmo round (SPEC-20261016-parallel-tool-calls
+    /// RF-001). Default conservador <c>false</c>: <see cref="Tier"/> Read
+    /// não basta — tools sem gate mas com efeito (todo_write, ask_user,
+    /// generate_*) continuam sequenciais. Tools externas (HTTP/MCP/python)
+    /// nunca paralelizam nesta fase.
+    /// </summary>
+    bool SafeInParallel => false;
+
+    /// <summary>
     /// Executa a tool com os argumentos do modelo no contexto da run.
     /// </summary>
     /// <param name="args">Documento JSON dos argumentos do tool call.</param>

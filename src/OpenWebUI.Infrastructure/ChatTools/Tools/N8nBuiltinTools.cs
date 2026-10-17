@@ -22,6 +22,9 @@ public sealed class N8nListWorkflowsBuiltinTool(N8nService n8n) : IBuiltinChatTo
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
