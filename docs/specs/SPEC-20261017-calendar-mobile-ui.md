@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `fix/devin-20261017-calendar-mobile` |
-| Status | `Approved` |
+| Status | `Delivered` |
 | Fonte | prints do usuário (`C:\print`): `}` literal na tela + layout do calendário quebrado no mobile |
 
 ## 1. Contexto
