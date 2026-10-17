@@ -907,7 +907,10 @@ public class BuiltinToolsTests
         var path = Path.Join(_workspace, "num.txt");
         File.WriteAllLines(path, Enumerable.Range(1, 20).Select(i => $"l{i}"));
 
-        var tool = new FileReadBuiltinTool(new HistoryResourceService(NewDb()));
+        var tool = new FileReadBuiltinTool(new HistoryResourceService(NewDb()),
+            new ToolOutputService(new ConfigService(NewDb(), TestCache.Create()),
+                new StubEnvLocal(_root),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<ToolOutputService>.Instance));
         var r = await tool.ExecuteAsync(
             Args("{\"path\":\"num.txt\",\"offset\":10,\"limit\":5}"), Ctx(), default);
 
@@ -1766,6 +1769,103 @@ public class BuiltinToolsTests
             Assert.That(automation.ModelId, Is.EqualTo("modelo-da-run"));
             Assert.That(automation.NextRunAt, Is.InRange(esperado - 30, esperado + 30));
             Assert.That(automation.Prompt, Does.Contain("revisar o PR"));
+        });
+    }
+
+    // ---------------- ToolOutputService wire (SPEC-20261016) ----------------
+
+    /// <summary>Tool que devolve N linhas — exercita o bound do executor.</summary>
+    private sealed class BigOutputTool(int lines) : IBuiltinChatTool
+    {
+        public string Name => "big_output";
+        public string Description => "d";
+        public string ParametersJson => "{\"type\":\"object\"}";
+        public ApprovalTier Tier => ApprovalTier.Read;
+
+        public Task<BuiltinToolResult> ExecuteAsync(
+            JsonElement args, BuiltinToolContext context, CancellationToken ct) =>
+            Task.FromResult(new BuiltinToolResult(
+                string.Join('\n', Enumerable.Range(1, lines).Select(i => $"L{i:D5}"))));
+    }
+
+    /// <summary>Tool que já trunca com path próprio — não é re-truncada (RF-003).</summary>
+    private sealed class SelfTruncatedTool : IBuiltinChatTool
+    {
+        public string Name => "self_truncated";
+        public string Description => "d";
+        public string ParametersJson => "{\"type\":\"object\"}";
+        public ApprovalTier Tier => ApprovalTier.Read;
+
+        public Task<BuiltinToolResult> ExecuteAsync(
+            JsonElement args, BuiltinToolContext context, CancellationToken ct) =>
+            Task.FromResult(new BuiltinToolResult(
+                new string('y', 60_000), new { truncated = true, path = "x.txt" }));
+    }
+
+    [Test]
+    public async Task Executor_OutputGrande_BoundComPathGerenciado()
+    {
+        using var db = NewDb();
+        var registry = new BuiltinToolRegistry(
+            [new BigOutputTool(5000)], new ConfigurationBuilder().Build());
+        var outputs = new ToolOutputService(
+            new ConfigService(db, TestCache.Create()),
+            new StubEnvLocal(_root),
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<ToolOutputService>.Instance);
+        var executor = new ToolExecutor(db, new StubHttpClientFactory(),
+            new PythonToolExecutor(new ConfigurationBuilder().Build()),
+            new McpClientService(db, TestCache.Create()),
+            registry, new ConfigService(db, TestCache.Create()), outputs);
+
+        var tools = await executor.LoadEnabledAsync("u1", ["builtin:big_output"]);
+        var outcome = await executor.ExecuteAsync(tools, "builtin_big_output",
+            "{}", Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome.Text, Does.Contain("L00001"));
+            Assert.That(outcome.Text, Does.Contain("L05000"));
+            Assert.That(outcome.Text, Does.Contain("output completo:"));
+            Assert.That(outcome.Text.Split('\n').Length, Is.LessThan(2100));
+            Assert.That(outcome.Result.HasValue, Is.True);
+        });
+        var meta = outcome.Result!.Value;
+        Assert.Multiple(() =>
+        {
+            Assert.That(meta.GetProperty("truncated").GetBoolean(), Is.True);
+            Assert.That(meta.GetProperty("outputPath").GetString(), Does.Contain("tool-output"));
+            Assert.That(File.Exists(meta.GetProperty("outputPath").GetString()), Is.True);
+        });
+    }
+
+    [Test]
+    public async Task Executor_ResultadoJaTruncado_NaoReTrunca()
+    {
+        using var db = NewDb();
+        var registry = new BuiltinToolRegistry(
+            [new SelfTruncatedTool()], new ConfigurationBuilder().Build());
+        var outputs = new ToolOutputService(
+            new ConfigService(db, TestCache.Create()),
+            new StubEnvLocal(_root),
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<ToolOutputService>.Instance);
+        var executor = new ToolExecutor(db, new StubHttpClientFactory(),
+            new PythonToolExecutor(new ConfigurationBuilder().Build()),
+            new McpClientService(db, TestCache.Create()),
+            registry, new ConfigService(db, TestCache.Create()), outputs);
+
+        var tools = await executor.LoadEnabledAsync("u1", ["builtin:self_truncated"]);
+        var outcome = await executor.ExecuteAsync(tools, "builtin_self_truncated",
+            "{}", Ctx(), default);
+
+        // Result marcado truncated:true passa intacto (60KB ficam como estão).
+        Assert.That(outcome.Text, Has.Length.EqualTo(60_000));
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome.Text, Does.Not.Contain("output completo:"));
+            Assert.That(outcome.Result!.Value.GetProperty("path").GetString(),
+                Is.EqualTo("x.txt"));
         });
     }
 }

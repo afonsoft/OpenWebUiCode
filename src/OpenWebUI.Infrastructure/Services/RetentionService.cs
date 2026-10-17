@@ -18,7 +18,8 @@ namespace OpenWebUI.Infrastructure.Services;
 public class RetentionService(
     AppDbContext db, ConfigService config, WorktreeService worktrees,
     MemorySyncService memorySync,
-    ILogger<RetentionService> logger)
+    ILogger<RetentionService> logger,
+    ToolOutputService? toolOutputs = null)
 {
     /// <summary>Dias de retenção das execuções de automações.</summary>
     public const int AutomationRunDays = 90;
@@ -135,6 +136,13 @@ public class RetentionService(
         if (!dryRun)
         {
             await worktrees.PruneOrphansAsync(ct);
+            // Arquivos gerenciados de tool-output >7d (RF-004 do SPEC
+            // tool-output-bounding) — limpeza barata junto do ciclo.
+            if (toolOutputs is not null)
+            {
+                await toolOutputs.CleanupAsync(ct: ct);
+            }
+
             await CheckpointAsync(ct);
             vacuumed = await MaybeVacuumAsync(now, ct);
         }

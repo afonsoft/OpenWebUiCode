@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-tool-output-bounding` |
 | Ticket | [#402](https://github.com/afonsoft/open-webui/issues/402) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Fonte | análise opencode v2.0.31 (`tool-output.ts`: bound genérico 2000 linhas/50KiB, output completo em arquivo gerenciado + path no resultado) |
 
 ## 1. User Story

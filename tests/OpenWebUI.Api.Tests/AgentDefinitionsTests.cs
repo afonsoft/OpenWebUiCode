@@ -55,6 +55,7 @@ public class AgentDefinitionsTests
         services.AddScoped<ProviderService>();
         services.AddScoped<UserConfigOverlayService>();
         services.AddScoped<AgentDefinitionService>();
+        services.AddScoped<ToolOutputService>();
         services.AddScoped(sp => new ModelRoleResolver(
             sp.GetRequiredService<AppDbContext>(),
             sp.GetRequiredService<ConfigService>(),
@@ -63,7 +64,8 @@ public class AgentDefinitionsTests
         // Registry só com as tools que o teste de allowlist consulta.
         services.AddScoped<IBuiltinChatTool>(sp =>
             new FileReadBuiltinTool(
-                sp.GetRequiredService<HistoryResourceService>()));
+                sp.GetRequiredService<HistoryResourceService>(),
+                sp.GetRequiredService<ToolOutputService>()));
         services.AddScoped<IBuiltinChatTool>(_ => new FileWriteBuiltinTool());
         services.AddScoped<IBuiltinChatTool>(_ => new DelegateTaskBuiltinTool(
             _.GetRequiredService<IServiceScopeFactory>(),

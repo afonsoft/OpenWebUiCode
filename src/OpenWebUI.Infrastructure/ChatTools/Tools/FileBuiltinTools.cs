@@ -130,7 +130,8 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
 /// linhas e paginação (<paramref>offset</paramref>/<paramref>limit</paramref>).
 /// Somente leitura.
 /// </summary>
-public sealed class FileReadBuiltinTool(HistoryResourceService history) : IBuiltinChatTool
+public sealed class FileReadBuiltinTool(
+    HistoryResourceService history, ToolOutputService toolOutputs) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_read";
@@ -192,32 +193,48 @@ public sealed class FileReadBuiltinTool(HistoryResourceService history) : IBuilt
             return new BuiltinToolResult(hsb.ToString().TrimEnd());
         }
 
+        // Allowlist (RF-005 SPEC-20261016-tool-output-bounding): path
+        // absoluto sob {data}/tool-output/tool_*.txt é lido direto — é o
+        // arquivo gerenciado devolvido pelo marcador de truncamento.
+        if (Path.IsPathRooted(path) && toolOutputs.TryResolveManaged(path) is { } managed)
+        {
+            return await ReadFileAsync(managed, managed, args, ct);
+        }
+
         var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
         if (full is null)
         {
             return new BuiltinToolResult(error);
         }
 
+        var rel = WorkspaceFiles.RelativeOf(context.WorkspacePath, full);
+        return await ReadFileAsync(full, rel, args, ct);
+    }
+
+    /// <summary>Leitura paginada comum (workspace ou arquivo gerenciado allowlisted).</summary>
+    private static async Task<BuiltinToolResult> ReadFileAsync(
+        string full, string displayPath, JsonElement args, CancellationToken ct)
+    {
         if (Directory.Exists(full))
         {
-            return new BuiltinToolResult($"'{path}' é um diretório — use file_list.");
+            return new BuiltinToolResult($"'{displayPath}' é um diretório — use file_list.");
         }
 
         if (!File.Exists(full))
         {
-            return new BuiltinToolResult($"Arquivo '{path}' não existe.");
+            return new BuiltinToolResult($"Arquivo '{displayPath}' não existe.");
         }
 
         if (new FileInfo(full).Length > WorkspaceFiles.MaxFileBytes)
         {
             return new BuiltinToolResult(
-                $"Arquivo '{path}' excede {WorkspaceFiles.MaxFileBytes / 1024}KB — leia por partes "
+                $"Arquivo '{displayPath}' excede {WorkspaceFiles.MaxFileBytes / 1024}KB — leia por partes "
                 + "com offset/limit após um file_grep para achar a região.");
         }
 
         if (WorkspaceFiles.LooksBinary(full))
         {
-            return new BuiltinToolResult($"Arquivo '{path}' parece binário — leitura negada.");
+            return new BuiltinToolResult($"Arquivo '{displayPath}' parece binário — leitura negada.");
         }
 
         var offset = args.TryGetProperty("offset", out var o) && o.TryGetInt32(out var off)
@@ -226,8 +243,7 @@ public sealed class FileReadBuiltinTool(HistoryResourceService history) : IBuilt
             ? Math.Clamp(lim, 1, 2000) : 400;
 
         var lines = (await File.ReadAllLinesAsync(full, ct));
-        var rel = WorkspaceFiles.RelativeOf(context.WorkspacePath, full);
-        var sb = new StringBuilder($"{rel} ({lines.Length} linhas)\n");
+        var sb = new StringBuilder($"{displayPath} ({lines.Length} linhas)\n");
         for (var i = offset - 1; i < lines.Length && i < offset - 1 + limit; i++)
         {
             sb.Append($"{i + 1,6}: {lines[i]}\n");
@@ -241,7 +257,7 @@ public sealed class FileReadBuiltinTool(HistoryResourceService history) : IBuilt
 
         return new BuiltinToolResult(sb.ToString().TrimEnd(), new
         {
-            path = rel,
+            path = displayPath,
             totalLines = lines.Length,
             offset,
             limit,
