@@ -1,6 +1,7 @@
+using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using OpenWebUI.Application.Contracts;
 
 namespace OpenWebUI.Infrastructure.Services;
@@ -8,12 +9,37 @@ namespace OpenWebUI.Infrastructure.Services;
 /// <summary>
 /// Web search via engine configurada em <c>retrieval.config</c>:
 /// searxng (self-hosted), duckduckgo (instant answer), tavily, brave,
-/// google_pse, jina, exa, kagi e perplexity (API key).
+/// google_pse, jina, exa, kagi, perplexity (API key) — ou
+/// <c>auto</c> (SPEC-20261016-websearch-failover): tenta os providers
+/// com credencial na ordem estável tavily→brave→exa→google_pse→kagi e
+/// duckduckgo por último (sem chave), com cooldown por provider em
+/// 429/5xx/timeout e failover automático para o próximo.
 /// Chaves nunca são retornadas — apenas usadas no request à engine.
 /// </summary>
 public class WebSearchService(IHttpClientFactory httpFactory, ConfigService config)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>Cooldown quando o provider devolve 429 sem Retry-After.</summary>
+    public static readonly TimeSpan RateLimitCooldown = TimeSpan.FromSeconds(60);
+
+    /// <summary>Cooldown por timeout/5xx/demais falhas de transporte.</summary>
+    public static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(30);
+
+    /// <summary>Teto do Retry-After respeitado (RF-002).</summary>
+    public static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(5);
+
+    /// <summary>Ordem estável do modo auto: credenciados primeiro, duckduckgo (sem key) por último.</summary>
+    private static readonly string[] AutoOrder =
+        ["tavily", "brave", "exa", "google_pse", "kagi", "duckduckgo"];
+
+    private static readonly ConcurrentDictionary<string, DateTimeOffset> Cooldowns = new();
+
+    /// <summary>Relógio injetável para testes de cooldown.</summary>
+    internal static Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.UtcNow;
+
+    /// <summary>Limpa cooldowns — uso exclusivo de testes.</summary>
+    internal static void ResetCooldowns() => Cooldowns.Clear();
 
     /// <summary>
     /// Executa a busca na engine configurada. Retorna null quando web search
@@ -24,24 +50,158 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
     /// <param name="ct">Cancelamento.</param>
     public async Task<List<WebSearchResult>?> SearchAsync(
         string query, int count = 5, CancellationToken ct = default)
+        => (await SearchDetailedAsync(query, count, ct))?.Results;
+
+    /// <summary>
+    /// Busca com metadados de provider/failover (RF-003/RF-004): usada por
+    /// <c>builtin:web_search</c> para registrar <c>[via provider]</c> e
+    /// devolver <c>all-providers-cooling</c> quando tudo está em cooldown.
+    /// </summary>
+    public async Task<WebSearchOutcome?> SearchDetailedAsync(
+        string query, int count = 5, CancellationToken ct = default)
     {
         var cfg = await config.GetAsync("retrieval.config", RetrievalConfig.Default, ct);
         var client = httpFactory.CreateClient(nameof(WebSearchService));
         client.Timeout = TimeSpan.FromSeconds(15);
 
-        return cfg.Engine switch
+        if (cfg.Engine == "auto")
         {
-            "searxng" => await SearxngAsync(client, cfg, query, count, ct),
-            "duckduckgo" => await DuckDuckGoAsync(client, query, count, ct),
-            "tavily" => await TavilyAsync(client, cfg, query, count, ct),
-            "brave" => await BraveAsync(client, cfg, query, count, ct),
-            "google_pse" => await GooglePseAsync(client, cfg, query, count, ct),
-            "jina" => await JinaAsync(client, cfg, query, count, ct),
-            "exa" => await ExaAsync(client, cfg, query, count, ct),
-            "kagi" => await KagiAsync(client, cfg, query, count, ct),
-            "perplexity" => await PerplexityAsync(client, cfg, query, count, ct),
-            _ => null,
-        };
+            return await SearchAutoAsync(client, cfg, query, count, ct);
+        }
+        if (cfg.Engine == "none" || string.IsNullOrWhiteSpace(cfg.Engine))
+        {
+            return null;
+        }
+
+        var results = await DispatchAsync(cfg.Engine, client, cfg, query, count, ct);
+        return new WebSearchOutcome(results, cfg.Engine, FailoverChain: null);
+    }
+
+    /// <summary>
+    /// Modo auto (RF-001/RF-002/RF-004): tenta providers com credencial na
+    /// ordem estável, pulando quem está em cooldown; falha marca cooldown
+    /// e tenta o próximo. Todos cooling/falhos → outcome de erro
+    /// <c>all-providers-cooling</c> com retry até o cooldown mais próximo.
+    /// </summary>
+    private async Task<WebSearchOutcome> SearchAutoAsync(
+        HttpClient client, RetrievalConfig cfg, string query, int count, CancellationToken ct)
+    {
+        var attempted = new List<string>();
+        foreach (var provider in AutoOrder)
+        {
+            if (!HasCredentials(provider, cfg) || InCooldown(provider))
+            {
+                continue;
+            }
+
+            try
+            {
+                var results = await DispatchAsync(provider, client, cfg, query, count, ct);
+                var chain = attempted.Count > 0
+                    ? string.Join("→", attempted.Append(provider))
+                    : null;
+                return new WebSearchOutcome(results, provider, chain);
+            }
+            catch (WebSearchProviderException ex)
+            {
+                SetCooldown(provider, ex.RetryAfter);
+                attempted.Add(provider);
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // Timeout do HttpClient (15s) — cooldown curto e próximo.
+                SetCooldown(provider, null);
+                attempted.Add(provider);
+            }
+        }
+
+        // Todos falharam agora ou já estavam em cooldown (RF-004).
+        var next = AutoOrder.Select(CooldownUntil).Where(u => u is not null).Min();
+        var retryAfter = next is { } until
+            ? Math.Max(1, (int)Math.Ceiling((until - Now()).TotalSeconds))
+            : (int)FailureCooldown.TotalSeconds;
+        return new WebSearchOutcome([], attempted.LastOrDefault() ?? "auto",
+            attempted.Count > 0 ? string.Join("→", attempted) : null,
+            Error: "all-providers-cooling", RetryAfterSeconds: retryAfter);
+    }
+
+    /// <summary>Provider tem credencial configurada para entrar no pool do auto.</summary>
+    private static bool HasCredentials(string provider, RetrievalConfig cfg) => provider switch
+    {
+        "tavily" => !string.IsNullOrEmpty(cfg.TavilyApiKey),
+        "brave" => !string.IsNullOrEmpty(cfg.BraveApiKey),
+        "exa" => !string.IsNullOrEmpty(cfg.ExaApiKey),
+        "google_pse" => !string.IsNullOrEmpty(cfg.GooglePseApiKey)
+            && !string.IsNullOrEmpty(cfg.GooglePseEngineId),
+        "kagi" => !string.IsNullOrEmpty(cfg.KagiApiKey),
+        "duckduckgo" => true,
+        _ => false,
+    };
+
+    private static bool InCooldown(string provider)
+        => CooldownUntil(provider) is { } until && until > Now();
+
+    private static DateTimeOffset? CooldownUntil(string provider)
+        => Cooldowns.TryGetValue(provider, out var until) ? until : null;
+
+    /// <summary>
+    /// Marca cooldown do provider (RF-002): 429 honra Retry-After (teto de
+    /// 5min) ou cai no default de 60s; demais falhas → 30s.
+    /// </summary>
+    private static void SetCooldown(string provider, TimeSpan? retryAfter)
+    {
+        var span = retryAfter is { } r
+            ? r <= TimeSpan.Zero ? RateLimitCooldown : r
+            : FailureCooldown;
+        if (span > MaxRetryAfter)
+        {
+            span = MaxRetryAfter;
+        }
+        Cooldowns[provider] = Now() + span;
+    }
+
+    /// <summary>Despacha para a implementação do provider.</summary>
+    private static Task<List<WebSearchResult>> DispatchAsync(
+        string provider, HttpClient client, RetrievalConfig cfg,
+        string query, int count, CancellationToken ct) => provider switch
+    {
+        "searxng" => SearxngAsync(client, cfg, query, count, ct),
+        "duckduckgo" => DuckDuckGoAsync(client, query, count, ct),
+        "tavily" => TavilyAsync(client, cfg, query, count, ct),
+        "brave" => BraveAsync(client, cfg, query, count, ct),
+        "google_pse" => GooglePseAsync(client, cfg, query, count, ct),
+        "jina" => JinaAsync(client, cfg, query, count, ct),
+        "exa" => ExaAsync(client, cfg, query, count, ct),
+        "kagi" => KagiAsync(client, cfg, query, count, ct),
+        "perplexity" => PerplexityAsync(client, cfg, query, count, ct),
+        _ => Task.FromResult(new List<WebSearchResult>()),
+    };
+
+    /// <summary>
+    /// GET/POST com checagem de status: não-2xx →
+    /// <see cref="WebSearchProviderException"/> carregando Retry-After
+    /// (antes os SendAsync liam o corpo de erro como JSON vazio).
+    /// </summary>
+    private static async Task<JsonElement> SendJsonAsync(
+        HttpClient client, string provider, HttpRequestMessage request, CancellationToken ct)
+    {
+        using var response = await client.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var retry = response.Headers.RetryAfter?.Delta
+                ?? (response.Headers.RetryAfter?.Date is { } d
+                    ? d - DateTimeOffset.UtcNow
+                    : null);
+            throw new WebSearchProviderException(provider, response.StatusCode, retry);
+        }
+        return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+    }
+
+    private static async Task<JsonElement> GetJsonAsync(
+        HttpClient client, string provider, string url, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        return await SendJsonAsync(client, provider, request, ct);
     }
 
     private static async Task<List<WebSearchResult>> SearxngAsync(
@@ -53,7 +213,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         }
 
         var url = $"{cfg.SearxngBaseUrl.TrimEnd('/')}/search?q={Uri.EscapeDataString(query)}&format=json";
-        var doc = await client.GetFromJsonAsync<JsonElement>(url, JsonOptions, ct);
+        var doc = await GetJsonAsync(client, "searxng", url, ct);
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("results", out var items))
         {
@@ -72,7 +232,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         HttpClient client, string query, int count, CancellationToken ct)
     {
         var url = $"https://api.duckduckgo.com/?q={Uri.EscapeDataString(query)}&format=json&no_html=1&skip_disambig=1";
-        var doc = await client.GetFromJsonAsync<JsonElement>(url, JsonOptions, ct);
+        var doc = await GetJsonAsync(client, "duckduckgo", url, ct);
         var results = new List<WebSearchResult>();
 
         void AddTopic(JsonElement topic)
@@ -120,11 +280,14 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         }
 
         var payload = new { api_key = cfg.TavilyApiKey, query, max_results = count };
-        var doc = await client.PostAsJsonAsync(
-            "https://api.tavily.com/search", payload, JsonOptions, ct)
-            .ContinueWith(t => t.Result.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct), ct);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "https://api.tavily.com/search")
+        {
+            Content = JsonContent.Create(payload, options: JsonOptions),
+        };
+        var doc = await SendJsonAsync(client, "tavily", request, ct);
         var results = new List<WebSearchResult>();
-        if (doc.Result.TryGetProperty("results", out var items))
+        if (doc.TryGetProperty("results", out var items))
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
@@ -148,8 +311,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         var url = $"https://api.search.brave.com/res/v1/web/search?q={Uri.EscapeDataString(query)}&count={count}";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("X-Subscription-Token", cfg.BraveApiKey);
-        var response = await client.SendAsync(request, ct);
-        var doc = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+        var doc = await SendJsonAsync(client, "brave", request, ct);
 
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("web", out var web)
@@ -178,7 +340,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         var url = $"{baseUrl}/customsearch/v1?key={Uri.EscapeDataString(cfg.GooglePseApiKey)}"
             + $"&cx={Uri.EscapeDataString(cfg.GooglePseEngineId)}"
             + $"&q={Uri.EscapeDataString(query)}&num={count}";
-        var doc = await client.GetFromJsonAsync<JsonElement>(url, JsonOptions, ct);
+        var doc = await GetJsonAsync(client, "google_pse", url, ct);
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("items", out var items))
         {
@@ -205,8 +367,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         using var request = new HttpRequestMessage(
             HttpMethod.Get, $"{baseUrl}?q={Uri.EscapeDataString(query)}");
         request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {cfg.JinaApiKey}");
-        var response = await client.SendAsync(request, ct);
-        var doc = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+        var doc = await SendJsonAsync(client, "jina", request, ct);
 
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("data", out var items))
@@ -236,8 +397,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         request.Headers.TryAddWithoutValidation("x-api-key", cfg.ExaApiKey);
         request.Content = JsonContent.Create(
             new { query, numResults = count, contents = new { text = true } }, options: JsonOptions);
-        var response = await client.SendAsync(request, ct);
-        var doc = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+        var doc = await SendJsonAsync(client, "exa", request, ct);
 
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("results", out var items))
@@ -267,8 +427,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         using var request = new HttpRequestMessage(
             HttpMethod.Get, $"{baseUrl}/api/v0/search?q={Uri.EscapeDataString(query)}&limit={count}");
         request.Headers.TryAddWithoutValidation("Authorization", $"Bot {cfg.KagiApiKey}");
-        var response = await client.SendAsync(request, ct);
-        var doc = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+        var doc = await SendJsonAsync(client, "kagi", request, ct);
 
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("data", out var items))
@@ -303,8 +462,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
                 model = "sonar",
                 messages = new[] { new { role = "user", content = query } },
             }, options: JsonOptions);
-        var response = await client.SendAsync(request, ct);
-        var doc = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, ct);
+        var doc = await SendJsonAsync(client, "perplexity", request, ct);
 
         // Upstream: perplexity devolve citações — cada URL vira um resultado.
         var results = new List<WebSearchResult>();
@@ -320,4 +478,39 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         }
         return results;
     }
+}
+
+/// <summary>
+/// Resultado detalhado de uma busca (SPEC-20261016-websearch-failover):
+/// provider efetivo, cadeia de failover ("tavily→brave") e erro agregado
+/// <c>all-providers-cooling</c> com segundos até o próximo retry quando
+/// todos os candidatos estão em cooldown.
+/// </summary>
+/// <param name="Results">Resultados (vazio em erro).</param>
+/// <param name="Provider">Provider que respondeu (ou o último tentado).</param>
+/// <param name="FailoverChain">Cadeia percorrida quando houve failover.</param>
+/// <param name="Error">Código de erro agregado (ex.: all-providers-cooling).</param>
+/// <param name="RetryAfterSeconds">Segundos até o cooldown mais próximo expirar.</param>
+public sealed record WebSearchOutcome(
+    List<WebSearchResult> Results,
+    string Provider,
+    string? FailoverChain,
+    string? Error = null,
+    int? RetryAfterSeconds = null);
+
+/// <summary>
+/// Falha HTTP de um provider de busca — carrega o status e o Retry-After
+/// para o cooldown do modo auto. Herda de <see cref="HttpRequestException"/>
+/// para o modo fixo manter o comportamento atual (endpoint → 502).
+/// </summary>
+public sealed class WebSearchProviderException(
+    string provider, HttpStatusCode? status, TimeSpan? retryAfter)
+    : HttpRequestException($"web search provider '{provider}' falhou ({status})",
+        inner: null, statusCode: status)
+{
+    /// <summary>Provider que falhou.</summary>
+    public string Provider { get; } = provider;
+
+    /// <summary>Retry-After devolvido pelo provider (quando presente).</summary>
+    public TimeSpan? RetryAfter { get; } = retryAfter;
 }

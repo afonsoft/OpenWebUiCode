@@ -274,7 +274,7 @@ public static class RetrievalEndpoints
             return Results.Forbid();
         }
 
-        var valid = request.Engine is "none" or "searxng" or "duckduckgo" or "tavily"
+        var valid = request.Engine is "none" or "auto" or "searxng" or "duckduckgo" or "tavily"
             or "brave" or "google_pse" or "jina" or "exa" or "kagi" or "perplexity"
             && request.TopK is > 0 and <= 100
             && request.ChunkSize is >= 100 and <= 10000

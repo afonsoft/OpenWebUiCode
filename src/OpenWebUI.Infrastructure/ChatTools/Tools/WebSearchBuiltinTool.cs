@@ -47,21 +47,43 @@ public sealed class WebSearchBuiltinTool(WebSearchService search) : IBuiltinChat
             ? Math.Clamp(n, 1, 10)
             : 5;
 
-        var results = await search.SearchAsync(query, count, ct);
-        if (results is null)
+        var outcome = await search.SearchDetailedAsync(query, count, ct);
+        if (outcome is null)
         {
             return new BuiltinToolResult(
                 "Busca web não configurada — ative um engine em Admin → Configurações → Busca web.");
         }
 
+        // Todos os providers em cooldown/falha no modo auto (RF-004).
+        if (outcome.Error is { } error)
+        {
+            return new BuiltinToolResult(
+                $"Busca web indisponível ({error}) — tente em "
+                    + $"{outcome.RetryAfterSeconds}s.",
+                new
+                {
+                    error,
+                    retryAfterSeconds = outcome.RetryAfterSeconds,
+                    provider = outcome.Provider,
+                });
+        }
+
+        var results = outcome.Results;
         if (results.Count == 0)
         {
             return new BuiltinToolResult($"Nenhum resultado para '{query}'.", new { results = Array.Empty<object>() });
         }
 
+        // RF-003: provider efetivo (e cadeia de failover) visível no output.
+        var via = outcome.FailoverChain ?? outcome.Provider;
         var items = results.Select(r => new { r.Title, r.Url, r.Snippet }).ToList();
-        var text = string.Join("\n", results.Select((r, i) =>
+        var text = $"[via {via}]\n" + string.Join("\n", results.Select((r, i) =>
             $"{i + 1}. {r.Title}\n   {r.Url}\n   {r.Snippet}"));
-        return new BuiltinToolResult(text, new { results = items });
+        return new BuiltinToolResult(text, new
+        {
+            results = items,
+            provider = outcome.Provider,
+            failover = outcome.FailoverChain,
+        });
     }
 }
