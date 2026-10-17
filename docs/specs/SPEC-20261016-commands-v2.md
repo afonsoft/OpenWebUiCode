@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-commands-v2` |
 | Ticket | [#403](https://github.com/afonsoft/open-webui/issues/403) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (docs `/commands` + `command.ts` — frontmatter agent/model/subagent, `$ARGUMENTS`/`$N`, `!`shell`` expansion) |
 
 ## 1. User Story
@@ -125,3 +125,10 @@ Hoje commands do repo são interpolados no cliente (`ChatView.razor:1512` — `R
 ## Open Questions / Pending Ambiguity
 
 - `agent:` refere-se a `agents/*.agent.md` (AgentDefinitionService) ou mode? Decisão: aceita ambos — nome de agent definition resolve, senão cai em mode se `plan|build|chat`.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #432 · 9edce99f4 |
+| Issue | https://github.com/afonsoft/open-webui/issues/403 |
