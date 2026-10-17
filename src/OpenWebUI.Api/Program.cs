@@ -75,6 +75,7 @@ builder.Services.AddSingleton<IChatRunDispatcher>(
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ChatRunDispatcher>());
 builder.Services.AddScoped<ChatRunExecutor>();
 builder.Services.AddScoped<ContextCompactionService>();
+builder.Services.AddScoped<RunEventWriter>();
 // Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
 // context-management): boundaries + notebook + flag new_context via kv.
 builder.Services.AddScoped<ContextBoundaryService>();

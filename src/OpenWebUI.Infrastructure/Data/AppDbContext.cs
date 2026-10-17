@@ -24,6 +24,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Inbox durável de steer/queue das runs (SPEC-20261010-steer-queue).</summary>
     public DbSet<ChatRunSteer> ChatRunSteers => Set<ChatRunSteer>();
 
+    /// <summary>Eventos duráveis append-only por run (SPEC-20261016-run-recovery).</summary>
+    public DbSet<ChatRunEvent> ChatRunEvents => Set<ChatRunEvent>();
+
     /// <summary>Jobs de background spawnados pelo chat (SPEC-20261007-chat-agent-tools).</summary>
     public DbSet<ChatJob> ChatJobs => Set<ChatJob>();
 
@@ -198,6 +201,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasKey(m => m.Id);
             entity.HasIndex(m => new { m.UserId, m.Scope });
             entity.HasIndex(m => new { m.UserId, m.RepoSlug });
+        });
+
+        modelBuilder.Entity<ChatRunEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.RunId, e.Seq });
         });
 
         modelBuilder.Entity<ChatRunSteer>(entity =>
