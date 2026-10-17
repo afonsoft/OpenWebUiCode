@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-parallel-tool-calls` |
 | Ticket | [#401](https://github.com/afonsoft/open-webui/issues/401) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`session/runner/step.ts:86-151` — tool calls executam como fibers concorrentes durante o stream) |
 
 ## 1. User Story
@@ -108,3 +108,10 @@ Sem mudança de API — o SSE passa a poder emitir `tool_result` fora de ordem e
 ## Open Questions / Pending Ambiguity
 
 - `delegate_task` (subagent) — sequencial nesta fase (subagentes paralelos = fase 2, requer isolamento de workdir).
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #431 · ab55aac42 |
+| Issue | https://github.com/afonsoft/open-webui/issues/401 |

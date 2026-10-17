@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-provider-resilience` |
 | Ticket | [#400](https://github.com/afonsoft/open-webui/issues/400) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
-| Status | `Approved` |
+| Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`session/runner/retry.ts`, `runner/llm.ts:273-330`, `compaction.ts`) |
 
 ## 1. User Story
@@ -118,3 +118,10 @@ Sem endpoints novos — comportamento interno do pipeline + evento SSE `phase: r
 ## Open Questions / Pending Ambiguity
 
 - `ProviderCompletion` hoje expõe `finish_reason`? Se não, adicionar campo — confirmar no T3.
+
+## Delivered
+
+| Item | Link |
+| --- | --- |
+| PR/commit | #428 · 689510ea1 |
+| Issue | https://github.com/afonsoft/open-webui/issues/400 |
