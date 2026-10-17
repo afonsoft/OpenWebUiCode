@@ -22,6 +22,7 @@ public static class RepoSkillEndpoints
         repo.MapPut("/skills/{name}/enabled", SetSkillEnabledAsync);
         repo.MapGet("/commands", ListCommandsAsync);
         repo.MapGet("/commands/{name}", GetCommandAsync);
+        repo.MapPost("/commands/{name}/expand", ExpandCommandAsync);
     }
 
     /// <summary>
@@ -140,6 +141,40 @@ public static class RepoSkillEndpoints
             : Results.Ok(new RepoCommandDetailResponse(
                 entry.Name, entry.Description, entry.Agent, entry.Model,
                 entry.Subtask, "command", entry.Path, entry.Body, entry.Scope));
+    }
+
+    /// <summary>
+    /// Expande um command no servidor (SPEC-20261016-commands-v2 RF-003):
+    /// <c>$ARGUMENTS</c>/<c>$N</c>, <c>!`shell`</c> (opt-in) e validação de
+    /// <c>agent</c>/<c>model</c> declarados. O composer usa o resultado para
+    /// montar o submit da run.
+    /// </summary>
+    private static async Task<IResult> ExpandCommandAsync(
+        string name, RepoCommandExpandRequest request,
+        string? chatId, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
+        RepoCommandService commands, CancellationToken ct)
+    {
+        var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        if (reject is not null)
+        {
+            return reject;
+        }
+
+        var (result, error) = await commands.ExpandAsync(
+            userId!, workdir!, name, request.Args, ct);
+        if (result is null)
+        {
+            return error is null
+                ? Results.NotFound(new { detail = $"Command '{name}' não encontrado." })
+                : Results.BadRequest(new { detail = error });
+        }
+        if (error is not null)
+        {
+            return Results.BadRequest(new { detail = error });
+        }
+
+        return Results.Ok(new RepoCommandExpandResponse(
+            result.Prompt, result.Agent, result.Model, result.Mode, result.Subagent));
     }
 
     /// <summary>Guard comum: usuário autenticado + repo vinculado → workdir.</summary>

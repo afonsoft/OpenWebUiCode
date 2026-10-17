@@ -8,6 +8,7 @@ using OpenWebUI.Application.Contracts;
 using OpenWebUI.Application.Interfaces;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -558,5 +559,163 @@ public class ChatRunEndpointsTests
         var noTree = await _client.GetAsync(
             $"/api/v1/chats/{chat.Id}/runs/{runId}/diff");
         Assert.That((int)noTree.StatusCode, Is.LessThan(500));
+    }
+
+    // ---------- commands-v2: enqueue via Command/CommandArgs ----------
+
+    [Test]
+    public async Task Enqueue_ComandoInexistente_404()
+    {
+        var auth = await SignUpAsync("CX", "cx@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+
+        var res = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/messages",
+            new EnqueueChatRunRequest("oi", "llama3", Command: "zz-inexistente"));
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Enqueue_ComandoAgentInvalido_400()
+    {
+        var auth = await SignUpAsync("CY", "cy@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+        var cmdDir = Path.Join(TestHomeIsolation.Home, ".agents", "commands");
+        Directory.CreateDirectory(cmdDir);
+        File.WriteAllText(Path.Join(cmdDir, "zz-badagent.md"),
+            "---\nagent: zz-fantasma\n---\ncorpo\n");
+        SkillDiscoveryService.Invalidate("");
+        try
+        {
+            var res = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/messages",
+                new EnqueueChatRunRequest("oi", "llama3", Command: "zz-badagent"));
+            Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest),
+                await res.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            File.Delete(Path.Join(cmdDir, "zz-badagent.md"));
+            SkillDiscoveryService.Invalidate("");
+        }
+    }
+
+    [Test]
+    public async Task Enqueue_ComCommand_ExpandePromptNoServidor()
+    {
+        var auth = await SignUpAsync("CZ", "cz@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+        var cmdDir = Path.Join(TestHomeIsolation.Home, ".agents", "commands");
+        Directory.CreateDirectory(cmdDir);
+        File.WriteAllText(Path.Join(cmdDir, "zz-fix.md"),
+            "---\nagent: build\n---\nCorrija $ARGUMENTS\n");
+        SkillDiscoveryService.Invalidate("");
+        try
+        {
+            var res = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/messages",
+                new EnqueueChatRunRequest(
+                    "texto ignorado", "llama3",
+                    Command: "zz-fix", CommandArgs: "o bug"));
+            Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
+                await res.Content.ReadAsStringAsync());
+
+            // O servidor expande o template — a mensagem persistida mostra
+            // o texto final, não o content enviado pelo cliente.
+            var detalhe = await _client.GetFromJsonAsync<ChatResponse>(
+                $"/api/v1/chats/{chat.Id}");
+            var userMsg = detalhe!.Messages.LastOrDefault(m => m.Role == "user");
+            Assert.That(userMsg?.Content, Is.EqualTo("Corrija o bug"));
+        }
+        finally
+        {
+            File.Delete(Path.Join(cmdDir, "zz-fix.md"));
+            SkillDiscoveryService.Invalidate("");
+        }
+    }
+
+    [Test]
+    public async Task Enqueue_ComSubagent_SpawnaRunFilha()
+    {
+        var auth = await SignUpAsync("CS", "cs@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+        var cmdDir = Path.Join(TestHomeIsolation.Home, ".agents", "commands");
+        Directory.CreateDirectory(cmdDir);
+        File.WriteAllText(Path.Join(cmdDir, "zz-sub.md"),
+            "---\nsubagent: true\n---\nFaça $ARGUMENTS\n");
+        SkillDiscoveryService.Invalidate("");
+        try
+        {
+            var res = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/messages",
+                new EnqueueChatRunRequest(
+                    "x", "llama3", Command: "zz-sub", CommandArgs: "tarefa y"));
+            Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
+                await res.Content.ReadAsStringAsync());
+            var mae = (await res.Content
+                .ReadFromJsonAsync<ChatRunResponse>())!;
+
+            // A run-mãe só enfileira a filha e completa (sem provider).
+            var final = await AguardarFinalAsync(chat.Id, mae.Id);
+            Assert.That(final.Status, Is.EqualTo(ChatRunStatus.Completed));
+
+            // Chat filho "cmd-subagent:" + run filha com ParentRunId da mãe.
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var filho = await db.Chats.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.ParentChatId == chat.Id);
+            Assert.That(filho, Is.Not.Null);
+            Assert.That(filho!.Title, Does.StartWith("cmd-subagent:"));
+            var filha = await db.ChatRuns.AsNoTracking()
+                .FirstOrDefaultAsync(r => r.ParentRunId == mae.Id);
+            Assert.That(filha, Is.Not.Null);
+        }
+        finally
+        {
+            File.Delete(Path.Join(cmdDir, "zz-sub.md"));
+            SkillDiscoveryService.Invalidate("");
+        }
+    }
+
+    [Test]
+    public async Task Enqueue_ComAgentDef_AplicaOverrideDeAgente()
+    {
+        var auth = await SignUpAsync("CA", "ca@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+        var cmdDir = Path.Join(TestHomeIsolation.Home, ".agents", "commands");
+        var agentDir = Path.Join(TestInfra.IsolatedHome, ".agents", "agents");
+        Directory.CreateDirectory(cmdDir);
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Join(agentDir, "zz-helper.agent.md"),
+            "---\nname: zz-helper\ndescription: helper\n---\nPrompt do helper.");
+        File.WriteAllText(Path.Join(cmdDir, "zz-agent.md"),
+            "---\nagent: zz-helper\n---\nRode $ARGUMENTS\n");
+        SkillDiscoveryService.Invalidate("");
+        try
+        {
+            var res = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/messages",
+                new EnqueueChatRunRequest(
+                    "x", "llama3", Command: "zz-agent", CommandArgs: "isto"));
+            Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
+                await res.Content.ReadAsStringAsync());
+            var run = (await res.Content
+                .ReadFromJsonAsync<ChatRunResponse>())!;
+
+            // O executor resolve o agente declarado e falha só no provider.
+            var final = await AguardarFinalAsync(chat.Id, run.Id);
+            Assert.That(final.Status, Is.EqualTo(ChatRunStatus.Failed));
+        }
+        finally
+        {
+            File.Delete(Path.Join(cmdDir, "zz-agent.md"));
+            File.Delete(Path.Join(agentDir, "zz-helper.agent.md"));
+            SkillDiscoveryService.Invalidate("");
+        }
     }
 }

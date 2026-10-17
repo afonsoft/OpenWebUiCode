@@ -1126,6 +1126,20 @@ public class ApiService(HttpClient http, AuthService auth)
             $"/api/v1/workspace/repo/commands/{Uri.EscapeDataString(name)}"
             + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
 
+    /// <summary>
+    /// Expande um command no servidor (SPEC-20261016-commands-v2): interpola
+    /// <c>$ARGUMENTS</c>/<c>$N</c>, avalia <c>!`shell`</c> (quando o servidor
+    /// tem o opt-in ligado) e devolve os overrides declarados
+    /// (<c>agent</c>/<c>model</c>/<c>mode</c>/<c>subagent</c>). null em
+    /// 404/400 — o caller faz fallback para a interpolação local.
+    /// </summary>
+    public Task<RepoCommandExpandResponse?> ExpandRepoCommandAsync(
+        string name, string? args, string? chatId = null) =>
+        SendAsync<RepoCommandExpandResponse>(HttpMethod.Post,
+            $"/api/v1/workspace/repo/commands/{Uri.EscapeDataString(name)}/expand"
+            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            new RepoCommandExpandRequest(args));
+
     /// <summary>Lê um arquivo do workdir (fatia de linhas); null em 404/binário/grande.</summary>
     public Task<WorkspaceFileReadResponse?> GetWorkspaceFileAsync(
         string path, int? startLine = null, int? maxLines = null, string? chatId = null)

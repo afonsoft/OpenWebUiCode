@@ -98,6 +98,52 @@ public class RepoSkillEndpointsTests
     }
 
     [Test]
+    public async Task Commands_Expand_ResolveOverrides()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var dir = Path.Join(ctx.Workdir!, ".opencode", "command");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Join(dir, "zz-fix.md"),
+            "---\ndescription: fix\nagent: build\nsubagent: true\n---\nCorrija $ARGUMENTS\n");
+
+        var res = await ctx.Client.PostAsJsonAsync(
+            "/api/v1/workspace/repo/commands/zz-fix/expand",
+            new RepoCommandExpandRequest("o bug"));
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await res.Content.ReadAsStringAsync());
+        var exp = (await res.Content
+            .ReadFromJsonAsync<RepoCommandExpandResponse>())!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(exp.Prompt, Is.EqualTo("Corrija o bug"));
+            Assert.That(exp.Mode, Is.EqualTo("build"));
+            Assert.That(exp.Agent, Is.Null);
+            Assert.That(exp.Subagent, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task Commands_Expand_Inexistente404_EAgentRuim400()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var missing = await ctx.Client.PostAsJsonAsync(
+            "/api/v1/workspace/repo/commands/zz-nope/expand",
+            new RepoCommandExpandRequest(null));
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        var dir = Path.Join(ctx.Workdir!, ".opencode", "command");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Join(dir, "zz-bad.md"),
+            "---\nagent: zz-fantasma\n---\ncorpo\n");
+        // O scan do workdir ficou cacheado (TTL 60s) pela chamada 404 acima.
+        SkillDiscoveryService.Invalidate(ctx.Workdir!);
+        var bad = await ctx.Client.PostAsJsonAsync(
+            "/api/v1/workspace/repo/commands/zz-bad/expand",
+            new RepoCommandExpandRequest(null));
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    [Test]
     public async Task Skills_FiltroScope_ProjetoVsGlobal()
     {
         // Skill global no home isolado da suíte + skill de projeto no workdir.

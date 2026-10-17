@@ -173,6 +173,7 @@ builder.Services.AddScoped<FormatHookService>();
 builder.Services.AddSingleton<CheckpointService>();
 builder.Services.AddSingleton<SkillDiscoveryService>();
 builder.Services.AddScoped<AgentDefinitionService>();
+builder.Services.AddScoped<RepoCommandService>();
 builder.Services.AddScoped<GitHubService>();
 builder.Services.AddHttpClient(GitHubService.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(30));
