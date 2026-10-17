@@ -1301,17 +1301,20 @@
                         </div>
                     </div>
                 }
-                else
+                else if (_configTab == "features")
                 {
                     <div class="card-list">
-                        <div class="card-row">
-                            <div class="flex flex-col gap-2 w-full text-sm py-1">
-                                <label class="check"><input type="checkbox" @bind="_toggleChannels" /> channels</label>
-                                <label class="check"><input type="checkbox" @bind="_toggleDirect" /> direct_connections</label>
-                                <label class="check"><input type="checkbox" @bind="_enginePyodide" /> code exec: pyodide</label>
-                                <label class="check"><input type="checkbox" @bind="_engineJupyter" /> code exec: jupyter</label>
+                        <SettingsSection Title="@L["admin.feature_toggles"]" Description="@L["admin.feature_toggles_desc"]">
+                            <div class="card-row">
+                                <div class="flex flex-col gap-2 w-full text-sm py-1">
+                                    <label class="check"><input type="checkbox" @bind="_toggleChannels" /> channels</label>
+                                    <label class="check"><input type="checkbox" @bind="_toggleDirect" /> direct_connections</label>
+                                    <label class="check"><input type="checkbox" @bind="_featUserKeys" /> user_provider_keys (BYOK)</label>
+                                    <label class="check"><input type="checkbox" @bind="_enginePyodide" /> code exec: pyodide</label>
+                                    <label class="check"><input type="checkbox" @bind="_engineJupyter" /> code exec: jupyter</label>
+                                </div>
                             </div>
-                        </div>
+                        </SettingsSection>
                         <div class="card-row">
                             @if (_configMessage is not null)
                             {
@@ -1701,6 +1704,7 @@
     private string? _editingBannerId;
     private bool _toggleChannels = true;
     private bool _toggleDirect;
+    private bool _featUserKeys;
     private bool _enginePyodide = true;
     private bool _engineJupyter;
     private List<TerminalServerResponse> _terminals = [];
@@ -1848,6 +1852,7 @@
         _suggestions = models?.PromptSuggestions?.ToList() ?? [];
         _banners = await Api.GetBannersAsync();
         _toggleChannels = await Api.GetFeatureToggleAsync("channels", true);
+        _featUserKeys = (await Api.GetUserProviderKeysFlagAsync())?.Enabled ?? false;
         var codeExec = await Api.GetCodeExecutionConfigAsync();
         _toggleDirect = codeExec?.DirectConnections ?? false;
         _enginePyodide = codeExec?.Engines.Contains("pyodide") ?? true;
@@ -2720,6 +2725,7 @@
         if (_enginePyodide) engines.Add("pyodide");
         if (_engineJupyter) engines.Add("jupyter");
         var ok = await Api.SetFeatureToggleAsync("channels", _toggleChannels)
+            && await Api.SetUserProviderKeysFlagAsync(_featUserKeys)
             && await Api.UpdateCodeExecutionConfigAsync(
                 new CodeExecutionConfig(engines, _toggleDirect)) is not null;
         _configMessage = ok ? L["admin.config_saved"] : L["settings.save_failed"];
