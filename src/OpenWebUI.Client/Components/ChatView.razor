@@ -827,6 +827,10 @@
     private string _chatTitle = "New Chat";
     private string? _model;
     private string _input = string.Empty;
+    // SPEC-20261016-commands-v2 T6: command expandido via /expand cujo texto
+    // ainda não foi editado — o submit reenvia Command/CommandArgs para o
+    // servidor aplicar os overrides declarados (agent/model/mode/subagent).
+    private (string Name, string Args, string Prompt)? _pendingCommand;
     private List<string> _inputHistory = [];
     private int _historyIndex = -1;
     private string? _error;
@@ -1496,6 +1500,7 @@
                 await SetAgentModeAsync("plan");
             }
             _input = builtinArgs;
+            _pendingCommand = null;
             return;
         }
         if (item.Source == "prompt")
@@ -1506,7 +1511,7 @@
             {
                 _input = prompt.Content;
             }
-
+            _pendingCommand = null;
             return;
         }
 
@@ -1516,11 +1521,29 @@
         {
             var detail = await Api.GetRepoSkillAsync(item.Command);
             _input = detail?.Content ?? _input;
+            _pendingCommand = null;
         }
         else
         {
-            var detail = await Api.GetRepoCommandAsync(item.Command);
-            _input = detail is null ? _input : RepoSlashCommands.Interpolate(detail.Content, args);
+            // T6: o servidor é a fonte canônica da expansão (suporta
+            // !`shell`, rest-capture e devolve os overrides declarados).
+            var expanded = await Api.ExpandRepoCommandAsync(item.Command, args, _loadedChatId);
+            if (expanded is not null)
+            {
+                _input = expanded.Prompt;
+                _pendingCommand = expanded.Agent is not null
+                    || expanded.Model is not null
+                    || expanded.Mode is not null
+                    || expanded.Subagent
+                    ? (item.Command, args, expanded.Prompt)
+                    : null;
+            }
+            else
+            {
+                var detail = await Api.GetRepoCommandAsync(item.Command);
+                _input = detail is null ? _input : RepoSlashCommands.Interpolate(detail.Content, args);
+                _pendingCommand = null;
+            }
         }
     }
 
@@ -1869,6 +1892,11 @@
     private async Task SendAsync()
     {
         var text = _input.Trim();
+        // T6: Command/CommandArgs só viajam se o usuário não editou o texto
+        // expandido — edição manual desativa os overrides declarados.
+        (string Name, string Args, string Prompt)? pendingCommand =
+            _pendingCommand is { } pc && text == pc.Prompt.Trim() ? pc : null;
+        _pendingCommand = null;
         var fileIds = _attachedFiles.Select(f => f.Id).ToList();
         var mentionPaths = _mentionPaths.Count > 0 ? _mentionPaths.ToList() : null;
         // SPEC-20261015-plan-spec-sdd RF-003: "/plan <requisito>" enviado sem
@@ -1979,7 +2007,8 @@
         // Chats persistidos usam runs desacopladas (a geração sobrevive a fechar a aba);
         // playground e demais caminhos seguem no stream direto legado.
         var detached = _loadedChatId is not null && !Playground;
-        await StreamAssistantAsync(fileIds, detached ? content : null, mentionPaths);
+        await StreamAssistantAsync(fileIds, detached ? content : null,
+            mentionPaths, pendingCommand);
         if (!detached)
         {
             await PersistAsync();
@@ -2165,11 +2194,13 @@
 
     private async Task StreamAssistantAsync(
         IReadOnlyList<string> fileIds, string? runContent = null,
-        IReadOnlyList<string>? mentionPaths = null)
+        IReadOnlyList<string>? mentionPaths = null,
+        (string Name, string Args, string Prompt)? pendingCommand = null)
     {
         if (_loadedChatId is not null && !Playground)
         {
-            await StreamDetachedRunAsync(fileIds, runContent, mentionPaths);
+            await StreamDetachedRunAsync(
+                fileIds, runContent, mentionPaths, pendingCommand);
             return;
         }
 
@@ -2240,7 +2271,8 @@
     /// </summary>
     private async Task StreamDetachedRunAsync(
         IReadOnlyList<string> fileIds, string? runContent,
-        IReadOnlyList<string>? mentionPaths = null)
+        IReadOnlyList<string>? mentionPaths = null,
+        (string Name, string Args, string Prompt)? pendingCommand = null)
     {
         var placeholder = new ChatMessageModel(
             Guid.NewGuid().ToString(), "assistant", string.Empty, _model,
@@ -2264,6 +2296,8 @@
                 _toolIds.Count > 0 ? _toolIds.ToList() : null,
                 _webSearch ? true : null,
                 mentionPaths,
+                command: pendingCommand?.Name,
+                commandArgs: pendingCommand?.Args,
                 ct: _cts.Token);
             _activeRunId = run.Id;
 
