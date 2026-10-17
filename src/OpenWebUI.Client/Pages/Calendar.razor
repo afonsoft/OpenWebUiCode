@@ -7,15 +7,15 @@
 <div class="page">
     <div class="page-header">
         <h1 class="page-title" tabindex="-1">@MonthTitle()</h1>
-        <div class="flex gap-2 items-center">
+        <div class="flex flex-wrap gap-2 items-center">
             <div class="flex rounded-full border border-gray-200 dark:border-gray-800 overflow-hidden text-xs">
-                <button class="px-3 py-1.5 @(_layer == "events" ? "bg-gray-200 dark:bg-gray-700" : "")"
+                <button class="px-3 py-1.5 max-sm:px-4 max-sm:min-h-11 @(_layer == "events" ? "bg-gray-200 dark:bg-gray-700" : "")"
                         @onclick='() => SetLayer("events")'>@L["calendar.events"]</button>
-                <button class="px-3 py-1.5 @(_layer == "automations" ? "bg-gray-200 dark:bg-gray-700" : "")"
+                <button class="px-3 py-1.5 max-sm:px-4 max-sm:min-h-11 @(_layer == "automations" ? "bg-gray-200 dark:bg-gray-700" : "")"
                         @onclick='() => SetLayer("automations")'>@L["calendar.automations"]</button>
             </div>
-            <button class="msg-action" @onclick="() => ChangeMonthAsync(-1)">@L["admin.prev"]</button>
-            <button class="msg-action" @onclick="() => ChangeMonthAsync(1)">@L["admin.next"]</button>
+            <button class="msg-action max-sm:min-h-11 max-sm:inline-flex max-sm:items-center" @onclick="() => ChangeMonthAsync(-1)">@L["admin.prev"]</button>
+            <button class="msg-action max-sm:min-h-11 max-sm:inline-flex max-sm:items-center" @onclick="() => ChangeMonthAsync(1)">@L["admin.next"]</button>
         </div>
     </div>
 
@@ -28,21 +28,21 @@
                     <div class="flex flex-wrap gap-2 mt-2 items-center">
                         @if (_calendars.Count == 0)
                         {
-                            <input aria-label="@L["calendar.calendar_name"]" class="input w-48" placeholder="@L["calendar.calendar_name"]"
+                            <input aria-label="@L["calendar.calendar_name"]" class="input w-full sm:w-48" placeholder="@L["calendar.calendar_name"]"
                                    @bind="_newCalendarName" />
                         }
                         else
                         {
-                            <select aria-label="@L["calendar.calendar_name"]" class="input w-48" @bind="_eventCalendarId">
+                            <select aria-label="@L["calendar.calendar_name"]" class="input w-full sm:w-48" @bind="_eventCalendarId">
                                 @foreach (var c in _calendars)
                                 {
                                     <option value="@c.Id">@c.Name</option>
                                 }
                             </select>
                         }
-                        <input aria-label="@L["calendar.event_title"]" class="input w-56" placeholder="@L["calendar.event_title"]" @bind="_eventTitle" />
-                        <input aria-label="@L["calendar.event_date"]" class="input w-40" type="date" @bind="_eventDate" />
-                        <button class="primary-btn" @onclick="CreateEventAsync" disabled="@_savingEvent">
+                        <input aria-label="@L["calendar.event_title"]" class="input w-full sm:w-56" placeholder="@L["calendar.event_title"]" @bind="_eventTitle" />
+                        <input aria-label="@L["calendar.event_date"]" class="input w-full sm:w-40" type="date" @bind="_eventDate" />
+                        <button class="primary-btn max-sm:w-full max-sm:min-h-11" @onclick="CreateEventAsync" disabled="@_savingEvent">
                             @L["common.create"]
                         </button>
                     </div>
@@ -67,7 +67,7 @@
                 <div class="text-center py-1">@L[$"calendar.d{d}"]</div>
             }
         </div>
-        <div class="mb-1 flex items-center gap-3 text-[0.6875rem] text-gray-400 dark:text-gray-500">
+        <div class="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-gray-400 dark:text-gray-500">
             <span class="inline-flex items-center gap-1"><span class="size-1.5 rounded-full bg-blue-500" aria-hidden="true"></span>@L["calendar.today"]</span>
             @if (_layer == "events")
             {
@@ -85,7 +85,7 @@
             {
                 @if (cell.Day == 0)
                 {
-                    <div class="h-20"></div>
+                    <div class="h-16 sm:h-20"></div>
                 }
                 else
                 {
@@ -94,7 +94,7 @@
                     var scheduled = ScheduledOn(day);
                     var events = EventsOn(day);
                     var selected = _selectedDay == day;
-                    <button class="h-20 rounded-xl border text-left p-1.5 text-sm align-top transition
+                    <button class="h-16 sm:h-20 rounded-xl border text-left p-1 sm:p-1.5 text-sm align-top transition overflow-hidden
                             @(selected ? "border-gray-400 dark:border-gray-500" : "border-gray-200 dark:border-gray-800")
                             @(cell.Today ? "font-semibold" : "")
                             hover:border-gray-400 dark:hover:border-gray-600"
@@ -374,14 +374,17 @@
     private static DateTime LocalDate(long epoch) =>
         DateTimeOffset.FromUnixTimeSeconds(epoch).LocalDateTime;
 
-    private string MonthTitle()
-    {
-        var key = $"calendar.m{_month}";
-        return $"{L[key]} {_year}";
-    }
+    private string MonthTitle() => $"{MonthName(_month)} {_year}";
 
     private string DayTitle(int day) =>
-        $"{day} {L[$"calendar.m{_month}"].ToString().ToLowerInvariant()}";
+        $"{day} {MonthName(_month).ToLowerInvariant()}";
+
+    /// <summary>Nome do mês 1-12 via chave CSV calendar.months (traduzida em todos os locales).</summary>
+    private string MonthName(int month)
+    {
+        var names = L["calendar.months"].Split(',');
+        return month >= 1 && month <= names.Length ? names[month - 1].Trim() : month.ToString();
+    }
 
     private static string FormatTime(long epoch) =>
         DateTimeOffset.FromUnixTimeSeconds(epoch).LocalDateTime.ToString("HH:mm");

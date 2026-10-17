@@ -401,7 +401,7 @@
                                         @if (RoleInheritedFrom(role) is { } inheritedFrom)
                                         {
                                             <div class="text-xs text-gray-400">
-                                                @L.T("settings.model_role_inherited", ("models", inheritedFrom))</div>
+                                                @L.T("settings.model_role_inherited", ("chain", inheritedFrom))</div>
                                         }
                                     </div>
                                     <select class="input max-w-64" disabled="@_modelsSaving"
