@@ -626,7 +626,8 @@ public static class ChatPipeline
 
                     timeouts = ex is TaskCanceledException or TimeoutException
                         ? timeouts + 1 : 0;
-                    var decision = ProviderRetryPolicy.Decide(ex, attempt, timeouts);
+                    var decision = ProviderRetryPolicy.Decide(
+                        ex, attempt, timeouts, options: providers.RetryOptions);
                     if (!decision.Retry)
                     {
                         var code = decision.Reason switch
@@ -646,7 +647,7 @@ public static class ChatPipeline
                     }
                     log?.LogWarning(
                         "Completion falhou ({Reason}, tentativa {Attempt}/{Max}) — retry em {Delay}ms.",
-                        decision.Reason, attempt + 1, ProviderRetryPolicy.MaxAttempts,
+                        decision.Reason, attempt + 1, providers.RetryOptions.MaxAttempts,
                         (int)decision.Delay.TotalMilliseconds);
                     if (callbacks?.OnRetryingAsync is { } onRetry)
                     {

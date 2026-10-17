@@ -515,7 +515,8 @@ public sealed class ChatRunExecutor(
                         plainTimeouts = ex is TaskCanceledException or TimeoutException
                             ? plainTimeouts + 1 : 0;
                         var decision = ProviderRetryPolicy.Decide(
-                            ex, plainAttempt, plainTimeouts);
+                            ex, plainAttempt, plainTimeouts,
+                            options: providers.RetryOptions);
                         if (!decision.Retry)
                         {
                             throw;

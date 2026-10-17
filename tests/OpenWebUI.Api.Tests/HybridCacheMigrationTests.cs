@@ -203,7 +203,7 @@ public class HybridCacheMigrationTests
             new StubHttpClientFactoryAlwaysFails(),
             config,
             new Microsoft.Extensions.Logging.Abstractions.NullLogger<ProviderService>(),
-            _cache);
+            _cache, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
 
         // Quando: primeira listagem (upstream falha → lista vazia cacheada)
         var models1 = await svc.ListModelsAsync();
