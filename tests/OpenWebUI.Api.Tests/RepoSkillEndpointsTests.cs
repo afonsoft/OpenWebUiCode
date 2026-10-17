@@ -217,6 +217,37 @@ public class RepoSkillEndpointsTests
         Assert.That(list.Single(s => s.Name == "toggleme").Enabled, Is.True);
     }
 
+    [Test]
+    public async Task GetCommand_404_E_ScopeInvalido_ListaTudo()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var dir = Path.Join(ctx.Workdir!, ".claude", "commands");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Join(dir, "lint-fix.md"), "Roda o lint.\n");
+
+        // Command inexistente → 404 (ternário do GetCommandAsync).
+        var missing = await ctx.Client.GetAsync("/api/v1/workspace/repo/commands/nope");
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Skill inexistente → 404 (ternário do GetSkillAsync).
+        var missingSkill = await ctx.Client.GetAsync("/api/v1/workspace/repo/skills/nope");
+        Assert.That(missingSkill.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // scope fora de global|project → Where passa tudo (branch do `is not`).
+        var all = (await ctx.Client.GetFromJsonAsync<List<RepoCommandItemResponse>>(
+            "/api/v1/workspace/repo/commands?scope=bogus"))!;
+        Assert.That(all.Any(c => c.Name == "lint-fix"), Is.True);
+
+        var allSkills = (await ctx.Client.GetFromJsonAsync<List<RepoSkillItemResponse>>(
+            "/api/v1/workspace/repo/skills?scope=bogus"))!;
+        Assert.That(allSkills, Is.Not.Null);
+
+        // chatId inexistente → BoundWorkdir reject NotFound (chat não encontrado).
+        var badChat = await ctx.Client.GetAsync(
+            $"/api/v1/workspace/repo/skills?chatId={Guid.NewGuid():N}");
+        Assert.That(badChat.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
     // ---------- discovery service (unitário sobre workdir fake) ----------
 
     [Test]

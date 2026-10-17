@@ -533,4 +533,77 @@ public class ComboEndpointsTests
             Assert.That(cd.Until, Is.LessThanOrEqualTo(limite + 10));
         });
     }
+
+    // ---- Cobertura: guards de auth/ownership dos endpoints ----
+
+    [Test]
+    public async Task Create_Global_NaoAdmin_403_Admin_Ok()
+    {
+        var user = await SignUpAsync("NonAdmin", "nonadmin@combo.local", "senha123");
+        UseToken(user.Token);
+        var forbidden = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "global-negado", models: ["fake:1"]) with { Global = true });
+        Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+
+        UseToken(_adminToken);
+        var ok = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "global-admin", models: ["fake:1"]) with { Global = true });
+        Assert.That(ok.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+    }
+
+    [Test]
+    public async Task Write_ComboGlobal_NaoAdmin_404()
+    {
+        // Combo global (UserId null) existe; usuário comum pode LER mas não escrever.
+        UseToken(_adminToken);
+        var created = await _client.PostAsJsonAsync("/api/v1/combos",
+            NewCombo(name: "global-ro", models: ["fake:1"]) with { Global = true });
+        var combo = await created.Content.ReadFromJsonAsync<ComboResponse>();
+
+        var outro = await SignUpAsync("Reader", "reader@combo.local", "senha123");
+        UseToken(outro.Token);
+
+        // leitura de combo global funciona
+        var get = await _client.GetAsync($"/api/v1/combos/{combo!.Id}");
+        Assert.That(get.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // escrita exige dono/admin → FindAsync devolve null → 404
+        var put = await _client.PutAsJsonAsync($"/api/v1/combos/{combo.Id}",
+            NewCombo(name: "global-ro", models: ["fake:1"]));
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var del = await _client.DeleteAsync($"/api/v1/combos/{combo.Id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Endpoints_SemAuth_Unauthorized()
+    {
+        _client.DefaultRequestHeaders.Authorization = null;
+        try
+        {
+            var list = await _client.GetAsync("/api/v1/combos");
+            Assert.That(list.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var create = await _client.PostAsJsonAsync("/api/v1/combos",
+                NewCombo(models: ["fake:1"]));
+            Assert.That(create.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var get = await _client.GetAsync("/api/v1/combos/qualquer");
+            Assert.That(get.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var put = await _client.PutAsJsonAsync("/api/v1/combos/qualquer",
+                NewCombo(models: ["fake:1"]));
+            Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var del = await _client.DeleteAsync("/api/v1/combos/qualquer");
+            Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var status = await _client.GetAsync("/api/v1/combos/qualquer/status");
+            Assert.That(status.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        }
+        finally
+        {
+            UseToken(_adminToken);
+        }
+    }
 }

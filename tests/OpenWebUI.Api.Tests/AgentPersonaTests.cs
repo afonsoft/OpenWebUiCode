@@ -400,4 +400,117 @@ public class AgentPersonaTests
             UseToken(_adminToken);
         }
     }
+
+    // ---- Cobertura: validação / edges dos endpoints (RF-001) ----
+
+    [Test]
+    public async Task Create_Validacoes_BadRequest()
+    {
+        // name vazio
+        var r1 = await _client.PostAsJsonAsync("/api/v1/agent-personas",
+            new AgentPersonaUpsertRequest(" ", "sys", "fake:1", null, null, null));
+        Assert.That(r1.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // name > 100
+        var r2 = await _client.PostAsJsonAsync("/api/v1/agent-personas",
+            new AgentPersonaUpsertRequest(new string('n', 101), "sys", "fake:1", null, null, null));
+        Assert.That(r2.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // modelId vazio
+        var r3 = await _client.PostAsJsonAsync("/api/v1/agent-personas",
+            new AgentPersonaUpsertRequest("m-sem-modelo", "sys", " ", null, null, null));
+        Assert.That(r3.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // guardrailLevel inválido
+        var r4 = await _client.PostAsJsonAsync("/api/v1/agent-personas",
+            new AgentPersonaUpsertRequest("g-invalida", "sys", "fake:1", "nuclear", null, null));
+        Assert.That(r4.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // systemPrompt > 8KB
+        var r5 = await _client.PostAsJsonAsync("/api/v1/agent-personas",
+            new AgentPersonaUpsertRequest("sys-grande", new string('s', 8193), "fake:1", null, null, null));
+        Assert.That(r5.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    [Test]
+    public async Task Update_Validacao_E_LimpaTools()
+    {
+        var persona = await CriarPersonaAsync("upd-edges", "basic");
+
+        // update 404 (id inexistente)
+        var r404 = await _client.PutAsJsonAsync("/api/v1/agent-personas/inexistente",
+            new AgentPersonaUpsertRequest("x", null, "fake:1", null, null, null));
+        Assert.That(r404.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // update com validação falha (name > 100)
+        var rBad = await _client.PutAsJsonAsync($"/api/v1/agent-personas/{persona.Id}",
+            new AgentPersonaUpsertRequest(new string('n', 101), null, "fake:1", null, null, null));
+        Assert.That(rBad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // seta tools não-vazias → depois limpa com array vazio (Count: > 0 = false → null)
+        var rTools = await _client.PutAsJsonAsync($"/api/v1/agent-personas/{persona.Id}",
+            new AgentPersonaUpsertRequest("upd-edges", null, "fake:1", null,
+                new List<string> { "file_read" }, null));
+        Assert.That(rTools.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var comTools = (await rTools.Content.ReadFromJsonAsync<AgentPersonaResponse>())!;
+        Assert.That(comTools.Tools, Is.EqualTo(new[] { "file_read" }));
+
+        var rClear = await _client.PutAsJsonAsync($"/api/v1/agent-personas/{persona.Id}",
+            new AgentPersonaUpsertRequest("upd-edges", null, "fake:1", null,
+                new List<string>(), null));
+        Assert.That(rClear.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var semTools = (await rClear.Content.ReadFromJsonAsync<AgentPersonaResponse>())!;
+        Assert.That(semTools.Tools, Is.Null);
+    }
+
+    [Test]
+    public async Task Delete_Inexistente_404()
+    {
+        var r = await _client.DeleteAsync("/api/v1/agent-personas/nao-existe");
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Message_Vazia_Retorna422()
+    {
+        var persona = await CriarPersonaAsync("msg-vazia");
+        var r = await _client.PostAsJsonAsync(
+            $"/api/v1/agent-personas/{persona.Id}/message",
+            new PersonaMessageRequest("  ", null));
+        Assert.That(r.StatusCode, Is.EqualTo(HttpStatusCode.UnprocessableEntity));
+    }
+
+    [Test]
+    public async Task Audit_TakeClamp_E404()
+    {
+        var persona = await CriarPersonaAsync("audit-clamp");
+
+        // take acima do máximo → clamp 200 (branch Math.Clamp)
+        var turns = await _client.GetFromJsonAsync<List<AgentTurnResponse>>(
+            $"/api/v1/agent-personas/{persona.Id}/audit?take=500");
+        Assert.That(turns, Is.Not.Null);
+
+        // persona inexistente → 404
+        var r404 = await _client.GetAsync("/api/v1/agent-personas/inexistente/audit");
+        Assert.That(r404.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task SemAuth_Retorna401()
+    {
+        _client.DefaultRequestHeaders.Authorization = null;
+        try
+        {
+            var r1 = await _client.GetAsync("/api/v1/agent-personas");
+            Assert.That(r1.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var r2 = await _client.PostAsJsonAsync("/api/v1/agent-personas",
+                new AgentPersonaUpsertRequest("x", null, "m", null, null, null));
+            Assert.That(r2.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        }
+        finally
+        {
+            UseToken(_adminToken);
+        }
+    }
 }

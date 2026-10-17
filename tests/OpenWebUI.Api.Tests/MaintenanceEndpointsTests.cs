@@ -155,6 +155,14 @@ public class MaintenanceEndpointsTests
         {
             var resp = await _client.GetAsync("/api/v1/maintenance/status");
             Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var run = await _client.PostAsJsonAsync("/api/v1/maintenance/run",
+                new MaintenanceRunRequest(true));
+            Assert.That(run.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var config = await _client.PutAsJsonAsync("/api/v1/maintenance/config",
+                new MaintenanceConfigRequest(30));
+            Assert.That(config.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
         }
         finally
         {
