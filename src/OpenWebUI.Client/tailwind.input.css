@@ -404,11 +404,11 @@
 	/* ----- Modal ----- */
 
 	.modal-backdrop {
-		@apply fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 dark:bg-gray-950/60 px-4;
+		@apply fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 dark:bg-gray-950/60 px-4 max-sm:px-0;
 	}
 
 	.modal {
-		@apply w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl;
+		@apply w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl max-sm:h-dvh max-sm:max-h-dvh max-sm:rounded-none max-sm:border-0;
 	}
 
 	.modal-header {
@@ -422,11 +422,11 @@
 	}
 
 	.modal-tabs {
-		@apply flex gap-1 px-3 py-2 border-b border-gray-100 dark:border-gray-800 overflow-x-auto scrollbar-hidden sm:w-52 sm:shrink-0 sm:flex-col sm:overflow-x-hidden sm:overflow-y-auto sm:border-b-0 sm:border-r sm:py-4 sm:items-stretch;
+		@apply flex gap-1 px-3 py-2 border-b border-gray-100 dark:border-gray-800 overflow-x-auto scrollbar-hidden snap-x scroll-smooth sm:w-52 sm:shrink-0 sm:flex-col sm:overflow-x-hidden sm:overflow-y-auto sm:border-b-0 sm:border-r sm:py-4 sm:items-stretch;
 	}
 
 	.modal-tab {
-		@apply rounded-xl px-3 py-2 text-sm text-left text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer whitespace-nowrap sm:whitespace-normal;
+		@apply rounded-xl px-3 py-2 text-sm text-left text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer whitespace-nowrap sm:whitespace-normal snap-start max-sm:min-h-11 max-sm:flex max-sm:items-center;
 	}
 
 	.modal-tab.active {
@@ -435,6 +435,36 @@
 
 	.modal-body {
 		@apply flex-1 overflow-y-auto px-5 py-4;
+	}
+
+	/* ----- Settings: seções nomeadas + barra de salvar fixa ----- */
+
+	.settings-section {
+		@apply mb-6;
+	}
+
+	.settings-section-title {
+		@apply text-sm font-medium text-gray-800 dark:text-gray-100;
+	}
+
+	.settings-section-desc {
+		@apply text-xs text-gray-400 dark:text-gray-500 mb-2;
+	}
+
+	.save-bar {
+		@apply sticky bottom-0 -mx-5 mt-2 flex items-center justify-between gap-3 border-t border-gray-100 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 px-5 py-3 backdrop-blur;
+	}
+
+	.save-bar-msg {
+		@apply text-xs text-gray-400 dark:text-gray-500 min-w-0 flex-1;
+	}
+
+	.save-bar-actions {
+		@apply flex items-center gap-2 flex-none;
+	}
+
+	.save-bar-actions button {
+		@apply max-sm:min-h-11;
 	}
 
 	.modal-sep {

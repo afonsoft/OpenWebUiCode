@@ -20,3 +20,6 @@ public sealed record MaintenanceStatusResponse(
 
 /// <summary>Disparo de ciclo sob demanda (admin).</summary>
 public sealed record MaintenanceRunRequest(bool DryRun = false);
+
+/// <summary>Configuração da poda de chats (admin; PUT /config).</summary>
+public sealed record MaintenanceConfigRequest(int? ChatDays);

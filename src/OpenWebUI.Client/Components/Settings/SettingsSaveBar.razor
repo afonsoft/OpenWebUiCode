@@ -1,0 +1,45 @@
+@inject LocalizationService L
+
+@* Barra de salvamento fixa no rodapé da tab: mensagem (aria-live) + Descartar + Salvar.
+   Ações extras da tab podem entrar via ChildContent entre Descartar e Salvar. *@
+<div class="save-bar">
+    <div class="save-bar-msg" aria-live="polite" role="status">@Message</div>
+    <div class="save-bar-actions">
+        @if (Dirty && OnDiscard.HasDelegate)
+        {
+            <button type="button" class="button-sm" disabled="@Busy"
+                    @onclick="OnDiscard">@L["common.discard"]</button>
+        }
+        @ChildContent
+        <button type="button" class="primary-btn" disabled="@(Busy || SaveDisabled)"
+                @onclick="OnSave">
+            @(Busy ? (SavingLabel ?? L["common.saving"]) : L["common.save"])
+        </button>
+    </div>
+</div>
+
+@code {
+    /// <summary>Mensagem de status (salvo/erro) anunciada via aria-live.</summary>
+    [Parameter] public string? Message { get; set; }
+
+    /// <summary>Verdadeiro enquanto o save está em voo — desabilita os botões.</summary>
+    [Parameter] public bool Busy { get; set; }
+
+    /// <summary>Verdadeiro quando há alterações não salvas (habilita Descartar).</summary>
+    [Parameter] public bool Dirty { get; set; }
+
+    /// <summary>Desabilita o botão Salvar além do estado busy (ex.: form inválido).</summary>
+    [Parameter] public bool SaveDisabled { get; set; }
+
+    /// <summary>Rótulo alternativo durante o save (default: common.saving).</summary>
+    [Parameter] public string? SavingLabel { get; set; }
+
+    /// <summary>Callback do botão Salvar.</summary>
+    [Parameter] public EventCallback OnSave { get; set; }
+
+    /// <summary>Callback do botão Descartar (só aparece quando Dirty).</summary>
+    [Parameter] public EventCallback OnDiscard { get; set; }
+
+    /// <summary>Ações extras renderizadas antes do Salvar (ex.: testar conexão).</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}
