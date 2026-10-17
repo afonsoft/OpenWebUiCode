@@ -1,3 +1,10 @@
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.DependencyInjection;
+using OpenWebUI.Infrastructure.ChatTools;
+using OpenWebUI.Infrastructure.ChatTools.Tools;
+using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
@@ -356,5 +363,53 @@ public class SkillDiscoveryTests
         WriteFile(".claude/skills/long/SKILL.md", big);
         var s = _svc.Scan(_dir).Skills[0];
         Assert.That(s.Description, Has.Length.EqualTo(160));
+    }
+
+    // ---- builtin:skill — caminho de skill encontrada (SPEC-20261016) ----
+
+    [Test]
+    public async Task SkillTool_Encontra_DevolveCorpoEPath()
+    {
+        WriteFile(".claude/skills/runbook/SKILL.md",
+            "---\nname: runbook\ndescription: ops\n---\nSiga o runbook 42.\n");
+
+        var dbPath = TestInfra.NewDbPath("sk-tool");
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o => o.UseSqlite($"Data Source={dbPath}"));
+        services.AddHybridCache();
+        services.AddLogging();
+        using var provider = services.BuildServiceProvider();
+        using (var scope = provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<AppDbContext>()
+                .Database.EnsureCreatedAsync();
+        }
+
+        var scope2 = provider.CreateAsyncScope();
+        var db = scope2.ServiceProvider.GetRequiredService<AppDbContext>();
+        var cache = scope2.ServiceProvider.GetRequiredService<HybridCache>();
+        var overlay = new UserConfigOverlayService(db, new ConfigService(db, cache));
+        var tool = new SkillBuiltinTool(_svc, overlay);
+
+        using var args = JsonDocument.Parse("{\"name\":\"runbook\"}");
+        var result = await tool.ExecuteAsync(args.RootElement,
+            new BuiltinToolContext("u1", null, null, _dir, _dir),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Text, Does.Contain("Siga o runbook 42."));
+            Assert.That(result.Text, Does.Contain("runbook"));
+        });
+
+        // Skill escondida pelo overlay → mensagem de "não encontrada".
+        await overlay.SetSkillDisabledAsync("u1", "runbook", disabled: true, CancellationToken.None);
+        using var args2 = JsonDocument.Parse("{\"name\":\"runbook\"}");
+        var denied = await tool.ExecuteAsync(args2.RootElement,
+            new BuiltinToolContext("u1", null, null, _dir, _dir),
+            CancellationToken.None);
+        Assert.That(denied.Text, Does.Contain("não encontrada ou desabilitada"));
+
+        TestInfra.DeleteDb(dbPath);
     }
 }

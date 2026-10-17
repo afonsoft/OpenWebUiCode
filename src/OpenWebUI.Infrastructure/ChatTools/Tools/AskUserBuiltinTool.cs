@@ -27,7 +27,7 @@ public sealed class AskUserBuiltinTool : IBuiltinChatTool
         {
           "type": "object",
           "properties": {
-            "question": { "type": "string", "description": "The question to ask." },
+            "question": { "type": "string", "description": "The question to ask (single form)." },
             "options": {
               "type": "array",
               "items": { "type": "string" },
@@ -36,9 +36,40 @@ public sealed class AskUserBuiltinTool : IBuiltinChatTool
             "multiple": {
               "type": "boolean",
               "description": "Allow picking more than one option (optional)."
+            },
+            "questions": {
+              "type": "array",
+              "maxItems": 5,
+              "description": "Multi-question form (max 5). Alternative to the single 'question' field.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "question": { "type": "string" },
+                  "header": { "type": "string", "description": "Short label above the question (optional)." },
+                  "options": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                      "oneOf": [
+                        { "type": "string" },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "label": { "type": "string" },
+                            "description": { "type": "string" }
+                          },
+                          "required": ["label"]
+                        }
+                      ]
+                    }
+                  },
+                  "multiple": { "type": "boolean" },
+                  "required": { "type": "boolean", "description": "false lets the user skip this question (default true)." }
+                },
+                "required": ["question"]
+              }
             }
-          },
-          "required": ["question"]
+          }
         }
         """;
 

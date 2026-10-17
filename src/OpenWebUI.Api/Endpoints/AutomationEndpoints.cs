@@ -31,13 +31,22 @@ public static class AutomationEndpoints
     private static AutomationResponse ToResponse(Automation a) => new(
         a.Id, a.Name, a.Prompt, a.ModelId, a.ScheduleKind,
         a.IntervalMinutes, a.TimeOfDay, a.Weekday, a.Enabled,
-        a.NextRunAt, a.CreatedAt, a.UpdatedAt);
+        a.NextRunAt, a.CreatedAt, a.UpdatedAt,
+        a.ActionKind, a.ActionJson, a.PermissionMode, a.ChatId);
 
     private static string? Validate(AutomationUpsertRequest r)
     {
         if (string.IsNullOrWhiteSpace(r.Name)) return "Nome obrigatório.";
-        if (string.IsNullOrWhiteSpace(r.Prompt)) return "Prompt obrigatório.";
-        if (string.IsNullOrWhiteSpace(r.ModelId)) return "Modelo obrigatório.";
+        var kind = r.ActionKind ?? "prompt";
+        if (kind == "prompt" && string.IsNullOrWhiteSpace(r.Prompt))
+            return "Prompt obrigatório.";
+        if (kind is "prompt" or "skill" && string.IsNullOrWhiteSpace(r.ModelId))
+            return "Modelo obrigatório.";
+        var actionError = AutomationService.ValidateAction(kind, r.ActionJson);
+        if (actionError is not null) return actionError;
+        if (r.PermissionMode is not null &&
+            r.PermissionMode is not "default" and not "auto" and not "bypass")
+            return "PermissionMode deve ser default, auto ou bypass.";
         if (!Kinds.Contains(r.ScheduleKind)) return "ScheduleKind deve ser interval, daily, weekly ou once.";
         if (r.ScheduleKind == "interval" && (r.IntervalMinutes ?? 0) < 1)
             return "Intervalo mínimo é 1 minuto.";
@@ -57,6 +66,10 @@ public static class AutomationEndpoints
         a.Name = r.Name.Trim();
         a.Prompt = r.Prompt;
         a.ModelId = r.ModelId;
+        a.ActionKind = r.ActionKind ?? "prompt";
+        a.ActionJson = r.ActionJson;
+        a.PermissionMode = r.PermissionMode ?? "default";
+        a.ChatId = r.ChatId;
         a.ScheduleKind = r.ScheduleKind;
         a.IntervalMinutes = Math.Max(1, r.IntervalMinutes ?? 60);
         a.TimeOfDay = r.TimeOfDay;
@@ -192,7 +205,8 @@ public static class AutomationEndpoints
     }
 
     private static AutomationRunResponse ToRunResponse(AutomationRun r, string name) => new(
-        r.Id, r.AutomationId, name, r.Status, r.Error, r.ChatId, r.StartedAt, r.FinishedAt);
+        r.Id, r.AutomationId, name, r.Status, r.Error, r.ChatId, r.StartedAt, r.FinishedAt,
+        r.ActionKind, r.Output);
 
     private static async Task<(User?, Automation?)> FindOwnedAsync(
         string id, HttpContext http, AppDbContext db, CancellationToken ct)

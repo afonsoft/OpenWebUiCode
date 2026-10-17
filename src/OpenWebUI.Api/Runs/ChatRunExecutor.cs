@@ -38,6 +38,8 @@ public sealed class ChatRunExecutor(
     ContextCompactionService compaction,
     ContextBoundaryService boundaries,
     RunAdvisorService advisor,
+    McpClientService mcp,
+    ComboService combos,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
@@ -105,6 +107,40 @@ public sealed class ChatRunExecutor(
         var sinceCheckpoint = 0;
         IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
         var sw = Stopwatch.StartNew();
+
+        // combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada tentativa
+        // resolve o modelo efetivo; falha transitória ANTES do primeiro delta
+        // (content vazio ⇒ nenhum SSE parcial foi emitido) → report + próximo
+        // candidato. Cancelamento nunca queima cooldown.
+        var comboRef = request.Model.StartsWith(ComboService.Prefix, StringComparison.Ordinal)
+            ? request.Model[ComboService.Prefix.Length..]
+            : null;
+        var comboAttemptsLeft = 1;
+    combo_resolve:
+        if (comboRef is not null)
+        {
+            ComboPick pick;
+            try
+            {
+                pick = await combos.ResolveAsync(comboRef, run.UserId, ct);
+            }
+            catch (ComboUnavailableException cue)
+            {
+                var comboError = cue.RetryAt is { } retryAt
+                    ? $"{cue.Code} (retry após {retryAt})"
+                    : cue.Code;
+                broadcaster.Publish(run.Id,
+                    $"data: {JsonSerializer.Serialize(new { error = comboError })}");
+                await FailAsync(run, comboError, ct);
+                broadcaster.Publish(run.Id, "data: [DONE]");
+                return;
+            }
+
+            comboAttemptsLeft = Math.Max(1, pick.Candidates);
+            request = request with { Model = pick.ModelId };
+            broadcaster.Publish(run.Id,
+                $"event: combo\ndata: {JsonSerializer.Serialize(new { combo = pick.ComboId, model = pick.ModelId }, JsonOptions)}");
+        }
 
         try
         {
@@ -215,6 +251,19 @@ public sealed class ChatRunExecutor(
             if (request.ToolIds is { Count: > 0 })
             {
                 await PublishPhaseAsync(run, "loading_tools", null);
+
+                // .agents/mcp.json (global + projeto) materializa servers
+                // env:* no boot da run (SPEC-20261016-global-agents-scope
+                // RF-006). Falha de sync nunca quebra a run.
+                try
+                {
+                    await mcp.SyncEnvServersAsync(
+                        await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct), ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Run {RunId}: sync de .agents/mcp.json falhou — ignorado.", run.Id);
+                }
             }
             var tools = request.ToolIds is { Count: > 0 }
                 ? await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct)
@@ -404,6 +453,11 @@ public sealed class ChatRunExecutor(
             // marcador — a mensagem precisa já estar persistida.
             await FinishAsync(run, content.ToString(), ct, toolMessages: toolMessages);
             broadcaster.Publish(run.Id, "data: [DONE]");
+            if (comboRef is not null)
+            {
+                await combos.ReportAsync(comboRef, request.Model, ok: true,
+                    ct: CancellationToken.None);
+            }
             logger.LogInformation(
                 "Run {RunId} concluída em {Elapsed}ms: {Chars} chars, {ToolMessages} msgs de tool.",
                 run.Id, sw.ElapsedMilliseconds, content.Length,
@@ -420,6 +474,24 @@ public sealed class ChatRunExecutor(
         }
         catch (Exception ex)
         {
+            // Combo: falha transitória sem nenhum delta emitido → report e
+            // retenta com o próximo candidato (content vazio garante que o
+            // cliente ainda não viu resposta parcial).
+            if (comboRef is not null
+                && ex is (HttpRequestException or TaskCanceledException)
+                && content.Length == 0)
+            {
+                await combos.ReportAsync(comboRef, request.Model, ok: false,
+                    ct: CancellationToken.None);
+                if (--comboAttemptsLeft > 0)
+                {
+                    logger.LogWarning(
+                        "Run {RunId}: modelo {Model} do combo {Combo} falhou — próximo candidato.",
+                        run.Id, request.Model, comboRef);
+                    goto combo_resolve;
+                }
+            }
+
             // Qualquer falha fecha a run como failed — uma exceção que escapasse
             // deixaria a run eternamente "running" (o dispatcher só loga).
             // InvalidOperationException loga com stack: foi a silenciar
@@ -1063,9 +1135,7 @@ public sealed class ChatRunExecutor(
     private async Task<ToolGateDecision> AskUserAsync(
         ChatRun run, ProviderToolCall call, string? preset, CancellationToken ct)
     {
-        var question = "?";
-        string[] options = [];
-        var multiple = false;
+        List<RunQuestionItem> items;
         try
         {
             // NormalizeArgs desembrulha args double-encoded (string com o
@@ -1077,46 +1147,173 @@ public sealed class ChatRunExecutor(
             {
                 return new ToolGateDecision(true, Output: "Pergunta malformada (args inválidos).");
             }
-            question = args.TryGetProperty("question", out var q) && q.GetString() is { Length: > 0 } qt
-                ? qt
-                : question;
-            if (args.TryGetProperty("options", out var opts)
-                && opts.ValueKind == JsonValueKind.Array)
+
+            // SPEC-20261016-question-forms RF-001: questions[] é o form
+            // multi-pergunta (cap 5); a forma singular vira açúcar de 1 item.
+            if (args.TryGetProperty("questions", out var qs)
+                && qs.ValueKind == JsonValueKind.Array)
             {
-                options = [.. opts.EnumerateArray()
-                    .Select(o => o.GetString())
-                    .Where(o => !string.IsNullOrWhiteSpace(o))
-                    .Select(o => o!)
-                    .Take(6)];
+                if (qs.GetArrayLength() > 5)
+                {
+                    return new ToolGateDecision(
+                        true, Output: "Erro: max 5 questions por chamada.");
+                }
+                items = [.. qs.EnumerateArray().Select(ParseQuestionItem)];
             }
-            multiple = args.TryGetProperty("multiple", out var m)
-                && m.ValueKind == JsonValueKind.True;
+            else
+            {
+                var question = args.TryGetProperty("question", out var q)
+                    && q.GetString() is { Length: > 0 } qt ? qt : "?";
+                var options = ParseOptions(args);
+                var multiple = args.TryGetProperty("multiple", out var m)
+                    && m.ValueKind == JsonValueKind.True;
+                items = [new RunQuestionItem(question, null, options, multiple, true)];
+            }
+            if (items.Count == 0)
+            {
+                return new ToolGateDecision(true, Output: "Pergunta malformada (questions vazio).");
+            }
         }
         catch (JsonException)
         {
             return new ToolGateDecision(true, Output: "Pergunta malformada (args inválidos).");
         }
 
+        var first = items[0];
+        var single = items.Count == 1;
+
         // SPEC-15 RF-003: preset autônomo + opções → responde sozinho com a
-        // recomendada (marcada) ou a primeira, sem pausar a run. Pergunta
-        // de resposta livre (sem opções) segue aguardando o dono.
-        if (IsAutoPickPreset(preset) && options.Length > 0)
+        // recomendada (marcada) ou a primeira, sem pausar a run. No form
+        // multi, só auto-responde quando TODA pergunta tem opções; uma
+        // resposta livre segue aguardando o dono.
+        if (IsAutoPickPreset(preset) && items.All(i => i.Options.Length > 0))
         {
-            var pick = PickRecommended(options);
-            PublishDecisionAuto(run, call.Id, "ask_user", pick);
-            return new ToolGateDecision(true, Output: pick);
+            if (single)
+            {
+                var pick = PickRecommended(first.Options);
+                PublishDecisionAuto(run, call.Id, "ask_user", pick);
+                return new ToolGateDecision(true, Output: pick);
+            }
+            var picks = items.Select(i => PickRecommended(i.Options)).ToList();
+            PublishDecisionAuto(run, call.Id, "ask_user", picks[0]);
+            return new ToolGateDecision(
+                true, Output: JsonSerializer.Serialize(new { answers = picks }, JsonOptions));
         }
 
         broadcaster.Publish(run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
         broadcaster.Publish(run.Id,
-            $"event: question_asked\ndata: {JsonSerializer.Serialize(new RunQuestionAskedEvent(call.Id, Scrub(Truncate(question, PreviewChars)), options, multiple), JsonOptions)}");
+            $"event: question_asked\ndata: {JsonSerializer.Serialize(new RunQuestionAskedEvent(
+                call.Id,
+                Scrub(Truncate(first.Question, PreviewChars)),
+                first.Options, first.Multiple,
+                single ? null : items.Select(i => i with
+                {
+                    Question = Scrub(Truncate(i.Question, PreviewChars))
+                }).ToArray(),
+                "builtin:ask_user"), JsonOptions)}");
 
         var result = await approvals.WaitAsync(run.Id, run.ChatId, call.Id, call.Name, ct);
-        var answer = result.Approved && !string.IsNullOrWhiteSpace(result.Message)
-            ? Scrub(Truncate(result.Message!, PreviewChars))
-            : "O usuário não respondeu.";
-        return new ToolGateDecision(true, Output: answer);
+
+        // RF-004: deny/skip devolve recusa — a run segue, o modelo decide.
+        if (!result.Approved || string.IsNullOrWhiteSpace(result.Message))
+        {
+            return new ToolGateDecision(true,
+                Output: single ? "O usuário não respondeu." : "usuário recusou responder");
+        }
+
+        // RF-002/003: no form multi a resposta vem como JSON {answers:[..]}
+        // alinhado por índice (string | string[] | null por item); texto
+        // solto é tratado como resposta do item 0.
+        if (!single && TryParseAnswers(result.Message!, items.Count, out var answers))
+        {
+            return new ToolGateDecision(true, Output: Scrub(answers));
+        }
+        return new ToolGateDecision(true,
+            Output: Scrub(Truncate(result.Message!, PreviewChars)));
+    }
+
+    /// <summary>Item do form multi-pergunta (options aceitam string ou {label,description}).</summary>
+    private static RunQuestionItem ParseQuestionItem(JsonElement el)
+    {
+        var question = el.TryGetProperty("question", out var q)
+            && q.GetString() is { Length: > 0 } qt ? qt : "?";
+        var header = el.TryGetProperty("header", out var h)
+            && h.GetString() is { Length: > 0 } ht ? ht : null;
+        var options = ParseOptions(el);
+        var multiple = el.TryGetProperty("multiple", out var m)
+            && m.ValueKind == JsonValueKind.True;
+        var required = !el.TryGetProperty("required", out var r)
+            || r.ValueKind != JsonValueKind.False;
+        return new RunQuestionItem(question, header, options, multiple, required);
+    }
+
+    /// <summary>Lê options[] — strings puras ou objetos {label,description}.</summary>
+    private static string[] ParseOptions(JsonElement el)
+    {
+        if (!el.TryGetProperty("options", out var opts)
+            || opts.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        return [.. opts.EnumerateArray()
+            .Select(o => o.ValueKind == JsonValueKind.String
+                ? o.GetString()
+                : o.ValueKind == JsonValueKind.Object
+                    && o.TryGetProperty("label", out var l)
+                        ? l.GetString()
+                        : null)
+            .Where(o => !string.IsNullOrWhiteSpace(o))
+            .Select(o => o!)
+            .Take(4)];
+    }
+
+    /// <summary>
+    /// Valida/normaliza o JSON {answers:[..]} da resposta do form: exige
+    /// exatamente <paramref name="count"/> posições; cada item é string,
+    /// array de strings ou null. Devolve o JSON reemitido (capado).
+    /// </summary>
+    private static bool TryParseAnswers(string message, int count, out string answers)
+    {
+        answers = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(message);
+            if (!doc.RootElement.TryGetProperty("answers", out var array)
+                || array.ValueKind != JsonValueKind.Array
+                || array.GetArrayLength() != count)
+            {
+                return false;
+            }
+
+            // JsonElement só é válida enquanto o doc vive — normaliza aqui.
+            var normalized = new List<object?>(count);
+            foreach (var item in array.EnumerateArray())
+            {
+                switch (item.ValueKind)
+                {
+                    case JsonValueKind.String:
+                        normalized.Add(item.GetString());
+                        break;
+                    case JsonValueKind.Array:
+                        normalized.Add(item.EnumerateArray()
+                            .Where(v => v.ValueKind == JsonValueKind.String)
+                            .Select(v => v.GetString()).ToList());
+                        break;
+                    case JsonValueKind.Null:
+                        normalized.Add(null);
+                        break;
+                    default:
+                        return false;
+                }
+            }
+            answers = JsonSerializer.Serialize(new { answers = normalized }, JsonOptions);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

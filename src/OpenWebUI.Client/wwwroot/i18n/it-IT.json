@@ -633,6 +633,7 @@
   "chat.question_other": "Altro (digita la risposta)",
   "chat.question_submit": "Invia risposta",
   "chat.question_skip": "Salta",
+  "chat.question_optional": "facoltativo",
   "chat.question_placeholder": "Digita la risposta…",
   "common.copy": "Copia",
   "admin.tab_analytics": "Analytics",

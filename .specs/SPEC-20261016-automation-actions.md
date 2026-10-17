@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-automation-actions` |
 | Ticket | [#409](https://github.com/afonsoft/open-webui/issues/409) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Fonte | análise fork alltomatos/opencode — `core/src/schedule/runner.ts` + callers (`agentui/mcp/reminder/skill`) |
 
 ## 1. User Story

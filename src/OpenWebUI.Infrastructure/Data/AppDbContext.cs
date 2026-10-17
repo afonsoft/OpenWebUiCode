@@ -95,6 +95,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Webhooks de automação (disparam runs no chat vinculado).</summary>
     public DbSet<AutomationHook> AutomationHooks => Set<AutomationHook>();
 
+    /// <summary>Combos de modelos com failover (SPEC-20261016-model-combos).</summary>
+    public DbSet<ModelCombo> ModelCombos => Set<ModelCombo>();
+
+    /// <summary>Itens (modelos ordenados) dos combos.</summary>
+    public DbSet<ModelComboItem> ModelComboItems => Set<ModelComboItem>();
+
+    /// <summary>Personas de agente acionáveis por canal (SPEC-20261016-agent-personas-channels).</summary>
+    public DbSet<AgentPersona> AgentPersonas => Set<AgentPersona>();
+
+    /// <summary>Sessões lógicas (persona × chatKey → chat).</summary>
+    public DbSet<AgentPersonaSession> AgentPersonaSessions => Set<AgentPersonaSession>();
+
+    /// <summary>Turnos auditáveis das personas (cap 200/persona).</summary>
+    public DbSet<AgentTurn> AgentTurns => Set<AgentTurn>();
+
     /// <summary>Configurações chave-valor.</summary>
     public DbSet<ConfigEntry> ConfigEntries => Set<ConfigEntry>();
 
@@ -292,6 +307,41 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(h => h.ChatId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ModelCombo>(entity =>
+        {
+            entity.HasKey(c => c.Id);
+            entity.HasIndex(c => new { c.UserId, c.Name }).IsUnique();
+            entity.HasMany(c => c.Items)
+                .WithOne()
+                .HasForeignKey(i => i.ComboId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ModelComboItem>(entity =>
+        {
+            entity.HasKey(i => i.Id);
+            entity.HasIndex(i => new { i.ComboId, i.Position });
+        });
+
+        modelBuilder.Entity<AgentPersona>(entity =>
+        {
+            entity.HasKey(p => p.Id);
+            entity.HasIndex(p => new { p.UserId, p.Name }).IsUnique();
+        });
+
+        modelBuilder.Entity<AgentPersonaSession>(entity =>
+        {
+            entity.HasKey(s => s.Id);
+            entity.HasIndex(s => new { s.PersonaId, s.ChatKey }).IsUnique();
+        });
+
+        modelBuilder.Entity<AgentTurn>(entity =>
+        {
+            entity.HasKey(t => t.Id);
+            entity.HasIndex(t => new { t.PersonaId, t.Timestamp });
+            entity.HasIndex(t => t.RunId);
         });
 
         modelBuilder.Entity<ConfigEntry>(entity =>

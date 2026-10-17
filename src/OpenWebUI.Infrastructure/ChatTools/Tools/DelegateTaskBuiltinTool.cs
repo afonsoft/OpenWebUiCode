@@ -97,7 +97,7 @@ public sealed class DelegateTaskBuiltinTool(
             },
             "agent": {
               "type": "string",
-              "description": "Optional declarative agent name (see builtin_agent_catalog): applies its system prompt, model and tool allowlist to the child run."
+              "description": "Optional declarative agent name (see builtin_agent_catalog): applies its system prompt, model and tool allowlist to the child run. 'ext:{id}' delegates to an external agent CLI (claude, codex, devin, gemini, opencode) instead of a child run."
             },
             "merge": {
               "type": "boolean",
@@ -148,6 +148,20 @@ public sealed class DelegateTaskBuiltinTool(
         // sua allowlist `spawns` (kv gravada no nascimento da run).
         var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
         var agentName = ReadString(args, "agent", 200)?.Trim();
+
+        // SPEC-20261016-external-agent-registry RF-005: agent:"ext:{id}"
+        // executa o CLI externo headless (confined ao workdir, tier Exec já
+        // coberto pelo gate da tool) — sem run filha.
+        if (agentName?.StartsWith("ext:", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var external = scope.ServiceProvider
+                .GetRequiredService<ExternalAgentService>();
+            var extResult = await external.RunDelegateAsync(
+                agentName["ext:".Length..], fullPrompt,
+                context.WorkspacePath, context.UserId, ct);
+            return new BuiltinToolResult(extResult.Result);
+        }
+
         var allowedCsv = await config.GetAsync<string?>(
             $"r:{context.RunId}:agent.spawns", null, ct);
         var callerDepth = await config.GetAsync<int?>(

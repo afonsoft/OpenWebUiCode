@@ -633,6 +633,7 @@
   "chat.question_other": "Andere (Antwort eingeben)",
   "chat.question_submit": "Antwort senden",
   "chat.question_skip": "Überspringen",
+  "chat.question_optional": "optional",
   "chat.question_placeholder": "Antwort eingeben…",
   "common.copy": "Kopieren",
   "admin.tab_analytics": "Analytics",

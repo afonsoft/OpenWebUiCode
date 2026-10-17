@@ -97,6 +97,157 @@ public class RepoSkillEndpointsTests
         Assert.That(det.Content, Does.Contain("$ARGUMENTS"));
     }
 
+    [Test]
+    public async Task Skills_FiltroScope_ProjetoVsGlobal()
+    {
+        // Skill global no home isolado da suíte + skill de projeto no workdir.
+        var skillDir = Path.Join(TestHomeIsolation.Home, ".agents", "skills", "glob-skill");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Join(skillDir, "SKILL.md"),
+            "---\nname: glob-skill\ndescription: global\n---\ncorpo global\n");
+        SkillDiscoveryService.Invalidate("");
+        try
+        {
+            using var ctx = await NewAppAsync(bound: true);
+            var dir = Path.Join(ctx.Workdir!, ".claude", "skills", "proj-skill");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Join(dir, "SKILL.md"),
+                "---\nname: proj-skill\ndescription: projeto\n---\ncorpo projeto\n");
+
+            var global = await ctx.Client.GetAsync("/api/v1/workspace/repo/skills?scope=global");
+            var gItems = (await global.Content
+                .ReadFromJsonAsync<List<RepoSkillItemResponse>>())!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(gItems.Any(s => s.Name == "glob-skill"), Is.True);
+                Assert.That(gItems.Any(s => s.Name == "proj-skill"), Is.False);
+                Assert.That(gItems.All(s => s.Scope == "global"), Is.True);
+            });
+
+            var proj = await ctx.Client.GetAsync("/api/v1/workspace/repo/skills?scope=project");
+            var pItems = (await proj.Content
+                .ReadFromJsonAsync<List<RepoSkillItemResponse>>())!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(pItems.Any(s => s.Name == "proj-skill"), Is.True);
+                Assert.That(pItems.Any(s => s.Name == "glob-skill"), Is.False);
+            });
+
+            // Detalhe devolve o Scope.
+            var detail = await ctx.Client.GetAsync("/api/v1/workspace/repo/skills/glob-skill");
+            var det = (await detail.Content
+                .ReadFromJsonAsync<RepoSkillDetailResponse>())!;
+            Assert.That(det.Scope, Is.EqualTo("global"));
+        }
+        finally
+        {
+            try { Directory.Delete(skillDir, recursive: true); } catch (IOException) { }
+            SkillDiscoveryService.Invalidate("");
+        }
+    }
+
+    [Test]
+    public async Task Commands_FiltroScope_DetalheComScope()
+    {
+        var cmdDir = Path.Join(TestHomeIsolation.Home, ".agents", "commands");
+        Directory.CreateDirectory(cmdDir);
+        File.WriteAllText(Path.Join(cmdDir, "glob-cmd.md"),
+            "---\ndescription: comando global\n---\nBody $ARGUMENTS\n");
+        SkillDiscoveryService.Invalidate("");
+        try
+        {
+            using var ctx = await NewAppAsync(bound: true);
+            var dir = Path.Join(ctx.Workdir!, ".opencode", "command");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Join(dir, "proj-cmd.md"),
+                "---\ndescription: comando projeto\n---\nBody\n");
+
+            var global = await ctx.Client.GetAsync("/api/v1/workspace/repo/commands?scope=global");
+            var gItems = (await global.Content
+                .ReadFromJsonAsync<List<RepoCommandItemResponse>>())!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(gItems.Any(c => c.Name == "glob-cmd"), Is.True);
+                Assert.That(gItems.Any(c => c.Name == "proj-cmd"), Is.False);
+            });
+
+            var detail = await ctx.Client.GetAsync("/api/v1/workspace/repo/commands/glob-cmd");
+            var det = (await detail.Content
+                .ReadFromJsonAsync<RepoCommandDetailResponse>())!;
+            Assert.That(det.Scope, Is.EqualTo("global"));
+        }
+        finally
+        {
+            try { File.Delete(Path.Join(cmdDir, "glob-cmd.md")); } catch (IOException) { }
+            SkillDiscoveryService.Invalidate("");
+        }
+    }
+
+    [Test]
+    public async Task SetSkillEnabled_Toggle_AdminOff_404()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var dir = Path.Join(ctx.Workdir!, ".claude", "skills", "toggleme");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Join(dir, "SKILL.md"),
+            "---\nname: toggleme\ndescription: t\n---\ncorpo\n");
+
+        // Skill inexistente → 404.
+        var missing = await ctx.Client.PutAsJsonAsync(
+            "/api/v1/workspace/repo/skills/nope/enabled",
+            new McpServerEnabledRequest(false));
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Desliga para o usuário.
+        var off = await ctx.Client.PutAsJsonAsync(
+            "/api/v1/workspace/repo/skills/toggleme/enabled",
+            new McpServerEnabledRequest(false));
+        Assert.That(off.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var list = (await ctx.Client.GetFromJsonAsync<List<RepoSkillItemResponse>>(
+            "/api/v1/workspace/repo/skills"))!;
+        Assert.That(list.Single(s => s.Name == "toggleme").Enabled, Is.False);
+
+        // Religa — passa pelo ramo adminOff.Contains (falso) e SetSkillDisabledAsync.
+        var on = await ctx.Client.PutAsJsonAsync(
+            "/api/v1/workspace/repo/skills/toggleme/enabled",
+            new McpServerEnabledRequest(true));
+        Assert.That(on.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        list = (await ctx.Client.GetFromJsonAsync<List<RepoSkillItemResponse>>(
+            "/api/v1/workspace/repo/skills"))!;
+        Assert.That(list.Single(s => s.Name == "toggleme").Enabled, Is.True);
+    }
+
+    [Test]
+    public async Task GetCommand_404_E_ScopeInvalido_ListaTudo()
+    {
+        using var ctx = await NewAppAsync(bound: true);
+        var dir = Path.Join(ctx.Workdir!, ".claude", "commands");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Join(dir, "lint-fix.md"), "Roda o lint.\n");
+
+        // Command inexistente → 404 (ternário do GetCommandAsync).
+        var missing = await ctx.Client.GetAsync("/api/v1/workspace/repo/commands/nope");
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // Skill inexistente → 404 (ternário do GetSkillAsync).
+        var missingSkill = await ctx.Client.GetAsync("/api/v1/workspace/repo/skills/nope");
+        Assert.That(missingSkill.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // scope fora de global|project → Where passa tudo (branch do `is not`).
+        var all = (await ctx.Client.GetFromJsonAsync<List<RepoCommandItemResponse>>(
+            "/api/v1/workspace/repo/commands?scope=bogus"))!;
+        Assert.That(all.Any(c => c.Name == "lint-fix"), Is.True);
+
+        var allSkills = (await ctx.Client.GetFromJsonAsync<List<RepoSkillItemResponse>>(
+            "/api/v1/workspace/repo/skills?scope=bogus"))!;
+        Assert.That(allSkills, Is.Not.Null);
+
+        // chatId inexistente → BoundWorkdir reject NotFound (chat não encontrado).
+        var badChat = await ctx.Client.GetAsync(
+            $"/api/v1/workspace/repo/skills?chatId={Guid.NewGuid():N}");
+        Assert.That(badChat.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
     // ---------- discovery service (unitário sobre workdir fake) ----------
 
     [Test]

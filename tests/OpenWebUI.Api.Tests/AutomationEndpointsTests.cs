@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
 using OpenWebUI.Application.Contracts;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -12,6 +13,7 @@ namespace OpenWebUI.Api.Tests;
 /// mockado, run failed não bloqueando agenda e validação do schedule.
 /// </summary>
 [TestFixture, IsolateEnvironment]
+[NonParallelizable] // popula o home global isolado e invalida o cache de Scan
 public class AutomationEndpointsTests
 {
     private WebApplicationFactory<Program> _factory = null!;
@@ -274,4 +276,211 @@ public class AutomationEndpointsTests
         var gone = await _client.GetAsync($"/api/v1/automations/{automation.Id}");
         Assert.That(gone.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
+
+    // ---- automation-actions (#409): callers skill/mcp/reminder/webhook ----
+
+    [Test]
+    public async Task Create_ActionKindInvalido_Retorna400()
+    {
+        var user = await SignUpAsync("Kinds", "kinds@auto.local", "senha123");
+        UseToken(user.Token);
+        var bad = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with { ActionKind = "bogus" });
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    [Test]
+    public async Task Create_Mcp_PayloadIncompleto_Retorna400()
+    {
+        var user = await SignUpAsync("McpVal", "mcpval@auto.local", "senha123");
+        UseToken(user.Token);
+
+        var semJson = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with { ActionKind = "mcp" });
+        Assert.That(semJson.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        var semTool = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with { ActionKind = "mcp", ActionJson = "{\"server\":\"fs\"}" });
+        Assert.That(semTool.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        var jsonRuim = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with { ActionKind = "skill", ActionJson = "não-é-json" });
+        Assert.That(jsonRuim.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    [Test]
+    public async Task RunNow_Reminder_Ok_SemChat()
+    {
+        var user = await SignUpAsync("Remind", "remind@auto.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation(model: "") with
+            {
+                ActionKind = "reminder",
+                ActionJson = "{\"title\":\"Beber água\",\"body\":\"hidratação\"}",
+                PermissionMode = "auto",
+            });
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(automation!.ActionKind, Is.EqualTo("reminder"));
+            Assert.That(automation.PermissionMode, Is.EqualTo("auto"));
+        });
+
+        var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+        var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(run!.Status, Is.EqualTo("ok"), run!.Error);
+            Assert.That(run.ActionKind, Is.EqualTo("reminder"));
+            Assert.That(run.Output, Does.Contain("Beber água"));
+            Assert.That(run.ChatId, Is.Null); // reminder não cria chat
+        });
+    }
+
+    [Test]
+    public async Task RunNow_SkillDesconhecida_Failed()
+    {
+        var user = await SignUpAsync("Skiller", "skiller@auto.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with
+            {
+                ActionKind = "skill",
+                ActionJson = "{\"skill\":\"skill-inexistente-xyz\"}",
+            });
+        var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+
+        var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+        var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(run!.Status, Is.EqualTo("failed"));
+            Assert.That(run.Error, Does.Contain("skill-inexistente-xyz"));
+        });
+    }
+
+    [Test]
+    public async Task RunNow_Skill_Ok_MontaPromptDaSkill()
+    {
+        // Skill no home global isolado da suíte (SPEC-20261016-global-agents-scope).
+        var skillsRoot = Path.Join(TestHomeIsolation.Home, ".agents", "skills");
+        var skillDir = Path.Join(skillsRoot, "hidrate");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Join(skillDir, "SKILL.md"), """
+            ---
+            name: hidrate
+            description: Lembrete de hidratação
+            ---
+            Você é um coach de hidratação. MARCADOR-SKILL-42.
+            """);
+        SkillDiscoveryService.Invalidate("");
+
+        try
+        {
+            var user = await SignUpAsync("SkillOk", "skillok@auto.local", "senha123");
+            UseToken(user.Token);
+            var created = await _client.PostAsJsonAsync("/api/v1/automations",
+                NewAutomation() with
+                {
+                    ActionKind = "skill",
+                    ActionJson = "{\"skill\":\"hidrate\",\"args\":\"2 copos\"}",
+                });
+            Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+
+            var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+            var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+            Assert.Multiple(() =>
+            {
+                Assert.That(run!.Status, Is.EqualTo("ok"), run!.Error);
+                Assert.That(run.ActionKind, Is.EqualTo("skill"));
+                Assert.That(run.ChatId, Is.Not.Null);
+            });
+            var chat = await _client.GetFromJsonAsync<ChatResponse>($"/api/v1/chats/{run!.ChatId}");
+            Assert.That(chat!.Messages[0].Content, Does.Contain("MARCADOR-SKILL-42"));
+        }
+        finally
+        {
+            // O home isolado é compartilhado — remove a skill e derruba o
+            // cache para não vazar para os fixtures seguintes.
+            try { Directory.Delete(skillDir, recursive: true); } catch (IOException) { }
+            SkillDiscoveryService.Invalidate("");
+        }
+    }
+
+    [Test]
+    public async Task RunNow_Mcp_ServidorInexistente_Failed()
+    {
+        var user = await SignUpAsync("Mcper", "mcper@auto.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with
+            {
+                ActionKind = "mcp",
+                ActionJson = "{\"server\":\"env:nao-existe\",\"tool\":\"qualquer\"}",
+            });
+        var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+
+        var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+        var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(run!.Status, Is.EqualTo("failed"));
+            Assert.That(run.Error, Does.Contain("env:nao-existe"));
+        });
+    }
+
+    [Test]
+    public async Task Create_Webhook_UrlInvalida_Retorna400()
+    {
+        var user = await SignUpAsync("HookVal", "hookval@auto.local", "senha123");
+        UseToken(user.Token);
+        var bad = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation() with
+            {
+                ActionKind = "webhook",
+                ActionJson = "{\"url\":\"não-é-url\"}",
+            });
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    [Test]
+    public async Task RunNow_Webhook_Loopback_Bloqueado()
+    {
+        var user = await SignUpAsync("Hooked", "hooked@auto.local", "senha123");
+        UseToken(user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/automations",
+            NewAutomation(model: "") with
+            {
+                ActionKind = "webhook",
+                ActionJson = "{\"url\":\"http://localhost:1/hook\"}",
+            });
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var automation = await created.Content.ReadFromJsonAsync<AutomationResponse>();
+
+        var runResponse = await _client.PostAsync($"/api/v1/automations/{automation!.Id}/run-now", null);
+        var run = await runResponse.Content.ReadFromJsonAsync<AutomationRunResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(run!.Status, Is.EqualTo("failed"));
+            Assert.That(run.Error, Does.Contain("bloqueada"));
+        });
+    }
+
+    [TestCase("https://api.exemplo.com/hook", true)]
+    [TestCase("http://8.8.8.8/x", true)]
+    [TestCase("http://localhost/x", false)]
+    [TestCase("http://127.0.0.1/x", false)]
+    [TestCase("http://10.0.0.5/x", false)]
+    [TestCase("http://192.168.1.1/x", false)]
+    [TestCase("http://172.16.0.1/x", false)]
+    [TestCase("http://172.20.0.1/x", false)]
+    [TestCase("http://169.254.169.254/latest", false)]
+    [TestCase("http://[::1]/x", false)]
+    public void WebhookHost_SsrfGuard(string url, bool esperado) =>
+        Assert.That(
+            Infrastructure.Services.AutomationService.IsSafeWebhookHost(new Uri(url)),
+            Is.EqualTo(esperado));
 }

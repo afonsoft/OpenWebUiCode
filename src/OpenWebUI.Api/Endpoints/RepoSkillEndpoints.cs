@@ -31,7 +31,7 @@ public static class RepoSkillEndpoints
     /// para si — deny admin é absoluto.
     /// </summary>
     private static async Task<IResult> ListSkillsAsync(
-        string? chatId, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
+        string? chatId, string? scope, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
         SkillDiscoveryService skills, UserConfigOverlayService overlay, CancellationToken ct)
     {
         var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
@@ -43,10 +43,13 @@ public static class RepoSkillEndpoints
         var hidden = await overlay.HiddenSkillNamesAsync(userId!, ct);
         var adminOff = await overlay.AdminDisabledSkillNamesAsync(ct);
         var scan = skills.Scan(workdir!);
-        return Results.Ok(scan.Skills.Select(s =>
-            new RepoSkillItemResponse(
+        var items = scan.Skills
+            .Where(s => scope is not ("global" or "project") || s.Scope == scope)
+            .Select(s => new RepoSkillItemResponse(
                 s.Name, s.Description, "skill", s.Path,
-                !hidden.Contains(s.Name), adminOff.Contains(s.Name))).ToList());
+                !hidden.Contains(s.Name), adminOff.Contains(s.Name), s.Scope))
+            .ToList();
+        return Results.Ok(items);
     }
 
     /// <summary>
@@ -99,11 +102,11 @@ public static class RepoSkillEndpoints
         return entry is null
             ? Results.NotFound(new { detail = $"Skill '{name}' não encontrada no repositório." })
             : Results.Ok(new RepoSkillDetailResponse(
-                entry.Name, entry.Description, "skill", entry.Path, entry.Body));
+                entry.Name, entry.Description, "skill", entry.Path, entry.Body, entry.Scope));
     }
 
     private static async Task<IResult> ListCommandsAsync(
-        string? chatId, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
+        string? chatId, string? scope, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
         SkillDiscoveryService skills, CancellationToken ct)
     {
         var (_, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
@@ -113,9 +116,11 @@ public static class RepoSkillEndpoints
         }
 
         var scan = skills.Scan(workdir!);
-        return Results.Ok(scan.Commands.Select(c =>
-            new RepoCommandItemResponse(
-                c.Name, c.Description, c.Agent, c.Model, c.Subtask, "command", c.Path)).ToList());
+        return Results.Ok(scan.Commands
+            .Where(c => scope is not ("global" or "project") || c.Scope == scope)
+            .Select(c => new RepoCommandItemResponse(
+                c.Name, c.Description, c.Agent, c.Model, c.Subtask, "command", c.Path, c.Scope))
+            .ToList());
     }
 
     private static async Task<IResult> GetCommandAsync(
@@ -134,7 +139,7 @@ public static class RepoSkillEndpoints
             ? Results.NotFound(new { detail = $"Command '{name}' não encontrado no repositório." })
             : Results.Ok(new RepoCommandDetailResponse(
                 entry.Name, entry.Description, entry.Agent, entry.Model,
-                entry.Subtask, "command", entry.Path, entry.Body));
+                entry.Subtask, "command", entry.Path, entry.Body, entry.Scope));
     }
 
     /// <summary>Guard comum: usuário autenticado + repo vinculado → workdir.</summary>

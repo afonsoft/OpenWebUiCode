@@ -14,7 +14,7 @@ namespace OpenWebUI.Infrastructure.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
 
             modelBuilder.Entity("OpenWebUI.Domain.AgentMemory", b =>
                 {
@@ -53,6 +53,122 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasIndex("UserId", "Scope");
 
                     b.ToTable("AgentMemories");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.AgentPersona", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GuardrailLevel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SystemPrompt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ToolsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("AgentPersonas");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.AgentPersonaSession", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PersonaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PersonaId", "ChatKey")
+                        .IsUnique();
+
+                    b.ToTable("AgentPersonaSessions");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.AgentTurn", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OutText")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PersonaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Timestamp")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("PersonaId", "Timestamp");
+
+                    b.ToTable("AgentTurns");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.ApiKey", b =>
@@ -132,6 +248,16 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ActionJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActionKind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
@@ -151,6 +277,10 @@ namespace OpenWebUI.Infrastructure.Migrations
 
                     b.Property<long?>("NextRunAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("PermissionMode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Prompt")
                         .IsRequired()
@@ -222,6 +352,10 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ActionKind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("AutomationId")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -234,6 +368,9 @@ namespace OpenWebUI.Infrastructure.Migrations
 
                     b.Property<long>("FinishedAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Output")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("StartedAt")
                         .HasColumnType("INTEGER");
@@ -1170,6 +1307,71 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("Memories");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ModelCombo", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("RequestsPerMinute")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RoundRobinCursor")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Strategy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("TokensPerMinute")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("ModelCombos");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.ModelComboItem", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ComboId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ComboId", "Position");
+
+                    b.ToTable("ModelComboItems");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.ModelEntry", b =>
                 {
                     b.Property<string>("Id")
@@ -1729,6 +1931,15 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Navigation("Collection");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ModelComboItem", b =>
+                {
+                    b.HasOne("OpenWebUI.Domain.ModelCombo", null)
+                        .WithMany("Items")
+                        .HasForeignKey("ComboId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.OAuthAccount", b =>
                 {
                     b.HasOne("OpenWebUI.Domain.User", "User")
@@ -1780,6 +1991,11 @@ namespace OpenWebUI.Infrastructure.Migrations
             modelBuilder.Entity("OpenWebUI.Domain.KnowledgeCollection", b =>
                 {
                     b.Navigation("Files");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.ModelCombo", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.User", b =>

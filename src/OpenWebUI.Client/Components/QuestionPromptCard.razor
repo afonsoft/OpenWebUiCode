@@ -15,6 +15,63 @@
         <span>@L["chat.question_title"]</span>
     </div>
 
+    @if (Questions is { Count: > 1 } questions)
+    {
+        @* SPEC-20261016-question-forms RF-002: form agrupado — um card,
+           uma submissão; resposta = JSON {answers:[..]} alinhado por
+           índice (string | string[] | null por item). *@
+        @for (var i = 0; i < questions.Count; i++)
+        {
+            var index = i;
+            var item = questions[index];
+            <div class="mt-3 @(index > 0 ? "border-t border-blue-200/60 dark:border-blue-800/40 pt-3" : "")">
+                @if (!string.IsNullOrWhiteSpace(item.Header))
+                {
+                    <div class="text-[0.6875rem] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">@item.Header</div>
+                }
+                <div class="mt-1 text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words">
+                    @item.Question
+                    @if (!item.Required)
+                    {
+                        <span class="ml-1 text-[0.6875rem] text-gray-400">(@L["chat.question_optional"])</span>
+                    }
+                </div>
+                @if (item.Options.Length > 0)
+                {
+                    <div class="mt-1.5 flex flex-col gap-1">
+                        @foreach (var option in item.Options)
+                        {
+                            var opt = option;
+                            var selected = _multiSelected[index].Contains(opt);
+                            <button class="w-full text-left rounded-lg border px-3 py-1.5 text-xs transition cursor-pointer
+                                           @(selected
+                                               ? "border-blue-500 bg-blue-100 dark:bg-blue-900/40 text-blue-900 dark:text-blue-100 font-medium"
+                                               : "border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850")"
+                                    @onclick="() => ToggleMulti(index, opt, item.Multiple)">
+                                @(selected ? "● " : "○ ")@opt
+                            </button>
+                        }
+                    </div>
+                }
+                <input class="mt-1.5 w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300"
+                       placeholder="@L["chat.question_other"]" aria-label="@item.Question"
+                       value="@_multiFree[index]" @oninput="e => _multiFree[index] = e.Value?.ToString() ?? string.Empty" />
+            </div>
+        }
+        <div class="mt-3 flex items-center justify-end gap-2">
+            <button class="text-[0.6875rem] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+                    @onclick="() => OnAnswer.InvokeAsync(null)">
+                @L["chat.question_skip"]
+            </button>
+            <button class="rounded-lg bg-blue-600 text-white px-3 py-1.5 text-xs font-medium transition hover:opacity-85 cursor-pointer disabled:opacity-40"
+                    disabled="@(!MultiComplete(questions))"
+                    @onclick="() => SubmitMulti(questions)">
+                @L["chat.question_submit"]
+            </button>
+        </div>
+    }
+    else
+    {
     <div class="mt-2 text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words">@Question</div>
 
     @if (Options.Length > 0)
@@ -65,10 +122,11 @@
             @L["chat.question_skip"]
         </button>
     </div>
+    }
 </div>
 
 @code {
-    /// <summary>Texto da pergunta.</summary>
+    /// <summary>Texto da pergunta (forma singular).</summary>
     [Parameter] public string Question { get; set; } = "";
 
     /// <summary>Opções clicáveis (vazio = só resposta livre).</summary>
@@ -77,11 +135,91 @@
     /// <summary>Mais de uma opção pode ser escolhida.</summary>
     [Parameter] public bool Multiple { get; set; }
 
+    /// <summary>
+    /// Itens do form multi-pergunta (SPEC-20261016-question-forms):
+    /// <see langword="null"/> ou 1 item → forma singular; 2+ → form agrupado.
+    /// </summary>
+    [Parameter] public IReadOnlyList<RunQuestionItem>? Questions { get; set; }
+
     /// <summary>Resposta (null = o usuário pulou a pergunta).</summary>
     [Parameter] public EventCallback<string?> OnAnswer { get; set; }
 
     private readonly HashSet<string> _selected = new(StringComparer.Ordinal);
     private string _free = "";
+
+    /// <summary>Estado por índice do form multi — seleções e texto livre.</summary>
+    private readonly Dictionary<int, HashSet<string>> _multiSelected =
+        Enumerable.Range(0, 5).ToDictionary(i => i, _ => new HashSet<string>(StringComparer.Ordinal));
+    private readonly Dictionary<int, string> _multiFree =
+        Enumerable.Range(0, 5).ToDictionary(i => i, _ => string.Empty);
+
+    private void ToggleMulti(int index, string option, bool multiple)
+    {
+        var set = _multiSelected[index];
+        if (multiple)
+        {
+            if (!set.Add(option))
+            {
+                set.Remove(option);
+            }
+            return;
+        }
+        // Single-select dentro do form: marca só a clicada — clicar na
+        // marcada desmarca (pergunta não-obrigatória pode ficar vazia).
+        if (!set.Remove(option))
+        {
+            set.Clear();
+            set.Add(option);
+        }
+    }
+
+    /// <summary>Form completo quando toda pergunta required tem resposta.</summary>
+    private bool MultiComplete(IReadOnlyList<RunQuestionItem> questions)
+    {
+        for (var i = 0; i < questions.Count; i++)
+        {
+            if (!questions[i].Required)
+            {
+                continue;
+            }
+            if (_multiSelected[i].Count == 0
+                && string.IsNullOrWhiteSpace(_multiFree[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// RF-002/003: serializa {answers:[..]} — seleções viram string
+    /// (single) ou string[] (multiple, + texto livre concatenado); item
+    /// sem resposta e não-obrigatório → null.
+    /// </summary>
+    private Task SubmitMulti(IReadOnlyList<RunQuestionItem> questions)
+    {
+        var answers = new List<object?>(questions.Count);
+        for (var i = 0; i < questions.Count; i++)
+        {
+            var selected = _multiSelected[i].ToList();
+            var free = _multiFree[i].Trim();
+            if (questions[i].Multiple)
+            {
+                if (free.Length > 0)
+                {
+                    selected.Add(free);
+                }
+                answers.Add(selected.Count == 0 ? null : selected);
+            }
+            else
+            {
+                var single = free.Length > 0 ? free : selected.FirstOrDefault();
+                answers.Add(single);
+            }
+        }
+        var payload = System.Text.Json.JsonSerializer.Serialize(new { answers });
+        return OnAnswer.InvokeAsync(payload);
+    }
 
     private void Toggle(string option)
     {

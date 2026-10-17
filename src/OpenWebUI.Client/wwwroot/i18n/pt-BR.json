@@ -730,6 +730,7 @@
   "chat.question_other": "Outro (digite sua resposta)",
   "chat.question_submit": "Enviar resposta",
   "chat.question_skip": "Pular",
+  "chat.question_optional": "opcional",
   "chat.question_placeholder": "Digite sua resposta…",
   "common.copy": "Copiar",
   "admin.tab_analytics": "Analytics",

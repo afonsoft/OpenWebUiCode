@@ -117,7 +117,6 @@ public class AgentModeTests
     [TestCase("lsp_definition")]
     [TestCase("lsp_references")]
     [TestCase("lsp_hover")]
-    [TestCase("skill")]
     public void Evaluate_Chat_WorkspaceTools_Deny(string name) =>
         Assert.That(PermissionRuleset.Evaluate("chat", name),
             Is.EqualTo(PermissionDecision.Deny));
@@ -127,6 +126,9 @@ public class AgentModeTests
     [TestCase("ask_user")]
     [TestCase("todo_write")]
     [TestCase("generate_image")]
+    // skill saiu de WorkspaceTools (SPEC-20261016-global-agents-scope
+    // RF-007): funciona no modo chat lendo ~/.agents sem repo vinculado.
+    [TestCase("skill")]
     public void Evaluate_Chat_NaoWorkspace_SeguePreset(string name) =>
         // chat nega só workspace — o resto segue o gate do preset (Ask).
         Assert.That(PermissionRuleset.Evaluate("chat", name),

@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-session-maintenance` |
 | Ticket | [#411](https://github.com/afonsoft/open-webui/issues/411) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Fonte | análise fork alltomatos/opencode — `tool/maintenance.ts` + commits `e4b6ac49` (synthesize sessions to memory before purge, retention config, auto vacuum) |
 
 ## 1. User Story

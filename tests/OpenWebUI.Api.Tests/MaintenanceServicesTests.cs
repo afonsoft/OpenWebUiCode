@@ -404,6 +404,101 @@ public class MaintenanceServicesTests
             Is.GreaterThanOrEqualTo(now));
     }
 
+    // ---- session-maintenance (#411): poda de chats com destilação ----
+
+    [Test]
+    public async Task Poda_ChatVelho_DestilaEDeleta()
+    {
+        var old = DateTimeOffset.UtcNow.AddDays(-40).ToUnixTimeSeconds();
+        await SeedChatAsync("old-chat", "deploy fly.io", old);
+        await Config().SetAsync(RetentionService.ChatDaysKey, 30, CancellationToken.None);
+
+        var result = await NewRetention().RunCycleAsync(dryRun: false, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.ChatsPurged, Is.EqualTo(1));
+            Assert.That(result.MemoriesSynthesized, Is.EqualTo(1));
+        });
+        await using var db = NewDb();
+        Assert.That(await db.Chats.FindAsync("old-chat"), Is.Null);
+        Assert.That(await db.AgentMemories.AnyAsync(
+            m => m.UserId == "u1" && m.Title.StartsWith("auto:")), Is.True);
+    }
+
+    [Test]
+    public async Task Poda_DryRun_ContaSemDeletar()
+    {
+        var old = DateTimeOffset.UtcNow.AddDays(-40).ToUnixTimeSeconds();
+        await SeedChatAsync("dry-chat", "dry", old);
+        await Config().SetAsync(RetentionService.ChatDaysKey, 30, CancellationToken.None);
+
+        var result = await NewRetention().RunCycleAsync(dryRun: true, CancellationToken.None);
+
+        Assert.That(result.ChatsPurged, Is.EqualTo(1));
+        await using var db = NewDb();
+        Assert.That(await db.Chats.FindAsync("dry-chat"), Is.Not.Null);
+        Assert.That(await db.AgentMemories.CountAsync(), Is.Zero);
+    }
+
+    [Test]
+    public async Task Poda_PinadoERecente_EBinding_NaoPodam()
+    {
+        var old = DateTimeOffset.UtcNow.AddDays(-40).ToUnixTimeSeconds();
+        await SeedChatAsync("pinned-chat", "pinned", old);
+        await SeedChatAsync("bound-chat", "bound", old);
+        await SeedChatAsync("new-chat", "new", DateTimeOffset.UtcNow.AddDays(-5).ToUnixTimeSeconds());
+        await Config().SetAsync(RetentionService.ChatDaysKey, 30, CancellationToken.None);
+        await using (var db = NewDb())
+        {
+            (await db.Chats.FindAsync("pinned-chat"))!.Pinned = true;
+            await db.SaveChangesAsync();
+        }
+        // Binding de workspace por chat — nunca podado por idade.
+        await Config().SetAsync("chat:bound-chat:workspace.repo",
+            new { slug = "a/b" }, CancellationToken.None);
+
+        var result = await NewRetention().RunCycleAsync(dryRun: false, CancellationToken.None);
+
+        Assert.That(result.ChatsPurged, Is.Zero);
+        await using var check = NewDb();
+        Assert.That(await check.Chats.CountAsync(), Is.EqualTo(3));
+    }
+
+    [Test]
+    public async Task Poda_ProviderFalha_ChatNaoEhDeletado()
+    {
+        var old = DateTimeOffset.UtcNow.AddDays(-40).ToUnixTimeSeconds();
+        await SeedChatAsync("fragile-chat", "fragile", old);
+        await Config().SetAsync(RetentionService.ChatDaysKey, 30, CancellationToken.None);
+        _handler.FailChat = true;
+
+        var result = await NewRetention().RunCycleAsync(dryRun: false, CancellationToken.None);
+
+        Assert.That(result.ChatsPurged, Is.Zero);
+        await using var db = NewDb();
+        Assert.That(await db.Chats.FindAsync("fragile-chat"), Is.Not.Null);
+    }
+
+    [Test]
+    public async Task Status_RefleteUltimoCiclo()
+    {
+        var old = DateTimeOffset.UtcNow.AddDays(-40).ToUnixTimeSeconds();
+        await SeedChatAsync("status-chat", "st", old);
+        await Config().SetAsync(RetentionService.ChatDaysKey, 30, CancellationToken.None);
+
+        await NewRetention().RunCycleAsync(dryRun: false, CancellationToken.None);
+        var status = await NewRetention().GetStatusAsync(CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status.LastRun, Is.Not.Null);
+            Assert.That(status.LastRun!.ChatsPurged, Is.EqualTo(1));
+            Assert.That(status.ChatDays, Is.EqualTo(30));
+            Assert.That(status.NextRunAt, Is.GreaterThan(0));
+        });
+    }
+
     // ---------------- Stubs ----------------
 
     private sealed class OllamaStubHandler : HttpMessageHandler
@@ -411,9 +506,17 @@ public class MaintenanceServicesTests
         /// <summary>Último modelo pedido em /api/chat (asserção de papel).</summary>
         public string? LastChatModel;
 
+        /// <summary>Quando true, /api/chat responde 500 (provider transitório).</summary>
+        public bool FailChat;
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (FailChat && request.RequestUri!.AbsolutePath == "/api/chat")
+            {
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            }
+
             var json = request.RequestUri!.AbsolutePath switch
             {
                 "/api/tags" => """{"models":[{"model":"fake:1","name":"fake:1"},{"model":"fake:mem","name":"fake:mem"}]}""",

@@ -1015,6 +1015,22 @@ public class Automation
     /// <summary>Indica se a automação está habilitada.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// Tipo de ação disparada (SPEC-20261016-automation-actions):
+    /// <c>prompt</c> (default) | <c>skill</c> | <c>mcp</c> | <c>reminder</c>
+    /// | <c>webhook</c>.
+    /// </summary>
+    public string ActionKind { get; set; } = "prompt";
+
+    /// <summary>Payload JSON da ação, validado por <see cref="ActionKind"/>.</summary>
+    public string? ActionJson { get; set; }
+
+    /// <summary>Modo de permissão da ação: <c>default</c> | <c>auto</c> | <c>bypass</c>.</summary>
+    public string PermissionMode { get; set; } = "default";
+
+    /// <summary>Chat reutilizado pelas execuções, quando configurado.</summary>
+    public string? ChatId { get; set; }
+
     /// <summary>Próxima execução agendada (epoch seconds, UTC).</summary>
     public long? NextRunAt { get; set; }
 
@@ -1042,6 +1058,12 @@ public class AutomationRun
 
     /// <summary>Resultado: ok ou failed.</summary>
     public string Status { get; set; } = "ok";
+
+    /// <summary>Ação executada (cópia de <see cref="Automation.ActionKind"/> no disparo).</summary>
+    public string ActionKind { get; set; } = "prompt";
+
+    /// <summary>Resumo do output da ação (capado a 4KB), quando aplicável.</summary>
+    public string? Output { get; set; }
 
     /// <summary>Mensagem de erro quando Status = failed.</summary>
     public string? Error { get; set; }
@@ -1090,6 +1112,64 @@ public class AutomationHook
 
     /// <summary>Último disparo aceito (epoch seconds); null se nunca disparou.</summary>
     public long? LastFiredAt { get; set; }
+}
+
+/// <summary>
+/// Combo de modelos com failover (SPEC-20261016-model-combos RF-001):
+/// grupo nomeado de modelos ordenados com estratégia de resolução,
+/// rate limit compartilhado e cooldown por falha reportada. Referenciado
+/// como <c>combo:{Id}</c> onde um modelo é aceito.
+/// </summary>
+public class ModelCombo
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono do combo; null = global (só admin cria).</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>Nome único por dono.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Estratégia: <c>priority</c> | <c>round-robin</c> | <c>priority-round-robin</c>.</summary>
+    public string Strategy { get; set; } = "priority";
+
+    /// <summary>Teto de requisições por minuto do combo (janela deslizante); null = sem limite.</summary>
+    public int? RequestsPerMinute { get; set; }
+
+    /// <summary>Teto de tokens por minuto do combo; null = sem limite.</summary>
+    public int? TokensPerMinute { get; set; }
+
+    /// <summary>Indica se o combo aceita resoluções.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Cursor persistido do round-robin (RF-002 — "persiste em kv").</summary>
+    public int RoundRobinCursor { get; set; }
+
+    /// <summary>Itens ordenados do combo.</summary>
+    public List<ModelComboItem> Items { get; set; } = [];
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>Modelo participante de um <see cref="ModelCombo"/>, ordenado por <see cref="Position"/>.</summary>
+public class ModelComboItem
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Combo ao qual o item pertence.</summary>
+    public string ComboId { get; set; } = string.Empty;
+
+    /// <summary>Id do modelo/provider (ex.: <c>gpt-4o</c>, <c>ollama:llama3</c>).</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>Ordem de prioridade dentro do combo (menor primeiro).</summary>
+    public int Position { get; set; }
 }
 
 /// <summary>Banner de aviso exibido no topo do app (CRUD admin).</summary>
@@ -1396,4 +1476,106 @@ public class McpServer
 
     /// <summary>Última atualização (epoch seconds).</summary>
     public long UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Persona de agente acionável externamente (SPEC-20261016-agent-personas-
+/// channels RF-001): identidade nomeada com system prompt, modelo (ou
+/// <c>combo:{id}</c>) e nível de guardrails — o mesmo agente atende no
+/// chat, numa automação ou no endpoint <c>/message</c> (canal webhook).
+/// </summary>
+public class AgentPersona
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono da persona (isolamento por usuário).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Nome de exibição.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>System prompt base injetado a cada turno.</summary>
+    public string SystemPrompt { get; set; } = string.Empty;
+
+    /// <summary>Modelo de geração — id, nome ou referência <c>combo:{id}</c>.</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Nível de guardrails: <c>none</c> (todas as tools habilitadas),
+    /// <c>basic</c> (sem tools de execução) ou <c>strict</c> (somente
+    /// tools de leitura + instrução de confirmação no system).
+    /// </summary>
+    public string GuardrailLevel { get; set; } = "basic";
+
+    /// <summary>Allowlist extra de tools (JSON array); null = conjunto do guardrail.</summary>
+    public string? ToolsJson { get; set; }
+
+    /// <summary>Se a persona atende mensagens (false → 404 no dispatch).</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Sessão lógica de uma persona por canal (RF-003): o par
+/// (<see cref="PersonaId"/>, <see cref="ChatKey"/>) aponta para o chat que
+/// acumula os turnos daquele canal (ex.: <c>webhook:contato-42</c>).
+/// </summary>
+public class AgentPersonaSession
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Persona dona da sessão.</summary>
+    public string PersonaId { get; set; } = string.Empty;
+
+    /// <summary>Chave lógica do canal (default <c>"default"</c>).</summary>
+    public string ChatKey { get; set; } = "default";
+
+    /// <summary>Chat subjacente onde as mensagens/turnos persistem.</summary>
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Última atividade (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Turno auditável de uma persona (RF-004): entrada, saída e status de
+/// cada mensagem de canal, capado a 200 por persona. O
+/// <see cref="RunId"/> é preenchido no dispatch; <see cref="OutText"/>/
+/// <see cref="Status"/> ao término da run (IChatRunNotifier).
+/// </summary>
+public class AgentTurn
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Persona dona do turno.</summary>
+    public string PersonaId { get; set; } = string.Empty;
+
+    /// <summary>Run que produziu a resposta.</summary>
+    public string? RunId { get; set; }
+
+    /// <summary>Chave lógica do canal de origem.</summary>
+    public string ChatKey { get; set; } = "default";
+
+    /// <summary>Canal de entrada (ex.: <c>webhook</c>).</summary>
+    public string Channel { get; set; } = "webhook";
+
+    /// <summary>Texto recebido (capado a 4KB).</summary>
+    public string InText { get; set; } = string.Empty;
+
+    /// <summary>Texto respondido ou erro (capado a 4KB).</summary>
+    public string? OutText { get; set; }
+
+    /// <summary><c>running</c> | status terminal da run.</summary>
+    public string Status { get; set; } = "running";
+
+    /// <summary>Início do turno (epoch seconds).</summary>
+    public long Timestamp { get; set; }
 }

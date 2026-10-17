@@ -730,6 +730,7 @@
   "chat.question_other": "Other (type your answer)",
   "chat.question_submit": "Send answer",
   "chat.question_skip": "Skip",
+  "chat.question_optional": "optional",
   "chat.question_placeholder": "Type your answer…",
   "common.copy": "Copy",
   "admin.tab_analytics": "Analytics",

@@ -43,12 +43,16 @@ public static class RepoSlashCommands
             .Concat(prompts.Where(p => Match(p.Command))
                 .Select(p => new SlashItem(p.Command, p.Title, "prompt")))
             .Concat(skills.Where(s => Match(s.Name))
-                .Select(s => new SlashItem(s.Name, s.Description, "skill")))
+                .Select(s => new SlashItem(s.Name, Scoped(s.Description, s.Scope), "skill")))
             .Concat(commands.Where(c => Match(c.Name))
-                .Select(c => new SlashItem(c.Name, c.Description, "command")))
+                .Select(c => new SlashItem(c.Name, Scoped(c.Description, c.Scope), "command")))
             .Take(take)
             .ToList();
     }
+
+    /// <summary>Sufixa <c>· global</c> em itens vindos de <c>~/.agents</c> (RF-005).</summary>
+    private static string Scoped(string description, string? scope) =>
+        scope == "global" ? $"{description} · global" : description;
 
     /// <summary>Texto após <c>/nome</c> no input (os argumentos do command).</summary>
     public static string ArgsAfter(string input)
