@@ -285,7 +285,7 @@ public static class ApiEndpoints
         }
 
         await using var writer = new StreamWriter(http.Response.Body, Encoding.UTF8);
-        Task EmitAsync(string line) { writer.WriteLine(line); writer.WriteLine(); return writer.FlushAsync(); }
+        Task EmitAsync(string line) { writer.WriteLine(line); writer.WriteLine(); return writer.FlushAsync(http.RequestAborted); }
 
         // Modelos pipeline:{id} são roteados ao servidor de pipelines externo.
         if (request.Model.StartsWith("pipeline:", StringComparison.Ordinal))
@@ -611,7 +611,7 @@ public static class ApiEndpoints
             {
                 log.LogDebug(ex, "Auto-config de capacidades falhou.");
             }
-        });
+        }, CancellationToken.None);
 
         return Results.Ok(new ConnectionsConfigResponse(
             updated.OllamaBaseUrls,
