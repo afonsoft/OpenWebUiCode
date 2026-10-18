@@ -56,6 +56,13 @@ public sealed class GitHubService(
         ?? await config.GetAsync<string?>(GlobalTokenKey, null, ct);
 
     /// <summary>
+    /// Só o PAT global do admin (sem fallback de usuário) — para processos
+    /// compartilhados como o terminal local (SPEC-20261017-agent-secrets-env).
+    /// </summary>
+    public async Task<string?> GetGlobalTokenAsync(CancellationToken ct) =>
+        await config.GetAsync<string?>(GlobalTokenKey, null, ct);
+
+    /// <summary>
     /// Grava o token default global (admin). Devolve o login validado ou
     /// null quando o GitHub recusa. O valor nunca volta pela API.
     /// </summary>

@@ -102,6 +102,152 @@ public class WorkspaceGitTests
         }
     }
 
+    // ---------------- SPEC-20261017-workspace-changes-run-diff ----------------
+
+    /// <summary>
+    /// RF-001 (o bug reportado): agente commita na branch da run e deixa um
+    /// arquivo untracked — a aba Changes deve listar TODOS (commitados +
+    /// untracked), não só o untracked.
+    /// </summary>
+    [Test]
+    public async Task Servico_CommitsNaBranch_ListaCommitadosEUntracked()
+    {
+        RequireGit();
+        var dir = Path.Join(Path.GetTempPath(), $"owui-git-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Git(dir, "init");
+            File.WriteAllText(Path.Join(dir, "a.txt"), "linha1\n");
+            File.WriteAllText(Path.Join(dir, "velho.txt"), "v\n");
+            CommitAll(dir, "base");
+            var baseBranch = GitOut(dir, "branch", "--show-current");
+
+            Git(dir, "checkout", "-b", "agent-run");
+            File.WriteAllText(Path.Join(dir, "a.txt"), "linha1\nlinha2\n");
+            File.WriteAllText(Path.Join(dir, "b.txt"), "b1\nb2\n");
+            File.Delete(Path.Join(dir, "velho.txt"));
+            CommitAll(dir, "trabalho do agente");
+
+            File.WriteAllText(Path.Join(dir, "novo.spec.md"), "s1\ns2\ns3\n");
+
+            var info = await new WorkspaceGitService()
+                .GetInfoAsync(dir, CancellationToken.None, baseRef: baseBranch);
+
+            Assert.That(info.IsRepo, Is.True);
+            var paths = info.Files.Select(f => f.Path).ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(paths, Does.Contain("a.txt"), "modificação commitada");
+                Assert.That(paths, Does.Contain("b.txt"), "arquivo novo commitado");
+                Assert.That(paths, Does.Contain("velho.txt"), "deleção commitada");
+                Assert.That(paths, Does.Contain("novo.spec.md"), "untracked pós-commit");
+            });
+            Assert.That(info.Files.First(f => f.Path == "a.txt").Status, Is.EqualTo("M"));
+            Assert.That(info.Files.First(f => f.Path == "velho.txt").Status, Is.EqualTo("D"));
+            Assert.That(info.Files.First(f => f.Path == "novo.spec.md").Status, Is.EqualTo("A"));
+            Assert.That(info.Files.First(f => f.Path == "novo.spec.md").Added, Is.EqualTo(3));
+            Assert.Multiple(() =>
+            {
+                Assert.That(info.Diff, Does.Contain("+linha2"), "diff cobre commit do agente");
+                Assert.That(info.Diff, Does.Contain("+s1"), "diff cobre conteúdo do untracked");
+                Assert.That(info.BaseRef, Is.EqualTo(baseBranch));
+            });
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>RF-002: sem baseRef/base inexistente → cai no diff vs HEAD (regressão zero).</summary>
+    [Test]
+    public async Task Servico_SemBaseRef_CaiNoHead()
+    {
+        RequireGit();
+        var dir = Path.Join(Path.GetTempPath(), $"owui-git-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Git(dir, "init");
+            File.WriteAllText(Path.Join(dir, "a.txt"), "linha1\n");
+            CommitAll(dir, "base");
+
+            File.WriteAllText(Path.Join(dir, "a.txt"), "linha1\nlinha2\n");
+            CommitAll(dir, "agente commita");
+            File.WriteAllText(Path.Join(dir, "sujo.txt"), "x\n");
+
+            var info = await new WorkspaceGitService()
+                .GetInfoAsync(dir, CancellationToken.None, baseRef: "nao-existe");
+
+            Assert.That(info.IsRepo, Is.True);
+            Assert.That(info.BaseSha, Is.EqualTo("HEAD"));
+            // vs HEAD: só o untracked aparece (comportamento antigo preservado).
+            Assert.That(info.Files.Select(f => f.Path), Is.EqualTo(new[] { "sujo.txt" }));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>RF-003: falha/fluxo normal — index pré-existente é restaurado após o intent-to-add.</summary>
+    [Test]
+    public async Task Servico_IndexPreExistente_EhRestaurado()
+    {
+        RequireGit();
+        var dir = Path.Join(Path.GetTempPath(), $"owui-git-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Git(dir, "init");
+            File.WriteAllText(Path.Join(dir, "a.txt"), "linha1\n");
+            CommitAll(dir, "base");
+            var baseBranch = GitOut(dir, "branch", "--show-current");
+
+            Git(dir, "checkout", "-b", "run");
+            File.WriteAllText(Path.Join(dir, "staged.txt"), "staged\n");
+            Git(dir, "add", "staged.txt");          // index sujo ANTES do snapshot
+            File.WriteAllText(Path.Join(dir, "novo.txt"), "n\n"); // untracked
+
+            _ = await new WorkspaceGitService()
+                .GetInfoAsync(dir, CancellationToken.None, baseRef: baseBranch);
+
+            var stillStaged = GitOut(dir, "diff", "--cached", "--name-only");
+            Assert.That(stillStaged, Does.Contain("staged.txt"),
+                "index pré-existente deve ser restaurado após o intent-to-add");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static void CommitAll(string dir, string message)
+    {
+        Git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A");
+        Git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", message);
+    }
+
+    private static string GitOut(string workdir, params string[] args)
+    {
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = workdir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+        using var process = Process.Start(psi);
+        var output = process!.StandardOutput.ReadToEnd();
+        process.WaitForExit(15000);
+        return output.Trim();
+    }
+
     // ---------------- Endpoint /runs/{id}/diff ----------------
 
     [Test]

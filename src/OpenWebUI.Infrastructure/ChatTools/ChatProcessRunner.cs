@@ -26,6 +26,9 @@ public static class ChatProcessRunner
     /// Executa <paramref name="command"/> num shell no diretório de trabalho
     /// dado; retorna saída combinada limitada a
     /// <paramref name="maxOutputChars"/> e segredos mascarados.
+    /// <paramref name="env"/> injeta variáveis resolvidas (secrets do
+    /// usuário ∪ global ∪ managed GitHub — SPEC-20261017-agent-secrets-env);
+    /// <paramref name="secretsToScrub"/> mascara os valores literais na saída.
     /// </summary>
     public static async Task<ProcessOutcome> RunAsync(
         string command,
@@ -33,6 +36,8 @@ public static class ChatProcessRunner
         TimeSpan timeout,
         int maxOutputChars = DefaultMaxOutputChars,
         string? stdin = null,
+        IReadOnlyDictionary<string, string>? env = null,
+        IReadOnlyCollection<string>? secretsToScrub = null,
         CancellationToken ct = default)
     {
         var psi = new ProcessStartInfo
@@ -46,6 +51,13 @@ public static class ChatProcessRunner
         };
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(command);
+        if (env is not null)
+        {
+            foreach (var (key, value) in env)
+            {
+                psi.Environment[key] = value;
+            }
+        }
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stdout = new StringBuilder();
@@ -114,7 +126,7 @@ public static class ChatProcessRunner
             truncated = true;
         }
 
-        var scrubbed = SecretScrubber.Scrub(combined) ?? string.Empty;
+        var scrubbed = SecretScrubber.Scrub(combined, secretsToScrub) ?? string.Empty;
         var exitCode = timedOut ? -1 : process.HasExited ? process.ExitCode : -1;
         return new ProcessOutcome(exitCode, scrubbed, truncated, timedOut);
     }

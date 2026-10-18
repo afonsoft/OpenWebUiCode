@@ -1,5 +1,6 @@
 using System.Text.Json;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 
@@ -10,7 +11,8 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// (elevação, rede, fuga do workspace, binário desconhecido) são negados.
 /// Mutável → gate de aprovação.
 /// </summary>
-public sealed class ShellExecBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
+public sealed class ShellExecBuiltinTool(
+    ChatJobService jobs, AgentSecretsEnvService? agentEnv = null) : IBuiltinChatTool
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MaxTimeout = TimeSpan.FromSeconds(300);
@@ -71,8 +73,14 @@ public sealed class ShellExecBuiltinTool(ChatJobService jobs) : IBuiltinChatTool
         Directory.CreateDirectory(context.WorkspacePath);
 
         var (prepared, stdin) = PrepareSudo(command, args);
+        // Secrets user∪global ∪ managed GitHub entram na env do processo e
+        // são mascarados na saída (SPEC-20261017-agent-secrets-env RF-005/007).
+        var env = agentEnv is null
+            ? AgentEnv.Empty
+            : await agentEnv.BuildAsync(context.UserId, ct);
         var outcome = await ChatProcessRunner.RunAsync(
-            prepared, context.WorkspacePath, timeout, stdin: stdin, ct: ct);
+            prepared, context.WorkspacePath, timeout, stdin: stdin,
+            env: env.Vars, secretsToScrub: env.SecretsToScrub, ct: ct);
 
         return BuildResult(outcome, timeout, assessment);
     }

@@ -277,16 +277,21 @@ public sealed record ChatPatchRequest(
 /// <param name="Trigger"><c>user_message</c> | <c>tool_burst</c> | <c>pause</c>.</param>
 public sealed record RunAdvisorEvent(string Text, string Trigger);
 
-/// <summary>Arquivo alterado num workdir git (numstat + status M/A).</summary>
+/// <summary>Arquivo alterado num workdir git (numstat + status M/A/D/R).</summary>
+/// <param name="OldPath">Path anterior quando <see cref="Status"/> é <c>R</c> (rename).</param>
 public sealed record WorkspaceGitFileResponse(
-    string Path, int Added, int Removed, string Status);
+    string Path, int Added, int Removed, string Status, string? OldPath = null);
 
 /// <summary>
 /// Snapshot git do workspace do chat (SPEC-20261007-chat-agent-parity
-/// RF-018): branch, totais +a/-d, por-arquivo e o unified diff truncado.
+/// RF-018 + SPEC-20261017-workspace-changes-run-diff): branch, totais +a/-d,
+/// por-arquivo e o unified diff truncado contra a <b>base da run</b>
+/// (merge-base com a branch de origem — cobre commits do agente).
 /// <c>Git=false</c> quando o workdir não é repo (cliente cai pro
 /// agregado de <c>file_*</c> da run).
 /// </summary>
+/// <param name="BaseRef">Ref de origem usada como base (ex.: <c>origin/main</c>); null no fallback HEAD.</param>
+/// <param name="BaseSha">Sha efetivo da base (merge-base) ou <c>HEAD</c>.</param>
 public sealed record WorkspaceGitResponse(
     bool Git,
     string? Branch,
@@ -296,4 +301,6 @@ public sealed record WorkspaceGitResponse(
     string? Diff,
     bool DiffTruncated,
     bool Worktree = false,
-    bool GitWrite = false);
+    bool GitWrite = false,
+    string? BaseRef = null,
+    string? BaseSha = null);

@@ -286,6 +286,59 @@
                         <div class="field-note">@L["settings.github_repos_hint"]</div>
                     </SettingsSection>
 
+                    <SettingsSection Title="@L["settings.sec_secrets"]" Description="@L["settings.secrets_hint"]">
+                        @if (_secrets is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var entry in _secrets)
+                            {
+                                var isMine = entry.Source == "user";
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate font-mono">@entry.Name</div>
+                                        <div class="text-xs text-gray-400">
+                                            @(isMine ? L["settings.cfg_source_user"] : L["settings.cfg_source_global"])
+                                            · @DateTimeOffset.FromUnixTimeSeconds(entry.UpdatedAt).LocalDateTime.ToString("d")
+                                        </div>
+                                    </div>
+                                    @if (isMine)
+                                    {
+                                        <button type="button" class="msg-action danger" disabled="@_secretsBusy"
+                                                aria-label="@($"{entry.Name} remove")"
+                                                @onclick="() => DeleteSecretAsync(entry.Name)">✕</button>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-[0.625rem] text-gray-400" title="@L["settings.secrets_inherited_hint"]">@L["settings.secrets_inherited"]</span>
+                                    }
+                                </div>
+                            }
+                            @if (_secrets.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.secrets_none"]</div>
+                            }
+                            @if (_secretsMessage is not null)
+                            {
+                                <div class="field-note">@_secretsMessage</div>
+                            }
+                            <div class="field mt-2">
+                                <div class="field-label">@L["settings.secrets_add"]</div>
+                                <div class="flex gap-2 flex-wrap">
+                                    <input class="input flex-1 min-w-32 font-mono" @bind="_secretName" aria-label="@L["settings.secret_name_ph"]"
+                                           placeholder="@L["settings.secret_name_ph"]" spellcheck="false" />
+                                    <input class="input flex-1 min-w-32" type="password" autocomplete="off" @bind="_secretValue" aria-label="@L["settings.secret_value_ph"]"
+                                           placeholder="@L["settings.secret_value_ph"]" />
+                                    <button class="primary-btn flex-none" disabled="@(_secretsBusy || string.IsNullOrWhiteSpace(_secretName) || string.IsNullOrEmpty(_secretValue))"
+                                            @onclick="AddSecretAsync">@L["common.add"]</button>
+                                </div>
+                                <div class="field-note">@L["settings.secrets_never_shown"]</div>
+                            </div>
+                        }
+                    </SettingsSection>
+
                     <SettingsSection Title="MCP" Description="@L["settings.mcp_hint"]">
                         @if (_userMcp is null)
                         {
@@ -1098,6 +1151,43 @@
                                     </div>
                                 }
                             </div>
+                            <div class="field">
+                                <div class="field-label">@L["settings.admin_secrets_label"]</div>
+                                @if (_adminSecrets is not null)
+                                {
+                                    @foreach (var entry in _adminSecrets)
+                                    {
+                                        <div class="flex items-center justify-between gap-2 min-h-11">
+                                            <div class="min-w-0">
+                                                <div class="text-sm truncate font-mono">@entry.Name</div>
+                                                <div class="text-xs text-gray-400">
+                                                    @DateTimeOffset.FromUnixTimeSeconds(entry.UpdatedAt).LocalDateTime.ToString("d")
+                                                </div>
+                                            </div>
+                                            <button type="button" class="msg-action danger" disabled="@_adminSecretsBusy"
+                                                    aria-label="@($"{entry.Name} remove")"
+                                                    @onclick="() => DeleteAdminSecretAsync(entry.Name)">✕</button>
+                                        </div>
+                                    }
+                                    @if (_adminSecrets.Count == 0)
+                                    {
+                                        <div class="field-note">@L["settings.secrets_none"]</div>
+                                    }
+                                    @if (_adminSecretsMessage is not null)
+                                    {
+                                        <div class="field-note">@_adminSecretsMessage</div>
+                                    }
+                                    <div class="flex gap-2 flex-wrap mt-1">
+                                        <input class="input flex-1 min-w-32 font-mono" @bind="_adminSecretName" aria-label="@L["settings.secret_name_ph"]"
+                                               placeholder="@L["settings.secret_name_ph"]" spellcheck="false" />
+                                        <input class="input flex-1 min-w-32" type="password" autocomplete="off" @bind="_adminSecretValue" aria-label="@L["settings.secret_value_ph"]"
+                                               placeholder="@L["settings.secret_value_ph"]" />
+                                        <button class="primary-btn flex-none" disabled="@(_adminSecretsBusy || string.IsNullOrWhiteSpace(_adminSecretName) || string.IsNullOrEmpty(_adminSecretValue))"
+                                                @onclick="AddAdminSecretAsync">@L["common.add"]</button>
+                                    </div>
+                                    <div class="field-note">@L["settings.secrets_never_shown"]</div>
+                                }
+                            </div>
                             <label class="toggle">
                                 <input type="checkbox" checked="@_adminByokEnabled"
                                        @onchange="e => SetAdminByokAsync(e.Value is true)" />
@@ -1226,6 +1316,7 @@
             _ghMessage = null;
             _intMessage = null;
             await LoadUserMcpAsync();
+            await LoadSecretsAsync();
             await LoadHooksAsync();
         }
         if (tab == "combos")
@@ -1342,6 +1433,56 @@
         _ghSource = result.Source;
         _ghToken = string.Empty;
         _ghMessage = L.T("settings.github_connected", ("login", _ghLogin ?? ""));
+    }
+
+    // ── Secrets do agente (SPEC-20261017-agent-secrets-env) ──
+    private List<SecretEntryResponse>? _secrets;
+    private string _secretName = string.Empty;
+    private string _secretValue = string.Empty;
+    private bool _secretsBusy;
+    private string? _secretsMessage;
+
+    /// <summary>Carrega os secrets resolvidos (global + override do usuário).</summary>
+    private async Task LoadSecretsAsync()
+    {
+        _secretsMessage = null;
+        try
+        {
+            _secrets = await Api.GetSecretsAsync();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _secrets = [];
+        }
+        _secrets ??= [];
+    }
+
+    /// <summary>Cria/atualiza o secret do usuário (valor write-only).</summary>
+    private async Task AddSecretAsync()
+    {
+        _secretsBusy = true;
+        _secretsMessage = null;
+        var err = await Api.PutSecretAsync(_secretName.Trim(), _secretValue);
+        _secretsBusy = false;
+        if (err is not null)
+        {
+            _secretsMessage = err;
+            return;
+        }
+        _secretName = string.Empty;
+        _secretValue = string.Empty;
+        await LoadSecretsAsync();
+    }
+
+    /// <summary>Remove o secret do usuário — o global de mesmo nome volta a valer.</summary>
+    private async Task DeleteSecretAsync(string name)
+    {
+        _secretsBusy = true;
+        _secretsMessage = null;
+        var ok = await Api.DeleteSecretAsync(name);
+        _secretsBusy = false;
+        _secretsMessage = ok ? null : L["settings.secrets_op_error"];
+        await LoadSecretsAsync();
     }
 
     private async Task RemoveGitHubTokenAsync()
@@ -1615,6 +1756,43 @@
         _adminGhConfigured = gh?.Configured == true;
         _adminGhLogin = gh?.Login;
         _adminByokEnabled = (await Api.GetUserProviderKeysFlagAsync())?.Enabled == true;
+        _adminSecrets = await Api.GetGlobalSecretsAsync() ?? [];
+        _adminSecretsMessage = null;
+    }
+
+    // ── Secrets globais do agente (admin, SPEC-20261017-agent-secrets-env) ──
+    private List<SecretEntryResponse>? _adminSecrets;
+    private string _adminSecretName = string.Empty;
+    private string _adminSecretValue = string.Empty;
+    private bool _adminSecretsBusy;
+    private string? _adminSecretsMessage;
+
+    /// <summary>Cria/atualiza secret global (admin; usuário pode fazer override).</summary>
+    private async Task AddAdminSecretAsync()
+    {
+        _adminSecretsBusy = true;
+        _adminSecretsMessage = null;
+        var err = await Api.PutGlobalSecretAsync(_adminSecretName.Trim(), _adminSecretValue);
+        _adminSecretsBusy = false;
+        if (err is not null)
+        {
+            _adminSecretsMessage = err;
+            return;
+        }
+        _adminSecretName = string.Empty;
+        _adminSecretValue = string.Empty;
+        _adminSecrets = await Api.GetGlobalSecretsAsync() ?? [];
+    }
+
+    /// <summary>Remove o secret global (admin).</summary>
+    private async Task DeleteAdminSecretAsync(string name)
+    {
+        _adminSecretsBusy = true;
+        _adminSecretsMessage = null;
+        var ok = await Api.DeleteGlobalSecretAsync(name);
+        _adminSecretsBusy = false;
+        _adminSecretsMessage = ok ? null : L["settings.secrets_op_error"];
+        _adminSecrets = await Api.GetGlobalSecretsAsync() ?? [];
     }
 
     /// <summary>Valida e grava o PAT default global do GitHub.</summary>

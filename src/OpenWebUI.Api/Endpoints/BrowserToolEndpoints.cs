@@ -2,6 +2,7 @@ using System.Text.Json;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.ChatTools;
+using OpenWebUI.Infrastructure.ChatTools.Browser;
 using OpenWebUI.Infrastructure.ChatTools.Tools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
@@ -26,8 +27,9 @@ public static class BrowserToolEndpoints
 
         group.MapGet("/config", (HttpContext http, ConfigService config,
             IConfiguration configuration, BrowserScreenshotService screenshots,
+            BrowserSessionService sessions, TesseractOcr ocr,
             CancellationToken ct) =>
-            ConfigGetAsync(http, config, configuration, screenshots, ct));
+            ConfigGetAsync(http, config, configuration, screenshots, sessions, ocr, ct));
         group.MapPut("/config", (HttpContext http, ConfigService config,
             AppDbContext db, CancellationToken ct) =>
             ConfigPutAsync(http, config, db, ct));
@@ -37,7 +39,8 @@ public static class BrowserToolEndpoints
 
     private static async Task<IResult> ConfigGetAsync(
         HttpContext http, ConfigService config, IConfiguration configuration,
-        BrowserScreenshotService screenshots, CancellationToken ct)
+        BrowserScreenshotService screenshots, BrowserSessionService sessions,
+        TesseractOcr ocr, CancellationToken ct)
     {
         var user = await CurrentUserAsync(http, ct);
         return user is null
@@ -46,6 +49,8 @@ public static class BrowserToolEndpoints
             {
                 enabled = await IsEnabledAsync(config, configuration, ct),
                 browserPath = screenshots.ResolvePath(),
+                playwrightReady = sessions.IsBrowserReady(),
+                ocrAvailable = ocr.IsAvailable,
             });
     }
 
