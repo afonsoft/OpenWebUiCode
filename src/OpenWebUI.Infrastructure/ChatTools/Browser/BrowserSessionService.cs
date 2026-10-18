@@ -18,7 +18,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Browser;
 /// </summary>
 public sealed class BrowserSessionService(
     IConfiguration configuration,
-    ILogger<BrowserSessionService> logger) : IAsyncDisposable
+    ILogger<BrowserSessionService> logger) : IBrowserSessions, IAsyncDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<string, ChatSession> _sessions = new();

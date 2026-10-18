@@ -36,6 +36,10 @@ from typing import Any
 
 import aiohttp
 
+# S2245: SystemRandom é CSPRNG (os.urandom) — aceito pelo Sonar mesmo num
+# contexto não-sensível como este gerador de carga.
+_sysrand = random.SystemRandom()
+
 
 @dataclass
 class Sample:
@@ -361,8 +365,8 @@ async def scenario_rps(
         nonlocal counter
         while time.time() < deadline:
             counter += 1
-            kind = random.choices(names, probs)[0]
-            cid = random.choice(pool)
+            kind = _sysrand.choices(names, probs)[0]
+            cid = _sysrand.choice(pool)
             if kind == "list_chats":
                 await api.req(session, "list_chats", "GET", "/api/v1/chats", token)
             elif kind == "get_chat":

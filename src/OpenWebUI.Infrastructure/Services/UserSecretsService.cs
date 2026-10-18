@@ -33,7 +33,8 @@ public sealed class UserSecretsService(ConfigService config)
     private static string UserKey(string userId) => $"u:{userId}:secrets";
 
     private static readonly Regex NamePattern =
-        new("^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.Compiled);
+        new("^[A-Za-z_][A-Za-z0-9_]{0,63}$", RegexOptions.Compiled,
+            TimeSpan.FromMilliseconds(250));
 
     /// <summary>Nomes gerenciados (integração GitHub) ou críticos do processo.</summary>
     private static readonly HashSet<string> ReservedNames = new(StringComparer.Ordinal)

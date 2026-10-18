@@ -17,7 +17,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// Tier <see cref="ApprovalTier.Exec"/> (efeito colateral real na página).
 /// </summary>
 public sealed class BrowserActBuiltinTool(
-    BrowserSessionService sessions,
+    IBrowserSessions sessions,
     TesseractOcr ocr,
     ConfigService config,
     IConfiguration configuration,

@@ -17,7 +17,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 public abstract class BrowserSessionToolBase : IBuiltinChatTool
 {
     /// <summary>Serviço de sessões de browser por chat.</summary>
-    protected readonly BrowserSessionService Sessions;
+    protected readonly IBrowserSessions Sessions;
     /// <summary>OCR local opcional (tesseract do host).</summary>
     protected readonly TesseractOcr Ocr;
     private readonly ConfigService _config;
@@ -26,7 +26,7 @@ public abstract class BrowserSessionToolBase : IBuiltinChatTool
 
     /// <summary>Injeta as dependências compartilhadas das tools de browser.</summary>
     protected BrowserSessionToolBase(
-        BrowserSessionService sessions,
+        IBrowserSessions sessions,
         TesseractOcr ocr,
         ConfigService config,
         IConfiguration configuration,
