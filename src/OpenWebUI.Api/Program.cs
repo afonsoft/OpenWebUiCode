@@ -7,6 +7,7 @@ using Microsoft.Extensions.Caching.Hybrid;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.ChatTools;
+using OpenWebUI.Infrastructure.ChatTools.Browser;
 using OpenWebUI.Infrastructure.ChatTools.Tools;
 using OpenWebUI.Api;
 using OpenWebUI.Api.Endpoints;
@@ -148,6 +149,10 @@ builder.Services.AddScoped<IBuiltinChatTool, AgentCatalogBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RoutineBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReminderBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, BrowserScreenshotBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, BrowserNavigateBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, BrowserActBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, BrowserObserveBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, BrowserCloseBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, N8nListWorkflowsBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, N8nTriggerBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, SkillBuiltinTool>();
@@ -166,6 +171,8 @@ builder.Services.AddScoped<IBuiltinChatTool, LspHoverBuiltinTool>();
 builder.Services.AddSingleton<VideoEngineFactory>();
 builder.Services.AddScoped<VideoGenerationService>();
 builder.Services.AddSingleton<BrowserScreenshotService>();
+builder.Services.AddSingleton<BrowserSessionService>();
+builder.Services.AddSingleton<TesseractOcr>();
 builder.Services.AddSingleton<WorkspaceGitService>();
 builder.Services.AddScoped<WorkspaceRepoService>();
 builder.Services.AddSingleton<WorktreeService>();
@@ -177,6 +184,8 @@ builder.Services.AddScoped<RepoCommandService>();
 builder.Services.AddScoped<GitHubService>();
 builder.Services.AddHttpClient(GitHubService.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddScoped<UserSecretsService>();
+builder.Services.AddScoped<AgentSecretsEnvService>();
 builder.Services.AddScoped<N8nService>();
 builder.Services.AddHttpClient(N8nService.HttpClientName,
     client => client.Timeout = TimeSpan.FromSeconds(30));
@@ -507,6 +516,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapMcpEndpoints();
     app.MapUserMcpEndpoints();
     app.MapChannelEndpoints();
+    app.MapSecretEndpoints();
 }
 
 /// <summary>Mídia, automações, integrações e recursos do workspace.</summary>

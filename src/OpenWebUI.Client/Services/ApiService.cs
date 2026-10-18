@@ -363,6 +363,55 @@ public class ApiService(HttpClient http, AuthService auth)
         await SendStatusAsync(HttpMethod.Delete,
             $"/api/v1/configs/user/provider-keys/{provider}");
 
+    // --------- Secrets do agente (SPEC-20261017-agent-secrets-env) ---------
+
+    /// <summary>Secrets resolvidos do usuário (nomes + origem; valores nunca voltam).</summary>
+    public Task<List<SecretEntryResponse>?> GetSecretsAsync() =>
+        SendAsync<List<SecretEntryResponse>>(HttpMethod.Get, "/api/v1/secrets");
+
+    /// <summary>Upsert de secret do usuário — devolve o detail do 400 ou null no OK.</summary>
+    public async Task<string?> PutSecretAsync(string name, string value)
+    {
+        using var request = auth.CreateRequest(HttpMethod.Put,
+            $"/api/v1/secrets/{Uri.EscapeDataString(name)}");
+        request.Content = JsonContent.Create(new SecretUpsertRequest(value), options: JsonOptions);
+        using var response = await http.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+        var node = await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions);
+        return node?["detail"]?.GetValue<string>() ?? "Erro ao salvar o secret.";
+    }
+
+    /// <summary>Remove o secret do usuário (o global de mesmo nome volta a valer).</summary>
+    public Task<bool> DeleteSecretAsync(string name) =>
+        SendStatusAsync(HttpMethod.Delete, $"/api/v1/secrets/{Uri.EscapeDataString(name)}");
+
+    /// <summary>Secrets globais (admin; nomes + timestamps, sem valores).</summary>
+    public Task<List<SecretEntryResponse>?> GetGlobalSecretsAsync() =>
+        SendAsync<List<SecretEntryResponse>>(HttpMethod.Get, "/api/v1/configs/secrets");
+
+    /// <summary>Upsert de secret global (admin) — devolve o detail do 400 ou null.</summary>
+    public async Task<string?> PutGlobalSecretAsync(string name, string value)
+    {
+        using var request = auth.CreateRequest(HttpMethod.Put,
+            $"/api/v1/configs/secrets/{Uri.EscapeDataString(name)}");
+        request.Content = JsonContent.Create(new SecretUpsertRequest(value), options: JsonOptions);
+        using var response = await http.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+        var node = await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions);
+        return node?["detail"]?.GetValue<string>() ?? "Erro ao salvar o secret.";
+    }
+
+    /// <summary>Remove o secret global (admin).</summary>
+    public Task<bool> DeleteGlobalSecretAsync(string name) =>
+        SendStatusAsync(HttpMethod.Delete,
+            $"/api/v1/configs/secrets/{Uri.EscapeDataString(name)}");
+
     /// <summary>Auto-sync de memória: valores efetivos do usuário + camada global.</summary>
     public Task<MemorySyncResponse?> GetMemorySyncAsync() =>
         SendAsync<MemorySyncResponse>(HttpMethod.Get, "/api/v1/configs/user/memory-sync");

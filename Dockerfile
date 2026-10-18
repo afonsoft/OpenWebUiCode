@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 # Open WebUI (.NET) — multi-stage build, padrão afonsoft/KnowledgeRAG.
 # Stage 1: .NET SDK 10 → publish self-contained para linux-x64/arm64.
-# Stage 2: runtime-deps (Debian slim) + git e curl, usuário non-root `app`
-# (uid 1654), volume /data com DATA_ROOT=/data — uploads, workspaces do IDE,
-# checkpoints e worktrees persistem no volume (o content root /app pertence
-# a root e não é gravável pelo processo); healthcheck em /health.
+# Stage 2: runtime-deps (Debian slim) + git, curl, gh CLI e Chromium do
+# Playwright (browser_navigate/act/observe + browser_screenshot), tesseract
+# (OCR do visual loop), volume /data com DATA_ROOT=/data — uploads,
+# workspaces do IDE, checkpoints e worktrees persistem no volume (o content
+# root /app pertence a root e não é gravável pelo processo); healthcheck em
+# /health.
 #
 # NOTA: linux-musl-x64/Alpine não é possível — o cliente Blazor WASM hospedado
 # restaura Microsoft.NETCore.App.Runtime.Mono.<rid>, que não é publicado para
@@ -52,15 +54,35 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS runtime
 
 # curl para o HEALTHCHECK; git para o workspace IDE; sudo para o agente
-# (shell_exec roda com permissão total dentro do container — single-tenant).
+# (shell_exec roda com permissão total dentro do container — single-tenant);
+# tesseract-ocr para o OCR opcional do browser visual loop.
 RUN apt-get update \
  && apt-get upgrade -y \
- && apt-get install -y --no-install-recommends curl git sudo procps \
+ && apt-get install -y --no-install-recommends curl git sudo procps tesseract-ocr \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /data/workspaces
 
+# GitHub CLI (binário multi-arch): o agente usa `gh`/`git push` com o
+# GITHUB_TOKEN/GIT_ASKPASS injetado pelo AgentSecretsEnvService.
+ARG GH_VERSION=2.102.0
+RUN arch="$(uname -m)" \
+ && case "$arch" in x86_64) GH_ARCH=amd64 ;; aarch64) GH_ARCH=arm64 ;; \
+      *) echo "Unsupported arch: $arch" >&2; exit 1 ;; esac \
+ && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" \
+    | tar -xz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh"
+
 WORKDIR /app
 COPY --from=build /app/publish ./
+
+# Chromium + libs de SO via driver do Playwright publicado em .playwright/
+# (instala em /root/.cache/ms-playwright — mesmo path que BrowserSessionService
+# e BrowserScreenshotService procuram; USER é root). --with-deps roda o
+# apt-get das dependências do browser, então fica depois do COPY e antes do
+# rm final das listas.
+RUN case "$(uname -m)" in x86_64) N=linux-x64 ;; aarch64) N=linux-arm64 ;; \
+      *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;; esac \
+ && /app/.playwright/node/$N/node /app/.playwright/package/cli.js install --with-deps chromium \
+ && rm -rf /var/lib/apt/lists/*
 
 # DATA_ROOT alimenta DataPaths.Root: tudo que o app grava em runtime
 # (uploads, workspaces, checkpoints, worktrees) pousa no volume — sem

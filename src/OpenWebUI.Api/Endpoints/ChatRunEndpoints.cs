@@ -754,16 +754,21 @@ public static class ChatRunEndpoints
 
         // Com repo vinculado o snapshot sai do checkout do repo; numa run
         // isolada (Workspace:RunIsolation=worktree, E16 S9) sai do worktree.
+        // A base do diff é a branch do binding (origin/{branch}) — cobre
+        // commits do agente + working tree (SPEC-20261017 RF-001).
+        var (binding, _) = await repos.ResolveBindingAsync(user.Id, id, ct);
+        var baseRef = binding is not null ? $"origin/{binding.Branch}" : null;
         var mainWorkdir = await repos.ResolveWorkdirAsync(user.Id, id, ct);
         var isolated = worktrees.ResolveIsolated(user.Id, runId);
         var workdir = isolated ?? mainWorkdir;
-        var info = await git.GetInfoAsync(workdir, ct);
+        var info = await git.GetInfoAsync(workdir, ct, baseRef);
         return Results.Ok(new WorkspaceGitResponse(
             info.IsRepo, info.Branch, info.Added, info.Removed,
             info.Files.Select(f => new WorkspaceGitFileResponse(
-                f.Path, f.Added, f.Removed, f.Status)).ToList(),
+                f.Path, f.Added, f.Removed, f.Status, f.OldPath)).ToList(),
             info.Diff, info.DiffTruncated,
-            Worktree: isolated is not null));
+            Worktree: isolated is not null,
+            BaseRef: info.BaseRef, BaseSha: info.BaseSha));
     }
 
     private static ChatRunResponse ToResponse(ChatRun run) => new(

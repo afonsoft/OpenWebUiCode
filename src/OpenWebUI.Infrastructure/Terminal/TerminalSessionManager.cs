@@ -131,9 +131,11 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     /// <summary>
     /// Cria e inicia uma sessão PTY no workspace do usuário
     /// (<c>data/workspaces/{userId}</c>); lança quando o limite por usuário é
-    /// atingido.
+    /// atingido. <paramref name="env"/> injeta as variáveis resolvidas de
+    /// secrets do usuário (SPEC-20261017-agent-secrets-env).
     /// </summary>
-    public string Create(string userId, int cols = 120, int rows = 30)
+    public string Create(string userId, int cols = 120, int rows = 30,
+        IReadOnlyDictionary<string, string>? env = null)
     {
         var count = _sessions.Values.Count(e => e.UserId == userId);
         if (count >= MaxSessionsPerUser)
@@ -148,7 +150,8 @@ public sealed class TerminalSessionManager : IAsyncDisposable
 
         var session = (_sessionFactory
             ?? ((dir, c, r) => new PtySession(
-                dir, _loggerFactory.CreateLogger<PtySession>(), c, r)))(workspace, cols, rows);
+                dir, _loggerFactory.CreateLogger<PtySession>(), c, r,
+                env: env)))(workspace, cols, rows);
 
         var entry = new Entry
         {

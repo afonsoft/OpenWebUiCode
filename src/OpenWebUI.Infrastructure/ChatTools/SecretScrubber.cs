@@ -30,6 +30,29 @@ public static partial class SecretScrubber
         return result;
     }
 
+    /// <summary>
+    /// <see cref="Scrub(string?)"/> + scrub <b>literal</b> dos valores
+    /// resolvidos de secrets (SPEC-20261017-agent-secrets-env RF-007):
+    /// tokens arbitrários (ex.: <c>sqp_*</c>) não casam nos regexes — cada
+    /// literal com ≥4 chars vira <see cref="Redacted"/>. Maior primeiro
+    /// para não deixar sufixo de segredo sobreposto.
+    /// </summary>
+    public static string? Scrub(string? output, IEnumerable<string>? literals)
+    {
+        var result = Scrub(output);
+        if (result is null || literals is null)
+        {
+            return result;
+        }
+        foreach (var literal in literals
+                     .Where(l => l.Length >= 4)
+                     .OrderByDescending(l => l.Length))
+        {
+            result = result.Replace(literal, Redacted, StringComparison.Ordinal);
+        }
+        return result;
+    }
+
     // ghp_/gho_/ghu_/ghs_/ghr_ tokens pessoais + OAuth.
     [GeneratedRegex(@"gh[pousr]_[A-Za-z0-9_]{36,}", RegexOptions.Compiled)]
     private static partial Regex GitHubTokenRegex();

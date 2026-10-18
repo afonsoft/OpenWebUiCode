@@ -35,8 +35,8 @@ public static class TerminalPtyEndpoints
 
         group.MapPost("/sessions", (HttpContext http, TerminalSessionManager terminals,
             AppDbContext db, ConfigService config, IConfiguration configuration,
-            CancellationToken ct) =>
-            CreateSessionAsync(http, terminals, db, config, configuration, ct));
+            AgentSecretsEnvService agentEnv, CancellationToken ct) =>
+            CreateSessionAsync(http, terminals, db, config, configuration, agentEnv, ct));
         group.MapGet("/sessions", (HttpContext http, TerminalSessionManager terminals,
             AppDbContext db, ConfigService config, IConfiguration configuration,
             CancellationToken ct) =>
@@ -89,7 +89,8 @@ public static class TerminalPtyEndpoints
 
     private static async Task<IResult> CreateSessionAsync(
         HttpContext http, TerminalSessionManager terminals, AppDbContext db,
-        ConfigService config, IConfiguration configuration, CancellationToken ct)
+        ConfigService config, IConfiguration configuration,
+        AgentSecretsEnvService agentEnv, CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
         if (error is not null)
@@ -102,9 +103,13 @@ public static class TerminalPtyEndpoints
                 http.Request.Body, JsonOptions, ct)
             : null;
 
+        // Secrets do usuário ∪ global ∪ managed GitHub entram na env da PTY
+        // (SPEC-20261017-agent-secrets-env RF-006) — sessão é por usuário.
+        var env = await agentEnv.BuildAsync(user!.Id, ct);
         try
         {
-            var id = terminals.Create(user!.Id, request?.Cols ?? 120, request?.Rows ?? 30);
+            var id = terminals.Create(
+                user!.Id, request?.Cols ?? 120, request?.Rows ?? 30, env.Vars);
             return Results.Created($"/api/v1/terminal/sessions/{id}", new { id });
         }
         catch (InvalidOperationException ex)

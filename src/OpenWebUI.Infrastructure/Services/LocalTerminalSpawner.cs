@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Sockets;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OpenWebUI.Application.Contracts;
 
@@ -26,6 +27,7 @@ public sealed class LocalTerminalSpawner : IDisposable
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHostApplicationLifetime? _lifetime;
+    private readonly IServiceProvider? _services;
     private readonly ConcurrentDictionary<string, LocalServer> _servers = new();
     private readonly SemaphoreSlim _spawnLock = new(1, 1);
 
@@ -33,10 +35,11 @@ public sealed class LocalTerminalSpawner : IDisposable
 
     public LocalTerminalSpawner(
         IConfiguration configuration, IHttpClientFactory httpClientFactory,
-        IHostApplicationLifetime? lifetime = null)
+        IServiceProvider? services = null, IHostApplicationLifetime? lifetime = null)
     {
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
+        _services = services;
         _lifetime = lifetime;
         lifetime?.ApplicationStopping.Register(Dispose);
     }
@@ -113,6 +116,28 @@ public sealed class LocalTerminalSpawner : IDisposable
         process.StartInfo.RedirectStandardError = true;
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.WorkingDirectory = workDir;
+
+        // Só a camada GLOBAL de secrets entra aqui (SPEC-20261017 RF-005):
+        // o servidor local é compartilhado entre usuários — secret por
+        // usuário num processo compartilhado vazaria cross-user.
+        if (_services is not null)
+        {
+            try
+            {
+                await using var scope = _services.CreateAsyncScope();
+                var agentEnv = await scope.ServiceProvider
+                    .GetRequiredService<AgentSecretsEnvService>()
+                    .BuildGlobalAsync(ct);
+                foreach (var (key, value) in agentEnv.Vars)
+                {
+                    process.StartInfo.Environment[key] = value;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Env de secrets é best-effort — não derruba o spawn do terminal.
+            }
+        }
         // Descarta a saída para não bloquear o filho quando o buffer encher.
         process.OutputDataReceived += (_, _) => { };
         process.ErrorDataReceived += (_, _) => { };

@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Infrastructure.ChatTools;
 
@@ -38,6 +39,20 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
         var jobsDir = Path.Join(context.WorkspacePath, ".chat-jobs");
         Directory.CreateDirectory(jobsDir);
 
+        // Env resolvida (secrets user∪global ∪ managed GitHub —
+        // SPEC-20261017-agent-secrets-env RF-005/006) via scope: o service
+        // é singleton, os resolvedores são scoped.
+        AgentEnv agentEnv = AgentEnv.Empty;
+        await using (var envScope = scopeFactory.CreateAsyncScope())
+        {
+            var envService = envScope.ServiceProvider
+                .GetService<AgentSecretsEnvService>();
+            if (envService is not null)
+            {
+                agentEnv = await envService.BuildAsync(context.UserId, ct);
+            }
+        }
+
         var job = new ChatJob
         {
             ChatId = context.ChatId,
@@ -60,6 +75,10 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
         };
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(command);
+        foreach (var (key, value) in agentEnv.Vars)
+        {
+            psi.Environment[key] = value;
+        }
 
         Process? process = null;
         try
@@ -102,7 +121,7 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
 
         if (job.Status == ChatJobStatus.Running && process is not null)
         {
-            _ = WatchAsync(job.Id, process);
+            _ = WatchAsync(job.Id, process, agentEnv.SecretsToScrub);
         }
 
         return job;
@@ -241,7 +260,8 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
     /// Vigia o processo: copia stdout+stderr para o arquivo de log (linhas
     /// mascaradas), mata após <see cref="MaxRuntime"/> e grava o status final.
     /// </summary>
-    private async Task WatchAsync(string jobId, Process process)
+    private async Task WatchAsync(
+        string jobId, Process process, IReadOnlyList<string> secretsToScrub)
     {
         var outputPath = string.Empty;
         try
@@ -253,8 +273,8 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
             }
 
             await using var writer = new StreamWriter(outputPath, append: false);
-            var pumpOut = PumpAsync(process.StandardOutput, writer);
-            var pumpErr = PumpAsync(process.StandardError, writer);
+            var pumpOut = PumpAsync(process.StandardOutput, writer, secretsToScrub);
+            var pumpErr = PumpAsync(process.StandardError, writer, secretsToScrub);
 
             using var timeout = new CancellationTokenSource(MaxRuntime);
             var timedOut = false;
@@ -302,11 +322,12 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
         }
     }
 
-    private static async Task PumpAsync(StreamReader reader, StreamWriter writer)
+    private static async Task PumpAsync(
+        StreamReader reader, StreamWriter writer, IReadOnlyList<string> secretsToScrub)
     {
         while (await reader.ReadLineAsync() is { } line)
         {
-            await writer.WriteLineAsync(SecretScrubber.Scrub(line));
+            await writer.WriteLineAsync(SecretScrubber.Scrub(line, secretsToScrub));
             await writer.FlushAsync();
         }
     }

@@ -57,6 +57,7 @@ public static class PermissionRuleset
         "file_list", "file_read", "file_grep", "file_glob",
         "web_search", "fetch_url", "ask_user", "todo_write",
         "plan_exit", "browser_screenshot",
+        "browser_navigate", "browser_observe", "browser_close",
         "job_list", "job_output", "n8n_list_workflows",
     };
 

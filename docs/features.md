@@ -15,7 +15,7 @@ Status detalhado de paridade com o upstream: ver `docs/MIGRACAO-DOTNET.md`.
 - **IDE/LSP**: diagnósticos (squiggles + painel Problems), hover e símbolos via language servers por workdir — `Lsp:*` config (defaults csharp-ls, typescript-language-server, pylsp, vscode-json-languageserver; binários ausentes degradam para `unavailable`).
 - **Web IDE** (`/ide`): painel com tabs Chat/Mudanças/PRs/Testes/Terminal/Jobs/Preview, diff git do workspace, terminal PTY real via WebSocket + xterm.js.
 - **Runs desacopladas**: a resposta roda no servidor — recarregar a aba reanexa com replay do stream; pause/resume cooperativo; `delegate_task` para subtarefas.
-- **Agent tools builtin**: 21 tools (`shell_exec` + jobs, `file_*` com diff, `code_interpreter`, `web_search`, `fetch_url`, `todo_write`, `ask_user`, `delegate_task`, `browser_screenshot`, `generate_image`/`generate_video`, n8n), gate de aprovação por preset e risco LOW-MED-HIGH.
+- **Agent tools builtin**: 21 tools (`shell_exec` + jobs, `file_*` com diff, `code_interpreter`, `web_search`, `fetch_url`, `todo_write`, `ask_user`, `delegate_task`, `browser_screenshot`, `browser_navigate`/`browser_act`/`browser_observe`/`browser_close` (sessão Playwright por chat, auto-install/auto-bake de Chromium na imagem, self-healing por texto/OCR tesseract), `generate_image`/`generate_video`, n8n), gate de aprovação por preset e risco LOW-MED-HIGH.
 - **Painel Workspace** no chat: tabs Tasks/Changes/Jobs/MCPs/Info, divisor arrastável.
 - **Slash commands**: `/` no composer — prompts do workspace + skills/commands do repo vinculado.
 - **Prompt base**: system prompt de qualidade injetado pelo servidor antes do system do modelo custom.

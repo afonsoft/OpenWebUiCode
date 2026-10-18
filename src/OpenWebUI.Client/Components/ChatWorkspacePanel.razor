@@ -90,6 +90,11 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M18 9a9 9 0 0 1-9 9" />
                         </svg>
                         <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] font-medium text-gray-700 dark:text-gray-300" title="@git.Branch">@git.Branch</span>
+                        @if (git.BaseRef is { } baseRef)
+                        {
+                            <span class="flex-none truncate font-mono text-[0.5625rem] text-gray-400 dark:text-gray-500"
+                                  title="@L.T("chat.panel_diff_base_hint", ("base", baseRef))">←@baseRef</span>
+                        }
                         @if (git.Worktree)
                         {
                             @* Run isolada (E16 S9): snapshot lido do worktree. *@
@@ -155,9 +160,21 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
                                         </svg>
                                         <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300" title="@file.Path">@file.Path</span>
-                                        @if (file.Status == "A")
+                                        @switch (file.Status)
                                         {
-                                            <span class="flex-none rounded bg-green-100 dark:bg-green-900/40 px-1 text-[0.5625rem] font-medium text-green-700 dark:text-green-400">new</span>
+                                            case "A":
+                                                <span class="flex-none rounded bg-green-100 dark:bg-green-900/40 px-1 text-[0.5625rem] font-medium text-green-700 dark:text-green-400">new</span>
+                                                break;
+                                            case "D":
+                                                <span class="flex-none rounded bg-red-100 dark:bg-red-900/40 px-1 text-[0.5625rem] font-medium text-red-700 dark:text-red-400">del</span>
+                                                break;
+                                            case "R":
+                                                <span class="flex-none rounded bg-violet-100 dark:bg-violet-900/40 px-1 text-[0.5625rem] font-medium text-violet-700 dark:text-violet-300"
+                                                      title="@(file.OldPath is null ? file.Path : $"{file.OldPath} → {file.Path}")">ren</span>
+                                                break;
+                                            case "M":
+                                                <span class="flex-none rounded bg-blue-100 dark:bg-blue-900/40 px-1 text-[0.5625rem] font-medium text-blue-700 dark:text-blue-400">mod</span>
+                                                break;
                                         }
                                         <span class="flex-none font-mono text-[0.625rem] text-green-600 dark:text-green-400">+@file.Added</span>
                                         <span class="flex-none font-mono text-[0.625rem] text-red-500 dark:text-red-400">−@file.Removed</span>

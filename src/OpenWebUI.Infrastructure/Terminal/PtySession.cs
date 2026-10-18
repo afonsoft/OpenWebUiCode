@@ -20,6 +20,7 @@ public sealed class PtySession : IPtySession
     private readonly int _cols;
     private readonly int _rows;
     private readonly IReadOnlyList<string>? _command;
+    private readonly IReadOnlyDictionary<string, string>? _env;
 
     private Process? _process;
     private Task? _pumpTask;
@@ -37,7 +38,8 @@ public sealed class PtySession : IPtySession
     /// </summary>
     public PtySession(string workingDirectory, ILogger logger, int cols = 120,
         int rows = 30, Func<string, string?>? executableLocator = null,
-        IReadOnlyList<string>? command = null)
+        IReadOnlyList<string>? command = null,
+        IReadOnlyDictionary<string, string>? env = null)
     {
         _workingDirectory = workingDirectory;
         _logger = logger;
@@ -45,6 +47,7 @@ public sealed class PtySession : IPtySession
         _rows = rows;
         _locator = executableLocator ?? FindExecutable;
         _command = command;
+        _env = env;
         _lastCols = cols;
         _lastRows = rows;
         LastActivityUtc = DateTimeOffset.UtcNow;
@@ -109,6 +112,14 @@ public sealed class PtySession : IPtySession
         startInfo.ArgumentList.Add($"stty cols {_cols} rows {_rows} 2>/dev/null; exec {InnerCommand()}");
         startInfo.ArgumentList.Add("/dev/null");
         startInfo.Environment["TERM"] = "xterm-256color";
+        if (_env is not null)
+        {
+            // Secrets do usuário ∪ global ∪ managed GitHub (SPEC-20261017-agent-secrets-env).
+            foreach (var (key, value) in _env)
+            {
+                startInfo.Environment[key] = value;
+            }
+        }
 
         _process = Process.Start(startInfo)
             ?? throw new InvalidOperationException("Falha ao iniciar o processo do terminal.");
