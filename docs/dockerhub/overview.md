@@ -20,6 +20,8 @@ docker run -d --name open-webui \
 
 The same image is also on GHCR: `docker pull ghcr.io/afonsoft/open-webui`.
 
+**Multi-arch:** `linux/amd64` + `linux/arm64` — the same tag runs on x86 servers and ARM boards (Raspberry Pi, Apple Silicon).
+
 ## What you get
 
 - **Chat** — streaming completions (OpenAI-compatible `/api/chat/completions`), Ollama + OpenAI-compatible providers, multi-model, arena mode, regenerate/edit/versions.
@@ -74,7 +76,7 @@ volumes:
   openwebui:
 ```
 
-Full stack with Ollama + Whisper for local testing lives in `docker-compose.full.yaml` on GitHub.
+Full stack with Ollama + Whisper for local testing lives in `docker-compose.full.yaml` on GitHub. For production, `docker-compose.prod.yaml` adds a watchtower sidecar that auto-updates the container on new tags (5-minute poll).
 
 ## Docs
 

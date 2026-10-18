@@ -62,6 +62,10 @@ sessões, advisor e ferramentas de contexto guiou várias features abaixo.
 |---|---|
 | ![seletor de repositório do workspace](docs/screenshots/repo-binding-picker.png) | ![página de automações](docs/screenshots/automations.png) |
 
+| IDE estilo VS Code | Combos de modelos | Agentes e personas |
+|---|---|---|
+| ![workbench da IDE](docs/screenshots/ide-workbench.png) | ![Configurações → Combos](docs/screenshots/settings-combos.png) | ![Configurações → Agentes](docs/screenshots/settings-agents.png) |
+
 | Chat (claro/escuro) | Painel Workspace | Terminal PTY |
 |---|---|---|
 | ![chat](docs/screenshots/chat-light.png) | ![workspace](docs/screenshots/workspace-panel.png) | ![terminal](docs/screenshots/terminal.png) |
@@ -135,8 +139,51 @@ sessões, advisor e ferramentas de contexto guiou várias features abaixo.
 - **Anexos de mídia no chat** — thumbnails de imagem/vídeo dentro do composer,
   tamanho inline adequado após o envio, clique para ampliar; imagens anexadas
   são sempre analisadas junto ao prompt por um modelo com visão.
+- **Combos de modelos (failover)** — estratégias `priority` / `round-robin` /
+  `priority-round-robin` sobre listas ordenadas de modelos, limites RPM/TPM
+  compartilhados e cooldown por modelo; escopo por usuário ou global de admin,
+  gerenciados em Configurações → Combos.
+- **Personas de agente** — personas nomeadas (system prompt, modelo, nível de
+  guardrail, allowlist de tools) acionáveis via canais/hooks, com log de
+  auditoria por persona.
+- **Registro de agentes externos** — detecta CLIs de agente locais (Claude
+  Code, Codex, OpenCode, Devin, Gemini) e os integra em runs delegadas.
+- **Escopo global `~/.agents`** — skills, commands e `mcp.json` descobertos em
+  `~/.agents` e nas pastas `.claude`/`.agents` do projeto, mesclados ao
+  catálogo do workspace.
+- **Forms multi-pergunta do `ask_user`** — um prompt carrega várias perguntas
+  com `options`/`multiple`/`reject`; presets de autonomia respondem cada uma.
+- **Tool calls em paralelo** — tools marcadas `SafeInParallel` executam em
+  concorrência dentro de uma única rodada do provider.
+- **Resiliência de provider** — retry com backoff, continuação em
+  `finish_reason=length` e recuperação de context-overflow dentro do pipeline
+  da run.
+- **Runs duráveis** — eventos de run persistidos, replay de checkpoint e
+  heartbeat ownership: uma run viva sobrevive a restart da API e retoma no
+  drain.
+- **Passos da run + uso/custo** — feed de passos por agente, wrap-up do último
+  passo e metadata de uso/custo por run; a aba **Mudanças** do workspace mostra
+  o diff da run incluindo alterações commitadas pelo agente.
+- **Expansão de commands** — expansão server-side de slash commands do
+  repo/workspace com overrides por run.
+- **Failover de busca web** — modo `auto` alterna entre providers configurados
+  com cooldown por provider.
+- **Saída de tool limitada** — resultados grandes transbordam para um arquivo
+  gerenciado (`builtin:big_output`) em vez de inundar a janela de contexto.
+- **View de fonte markdown** — toggle view/source e copiar nas mensagens do
+  assistente.
+- **Secrets de agente no env** — secrets chave→valor (global de admin +
+  override por usuário) injetados nos jobs `shell_exec` e no terminal; o token
+  do GitHub da integração entra por padrão.
+- **Loop visual do browser** — tools de browser via Playwright
+  (`browser_navigate`/`browser_observe`/`browser_act`/`browser_screenshot`)
+  com OCR local para loops de raciocínio visual.
+- **Redesign das Configurações** — seções categorizadas (Combos, Agentes,
+  Manutenção, …) com barra de salvar unificada.
 - **Retenção** — expurgo diário (runs de automação >90d, notificações >60d, steers
-  de runs terminais >30d) + prune de worktrees órfãs + WAL checkpoint + VACUUM semanal.
+  de runs terminais >30d) + prune de worktrees órfãs + WAL checkpoint + VACUUM
+  semanal; a aba **Manutenção** das configurações adiciona retenção de
+  chats/memórias com dry-run e "executar agora".
 - **Hierarquia de chats** — `ParentChatId`/`ParentRunId`, `GET /chats/{id}/children`,
   árvore aninhada na sidebar, marcadores de conclusão postados no chat pai.
 
@@ -171,7 +218,7 @@ dotnet build OpenWebUI.slnx --configuration Release
 dotnet run --project src/OpenWebUI.Api   # http://localhost:8080
 ```
 
-Docker (`:3032 → :8080`) — imagem publicada no
+Docker (`:3032 → :8080`) — imagem **multi-arch (amd64 + arm64)** publicada no
 [Docker Hub](https://hub.docker.com/r/afonsoft/open-webui) e no GHCR:
 
 ```bash
@@ -183,13 +230,16 @@ docker compose -f docker-compose.hub.yaml up -d
 docker compose up -d --build
 ```
 
+O `docker-compose.prod.yaml` traz um layout de produção com watchtower para
+auto-update (poll de 5min).
+
 Guia completo de deploy: [docs/pt/DEPLOY-DOCKER.md](docs/pt/DEPLOY-DOCKER.md) ·
 [docs/en/DEPLOY-DOCKER.md](docs/en/DEPLOY-DOCKER.md)
 
 ## Testes
 
 ```bash
-dotnet test OpenWebUI.slnx   # 1700+ testes de API + testes de cliente (NUnit)
+dotnet test OpenWebUI.slnx   # 1900+ testes de API + testes de cliente (NUnit)
 ```
 
 Gate de cobertura via Coverlet + ratchet (`.ci/coverage-baseline.txt` só sobe).
@@ -202,7 +252,7 @@ Gate de cobertura via Coverlet + ratchet (`.ci/coverage-baseline.txt` só sobe).
 | `a11y-audit.yml` | axe-core (Playwright) mobile+desktop |
 | `code-quality.yml` | Qodana + [SonarCloud](https://sonarcloud.io/project/overview?id=afonsoft_open-webui) |
 | `security-scan.yml` | CodeQL (C#+JS), Trivy, GitGuardian, Snyk |
-| `release.yml` | Tag `vX.Y.Z` → imagem GHCR + Docker Hub |
+| `release.yml` | Tag `vX.Y.Z` → imagem multi-arch (amd64+arm64) GHCR + Docker Hub |
 
 ## Documentação
 

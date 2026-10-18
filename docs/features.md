@@ -13,11 +13,18 @@ Status detalhado de paridade com o upstream: ver `docs/MIGRACAO-DOTNET.md`.
 - **Notas** (`/notes`), **Memórias**, **Arquivados** (`/archived`).
 - **Tarefas**: geração de título, follow-ups e tags via LLM (`/api/v1/tasks`).
 - **IDE/LSP**: diagnósticos (squiggles + painel Problems), hover e símbolos via language servers por workdir — `Lsp:*` config (defaults csharp-ls, typescript-language-server, pylsp, vscode-json-languageserver; binários ausentes degradam para `unavailable`).
-- **Web IDE** (`/ide`): painel com tabs Chat/Mudanças/PRs/Testes/Terminal/Jobs/Preview, diff git do workspace, terminal PTY real via WebSocket + xterm.js.
-- **Runs desacopladas**: a resposta roda no servidor — recarregar a aba reanexa com replay do stream; pause/resume cooperativo; `delegate_task` para subtarefas.
-- **Agent tools builtin**: 21 tools (`shell_exec` + jobs, `file_*` com diff, `code_interpreter`, `web_search`, `fetch_url`, `todo_write`, `ask_user`, `delegate_task`, `browser_screenshot`, `browser_navigate`/`browser_act`/`browser_observe`/`browser_close` (sessão Playwright por chat, auto-install/auto-bake de Chromium na imagem, self-healing por texto/OCR tesseract), `generate_image`/`generate_video`, n8n), gate de aprovação por preset e risco LOW-MED-HIGH.
-- **Painel Workspace** no chat: tabs Tasks/Changes/Jobs/MCPs/Info, divisor arrastável.
-- **Slash commands**: `/` no composer — prompts do workspace + skills/commands do repo vinculado.
+- **Web IDE** (`/ide`): workbench estilo VS Code — views Explorer/Busca/SCM/Outline/Zen, tabs de editor, painéis laterais Chat/PRs/Testes, diff git do workspace, terminal PTY real via WebSocket + xterm.js.
+- **Runs desacopladas**: a resposta roda no servidor — recarregar a aba reanexa com replay do stream; eventos duráveis + heartbeat ownership fazem a run sobreviver a restart da API; pause/resume cooperativo; `delegate_task` para subtarefas.
+- **Resiliência de provider**: retry com backoff, continuação em `finish_reason=length`, recuperação de context-overflow; tool calls `SafeInParallel` em concorrência; saída de tool limitada com arquivo de overflow (`builtin:big_output`).
+- **Combos de modelos**: listas ordenadas com estratégias `priority`/`round-robin`/`priority-round-robin`, limites RPM/TPM e cooldown por modelo; escopo usuário ou global (Settings → Combos).
+- **Personas de agente**: perfis nomeados (system prompt, modelo, guardrails, allowlist de tools) com dispatch por canais/hooks e log de auditoria (Settings → Agentes).
+- **Agentes externos**: detecção de CLIs locais (Claude Code, Codex, OpenCode, Devin, Gemini) habilitáveis por usuário; escopo global `~/.agents` mescla skills/commands/`mcp.json` ao workspace.
+- **Agent tools builtin**: 30+ tools (`shell_exec` + jobs, `file_*` com diff, `code_interpreter`, `web_search` com failover `auto`, `fetch_url`, `todo_write`, `ask_user` multi-pergunta, `delegate_task`, `agent_catalog`, `apply_patch`, `browser_screenshot`, `browser_navigate`/`browser_act`/`browser_observe`/`browser_close` (sessão Playwright por chat, auto-install/auto-bake de Chromium na imagem, self-healing por texto/OCR tesseract), `generate_image`/`generate_video`, `memory_*`, `routine`/`reminder`, `skill`, `lsp_*`, `checkpoint`/`rewind`, `context_notes`, `new_context`, `plan_exit`, `worktree_diff`/`worktree_merge`, n8n), gate de aprovação por preset e risco LOW-MED-HIGH.
+- **Painel Workspace** no chat: tabs Tasks/Changes (diff da run)/Jobs/MCPs/Info, divisor arrastável.
+- **Slash commands**: `/` no composer — prompts do workspace + skills/commands do repo vinculado, com expansão server-side e overrides por run.
+- **Secrets de agente**: chave→valor (global admin + override por usuário) injetados no env de `shell_exec` e do terminal; `GITHUB_TOKEN` da integração incluído por padrão.
+- **Configurações**: modal com seções categorizadas (Geral, Conta, Memórias, Modelos, Combos, Agentes, Conexões, Admin, Manutenção, …) e barra de salvar unificada.
+- **Manutenção**: retenção de chats/memórias por usuário com dry-run e execução manual (Settings → Manutenção).
 - **Prompt base**: system prompt de qualidade injetado pelo servidor antes do system do modelo custom.
 - **Canais em grupo** com realtime SignalR (`/ws`), menção `@modelo`, typing/presence.
 - **Knowledge/RAG**: coleções, embeddings, retrieval vetorial híbrido (cosseno + BM25).

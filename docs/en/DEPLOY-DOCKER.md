@@ -13,7 +13,8 @@ Complete guide to running Open WebUI (.NET) — `afonsoft/open-webui` — with D
 
 The image is published on [Docker Hub](https://hub.docker.com/r/afonsoft/open-webui)
 and [GHCR](https://github.com/afonsoft/open-webui/pkgs/container/open-webui) on
-every `v*.*.*` tag.
+every `v*.*.*` tag — **multi-arch (`linux/amd64` + `linux/arm64`)**, so it runs
+unchanged on x86 servers and ARM boards (Raspberry Pi, Apple Silicon VMs).
 
 **1. One command, nothing else needed:**
 
@@ -50,6 +51,16 @@ Pull a specific registry or pin a version:
 docker pull afonsoft/open-webui:latest        # Docker Hub
 docker pull ghcr.io/afonsoft/open-webui:latest # GHCR
 docker pull afonsoft/open-webui:1.2.3          # pinned version
+```
+
+### Production layout
+
+`docker-compose.prod.yaml` runs the published image with a **watchtower**
+sidecar that polls for new tags every 5 minutes and rolls the container
+forward automatically:
+
+```bash
+docker compose -f docker-compose.prod.yaml up -d
 ```
 
 ## Containers & volumes
@@ -159,7 +170,7 @@ Images are built and published **only on a version tag** — never on branch pus
 git tag v1.2.3 && git push origin v1.2.3
 ```
 
-`.github/workflows/release.yml` then: validates `X.Y.Z` → builds Linux/Windows archives → builds the image and pushes `ghcr.io/afonsoft/open-webui:{X.Y.Z,latest}` → re-tags and pushes `docker.io/afonsoft/open-webui:{X.Y.Z,latest}` when the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` secrets exist → creates the GitHub Release. The Docker Hub overview page is synced manually via the **🐳 Docker Hub Overview** workflow (`docs/dockerhub/overview.md` → Hub description).
+`.github/workflows/release.yml` then: validates `X.Y.Z` → builds Linux/Windows archives → builds a **multi-arch image (amd64 + arm64)** and pushes `ghcr.io/afonsoft/open-webui:{X.Y.Z,latest}` → re-tags and pushes `docker.io/afonsoft/open-webui:{X.Y.Z,latest}` when the `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` secrets exist → creates the GitHub Release and a GitHub **deployment record**. The Docker Hub overview page is synced manually via the **🐳 Docker Hub Overview** workflow (`docs/dockerhub/overview.md` → Hub description).
 
 ## Troubleshooting
 

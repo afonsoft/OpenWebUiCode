@@ -62,6 +62,10 @@ context-tooling design shaped several features below.
 |---|---|
 | ![workspace repo picker](docs/screenshots/repo-binding-picker.png) | ![automations page](docs/screenshots/automations.png) |
 
+| VS Code-style IDE | Model combos | Agents & personas |
+|---|---|---|
+| ![IDE workbench](docs/screenshots/ide-workbench.png) | ![Settings → Combos](docs/screenshots/settings-combos.png) | ![Settings → Agentes](docs/screenshots/settings-agents.png) |
+
 | Chat (light/dark) | Workspace panel | Terminal PTY |
 |---|---|---|
 | ![chat](docs/screenshots/chat-light.png) | ![workspace](docs/screenshots/workspace-panel.png) | ![terminal](docs/screenshots/terminal.png) |
@@ -133,8 +137,49 @@ context-tooling design shaped several features below.
 - **Chat media attachments** — image/video thumbnails inside the composer,
   acceptable inline size after send, click-to-enlarge; attached images are
   always analyzed together with the prompt by a vision-capable model.
+- **Model combos (failover)** — `priority` / `round-robin` /
+  `priority-round-robin` strategies over ordered model lists, shared RPM/TPM
+  limits and per-model cooldown; user-scoped or admin-global, managed under
+  Settings → Combos.
+- **Agent personas** — named personas (system prompt, model, guardrail level,
+  tool allowlist) invocable via channels/hooks with a per-persona audit log.
+- **External agent registry** — detects local agent CLIs (Claude Code, Codex,
+  OpenCode, Devin, Gemini) and bridges them into delegated runs.
+- **Global `~/.agents` scope** — skills, commands and `mcp.json` are discovered
+  from `~/.agents` plus project `.claude`/`.agents` dirs and merged with the
+  workspace catalog.
+- **Multi-question `ask_user` forms** — one prompt can carry several questions
+  with `options`/`multiple`/`reject`; autonomy presets auto-answer per
+  question.
+- **Parallel tool calls** — tools marked `SafeInParallel` execute
+  concurrently inside a single provider round.
+- **Provider resilience** — retry with backoff, `finish_reason=length`
+  continuation and context-overflow recovery inside the run pipeline.
+- **Durable runs** — persisted run events, checkpoint replay and heartbeat
+  ownership: a live run survives an API restart and resumes on drain.
+- **Run steps + usage/cost** — per-agent step feed, last-step wrap-up and
+  usage/cost metadata per run; the workspace **Changes** tab shows the run
+  diff including changes the agent committed.
+- **Command expansion** — server-side expansion of repo/workspace slash
+  commands with per-run overrides.
+- **Web search failover** — `auto` mode rotates across configured providers
+  with a per-provider cooldown.
+- **Bounded tool output** — oversized tool results spill to a managed file
+  (`builtin:big_output`) instead of flooding the context window.
+- **Markdown source view** — view/source toggle and copy on assistant
+  messages.
+- **Agent secrets env** — key→value secrets (admin-global + per-user
+  overrides) injected into `shell_exec` jobs and the terminal; the GitHub
+  token from the integration is included by default.
+- **Browser visual loop** — Playwright browser tools
+  (`browser_navigate`/`browser_observe`/`browser_act`/`browser_screenshot`)
+  with local OCR for visual-reasoning loops.
+- **Settings redesign** — categorized sections (Combos, Agentes, Manutenção,
+  …) with a unified save bar.
 - **Retention** — daily purge (automation runs >90d, notifications >60d, steers of
-  terminal runs >30d) + worktree orphan prune + WAL checkpoint + weekly VACUUM.
+  terminal runs >30d) + worktree orphan prune + WAL checkpoint + weekly VACUUM;
+  the **Manutenção** settings tab adds chat/memory retention with dry-run and
+  "run now".
 - **Chat hierarchy** — `ParentChatId`/`ParentRunId`, `GET /chats/{id}/children`,
   nested sidebar tree, completion markers posted back to the parent chat.
 
@@ -169,7 +214,7 @@ dotnet build OpenWebUI.slnx --configuration Release
 dotnet run --project src/OpenWebUI.Api   # http://localhost:8080
 ```
 
-Docker (`:3032 → :8080`) — published image on
+Docker (`:3032 → :8080`) — published **multi-arch image (amd64 + arm64)** on
 [Docker Hub](https://hub.docker.com/r/afonsoft/open-webui) and GHCR:
 
 ```bash
@@ -181,13 +226,16 @@ docker compose -f docker-compose.hub.yaml up -d
 docker compose up -d --build
 ```
 
+`docker-compose.prod.yaml` ships a production layout with watchtower
+auto-updates (5min poll).
+
 Full Docker guide: [docs/en/DEPLOY-DOCKER.md](docs/en/DEPLOY-DOCKER.md) ·
 [docs/pt/DEPLOY-DOCKER.md](docs/pt/DEPLOY-DOCKER.md)
 
 ## Tests
 
 ```bash
-dotnet test OpenWebUI.slnx   # 1700+ API tests + client tests (NUnit)
+dotnet test OpenWebUI.slnx   # 1900+ API tests + client tests (NUnit)
 ```
 
 Coverage gate via Coverlet + ratchet (`.ci/coverage-baseline.txt` only goes up).
@@ -200,7 +248,7 @@ Coverage gate via Coverlet + ratchet (`.ci/coverage-baseline.txt` only goes up).
 | `a11y-audit.yml` | axe-core (Playwright) mobile+desktop |
 | `code-quality.yml` | Qodana + [SonarCloud](https://sonarcloud.io/project/overview?id=afonsoft_open-webui) |
 | `security-scan.yml` | CodeQL (C#+JS), Trivy, GitGuardian, Snyk |
-| `release.yml` | Tag `vX.Y.Z` → GHCR + Docker Hub image |
+| `release.yml` | Tag `vX.Y.Z` → multi-arch (amd64+arm64) GHCR + Docker Hub image |
 
 ## Documentation
 
