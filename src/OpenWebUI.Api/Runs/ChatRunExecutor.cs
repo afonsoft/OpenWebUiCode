@@ -1125,12 +1125,27 @@ public sealed class ChatRunExecutor(
         ChatRun run, ProviderToolCall call, string output, JsonElement? result, bool denied)
     {
         var ok = !denied && !output.StartsWith("Erro", StringComparison.Ordinal);
-        var (imagePath, videoPath) = ExtractMediaPaths(result);
-        PublishTasksSnapshot(run, result);
-        if (AccumulateChanges(result))
+        // Bookkeeping (media/tasks/changes) nunca pode derrubar a run — um
+        // payload estruturado malformado de qualquer tool encerrava a
+        // execução inteira como failed (ex.: file_glob devolve files[] de
+        // strings, não de {path,added,removed}).
+        string? imagePath = null;
+        string? videoPath = null;
+        try
         {
-            broadcaster.Publish(run.Id,
-                $"event: changes\ndata: {JsonSerializer.Serialize(new RunChangesEvent(_changes.Values.ToList()), JsonOptions)}");
+            (imagePath, videoPath) = ExtractMediaPaths(result);
+            PublishTasksSnapshot(run, result);
+            if (AccumulateChanges(result))
+            {
+                broadcaster.Publish(run.Id,
+                    $"event: changes\ndata: {JsonSerializer.Serialize(new RunChangesEvent(_changes.Values.ToList()), JsonOptions)}");
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "Run {RunId}: payload estruturado da tool {Tool} malformado — bookkeeping ignorado.",
+                run.Id, call.Name);
         }
         broadcaster.Publish(run.Id,
             $"event: tool_result\ndata: {JsonSerializer.Serialize(new RunToolResultEvent(call.Id, call.Name, ok, Scrub(Truncate(output, PreviewChars)), ImagePath: imagePath, Denied: denied, Result: result, VideoPath: videoPath), JsonOptions)}");
@@ -1191,7 +1206,8 @@ public sealed class ChatRunExecutor(
         {
             foreach (var f in files.EnumerateArray())
             {
-                if (f.TryGetProperty("path", out var fp) && fp.ValueKind == JsonValueKind.String
+                if (f.ValueKind == JsonValueKind.Object
+                    && f.TryGetProperty("path", out var fp) && fp.ValueKind == JsonValueKind.String
                     && f.TryGetProperty("added", out var fa) && fa.ValueKind == JsonValueKind.Number
                     && f.TryGetProperty("removed", out var fr) && fr.ValueKind == JsonValueKind.Number)
                 {
@@ -1501,19 +1517,22 @@ public sealed class ChatRunExecutor(
         var first = items[0];
         var single = items.Count == 1;
 
-        // SPEC-15 RF-003: preset autônomo + opções → responde sozinho com a
-        // recomendada (marcada) ou a primeira, sem pausar a run. No form
-        // multi, só auto-responde quando TODA pergunta tem opções; uma
-        // resposta livre segue aguardando o dono.
-        if (IsAutoPickPreset(preset) && items.All(i => i.Options.Length > 0))
+        // SPEC-15 RF-003: preset autônomo responde sozinho, sem pausar a
+        // run — opções → a recomendada (marcada) ou a primeira; resposta
+        // livre → diretriz autônoma padrão. Antes, qualquer pergunta sem
+        // opções travava a run esperando o dono, mesmo em always-allow/auto.
+        if (IsAutoPickPreset(preset))
         {
+            static string Auto(RunQuestionItem i) => i.Options.Length > 0
+                ? PickRecommended(i.Options)
+                : AutonomousAnswer;
             if (single)
             {
-                var pick = PickRecommended(first.Options);
+                var pick = Auto(first);
                 PublishDecisionAuto(run, call.Id, "ask_user", pick);
                 return new ToolGateDecision(true, Output: pick);
             }
-            var picks = items.Select(i => PickRecommended(i.Options)).ToList();
+            var picks = items.Select(Auto).ToList();
             PublishDecisionAuto(run, call.Id, "ask_user", picks[0]);
             return new ToolGateDecision(
                 true, Output: JsonSerializer.Serialize(new { answers = picks }, JsonOptions));
@@ -1641,6 +1660,14 @@ public sealed class ChatRunExecutor(
     /// </summary>
     private static bool IsAutoPickPreset(string? preset) =>
         preset is "smart" or "always-allow" or "auto";
+
+    /// <summary>
+    /// Resposta autônoma padrão para pergunta de texto livre em preset
+    /// auto-pick — instrui o modelo a decidir sozinho em vez de travar a run.
+    /// </summary>
+    private const string AutonomousAnswer =
+        "O usuário está em modo autônomo — decida pela melhor alternativa "
+        + "e prossiga com o trabalho.";
 
     /// <summary>
     /// Opção recomendada = a que o modelo marcou com "(recomendado)" /
