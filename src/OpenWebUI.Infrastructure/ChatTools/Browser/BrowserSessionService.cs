@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Playwright;
@@ -129,6 +130,9 @@ public sealed class BrowserSessionService(
         }
     }
 
+    // Launch/install glue — depende do Chromium do host, não executável em CI
+    // (coberto pelo smoke test quando o bundle existe).
+    [ExcludeFromCodeCoverage]
     private async Task<IBrowser> EnsureBrowserAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -177,6 +181,7 @@ public sealed class BrowserSessionService(
         }
     }
 
+    [ExcludeFromCodeCoverage]
     private Task<IBrowser> LaunchAsync() => _playwright!.Chromium.LaunchAsync(
         new BrowserTypeLaunchOptions
         {
@@ -184,10 +189,12 @@ public sealed class BrowserSessionService(
             Args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         });
 
+    [ExcludeFromCodeCoverage]
     private static bool IsMissingBrowser(PlaywrightException ex) =>
         ex.Message.Contains("Executable doesn't exist", StringComparison.OrdinalIgnoreCase)
         || ex.Message.Contains("playwright install", StringComparison.OrdinalIgnoreCase);
 
+    [ExcludeFromCodeCoverage]
     private async Task DisposeQuietlyAsync(IBrowserContext? context)
     {
         if (context is null)
@@ -200,6 +207,7 @@ public sealed class BrowserSessionService(
     }
 
     /// <inheritdoc />
+    [ExcludeFromCodeCoverage]
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
