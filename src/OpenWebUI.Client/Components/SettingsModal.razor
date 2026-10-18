@@ -702,7 +702,7 @@
                                         <button class="button-sm" disabled="@_comboSaving"
                                                 aria-label="@($"{combo.Name} status")"
                                                 @onclick="() => LoadComboStatusAsync(combo.Id)">↻</button>
-                                        @if (combo.UserId is not null)
+                                        @if (combo.UserId is not null || IsAdmin)
                                         {
                                             <button class="button-sm" disabled="@_comboSaving"
                                                     @onclick="() => EditCombo(combo)">@L["common.edit"]</button>
@@ -774,6 +774,15 @@
                                 <input class="input" id="combo-tpm" type="number" min="0" @bind="_comboTpm" />
                             </div>
                         </div>
+                        @if (IsAdmin)
+                        {
+                            <label class="check">
+                                <input type="checkbox" @bind="_comboGlobal"
+                                       disabled="@(_comboEditing is not null)" />
+                                @L["settings.combo_global"]
+                            </label>
+                            <div class="field-note">@L["settings.combo_global_hint"]</div>
+                        }
                         @if (_comboEditing is not null)
                         {
                             <div class="field-actions">
@@ -1197,6 +1206,72 @@
                             @if (_adminCfgMessage is not null)
                             {
                                 <div class="field-note">@_adminCfgMessage</div>
+                            }
+                        </SettingsSection>
+
+                        <SettingsSection Title="@L["settings.sec_admin_combos"]" Description="@L["settings.admin_combos_hint"]">
+                            @if (_combos is null)
+                            {
+                                <div>@L["common.loading"]</div>
+                            }
+                            else
+                            {
+                                @foreach (var combo in _combos.Where(c => c.UserId is null))
+                                {
+                                    <div class="flex items-center justify-between gap-2 min-h-11">
+                                        <div class="min-w-0">
+                                            <div class="text-sm truncate">@combo.Name
+                                                <span class="role-badge">@combo.Strategy</span>
+                                            </div>
+                                            <div class="text-xs text-gray-400 truncate">@string.Join(" → ", combo.Items)</div>
+                                        </div>
+                                        <div class="flex gap-1 flex-none items-center">
+                                            <button class="button-sm" disabled="@_comboSaving"
+                                                    @onclick='() => SelectTab("combos")'>@L["common.edit"]</button>
+                                            <button class="msg-action danger" disabled="@_comboSaving"
+                                                    aria-label="@($"{combo.Name} remove")"
+                                                    @onclick="() => DeleteComboAsync(combo.Id)">✕</button>
+                                            <button type="button" role="switch" aria-checked="@(combo.Enabled ? "true" : "false")"
+                                                    aria-label="@combo.Name" disabled="@_comboSaving"
+                                                    class="flex h-11 w-14 flex-none items-center justify-center cursor-pointer disabled:opacity-50"
+                                                    @onclick="() => ToggleComboAsync(combo)">
+                                                <span class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors @(combo.Enabled ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-700")">
+                                                    <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform @(combo.Enabled ? "translate-x-6" : "translate-x-1")"></span>
+                                                </span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                                @if (_combos.All(c => c.UserId is not null))
+                                {
+                                    <div class="field-note">@L["settings.admin_combos_none"]</div>
+                                }
+                                <div class="field-note">@L["settings.admin_combos_create_hint"]</div>
+                            }
+                        </SettingsSection>
+
+                        <SettingsSection Title="@L["settings.sec_agent_catalog"]" Description="@L["settings.admin_agents_hint"]">
+                            @if (_agentCatalog is null)
+                            {
+                                <div>@L["common.loading"]</div>
+                            }
+                            else
+                            {
+                                @foreach (var agent in _agentCatalog.Agents)
+                                {
+                                    <div class="flex items-center justify-between gap-2 min-h-11">
+                                        <div class="min-w-0">
+                                            <div class="text-sm truncate">@agent.Name
+                                                <span class="role-badge">@agent.Source</span>
+                                            </div>
+                                            <div class="text-xs text-gray-400 truncate">@agent.Description</div>
+                                        </div>
+                                    </div>
+                                }
+                                @if (_agentCatalog.Agents.Count == 0)
+                                {
+                                    <div class="field-note">@L["settings.agents_empty"]</div>
+                                }
                             }
                         </SettingsSection>
 
@@ -1758,6 +1833,8 @@
         _adminByokEnabled = (await Api.GetUserProviderKeysFlagAsync())?.Enabled == true;
         _adminSecrets = await Api.GetGlobalSecretsAsync() ?? [];
         _adminSecretsMessage = null;
+        _combos ??= await Api.GetCombosAsync();
+        _agentCatalog ??= await Api.GetAgentCatalogAsync();
     }
 
     // ── Secrets globais do agente (admin, SPEC-20261017-agent-secrets-env) ──
@@ -2943,6 +3020,8 @@
     // ── Combos de modelo (tab Combos) ──
     private List<ComboResponse>? _combos;
     private readonly Dictionary<string, ComboStatusResponse?> _comboStatus = new();
+    private bool IsAdmin => Auth.CurrentUser?.Role == "admin";
+
     private ComboResponse? _comboEditing;
     private string _comboName = string.Empty;
     private string _comboStrategy = "priority";
@@ -2951,6 +3030,7 @@
     private int? _comboRpm;
     private int? _comboTpm;
     private bool _comboSaving;
+    private bool _comboGlobal;
     private string? _combosMessage;
 
     private void AddComboItem()
@@ -2970,6 +3050,7 @@
         _comboItems = [.. combo.Items];
         _comboRpm = combo.RequestsPerMinute;
         _comboTpm = combo.TokensPerMinute;
+        _comboGlobal = combo.UserId is null;
     }
 
     private void ResetComboForm()
@@ -2981,6 +3062,7 @@
         _comboRpm = null;
         _comboTpm = null;
         _comboModelPick = string.Empty;
+        _comboGlobal = false;
     }
 
     private async Task SaveComboAsync()
@@ -2993,7 +3075,8 @@
             _comboItems.Select((m, i) => new ComboItemRequest(m, i)).ToList(),
             _comboRpm is > 0 ? _comboRpm : null,
             _comboTpm is > 0 ? _comboTpm : null,
-            Enabled: true);
+            Enabled: true,
+            Global: IsAdmin && _comboEditing is null && _comboGlobal ? true : null);
         var saved = _comboEditing is null
             ? await Api.CreateComboAsync(request)
             : await Api.UpdateComboAsync(_comboEditing.Id, request);
