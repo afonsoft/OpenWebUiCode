@@ -164,28 +164,10 @@ public sealed class BrowserActBuiltinTool(
 
         // Healing (b): OCR do último screenshot → clique por coordenada.
         if (action == "click" && !string.IsNullOrWhiteSpace(text)
-            && Sessions.OcrEnabled && Ocr.IsAvailable)
+            && Sessions.OcrEnabled && Ocr.IsAvailable
+            && await OcrClickAsync(page, text, ct))
         {
-            var tmp = Path.Join(Path.GetTempPath(), $"owui-ocr-{Guid.NewGuid():N}.png");
-            try
-            {
-                await page.ScreenshotAsync(new PageScreenshotOptions
-                {
-                    Type = ScreenshotType.Png, Path = tmp,
-                });
-                var box = await Ocr.FindTextBoxAsync(tmp, text, ct);
-                if (box is { } point)
-                {
-                    await page.Mouse.ClickAsync(point.X, point.Y);
-                    return null;
-                }
-            }
-            finally
-            {
-                try { File.Delete(tmp); }
-                catch (IOException) { /* best effort */ }
-                catch (UnauthorizedAccessException) { /* best effort */ }
-            }
+            return null;
         }
 
         // Healing (c): candidatos rankeados — o modelo escolhe o índice.
@@ -198,6 +180,37 @@ public sealed class BrowserActBuiltinTool(
             : "nenhum candidato visível — observe a página com browser_observe.";
         return new BuiltinToolResult(
             $"Não achei o alvo {targetDesc} para '{action}'. {hint}");
+    }
+
+    /// <summary>
+    /// Healing (b) por OCR: print temporário → tesseract TSV → clique no centro
+    /// do bounding box do texto. Depende do binário tesseract do host —
+    /// indisponível em CI (coberto localmente quando tesseract existe).
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+    private async Task<bool> OcrClickAsync(IPage page, string text, CancellationToken ct)
+    {
+        var tmp = Path.Join(Path.GetTempPath(), $"owui-ocr-{Guid.NewGuid():N}.png");
+        try
+        {
+            await page.ScreenshotAsync(new PageScreenshotOptions
+            {
+                Type = ScreenshotType.Png, Path = tmp,
+            });
+            var box = await Ocr.FindTextBoxAsync(tmp, text, ct);
+            if (box is { } point)
+            {
+                await page.Mouse.ClickAsync(point.X, point.Y);
+                return true;
+            }
+            return false;
+        }
+        finally
+        {
+            try { File.Delete(tmp); }
+            catch (IOException) { /* best effort */ }
+            catch (UnauthorizedAccessException) { /* best effort */ }
+        }
     }
 
     /// <summary>Executa a ação no locator; false quando o alvo não existe.</summary>

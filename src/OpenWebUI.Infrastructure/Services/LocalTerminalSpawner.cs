@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Collections.Concurrent;
@@ -163,6 +164,8 @@ public sealed class LocalTerminalSpawner : IDisposable
     }
 
     /// <summary>Poll em /api/status até qualquer resposta HTTP (até 404 prova que subiu).</summary>
+    // Poll de readiness do processo spawnado — depende de timing/socket real.
+    [ExcludeFromCodeCoverage]
     private async Task WaitReadyAsync(string url, Process process, string serverId, CancellationToken ct)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);

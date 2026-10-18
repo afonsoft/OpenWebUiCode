@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Extensions.Hosting;
@@ -301,6 +302,8 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
     }
 
+    // Loop de varredura com timing real de processo — não determinístico em CI.
+    [ExcludeFromCodeCoverage]
     private async Task SweepLoopAsync()
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));

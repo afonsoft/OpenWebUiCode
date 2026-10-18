@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
@@ -127,6 +128,8 @@ public sealed class TesseractOcr(ILogger<TesseractOcr> logger)
         }
     }
 
+    // Spawn do binário tesseract — depende do host; CI pode não ter.
+    [ExcludeFromCodeCoverage]
     private async Task<string?> RunAsync(string pngPath, string[] extra, CancellationToken ct)
     {
         try
