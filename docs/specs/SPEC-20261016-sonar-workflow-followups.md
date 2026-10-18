@@ -7,7 +7,7 @@
 | Feature | `sonar-workflow-followups` |
 | Type | `Security` + `Automation` |
 | Repository | `/home/ubuntu/repos/open-webui` |
-| Status | `Approved` |
+| Status | `Delivered` |
 | Ticket | [#394](https://github.com/afonsoft/open-webui/issues/394) · Epic [#392](https://github.com/afonsoft/open-webui/issues/392) |
 | Fonte | `gap-analysis`/`sonarqube-autofix` run 2026-10-16 — gap `GAP-automation-sonar-followups` |
 
@@ -50,6 +50,6 @@ SPEC-20261015-sonar-remediation (Done, PR #378, issue #377 fechada) deixou 3 ite
 
 ## 6. Task Plan
 
-- [ ] T1 — criar issue de tracking (gate do gap-analysis).
-- [ ] T2 — humano aplica RF-002/003/004.
-- [ ] T3 — validar no próximo scan + fechar issue.
+- [x] T1 — criar issue de tracking (gate do gap-analysis).
+- [x] T2 — humano aplica RF-002/003/004.
+- [x] T3 — validar no próximo scan + fechar issue.
