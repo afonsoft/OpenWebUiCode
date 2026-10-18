@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1
 # Open WebUI (.NET) — multi-stage build, padrão afonsoft/KnowledgeRAG.
 # Stage 1: .NET SDK 10 → publish self-contained para linux-x64/arm64.
-# Stage 2: runtime-deps (Debian slim) + git, curl, gh CLI e Chromium do
-# Playwright (browser_navigate/act/observe + browser_screenshot), tesseract
-# (OCR do visual loop), volume /data com DATA_ROOT=/data — uploads,
+# Stage 2: runtime-deps (Debian slim) + git, curl, gh CLI, NVM (Node 22 LTS
+# default + `nvm` wrapper p/ shells não-interativos), toolbelt enxuto do
+# agente (rg/fd/jq/sqlite3/...), Chromium do Playwright (browser_navigate/
+# act/observe + browser_screenshot), tesseract (OCR do visual loop),
+# volume /data com DATA_ROOT=/data — uploads,
 # workspaces do IDE, checkpoints e worktrees persistem no volume (o content
 # root /app pertence a root e não é gravável pelo processo); healthcheck em
 # /health.
@@ -70,6 +72,43 @@ RUN arch="$(uname -m)" \
       *) echo "Unsupported arch: $arch" >&2; exit 1 ;; esac \
  && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" \
     | tar -xz -C /usr/local/bin --strip-components=2 "gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh"
+
+# Toolbelt enxuto do agente (~35MB): busca (ripgrep, fd-find → fd), dados
+# (jq, file, tree, sqlite3 — lê a própria base do app), rede (dnsutils, ping,
+# netcat, openssh-client p/ git+ssh), arquivos (unzip/zip/rsync), debug
+# (lsof, strace, psmisc), shell (shellcheck) e terminal (tmux, nano, less,
+# htop). Runtimes pesados (python, gcc) ficam de fora de propósito — o
+# agente tem root+sudo e instala sob demanda.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      jq ripgrep fd-find unzip zip sqlite3 tree file nano lsof dnsutils \
+      iputils-ping netcat-openbsd openssh-client rsync tmux htop shellcheck \
+      less psmisc strace \
+ && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+ && rm -rf /var/lib/apt/lists/*
+
+# NVM (gerenciador de Node multi-versão): NVM_DIR fixo em /opt/nvm, Node
+# ${NODE_MAJOR} LTS como default. shell_exec/PTY usam shells não-interativos
+# que não leem profile, então entregamos: (a) symlinks de node/npm/npx do
+# default em /usr/local/bin (sempre no PATH); (b) wrapper /usr/local/bin/nvm
+# que faz source do nvm.sh — `nvm install 20`, `nvm exec 20 node app.js`
+# funcionam em qualquer shell; (c) profile.d + bash.bashrc p/ interativos.
+ARG NVM_VERSION=0.40.8
+ARG NODE_MAJOR=22
+ENV NVM_DIR=/opt/nvm
+RUN git clone --depth 1 -b "v${NVM_VERSION}" https://github.com/nvm-sh/nvm.git "$NVM_DIR" \
+ && . "$NVM_DIR/nvm.sh" --no-use \
+ && nvm install "$NODE_MAJOR" \
+ && nvm alias default "$NODE_MAJOR" \
+ && nvm cache clear \
+ && NODE_BIN="$(dirname "$(nvm which default)")" \
+ && ln -s "$NODE_BIN/node" /usr/local/bin/node \
+ && ln -s "$NODE_BIN/npm" /usr/local/bin/npm \
+ && ln -s "$NODE_BIN/npx" /usr/local/bin/npx \
+ && printf '#!/bin/sh\n. /opt/nvm/nvm.sh --no-use\nnvm "$@"\n' > /usr/local/bin/nvm \
+ && chmod +x /usr/local/bin/nvm \
+ && printf 'export NVM_DIR=/opt/nvm\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' > /etc/profile.d/nvm.sh \
+ && printf '. /etc/profile.d/nvm.sh\n' >> /etc/bash.bashrc
 
 WORKDIR /app
 COPY --from=build /app/publish ./
