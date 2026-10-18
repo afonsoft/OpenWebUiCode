@@ -281,11 +281,11 @@
 
 	.field label,
 	.field .field-label {
-		@apply block text-sm font-normal text-gray-600 dark:text-gray-400 mb-1;
+		@apply block text-sm font-normal text-gray-600 dark:text-gray-300 mb-1;
 	}
 
 	.field-note {
-		@apply text-xs text-gray-400 dark:text-gray-500 mt-1;
+		@apply text-xs text-gray-500 dark:text-gray-400 mt-1;
 	}
 
 	.field-actions {
@@ -409,7 +409,7 @@
 	}
 
 	.modal {
-		@apply w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl max-sm:h-dvh max-sm:max-h-dvh max-sm:rounded-none max-sm:border-0;
+		@apply w-full max-w-5xl max-h-[92vh] flex flex-col rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl max-sm:h-dvh max-sm:max-h-dvh max-sm:rounded-none max-sm:border-0;
 	}
 
 	.modal-header {
@@ -423,11 +423,11 @@
 	}
 
 	.modal-tabs {
-		@apply flex gap-1 px-3 py-2 border-b border-gray-100 dark:border-gray-800 overflow-x-auto scrollbar-hidden snap-x scroll-smooth sm:w-52 sm:shrink-0 sm:flex-col sm:overflow-x-hidden sm:overflow-y-auto sm:border-b-0 sm:border-r sm:py-4 sm:items-stretch;
+		@apply flex gap-1 px-3 py-2 border-b border-gray-100 dark:border-gray-800 overflow-x-auto scrollbar-hidden snap-x scroll-smooth sm:w-60 sm:shrink-0 sm:flex-col sm:overflow-x-hidden sm:overflow-y-auto sm:border-b-0 sm:border-r sm:py-4 sm:items-stretch;
 	}
 
 	.modal-tab {
-		@apply rounded-xl px-3 py-2 text-sm text-left text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer whitespace-nowrap sm:whitespace-normal snap-start max-sm:min-h-11 max-sm:flex max-sm:items-center;
+		@apply rounded-xl px-3 py-2 text-sm text-left text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer whitespace-nowrap sm:whitespace-normal snap-start max-sm:min-h-11 max-sm:flex max-sm:items-center;
 	}
 
 	.modal-tab.active {
@@ -449,7 +449,7 @@
 	}
 
 	.settings-section-desc {
-		@apply text-xs text-gray-400 dark:text-gray-500 mb-2;
+		@apply text-xs text-gray-500 dark:text-gray-400 mb-2;
 	}
 
 	.save-bar {
