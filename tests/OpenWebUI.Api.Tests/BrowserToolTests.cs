@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Playwright;
 using NUnit.Framework;
 using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.ChatTools.Browser;
@@ -165,5 +166,33 @@ public class BrowserToolTests
     {
         var tsv = "5\t1\t1\t1\t1\t1\t10\t10\t40\t15\t95\tHello";
         Assert.That(TesseractOcr.FindTextBox(tsv, "xyz"), Is.Null);
+    }
+
+    /// <summary>
+    /// Smoke E2E do RF-001/RF-003: lança o Chromium real (quando instalado),
+    /// navega numa data: URL e extrai os elementos indexados. Ignorado em
+    /// ambientes sem o bundle do Playwright (CI pode não ter).
+    /// </summary>
+    [Test]
+    public async Task Session_navega_e_indexa_elementos()
+    {
+        var root = Path.Join(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".cache", "ms-playwright");
+        if (!Directory.Exists(root)
+            || !Directory.GetDirectories(root)
+                .Any(d => Path.GetFileName(d).StartsWith("chromium", StringComparison.Ordinal)))
+        {
+            Assert.Ignore("Chromium do Playwright não instalado neste host");
+        }
+
+        await using var sessions = Sessions(Config());
+        var page = await sessions.GetPageAsync("smoke", default);
+        await page.GotoAsync("data:text/html,<button id=\"b\">Save</button>");
+        var json = await page.EvaluateAsync<JsonElement>(
+            BrowserElements.ExtractScript, BrowserElements.MaxElements);
+        var elements = BrowserElements.Parse(json);
+        Assert.That(elements.Any(e => e.Name == "Save" && e.Tag == "button"), Is.True);
+        await sessions.CloseChatAsync("smoke");
     }
 }
