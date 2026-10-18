@@ -11,7 +11,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// (libera cookies/storage da sessão). SPEC-20261017-browser-visual-reasoning.
 /// </summary>
 public sealed class BrowserCloseBuiltinTool(
-    BrowserSessionService sessions,
+    IBrowserSessions sessions,
     TesseractOcr ocr,
     ConfigService config,
     IConfiguration configuration,

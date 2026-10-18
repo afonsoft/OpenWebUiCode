@@ -172,6 +172,8 @@ builder.Services.AddSingleton<VideoEngineFactory>();
 builder.Services.AddScoped<VideoGenerationService>();
 builder.Services.AddSingleton<BrowserScreenshotService>();
 builder.Services.AddSingleton<BrowserSessionService>();
+builder.Services.AddSingleton<IBrowserSessions>(
+    sp => sp.GetRequiredService<BrowserSessionService>());
 builder.Services.AddSingleton<TesseractOcr>();
 builder.Services.AddSingleton<WorkspaceGitService>();
 builder.Services.AddScoped<WorkspaceRepoService>();

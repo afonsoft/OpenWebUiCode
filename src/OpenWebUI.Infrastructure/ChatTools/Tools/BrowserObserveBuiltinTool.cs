@@ -13,7 +13,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// SPEC-20261017-browser-visual-reasoning RF-003/RF-005.
 /// </summary>
 public sealed class BrowserObserveBuiltinTool(
-    BrowserSessionService sessions,
+    IBrowserSessions sessions,
     TesseractOcr ocr,
     ConfigService config,
     IConfiguration configuration,
