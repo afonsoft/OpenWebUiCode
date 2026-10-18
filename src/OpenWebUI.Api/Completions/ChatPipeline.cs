@@ -45,8 +45,12 @@ public static class ChatPipeline
         + "survive the session (never secrets or credentials); re-saving the "
         + "same title updates it. When prior context may exist, recall it first "
         + "via builtin_memory_search. "
-        + "Act autonomously and carry the task end-to-end; only ask the user "
-        + "when you genuinely need something from them "
+        + "Act autonomously and carry the task end-to-end: chain the steps of "
+        + "your task list without pausing — never end your turn just to ask "
+        + "whether to continue while items remain pending. When a tool call or "
+        + "command fails, diagnose the cause and retry with a corrected "
+        + "approach (up to 3 attempts) before reporting failure. Only ask the "
+        + "user when you genuinely need something from them "
         + "(a decision, a secret or an approval).";
     /// <summary>Aplica modelo personalizado, contexto de arquivos e memórias à requisição.</summary>
     public static async Task<ChatCompletionRequest> EnrichRequestAsync(
@@ -614,6 +618,14 @@ public static class ChatPipeline
         var overflowRetries = 0;
         var lengthContinuations = resume?.LengthContinuations ?? 0;
         var continuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? "");
+        // Auto-continue por tarefas pendentes: quando a lista de tarefas
+        // tem itens pending/in_progress e o modelo encerra o turno com
+        // texto ("próximo passo sugerido: …" seguido de parada), o loop
+        // injeta um nudge e segue para a próxima tarefa em vez de esperar
+        // o usuário. Cap de nudges para o modelo insistente poder parar.
+        const int maxAutoContinues = 3;
+        var autoContinues = 0;
+        var pendingTodos = 0;
 
         async Task<ProviderCompletion> CompleteResilientAsync(
             Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
@@ -815,6 +827,25 @@ public static class ChatPipeline
                         continue;
                     }
                 }
+                if (pendingTodos > 0 && autoContinues < maxAutoContinues)
+                {
+                    // Turno encerrado com a lista aberta — o modo de falha
+                    // "parou e perguntou se era para continuar". O nudge
+                    // manda executar a próxima tarefa já.
+                    autoContinues++;
+                    log?.LogInformation(
+                        "Turno encerrado com {Pending} tarefa(s) pendente(s) — "
+                        + "auto-continue {N}/{Max} injetado.",
+                        pendingTodos, autoContinues, maxAutoContinues);
+                    var nudge = new ChatCompletionMessage(
+                        "user", PendingTasksPrompt(pendingTodos));
+                    messages.Add(nudge);
+                    if (callbacks?.OnMessagesAddedAsync is not null)
+                    {
+                        await callbacks.OnMessagesAddedAsync([nudge], [], ct);
+                    }
+                    continue;
+                }
                 if (string.IsNullOrWhiteSpace(step.Content) && emptyRounds < maxEmptyRounds)
                 {
                     // Round vazio (ex.: gateway emitiu só reasoning, ou o
@@ -910,8 +941,33 @@ public static class ChatPipeline
                 }
                 try
                 {
-                    return await toolExecutor.ExecuteAsync(
-                        tools, call.Name, call.ArgumentsJson, builtinContext, ct);
+                    // Exceção de execução (IO, rede, MCP): até 3 tentativas
+                    // com backoff curto antes de devolver o erro ao modelo —
+                    // uma exceção aqui nunca pode escapar e derrubar a run.
+                    const int maxAttempts = 3;
+                    Exception? lastError = null;
+                    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+                    {
+                        try
+                        {
+                            return await toolExecutor.ExecuteAsync(
+                                tools, call.Name, call.ArgumentsJson, builtinContext, ct);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            lastError = ex;
+                            log?.LogWarning(ex,
+                                "Tool {Name} lançou exceção (tentativa {Attempt}/{Max}).",
+                                call.Name, attempt, maxAttempts);
+                            if (attempt < maxAttempts)
+                            {
+                                await Task.Delay(
+                                    TimeSpan.FromMilliseconds(500 * attempt), ct);
+                            }
+                        }
+                    }
+                    return new ToolExecutionOutcome(
+                        $"Erro: execução falhou após {maxAttempts} tentativas: {lastError!.Message}");
                 }
                 finally
                 {
@@ -928,6 +984,22 @@ public static class ChatPipeline
                 log?.LogInformation(
                     "Tool {Name}: {Elapsed}ms, denied={Denied}, output={Chars} chars.",
                     call.Name, (int)elapsed.TotalMilliseconds, denied, output.Length);
+                if (outcome.Result is { } tasksEl
+                    && tasksEl.ValueKind == JsonValueKind.Object
+                    && tasksEl.TryGetProperty("tasks", out var tasks)
+                    && tasks.ValueKind == JsonValueKind.Array)
+                {
+                    // Estado mais recente da lista de tarefas — alimenta o
+                    // auto-continue quando o turno encerra com itens abertos.
+                    // Um novo plano reabre o budget de nudges: quem re-escreve
+                    // a lista está trabalhando, não parado.
+                    autoContinues = 0;
+                    pendingTodos = tasks.EnumerateArray().Count(t =>
+                        t.ValueKind == JsonValueKind.Object
+                        && t.TryGetProperty("status", out var st)
+                        && st.ValueKind == JsonValueKind.String
+                        && st.GetString() is "pending" or "in_progress");
+                }
                 if (callbacks?.OnResultAsync is not null)
                 {
                     await callbacks.OnResultAsync(call, output, outcome.Result, denied, ct);
@@ -1029,6 +1101,19 @@ public static class ChatPipeline
         "Você atingiu o número máximo de passos desta execução — este é o "
         + "último. Sem novas tool calls: resuma o que foi feito, o estado "
         + "atual e os próximos passos sugeridos.";
+
+    /// <summary>
+    /// Nudge de auto-continue por tarefas pendentes: injetado como mensagem
+    /// <c>user</c> quando o turno encerra com a lista de tarefas aberta —
+    /// nunca persistido no histórico do chat.
+    /// </summary>
+    /// <param name="pending">Quantidade de itens pending/in_progress.</param>
+    public static string PendingTasksPrompt(int pending) =>
+        $"Sua resposta encerrou o turno, mas a lista de tarefas ainda tem "
+        + $"{pending} item(ns) pendente(s). Não pare para pedir confirmação — "
+        + "retome a próxima tarefa agora e siga executando até concluir tudo. "
+        + "Se estiver realmente bloqueado por algo que só o usuário pode "
+        + "fornecer (decisão, segredo ou aprovação), explique o bloqueio.";
 
     /// <summary>Prompt sintético de continuação em resposta truncada
     /// (SPEC-20261016-provider-resilience RF-003): nunca persistido como

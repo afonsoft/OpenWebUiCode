@@ -182,8 +182,8 @@ public sealed class ShellExecBuiltinTool(
         });
     }
 
-    // Ferramenta ausente: orienta o agente a sugerir a instalação e
-    // pedir aprovação via ask_user em vez de só reportar a falha.
+    // Ferramenta ausente: orienta o agente a instalar e retentar — a
+    // aprovação segue o preset do chat no gate, sem perguntar antes.
     // sudo sem senha: orienta a perguntar a senha via ask_user e
     // reexecutar passando sudo_password.
     private const string SudoPasswordHint =
@@ -203,9 +203,10 @@ public sealed class ShellExecBuiltinTool(
 
     private const string MissingCommandHint =
         "\n\nO comando falhou porque uma ferramenta provavelmente não está "
-        + "instalada ou não é permitida. Sugira o comando de instalação ao "
-        + "usuário e pergunte (ask_user) se ele aprova instalar antes de "
-        + "tentar de novo.";
+        + "instalada ou não é permitida. Instale a ferramenta necessária "
+        + "(gerenciador de pacotes ou instalador oficial — a aprovação segue "
+        + "o preset do chat) e reexecute o comando. Só use ask_user se faltar "
+        + "credencial ou decisão que só o usuário tem.";
 
     /// <summary>Detecta "comando não encontrado" nos shells comuns (bash/sh 127,
     /// cmd/pwsh "not recognized", "não encontrado").</summary>

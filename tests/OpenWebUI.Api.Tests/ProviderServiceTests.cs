@@ -12,6 +12,7 @@ using OpenWebUI.Api.Completions;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.ChatTools;
+using OpenWebUI.Infrastructure.ChatTools.Tools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
@@ -2942,6 +2943,164 @@ public class ProviderServiceTests
             Assert.That(results[0], Is.EqualTo("ok-t1"));
             Assert.That(results[1], Does.Contain("falhou-t2"));
             Assert.That(results[2], Is.EqualTo("ok-t3"));
+        });
+    }
+
+    // ---- Autonomia: retry de tool que lança exceção + auto-continue
+    // quando o turno encerra com tarefas abertas no todo_write ----
+
+    /// <summary>Tool que lança <paramref name="failures"/> vezes e só então
+    /// responde — mede o loop de 3 tentativas do ExecuteCallAsync.</summary>
+    private sealed class FlakyTool(int failures) : IBuiltinChatTool
+    {
+        public int Calls;
+        public string Name => "flaky";
+        public string Description => "fake flaky";
+        public string ParametersJson => "{}";
+        public ApprovalTier Tier => ApprovalTier.Read;
+        public Task<BuiltinToolResult> ExecuteAsync(
+            JsonElement args, BuiltinToolContext context, CancellationToken ct) =>
+            ++Calls <= failures
+                ? throw new IOException($"transiente-{Calls}")
+                : Task.FromResult(new BuiltinToolResult("recuperou"));
+    }
+
+    /// <summary>SSE de uma tool call com argumentos reais (o helper
+    /// <see cref="SseCalls"/> fixa <c>"{}"</c>).</summary>
+    private static string SseCallArgs(string name, string argsJson) =>
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{"
+        + "\"index\":0,\"id\":\"c0\",\"type\":\"function\",\"function\":{\"name\":\""
+        + name + "\",\"arguments\":" + JsonSerializer.Serialize(argsJson)
+        + "}}]}}]}\n\ndata: [DONE]\n\n";
+
+    [Test]
+    public async Task RunToolLoop_ToolLancaExcecao_RetentaAte3()
+    {
+        // Exceção de execução (IO/rede) não derruba a run: retenta com
+        // backoff até 3 tentativas — aqui a 3ª consegue.
+        var flaky = new FlakyTool(2);
+        var (executor, tools) = NewExecutorWith([flaky]);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCalls("builtin_flaky"), 0), (200, Sse("fim"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
+            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(flaky.Calls, Is.EqualTo(3), "2 falhas + sucesso na 3ª");
+            Assert.That(outcome!.ToolMessages.Where(m => m.Role == "tool")
+                .Select(m => m.Content), Is.EqualTo(new[] { "recuperou" }));
+            Assert.That(outcome.FinalContent, Is.EqualTo("fim"));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_ToolSempreFalha_Esgota3Tentativas()
+    {
+        // Falha permanente: exatamente 3 tentativas e o erro volta como
+        // resultado da tool — a run segue e o modelo decide o próximo passo.
+        var flaky = new FlakyTool(int.MaxValue);
+        var (executor, tools) = NewExecutorWith([flaky]);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCalls("builtin_flaky"), 0), (200, Sse("fim"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
+            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+
+        var toolText = outcome!.ToolMessages.Single(m => m.Role == "tool").Content;
+        Assert.Multiple(() =>
+        {
+            Assert.That(flaky.Calls, Is.EqualTo(3));
+            Assert.That(toolText, Does.Contain("3 tentativas"));
+            Assert.That(toolText, Does.Contain("transiente-"));
+            Assert.That(outcome.FinalContent, Is.EqualTo("fim"));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_TodosPendentes_AutoContinuaSemPerguntar()
+    {
+        // O modelo fecha A e deixa B in_progress, depois encerra o turno —
+        // o modo de falha "parou e perguntou se era para continuar". O loop
+        // injeta 1 nudge de tarefas pendentes; o modelo re-planeja (fecha B)
+        // e só então responde o texto final.
+        var injected = new List<ChatCompletionMessage>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnMessagesAddedAsync: (msgs, _, _) =>
+            {
+                injected.AddRange(msgs);
+                return Task.CompletedTask;
+            });
+        var (executor, tools) = NewExecutorWith([new TodoWriteBuiltinTool()]);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCallArgs("builtin_todo_write",
+                "{\"todos\":[{\"content\":\"A\",\"status\":\"completed\"},"
+                + "{\"content\":\"B\",\"status\":\"in_progress\"}]}"), 0),
+             (200, Sse("Vou parar por aqui."), 0),
+             (200, SseCallArgs("builtin_todo_write",
+                "{\"todos\":[{\"content\":\"A\",\"status\":\"completed\"},"
+                + "{\"content\":\"B\",\"status\":\"completed\"}]}"), 0),
+             (200, Sse("Tudo feito."), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            callbacks, TestCtx(), userId: "u1", log: NullLogger.Instance,
+            maxSteps: 10);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo("Tudo feito."));
+            Assert.That(injected.Count(m =>
+                m.Role == "user" && m.Content?.Contains("pendente") == true),
+                Is.EqualTo(1), "exatamente 1 nudge de tarefas pendentes");
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(4), "tool + texto + tool + texto final");
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_TodosPendentes_RespeitaCapDeNudges()
+    {
+        // Modelo insiste em encerrar com a lista aberta: após 3 nudges o
+        // loop desiste de insistir e devolve a resposta — nunca loop infinito.
+        var injected = new List<ChatCompletionMessage>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnMessagesAddedAsync: (msgs, _, _) =>
+            {
+                injected.AddRange(msgs);
+                return Task.CompletedTask;
+            });
+        var (executor, tools) = NewExecutorWith([new TodoWriteBuiltinTool()]);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCallArgs("builtin_todo_write",
+                "{\"todos\":[{\"content\":\"A\",\"status\":\"in_progress\"}]}"), 0),
+             (200, Sse("paro1"), 0),
+             (200, Sse("paro2"), 0),
+             (200, Sse("paro3"), 0),
+             (200, Sse("final"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            callbacks, TestCtx(), userId: "u1", log: NullLogger.Instance,
+            maxSteps: 10);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo("final"));
+            Assert.That(injected.Count(m =>
+                m.Role == "user" && m.Content?.Contains("pendente") == true),
+                Is.EqualTo(3), "3 nudges e para — o teto respeita o modelo");
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(5));
         });
     }
 }
