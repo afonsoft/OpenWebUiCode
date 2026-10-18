@@ -195,7 +195,7 @@ jobs:
           docker buildx imagetools create \
             -t "ghcr.io/${{ github.repository }}:$VER" \
             -t "ghcr.io/${{ github.repository }}:latest" \
-            $(printf "ghcr.io/${{ github.repository }}@sha256:%s " /tmp/digests/*)
+            $(for f in /tmp/digests/*; do printf "ghcr.io/${{ github.repository }}@sha256:%s " "${f##*/}"; done)
 
       # Docker Hub publica afonsoft/open-webui quando os secrets DOCKERHUB_*
       # existirem no repo — sem eles os steps abaixo são pulados.
