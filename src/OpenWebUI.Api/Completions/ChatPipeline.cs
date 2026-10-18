@@ -618,7 +618,7 @@ public static class ChatPipeline
         var overflowRetries = 0;
         var lengthContinuations = resume?.LengthContinuations ?? 0;
         var continuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? "");
-        // Auto-continue por tarefas pendentes: quando o todo_write da run
+        // Auto-continue por tarefas pendentes: quando a lista de tarefas
         // tem itens pending/in_progress e o modelo encerra o turno com
         // texto ("próximo passo sugerido: …" seguido de parada), o loop
         // injeta um nudge e segue para a próxima tarefa em vez de esperar
@@ -945,28 +945,29 @@ public static class ChatPipeline
                     // com backoff curto antes de devolver o erro ao modelo —
                     // uma exceção aqui nunca pode escapar e derrubar a run.
                     const int maxAttempts = 3;
-                    for (var attempt = 1; ; attempt++)
+                    Exception? lastError = null;
+                    for (var attempt = 1; attempt <= maxAttempts; attempt++)
                     {
                         try
                         {
                             return await toolExecutor.ExecuteAsync(
                                 tools, call.Name, call.ArgumentsJson, builtinContext, ct);
                         }
-                        catch (Exception ex) when (ex is not OperationCanceledException
-                            && attempt < maxAttempts)
-                        {
-                            log?.LogWarning(ex,
-                                "Tool {Name} lançou exceção (tentativa {Attempt}/{Max}) — retentando.",
-                                call.Name, attempt, maxAttempts);
-                            await Task.Delay(
-                                TimeSpan.FromMilliseconds(500 * attempt), ct);
-                        }
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         {
-                            return new ToolExecutionOutcome(
-                                $"Erro: execução falhou após {maxAttempts} tentativas: {ex.Message}");
+                            lastError = ex;
+                            log?.LogWarning(ex,
+                                "Tool {Name} lançou exceção (tentativa {Attempt}/{Max}).",
+                                call.Name, attempt, maxAttempts);
+                            if (attempt < maxAttempts)
+                            {
+                                await Task.Delay(
+                                    TimeSpan.FromMilliseconds(500 * attempt), ct);
+                            }
                         }
                     }
+                    return new ToolExecutionOutcome(
+                        $"Erro: execução falhou após {maxAttempts} tentativas: {lastError!.Message}");
                 }
                 finally
                 {
@@ -988,7 +989,7 @@ public static class ChatPipeline
                     && tasksEl.TryGetProperty("tasks", out var tasks)
                     && tasks.ValueKind == JsonValueKind.Array)
                 {
-                    // Estado mais recente do todo_write — alimenta o
+                    // Estado mais recente da lista de tarefas — alimenta o
                     // auto-continue quando o turno encerra com itens abertos.
                     // Um novo plano reabre o budget de nudges: quem re-escreve
                     // a lista está trabalhando, não parado.
@@ -1103,7 +1104,7 @@ public static class ChatPipeline
 
     /// <summary>
     /// Nudge de auto-continue por tarefas pendentes: injetado como mensagem
-    /// <c>user</c> quando o turno encerra com itens abertos no todo_write —
+    /// <c>user</c> quando o turno encerra com a lista de tarefas aberta —
     /// nunca persistido no histórico do chat.
     /// </summary>
     /// <param name="pending">Quantidade de itens pending/in_progress.</param>
