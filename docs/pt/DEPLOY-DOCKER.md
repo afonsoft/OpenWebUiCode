@@ -13,7 +13,8 @@ Guia completo para rodar o Open WebUI (.NET) — `afonsoft/open-webui` — com D
 
 A imagem é publicada no [Docker Hub](https://hub.docker.com/r/afonsoft/open-webui)
 e no [GHCR](https://github.com/afonsoft/open-webui/pkgs/container/open-webui) a
-cada tag `v*.*.*`.
+cada tag `v*.*.*` — **multi-arch (`linux/amd64` + `linux/arm64`)**, rodando
+igual em servidores x86 e placas ARM (Raspberry Pi, VMs Apple Silicon).
 
 **1. Um comando, sem mais nada:**
 
@@ -50,6 +51,16 @@ Baixar de um registry específico ou fixar versão:
 docker pull afonsoft/open-webui:latest        # Docker Hub
 docker pull ghcr.io/afonsoft/open-webui:latest # GHCR
 docker pull afonsoft/open-webui:1.2.3          # versão fixada
+```
+
+### Layout de produção
+
+O `docker-compose.prod.yaml` sobe a imagem publicada com um sidecar
+**watchtower** que verifica novas tags a cada 5 minutos e atualiza o
+container automaticamente:
+
+```bash
+docker compose -f docker-compose.prod.yaml up -d
 ```
 
 ## Containers & volumes
@@ -159,7 +170,7 @@ As imagens são buildadas e publicadas **somente quando uma tag de versão é cr
 git tag v1.2.3 && git push origin v1.2.3
 ```
 
-O `.github/workflows/release.yml` então: valida `X.Y.Z` → builda os arquivos Linux/Windows → builda a imagem e publica `ghcr.io/afonsoft/open-webui:{X.Y.Z,latest}` → retagueia e publica `docker.io/afonsoft/open-webui:{X.Y.Z,latest}` quando os secrets `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` existem → cria a GitHub Release. A página de overview do Docker Hub é sincronizada manualmente pelo workflow **🐳 Docker Hub Overview** (`docs/dockerhub/overview.md` → descrição do Hub).
+O `.github/workflows/release.yml` então: valida `X.Y.Z` → builda os arquivos Linux/Windows → builda uma **imagem multi-arch (amd64 + arm64)** e publica `ghcr.io/afonsoft/open-webui:{X.Y.Z,latest}` → retagueia e publica `docker.io/afonsoft/open-webui:{X.Y.Z,latest}` quando os secrets `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` existem → cria a GitHub Release e o registro de **deployment** do GitHub. A página de overview do Docker Hub é sincronizada manualmente pelo workflow **🐳 Docker Hub Overview** (`docs/dockerhub/overview.md` → descrição do Hub).
 
 ## Troubleshooting
 

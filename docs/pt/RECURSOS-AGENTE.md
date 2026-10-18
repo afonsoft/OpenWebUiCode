@@ -173,6 +173,113 @@ faz a próxima run reprocessar `[resumo] + cauda` em vez do histórico inteiro.
 - Toda escolha automática emite evento SSE auditável `decision_auto`
   renderizado no feed de atividade da run.
 
+## 13. Combos de modelos (failover)
+
+`GET`/`POST`/`PUT`/`DELETE /api/v1/combos[/{id}]` (+ `/{id}/status`)
+
+- Um combo é uma **lista ordenada de modelos** resolvida por uma de três
+  estratégias: `priority` (sempre o primeiro saudável), `round-robin` ou
+  `priority-round-robin`. Quando o modelo atual falha, o combo tenta os
+  próximos; um modelo que falha entra em **cooldown** por modelo (máx. 5min).
+- Limites de taxa compartilhados por combo: `requestsPerMinute` e
+  `tokensPerMinute` numa janela deslizante de 60s.
+- Escopo por usuário por padrão; admins podem criar **combos globais** (sem
+  dono — visíveis a todos). Gerenciado em **Configurações → Combos**.
+
+![Configurações → Combos](../screenshots/settings-combos.png)
+
+## 14. Personas de agente
+
+`GET`/`POST`/`PUT`/`DELETE /api/v1/agent-personas[/{id}]` (+ `/{id}/message`,
+`/{id}/audit`)
+
+- Uma persona é um perfil de agente nomeado: `systemPrompt`, `modelId`,
+  `guardrailLevel` (`basic`/`strict`) e uma allowlist de tools opcional.
+- Personas são acionáveis via dispatch de canais/hooks e por
+  `delegate_task(persona: "…")`; cada dispatch fica registrado no log de
+  auditoria da persona (`GET /{id}/audit`).
+- Gerenciadas em **Configurações → Agentes**, junto ao catálogo de agentes e
+  ao registro de agentes externos.
+
+![Configurações → Agentes](../screenshots/settings-agents.png)
+
+## 15. Agentes externos e o escopo global `~/.agents`
+
+- **Registro de agentes externos** — `GET /api/v1/external-agents/detect`
+  varre o host procurando CLIs de agente (Claude Code, Codex CLI, OpenCode,
+  Devin CLI, Gemini CLI). CLIs detectados podem ser habilitados por usuário e
+  integrados a runs delegadas.
+- **Catálogo de agentes** — `builtin:agent_catalog` lista os agentes do
+  workspace descobertos em arquivos `*.agent.md` e roles builtin
+  (`code-reviewer`, `researcher`).
+- **Escopo global** — skills, slash commands e `mcp.json` são descobertos em
+  `~/.agents` (mais pastas `.claude`/`.agents` do projeto e arquivos `*.md`
+  de agente) e mesclados ao catálogo do repo/workspace.
+
+## 16. Forms multi-pergunta do `ask_user`
+
+- Uma chamada `ask_user` pode carregar **várias perguntas**, cada uma com
+  `options`, seleção `multiple` e opção de `reject` — renderizadas num form
+  único.
+- Presets de autonomia respondem pergunta a pergunta (opção recomendada,
+  senão a primeira); cada resposta automática continua emitindo
+  `decision_auto`.
+
+## 17. Durabilidade, resiliência e throughput de runs
+
+- **Eventos duráveis de run** — eventos persistidos; **replay de checkpoint**
+  reconstrói o estado do stream e **heartbeat ownership** permite que uma API
+  reiniciada adote runs órfãs em vez de abandoná-las (`run-recovery`).
+- **Resiliência de provider** — retry com backoff em falhas transientes,
+  continuação automática em `finish_reason=length` e recuperação de
+  context-overflow (encolher e retentar) dentro do pipeline da run.
+- **Tool calls em paralelo** — tools marcadas `SafeInParallel` executam em
+  concorrência numa mesma rodada do provider; tools inseguras seguem seriais.
+- **Passos por agente + uso/custo** — runs expõem feed de passos por agente,
+  wrap-up do último passo e metadata de uso/custo (`run.usage`/`run.cost`).
+- **Saída de tool limitada** — resultados grandes são clipados e transbordam
+  para um arquivo gerenciado, recuperável via `builtin:big_output`, sem
+  inundar a janela de contexto.
+- **Failover de busca web** — o modo `auto` alterna entre providers
+  configurados com cooldown por provider.
+- **Expansão de commands** — slash commands do repo/workspace são expandidos
+  server-side com overrides por run.
+
+## 18. Workspace e refinamentos de UX
+
+- **IDE estilo VS Code** (`/ide`) — views Explorer/Busca/SCM/Outline/Zen sobre
+  a worktree vinculada ao chat, abas de editor e painéis laterais
+  Chat/PRs/Testes.
+
+![Workbench da IDE](../screenshots/ide-workbench.png)
+
+- **Aba Mudanças do workspace** — mostra o **diff da run**, incluindo
+  alterações commitadas pelo agente na branch da worktree (não só a árvore de
+  trabalho).
+- **View de fonte markdown** — mensagens do assistente alternam entre
+  markdown renderizado e fonte crua, com copiar.
+- **Secrets de agente no env** — secrets chave→valor configurados em nível
+  global de admin e por usuário injetados nos jobs `shell_exec` e no terminal
+  do workspace; o token do GitHub da integração entra por padrão.
+- **Loop visual do browser** — `browser_navigate`/`browser_observe`/
+  `browser_act`/`browser_screenshot` (Playwright) com OCR local para loops de
+  raciocínio visual.
+- **Redesign das Configurações** — o modal usa seções categorizadas (Combos,
+  Agentes, Manutenção, …) com barra de salvar unificada.
+
+![Modal de Configurações](../screenshots/settings-modal.png)
+
+## 19. Manutenção (retenção de chats)
+
+- **Configurações → Manutenção** — retenção de chats/logs por usuário (dias),
+  tamanho do banco, última/próxima execução agendada, além de prévia **dry
+  run** e **executar agora**.
+- A passada agendada remove chats/memórias expirados (destilando fatos
+  duráveis antes) e faz vacuum do banco — em cima do sweep global do
+  `RetentionService` da seção 9.
+
+![Configurações → Manutenção](../screenshots/settings-maintenance.png)
+
 ## Referência rápida de API
 
 | Superfície | Rota |
@@ -184,5 +291,8 @@ faz a próxima run reprocessar `[resumo] + cauda` em vez do histórico inteiro.
 | Filhos | `GET /api/v1/chats/{id}/children` |
 | Runs ativas | `GET /api/v1/chats/runs` |
 | Binding de repo | `GET`/`PUT /api/v1/chats/{id}/workspace-repo` |
-| Automações | `GET`/`POST`/`PUT`/`DELETE /api/v1/automations[/{id}]` (+ `/run`) |
+| Automações | `GET`/`POST`/`PUT`/`DELETE /api/v1/automations[/{id}]` (+ `/run`, `/run-now`) |
+| Combos | `GET`/`POST`/`PUT`/`DELETE /api/v1/combos[/{id}]` (+ `/{id}/status`) |
+| Personas | `GET`/`POST`/`PUT`/`DELETE /api/v1/agent-personas[/{id}]` (+ `/{id}/message`, `/{id}/audit`) |
+| Agentes externos | `GET /api/v1/external-agents/detect` |
 | Memórias | via tools `builtin:memory_*` |
