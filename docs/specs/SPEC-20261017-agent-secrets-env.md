@@ -135,4 +135,4 @@ DELETE /api/v1/configs/secrets/{name}     → 200 { "status": true }            
 | Item | Link |
 | --- | --- |
 | Issue | https://github.com/afonsoft/open-webui/issues/445 |
-| Branch | `feature/agent-20261017-chat-workspace-secrets-browser` |
+| PR/commit | #447 · 72e1bcabe |

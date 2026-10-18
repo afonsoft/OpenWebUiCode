@@ -91,4 +91,4 @@
 | Item | Link |
 | --- | --- |
 | Issue | https://github.com/afonsoft/open-webui/issues/443 |
-| Branch | `feature/agent-20261017-chat-workspace-secrets-browser` |
+| PR/commit | #447 · 72e1bcabe |
