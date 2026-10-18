@@ -1,0 +1,44 @@
+# Open WebUI (.NET) — produção: imagem do GHCR + watchtower (auto-update).
+#
+#   docker compose -f docker-compose.prod.yaml up -d
+#
+# App: http://localhost:3032 (WEBUI_PORT no .env)
+# Imagem: ghcr.io/afonsoft/open-webui:latest (amd64+arm64, publicada em cada
+# release v*.*.* pelo workflow release.yml).
+# Watchtower: a cada 5min verifica se :latest mudou; se mudou, faz pull,
+# recria o container e apaga a imagem antiga (--cleanup). Escopo limitado
+# por label — só serviços com com.centurylinklabs.watchtower.enable=true.
+# Conexões com providers: .env no primeiro boot ou Configurações → Conexões.
+# Build local a partir do fonte: docker-compose.yaml (raiz do repositório).
+
+services:
+  openwebui:
+    image: ghcr.io/afonsoft/open-webui:latest
+    container_name: openwebui
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    ports:
+      - "${WEBUI_PORT:-3032}:8080"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - openwebui:/data
+    deploy:
+      resources:
+        limits:
+          memory: ${WEBUI_MEM_LIMIT:-4g}
+    restart: unless-stopped
+
+  watchtower:
+    image: nickfedor/watchtower:1.23.1
+    container_name: openwebui-watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Poll 5min, só containers com a label enable, remove imagem antiga,
+    # rolling restart (o container antigo só morre depois do novo subir).
+    command: --interval 300 --cleanup --label-enable --rolling-restart
+    restart: unless-stopped
+
+volumes:
+  openwebui:

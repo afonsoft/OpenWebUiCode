@@ -101,11 +101,24 @@ jobs:
             ./publish/openwebui-win-x64.zip
           retention-days: 30
 
+  # Cada arquitetura é buildada em runner nativo (ubuntu-24.04-arm é gratuito
+  # em repos públicos) e publicada por digest; as tags multi-arch são criadas
+  # no merge-manifests. QEMU seria ~5x mais lento para publish self-contained
+  # + wasm-tools + Chromium. O Dockerfile resolve RID/gh/Playwright por
+  # `uname -m`, então funciona nativo em ambas as plataformas.
   publish-docker:
-    name: 🐳 Publish Docker Image
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: 🐳 Build Image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     needs: [validate-tag, build-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -123,18 +136,64 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🐳 Build and Push Docker Image (GHCR)
+      - name: 🐳 Build and Push by Digest
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc   # v7.4.0
         with:
           context: .
           file: ./Dockerfile
-          push: true
-          load: true
-          tags: |
-            ghcr.io/afonsoft/open-webui:${{ needs.validate-tag.outputs.version }}
-            ghcr.io/afonsoft/open-webui:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,"name=ghcr.io/${{ github.repository }}",push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }},ignore-error=true
+
+      - name: 📤 Export Digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: 📤 Upload Digest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7
+        with:
+          name: digest-${{ matrix.platform }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-manifests:
+    name: 🏷️ Tag Multi-Arch Manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [validate-tag, publish-docker]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 📥 Download Digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with:
+          pattern: digest-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069   # v4.4.1
+
+      - name: 🔐 Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f   # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Create Multi-Arch Tags (GHCR)
+        run: |
+          VER="${{ needs.validate-tag.outputs.version }}"
+          docker buildx imagetools create \
+            -t "ghcr.io/${{ github.repository }}:$VER" \
+            -t "ghcr.io/${{ github.repository }}:latest" \
+            $(printf "ghcr.io/${{ github.repository }}@sha256:%s " /tmp/digests/*)
 
       # Docker Hub publica afonsoft/open-webui quando os secrets DOCKERHUB_*
       # existirem no repo — sem eles os steps abaixo são pulados.
@@ -155,16 +214,36 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           VER="${{ needs.validate-tag.outputs.version }}"
-          docker tag ghcr.io/afonsoft/open-webui:$VER "$DOCKERHUB_USERNAME/open-webui:$VER"
-          docker tag ghcr.io/afonsoft/open-webui:$VER "$DOCKERHUB_USERNAME/open-webui:latest"
-          docker push "$DOCKERHUB_USERNAME/open-webui:$VER"
-          docker push "$DOCKERHUB_USERNAME/open-webui:latest"
+          docker buildx imagetools create \
+            -t "$DOCKERHUB_USERNAME/open-webui:$VER" \
+            -t "$DOCKERHUB_USERNAME/open-webui:latest" \
+            "ghcr.io/${{ github.repository }}:$VER"
+
+  # Registra o deployment na página /deployments do repo: o key `environment`
+  # cria o registro automaticamente e auto-cria o environment "production"
+  # na primeira run. `url` vem da repo variable DEPLOY_URL (opcional).
+  deploy:
+    name: 🚢 Register Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [validate-tag, merge-manifests]
+    permissions:
+      contents: read
+      deployments: write
+    environment:
+      name: production
+      url: ${{ vars.DEPLOY_URL }}
+    steps:
+      - name: 🚢 Image published — hosts pull via watchtower
+        run: |
+          echo "ghcr.io/${{ github.repository }}:${{ needs.validate-tag.outputs.version }} published (amd64+arm64)."
+          echo "Hosts on docker-compose.prod.yaml atualizam sozinhos via watchtower (poll 5min)."
 
   create-release:
     name: 📝 Create GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [validate-tag, build-release, publish-docker]
+    needs: [validate-tag, build-release, merge-manifests]
     permissions:
       contents: write
     steps:
