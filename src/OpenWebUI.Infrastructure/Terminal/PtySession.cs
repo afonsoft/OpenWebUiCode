@@ -112,6 +112,23 @@ public sealed class PtySession : IPtySession
         startInfo.ArgumentList.Add($"stty cols {_cols} rows {_rows} 2>/dev/null; exec {InnerCommand()}");
         startInfo.ArgumentList.Add("/dev/null");
         startInfo.Environment["TERM"] = "xterm-256color";
+        startInfo.Environment["COLORTERM"] = "truecolor";
+        // bash -l precisa de HOME para achar o rc do usuário (paridade
+        // agent-harness); serviço bare-metal pode vir sem ele.
+        if (!startInfo.Environment.ContainsKey("HOME"))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrEmpty(home))
+            {
+                startInfo.Environment["HOME"] = home;
+            }
+        }
+
+        if (_command is not { Count: > 0 })
+        {
+            ApplyDefaultShellColors(startInfo);
+        }
+
         if (_env is not null)
         {
             // Secrets do usuário ∪ global ∪ managed GitHub (SPEC-20261017-agent-secrets-env).
@@ -125,6 +142,42 @@ public sealed class PtySession : IPtySession
             ?? throw new InvalidOperationException("Falha ao iniciar o processo do terminal.");
         _pumpCts = new CancellationTokenSource();
         _pumpTask = Task.Run(() => PumpAsync(_pumpCts.Token), _pumpCts.Token);
+    }
+
+    /// <summary>ls --color: paleta escura quando o ambiente não traz uma.</summary>
+    private const string DefaultLsColors =
+        "di=01;34:ln=01;36:so=01;35:pi=33:ex=01;32:bd=01;33:cd=01;33:" +
+        "su=01;37;41:sg=01;30;43:tw=01;30;42:ow=01;34;42:st=01;37;44:" +
+        "*.tar=01;31:*.tgz=01;31:*.zip=01;31:*.gz=01;31:*.bz2=01;31:*.xz=01;31:" +
+        "*.jpg=01;35:*.jpeg=01;35:*.png=01;35:*.gif=01;35:*.svg=01;35:" +
+        "*.mp4=01;35:*.log=00;33:*.md=01;36:*.json=00;36";
+
+    /// <summary>
+    /// Shim avaliado antes de cada prompt: roda uma vez (guard
+    /// <c>__owui_done</c>), define aliases de cor e troca a PS1 somente
+    /// quando ela ainda é o default do bash (<c>\s-\v\$ </c>) — um rc do
+    /// usuário que configure PS1/PROMPT_COMMAND vence sem disputa.
+    /// </summary>
+    private const string DefaultShellColorShim =
+        """[ -n "${__owui_done:-}" ] || { __owui_done=1; alias ls='ls --color=auto' 2>/dev/null; alias grep='grep --color=auto' 2>/dev/null; alias egrep='egrep --color=auto' 2>/dev/null; alias fgrep='fgrep --color=auto' 2>/dev/null; alias ll='ls -alF --color=auto' 2>/dev/null; alias la='ls -A --color=auto' 2>/dev/null; case "$PS1" in '\s-\v\$ ') PS1='\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ ';; esac; }""";
+
+    /// <summary>
+    /// Defaults de cor do shell interativo default — preenche somente o
+    /// que está vazio. LS_COLORS/PROMPT_COMMAND herdados, o .bashrc do
+    /// usuário e o <c>_env</c> do caller sempre prevalecem; comandos
+    /// custom (<c>_command</c>) não recebem shim nenhum.
+    /// </summary>
+    private static void ApplyDefaultShellColors(ProcessStartInfo startInfo)
+    {
+        if (!startInfo.Environment.ContainsKey("LS_COLORS"))
+        {
+            startInfo.Environment["LS_COLORS"] = DefaultLsColors;
+        }
+
+        if (!startInfo.Environment.ContainsKey("PROMPT_COMMAND"))
+        {
+            startInfo.Environment["PROMPT_COMMAND"] = DefaultShellColorShim;
+        }
     }
 
     /// <summary>Comando interno do PTY — login bash ou argv single-quoted.</summary>

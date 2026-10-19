@@ -108,6 +108,96 @@ public class TerminalPtyTests
         await session.DisposeAsync();
     }
 
+    [Test]
+    public async Task PtySession_ShellPadrao_ExportaEnvDeCor()
+    {
+        if (!File.Exists("/usr/bin/script"))
+        {
+            Assert.Ignore("binário 'script' indisponível neste host");
+        }
+
+        var dir = Path.Join(Path.GetTempPath(), $"pty-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var output = new StringBuilder();
+        var exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var session = new PtySession(
+            dir, NullLogger<PtySession>.Instance, cols: 80, rows: 24);
+        session.OutputReceived += chunk => output.Append(chunk);
+        session.Exited += code => exited.TrySetResult(code);
+        session.Start();
+
+        // SPEC terminal-color RF-002/003: TERM+COLORTERM sempre, HOME
+        // garantido e LS_COLORS presente (default não-destrutivo).
+        await session.WriteAsync(
+            "echo \"E=$TERM|$COLORTERM|${LS_COLORS:+yes}|${HOME:+yes}\"\n");
+        await SpinWaitAsync(
+            () => output.ToString().Contains("E=xterm-256color|truecolor|yes|yes"), 10_000);
+
+        await session.WriteAsync("exit\n");
+        await exited.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await session.DisposeAsync();
+    }
+
+    [Test]
+    public async Task PtySession_ShellPadrao_AliasLsComCor()
+    {
+        if (!File.Exists("/usr/bin/script"))
+        {
+            Assert.Ignore("binário 'script' indisponível neste host");
+        }
+
+        var dir = Path.Join(Path.GetTempPath(), $"pty-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var output = new StringBuilder();
+        var exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var session = new PtySession(
+            dir, NullLogger<PtySession>.Instance, cols: 80, rows: 24);
+        session.OutputReceived += chunk => output.Append(chunk);
+        session.Exited += code => exited.TrySetResult(code);
+        session.Start();
+
+        // O shim via PROMPT_COMMAND roda antes do 1º prompt — quando o
+        // input chega, o alias já está definido (RF-003).
+        await session.WriteAsync("alias ls\n");
+        await SpinWaitAsync(() => output.ToString().Contains("--color=auto"), 10_000);
+
+        await session.WriteAsync("exit\n");
+        await exited.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await session.DisposeAsync();
+    }
+
+    [Test]
+    public async Task PtySession_ComandoCustom_SemShimDeCor()
+    {
+        if (!File.Exists("/usr/bin/script"))
+        {
+            Assert.Ignore("binário 'script' indisponível neste host");
+        }
+
+        var dir = Path.Join(Path.GetTempPath(), $"pty-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var output = new StringBuilder();
+        var exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // argv custom: TERM/COLORTERM/HOME são universais, mas o shim de
+        // cor (aliases/__owui) fica restrito ao shell default (RF-003).
+        var session = new PtySession(
+            dir, NullLogger<PtySession>.Instance, cols: 80, rows: 24,
+            command: ["env"]);
+        session.OutputReceived += chunk => output.Append(chunk);
+        session.Exited += code => exited.TrySetResult(code);
+        session.Start();
+
+        await SpinWaitAsync(
+            () => output.ToString().Contains("COLORTERM=truecolor"), 10_000);
+        Assert.That(output.ToString(), Does.Not.Contain("__owui"));
+
+        await exited.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await session.DisposeAsync();
+    }
+
     // ---------------- TerminalSessionManager ----------------
 
     private sealed class TestEnv : IHostEnvironment
