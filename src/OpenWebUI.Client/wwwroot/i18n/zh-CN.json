@@ -1135,5 +1135,17 @@
   "settings.personas_none": "暂无人格。",
   "settings.persona_name": "人格名称",
   "settings.persona_prompt": "系统提示词",
-  "settings.persona_editing": "编辑: {{name}}"
+  "settings.persona_editing": "编辑: {{name}}",
+  "admin.tab_policies": "",
+  "admin.policies_new": " (hard-deny)",
+  "admin.policies_action": "",
+  "admin.policies_resource": " (glob)",
+  "admin.policies_note": "",
+  "admin.policies_hint": "deny  shell:rm *, openai/*, mcp:filesystem, skill:name",
+  "admin.policies_empty": "。",
+  "admin.policies_simulate": "",
+  "admin.policies_test": "",
+  "admin.policies_denied": "",
+  "admin.policies_allowed": " ()",
+  "admin.policies_denials": ""
 }

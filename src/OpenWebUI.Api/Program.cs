@@ -45,6 +45,7 @@ builder.Services.AddScoped<ToolOutputService>();
 builder.Services.AddHostedService<RetentionScheduler>();
 builder.Services.AddScoped<OAuthService>();
 builder.Services.AddScoped<PermissionService>();
+builder.Services.AddScoped<PolicyService>();
 builder.Services.AddScoped<EmbeddingService>();
 builder.Services.AddScoped<RagService>();
 builder.Services.AddScoped<ToolExecutor>();
@@ -511,6 +512,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapTaskEndpoints();
     app.MapApiEndpoints();
     app.MapGroupEndpoints();
+    app.MapAdminPolicyEndpoints();
     app.MapOAuthEndpoints();
     app.MapKnowledgeEndpoints();
     app.MapToolEndpoints();

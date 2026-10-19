@@ -340,6 +340,70 @@
                 </div>
             }
         }
+        else if (_tab == "policies")
+        {
+            <div class="card-list">
+                <div class="card-row">
+                    <div class="flex flex-col gap-2 w-full text-sm py-1">
+                        <div class="font-medium">@L["admin.policies_new"]</div>
+                        <div class="flex flex-wrap gap-2">
+                            <select class="input w-44" @bind="_polAction" aria-label="@L["admin.policies_action"]">
+                                @foreach (var a in PolicyActions) { <option value="@a">@a</option> }
+                            </select>
+                            <input class="input flex-1 min-w-40" placeholder="shell:rm *" @bind="_polResource" aria-label="@L["admin.policies_resource"]" />
+                            <input class="input flex-1 min-w-40" placeholder="@L["admin.policies_note"]" @bind="_polNote" aria-label="@L["admin.policies_note"]" />
+                            <button class="button-sm" @onclick="CreatePolicyAsync">@L["common.add"]</button>
+                        </div>
+                        <span class="field-note">@L["admin.policies_hint"]</span>
+                    </div>
+                </div>
+                @if (_policies.Count == 0)
+                {
+                    <div class="card-row"><span class="text-sm text-gray-500">@L["admin.policies_empty"]</span></div>
+                }
+                @foreach (var st in _policies)
+                {
+                    <div class="card-row">
+                        <div class="flex items-center gap-2 w-full text-sm">
+                            <span class="shrink-0 text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700">@st.Action</span>
+                            <code class="flex-1 truncate">@st.Resource</code>
+                            <span class="text-gray-500 text-xs truncate">@st.Note</span>
+                            <button class="msg-action" @onclick="() => DeletePolicyAsync(st.Id)">@L["common.delete"]</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="card-list mt-3">
+                <div class="card-row">
+                    <div class="flex flex-wrap items-center gap-2 w-full text-sm py-1">
+                        <span class="font-medium">@L["admin.policies_simulate"]</span>
+                        <select class="input w-44" @bind="_polSimAction" aria-label="@L["admin.policies_action"]">
+                            @foreach (var a in PolicyActions) { <option value="@a">@a</option> }
+                        </select>
+                        <input class="input flex-1 min-w-40" @bind="_polSimResource" aria-label="@L["admin.policies_resource"]" />
+                        <button class="button-sm" @onclick="SimulatePolicyAsync">@L["admin.policies_test"]</button>
+                        @if (_polSimResult is not null)
+                        {
+                            <span>@(_polSimResult.Denied ? L["admin.policies_denied"] : L["admin.policies_allowed"])</span>
+                        }
+                    </div>
+                </div>
+                @if (_policyDenials.Count > 0)
+                {
+                    <div class="card-row"><span class="text-xs text-gray-500">@L["admin.policies_denials"]</span></div>
+                    @foreach (var d in _policyDenials.Take(10))
+                    {
+                        <div class="card-row">
+                            <div class="flex gap-2 w-full text-xs">
+                                <span class="shrink-0">@d.Action</span>
+                                <code class="flex-1 truncate">@d.Resource</code>
+                                <span class="text-gray-500 truncate">@d.UserId</span>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        }
         else if (_tab == "config")
         {
             if (_adminConfig is null || _appConfig is null)
@@ -1566,6 +1630,7 @@
         new("evaluations", "admin.tab_evaluations", "M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"),
         new("leaderboard", "admin.tab_leaderboard", "M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 0 1-.982-3.172M9.497 14.25a7.454 7.454 0 0 0 .981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 0 0 7.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 0 0 2.748 1.35m8.272-6.842V4.5c0 2.108-.966 3.99-2.48 5.228m2.48-5.492a46.32 46.32 0 0 1 2.916.52 6.003 6.003 0 0 1-5.395 4.972m0 0a6.726 6.726 0 0 1-2.749 1.35m0 0a6.772 6.772 0 0 1-3.044 0"),
         new("config", "admin.tab_config", "M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.273.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.93.78-.165.398-.143.854.108 1.204l.526.738a1.125 1.125 0 0 1-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.318-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.107-1.204a1.125 1.125 0 0 0-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z"),
+        new("policies", "admin.tab_policies", "M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"),
     ];
 
     private static AdminNavItem[] NavItems() => AllNavItems;
@@ -1574,7 +1639,7 @@
     [
         new("admin.nav_manage", [AllNavItems[0], AllNavItems[1], AllNavItems[2]]),
         new("admin.nav_insights", [AllNavItems[3], AllNavItems[4], AllNavItems[5]]),
-        new("admin.nav_system", [AllNavItems[6]]),
+        new("admin.nav_system", [AllNavItems[6], AllNavItems[7]]),
     ];
 
     private (string Key, string Label)[] PermFlags =>
@@ -1600,6 +1665,16 @@
     private string _tab = "users";
     private int _fbPage;
     private string _configTab = "general";
+    private List<AdminPolicyStatementResponse> _policies = [];
+    private List<AdminPolicyDenialResponse> _policyDenials = [];
+    private AdminPolicySimulateResponse? _polSimResult;
+    private string _polAction = "tool.use";
+    private string _polResource = "";
+    private string _polNote = "";
+    private string _polSimAction = "tool.use";
+    private string _polSimResource = "";
+    private static readonly string[] PolicyActions =
+        ["tool.use", "provider.use", "model.use", "integration.use"];
     private List<McpServerResponse> _mcpServers = [];
     private readonly Dictionary<string, List<McpToolResponse>> _mcpTools = new();
     private readonly HashSet<string> _mcpExpanded = [];
@@ -1827,6 +1902,8 @@
         _adminConfig = await Api.GetAdminConfigAsync();
         _appConfig = await Api.GetAppConfigAsync();
         _mcpServers = await Api.GetMcpServersAsync();
+        _policies = await Api.GetAdminPoliciesAsync() ?? [];
+        _policyDenials = await Api.GetAdminPolicyDenialsAsync() ?? [];
         foreach (var server in _mcpServers)
         {
             _mcpTools[server.Id] = await Api.GetMcpToolsAsync(server.Id);
@@ -2389,6 +2466,8 @@
         {
             ResetMcpForm();
             _mcpServers = await Api.GetMcpServersAsync();
+        _policies = await Api.GetAdminPoliciesAsync() ?? [];
+        _policyDenials = await Api.GetAdminPolicyDenialsAsync() ?? [];
         }
     }
 
@@ -2402,6 +2481,8 @@
         if (updated is not null)
         {
             _mcpServers = await Api.GetMcpServersAsync();
+        _policies = await Api.GetAdminPoliciesAsync() ?? [];
+        _policyDenials = await Api.GetAdminPolicyDenialsAsync() ?? [];
         }
     }
 
@@ -2443,6 +2524,8 @@
         {
             var count = await Api.RefreshMcpServerAsync(server.Id);
             _mcpServers = await Api.GetMcpServersAsync();
+        _policies = await Api.GetAdminPoliciesAsync() ?? [];
+        _policyDenials = await Api.GetAdminPolicyDenialsAsync() ?? [];
             var updated = _mcpServers.FirstOrDefault(s => s.Id == server.Id);
             if (count >= 0)
             {
@@ -2736,12 +2819,44 @@
     protected override void OnParametersSet()
     {
         _tab = Tab is "users" or "groups" or "analytics" or "evaluations"
-            or "leaderboard" or "config" or "chats"
+            or "leaderboard" or "config" or "chats" or "policies"
             ? Tab
             : "users";
     }
 
     private void SetTab(string tab) => Nav.NavigateTo($"/admin/{tab}");
+
+    /// <summary>Cria statement de policy (admin).</summary>
+    private async Task CreatePolicyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_polResource))
+        {
+            return;
+        }
+        var created = await Api.CreateAdminPolicyAsync(_polAction, _polResource, _polNote);
+        if (created is not null)
+        {
+            _policies.Add(created);
+            _polResource = _polNote = "";
+        }
+    }
+
+    /// <summary>Remove statement de policy.</summary>
+    private async Task DeletePolicyAsync(string id)
+    {
+        if (await Api.DeleteAdminPolicyAsync(id))
+        {
+            _policies.RemoveAll(s => s.Id == id);
+        }
+    }
+
+    /// <summary>Dry-run: mostra qual statement casaria.</summary>
+    private async Task SimulatePolicyAsync()
+    {
+        _polSimResult = string.IsNullOrWhiteSpace(_polSimResource)
+            ? null
+            : await Api.SimulateAdminPolicyAsync(_polSimAction, _polSimResource);
+    }
 
     private async Task AddUserAsync()
     {

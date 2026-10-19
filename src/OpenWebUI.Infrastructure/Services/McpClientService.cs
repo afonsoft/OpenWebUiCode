@@ -26,6 +26,7 @@ namespace OpenWebUI.Infrastructure.Services;
 public partial class McpClientService(
     AppDbContext db,
     HybridCache cache,
+    PolicyService? policies = null,
     SkillDiscoveryService? skills = null,
     ILogger<McpClientService>? logger = null)
 {
@@ -137,6 +138,15 @@ public partial class McpClientService(
         if (!server.Enabled)
         {
             return $"Erro: servidor MCP '{server.Name}' está desabilitado.";
+        }
+
+        // Policies admin (SPEC-20261018-policies-admin RF-004): hard-deny
+        // de integração antes de conectar.
+        if (policies is not null
+            && await policies.DenyAsync(PolicyService.ActionIntegrationUse,
+                new[] { $"mcp:{server.Id}", $"mcp:{server.Name}" }, server.UserId, ct) is { } denied)
+        {
+            return "Erro: " + PolicyService.DeniedMessage(denied, $"mcp:{server.Name}");
         }
 
         try

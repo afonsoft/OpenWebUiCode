@@ -1629,6 +1629,32 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<AnalyticsResponse?> GetAnalyticsAsync(int days = 30) =>
         SendAsync<AnalyticsResponse>(HttpMethod.Get, $"/api/v1/analytics?days={days}");
 
+    // ---------------- Policies admin (SPEC-20261018-policies-admin) ----------------
+
+    /// <summary>Lista statements de policy administrativa.</summary>
+    public Task<List<AdminPolicyStatementResponse>?> GetAdminPoliciesAsync() =>
+        SendAsync<List<AdminPolicyStatementResponse>>(HttpMethod.Get, "/api/v1/admin/policies");
+
+    /// <summary>Cria statement de policy.</summary>
+    public Task<AdminPolicyStatementResponse?> CreateAdminPolicyAsync(
+        string action, string resource, string? note) =>
+        SendAsync<AdminPolicyStatementResponse>(HttpMethod.Post,
+            "/api/v1/admin/policies", new { action, resource, note });
+
+    /// <summary>Remove statement de policy.</summary>
+    public Task<bool> DeleteAdminPolicyAsync(string id) =>
+        SendStatusAsync(HttpMethod.Delete, $"/api/v1/admin/policies/{id}");
+
+    /// <summary>Dry-run: qual statement casaria para (action, resource).</summary>
+    public Task<AdminPolicySimulateResponse?> SimulateAdminPolicyAsync(
+        string action, string resource) =>
+        SendAsync<AdminPolicySimulateResponse>(HttpMethod.Post,
+            "/api/v1/admin/policies/simulate", new { action, resource });
+
+    /// <summary>Últimos bloqueios por policy (auditoria).</summary>
+    public Task<List<AdminPolicyDenialResponse>?> GetAdminPolicyDenialsAsync() =>
+        SendAsync<List<AdminPolicyDenialResponse>>(HttpMethod.Get, "/api/v1/admin/policies/denials");
+
     // ---------------- Grupos (RBAC) ----------------
 
     /// <summary>Lista os grupos visíveis ao usuário (admin vê todos).</summary>
@@ -2017,3 +2043,18 @@ public sealed record OllamaTagsResponse(IReadOnlyList<OllamaModelInfo> Models);
 /// <param name="Size">Tamanho em bytes.</param>
 /// <param name="ModifiedAt">Última modificação (ISO-8601 do Ollama).</param>
 public sealed record OllamaModelInfo(string? Name, long? Size, string? ModifiedAt);
+
+
+/// <summary>Statement de policy administrativa.</summary>
+public sealed record AdminPolicyStatementResponse(
+    string Id, int Order, string Action, string Resource, string Effect,
+    string? Note, long CreatedAt);
+
+/// <summary>Bloqueio auditado por policy.</summary>
+public sealed record AdminPolicyDenialResponse(
+    string Id, string? UserId, string Action, string Resource,
+    string StatementId, long CreatedAt);
+
+/// <summary>Resultado do dry-run de policy.</summary>
+public sealed record AdminPolicySimulateResponse(
+    bool Denied, AdminPolicyStatementResponse? Matched);

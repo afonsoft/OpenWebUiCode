@@ -21,7 +21,8 @@ public class ProviderService(
     ConfigService config,
     ILogger<ProviderService> logger,
     HybridCache cache,
-    IConfiguration cfg)
+    IConfiguration cfg,
+    PolicyService? policies = null)
 {
     /// <summary>Limites de retry lidos de <c>Providers:*</c>
     /// (SPEC-20261016-provider-resilience).</summary>
@@ -415,6 +416,22 @@ public class ProviderService(
         var connections = await ApplyUserKeysAsync(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
+
+        // Policies admin (SPEC-20261018-policies-admin RF-003): hard-deny
+        // por provider (provider.use) e por modelo (model.use) — avaliado
+        // antes de qualquer request sair.
+        if (policies is not null)
+        {
+            var deniedProvider = await policies.DenyAsync(PolicyService.ActionProviderUse,
+                new[] { provider, $"{provider}/{request.Model}" }, userId, ct)
+                ?? await policies.DenyAsync(PolicyService.ActionModelUse,
+                    new[] { request.Model, $"{provider}/{request.Model}" }, userId, ct);
+            if (deniedProvider is not null)
+            {
+                throw new InvalidOperationException(
+                    PolicyService.DeniedMessage(deniedProvider, request.Model));
+            }
+        }
 
         var lines = provider switch
         {
