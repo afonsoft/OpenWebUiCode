@@ -290,14 +290,33 @@
     {
         // O scan de blocos de código só vale quando o conteúdo mudou —
         // chamar a cada render disparava um interop + querySelectorAll por
-        // bolha por keystroke do composer.
-        if (_codeExecEnabled && Message.Role == "assistant"
-            && DisplayContent != _enhancedFor)
+        // bolha por keystroke do composer. SPEC-20261019-codeblock-toolbar:
+        // a barra (copiar/formatar/wrap/label) não depende de codeExec —
+        // a flag só controla o botão Executar.
+        if (Message.Role == "assistant" && DisplayContent != _enhancedFor)
         {
             _enhancedFor = DisplayContent;
-            await JS.InvokeVoidAsync("openwebui.codeExec.enhance", _contentRef);
+            await JS.InvokeVoidAsync("openwebui.codeBlocks.enhance",
+                _contentRef, CodeBlockOptions());
         }
     }
+
+    /// <summary>Labels localizados + flag do botão Executar para a barra de blocos.</summary>
+    private object CodeBlockOptions() => new
+    {
+        run = _codeExecEnabled,
+        labels = new
+        {
+            copy = L["chat.copy"],
+            copied = L["chat.copied"],
+            format = L["chat.code.format"],
+            minify = L["chat.code.minify"],
+            wrap = L["chat.code.wrap"],
+            unwrap = L["chat.code.unwrap"],
+            run = L["chat.code.run"],
+            invalidJson = L["chat.code.invalid_json"],
+        },
+    };
 
     /// <summary>Copia o markdown cru (DisplayContent — respeita a versão exibida) e mostra feedback.</summary>
     private async Task CopyAsync()

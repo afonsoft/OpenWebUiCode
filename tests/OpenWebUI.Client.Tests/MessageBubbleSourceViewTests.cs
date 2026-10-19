@@ -125,4 +125,32 @@ public sealed class MessageBubbleSourceViewTests
         Assert.That(invoke.Arguments[0], Is.EqualTo(md),
             "copiar envia o markdown cru (DisplayContent), nunca o HTML renderizado");
     }
+
+    // ---- SPEC-20261019-codeblock-toolbar ----
+
+    [Test]
+    public void CodeBlocks_AssistenteContent_DisparaEnhance()
+    {
+        using var ctx = Setup();
+        var cut = Render(ctx, Assistant("```bash\nls -la\n```"));
+
+        cut.WaitForAssertion(() =>
+        {
+            var invoke = ctx.JSInterop.VerifyInvoke("openwebui.codeBlocks.enhance");
+            Assert.That(invoke.Arguments, Has.Count.EqualTo(2),
+                "enhance recebe o contentRef e o objeto de opções (run + labels)");
+        });
+    }
+
+    [Test]
+    public void CodeBlocks_UserMessage_NaoDisparaEnhance()
+    {
+        using var ctx = Setup();
+        Render(ctx, new ChatMessageModel("m1", "user", "```bash\nls\n```", null, 0));
+
+        Assert.That(
+            ctx.JSInterop.Invocations.Where(
+                i => i.Identifier == "openwebui.codeBlocks.enhance"),
+            Is.Empty, "bolha de usuário não renderiza markdown — sem toolbar");
+    }
 }
