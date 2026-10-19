@@ -64,6 +64,12 @@ public static class ConfigEndpoints
         // (`memsync.enabled=false` global é negativa absoluta de custo).
         group.MapGet("/user/memory-sync", GetUserMemorySyncAsync);
         group.MapPut("/user/memory-sync", UpdateUserMemorySyncAsync);
+
+        // Overrides do loop do agente por usuário (SPEC-20261019-
+        // run-autonomy-continue RF-004) — u:{id}:agentLoop.* sobrescreve
+        // o agentLoop.* global; null na camada do usuário = herda.
+        group.MapGet("/user/agent-loop", GetUserAgentLoopAsync);
+        group.MapPut("/user/agent-loop", UpdateUserAgentLoopAsync);
         group.MapPut("/memory-sync", UpdateGlobalMemorySyncAsync);
 
         group.MapGet("/ratelimit", GetRateLimitAsync);
@@ -640,6 +646,63 @@ public static class ConfigEndpoints
             await config.GetAsync<bool?>("memsync.enabled", null, ct),
             await config.GetAsync<int?>("memsync.intervalHours", null, ct),
             await config.GetAsync<int?>("memsync.maxAgeDays", null, ct));
+
+    // ---------------- Agent loop (SPEC-20261019-run-autonomy-continue RF-004) ----------------
+
+    /// <summary>GET /api/v1/configs/user/agent-loop — efetivo + camadas cruas.</summary>
+    private static async Task<IResult> GetUserAgentLoopAsync(
+        HttpContext http, AppDbContext db, ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        return Results.Ok(await BuildAgentLoopResponseAsync(user.Id, config, ct));
+    }
+
+    /// <summary>PUT /api/v1/configs/user/agent-loop — override do usuário (null = herda o global).</summary>
+    private static async Task<IResult> UpdateUserAgentLoopAsync(
+        AgentLoopPrefs request, HttpContext http, AppDbContext db,
+        UserConfigOverlayService overlay, ConfigService config, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (request.MaxRounds is < 1 or > 99999
+            || request.MaxAutoChain is < 0 or > 10)
+        {
+            return Results.BadRequest(new
+            {
+                detail = "maxRounds ∈ [1,99999] e maxAutoChain ∈ [0,10].",
+            });
+        }
+        await overlay.SetUserAsync(user.Id, "agentLoop.maxRounds", request.MaxRounds, ct);
+        await overlay.SetUserAsync(user.Id, "agentLoop.autoChain", request.AutoChain, ct);
+        await overlay.SetUserAsync(user.Id, "agentLoop.maxAutoChain", request.MaxAutoChain, ct);
+        return Results.Ok(await BuildAgentLoopResponseAsync(user.Id, config, ct));
+    }
+
+    /// <summary>Monta o efetivo dobrando override do usuário sobre a camada global.</summary>
+    private static async Task<AgentLoopResponse> BuildAgentLoopResponseAsync(
+        string userId, ConfigService config, CancellationToken ct)
+    {
+        var global = new AgentLoopPrefs(
+            await config.GetAsync<int?>("agentLoop.maxRounds", null, ct),
+            await config.GetAsync<bool?>("agentLoop.autoChain", null, ct),
+            await config.GetAsync<int?>("agentLoop.maxAutoChain", null, ct));
+        var userLayer = new AgentLoopPrefs(
+            await config.GetAsync<int?>($"u:{userId}:agentLoop.maxRounds", null, ct),
+            await config.GetAsync<bool?>($"u:{userId}:agentLoop.autoChain", null, ct),
+            await config.GetAsync<int?>($"u:{userId}:agentLoop.maxAutoChain", null, ct));
+        return new AgentLoopResponse(
+            MaxRounds: Math.Clamp(userLayer.MaxRounds ?? global.MaxRounds ?? 99999, 1, 99999),
+            AutoChain: userLayer.AutoChain ?? global.AutoChain ?? true,
+            MaxAutoChain: Math.Clamp(userLayer.MaxAutoChain ?? global.MaxAutoChain ?? 3, 0, 10),
+            global, userLayer);
+    }
 
     // ---------------- Rate limiting ----------------
 

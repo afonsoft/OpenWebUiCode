@@ -162,6 +162,7 @@ public sealed class ChatRunExecutor(
         var content = new StringBuilder();
         var sinceCheckpoint = 0;
         IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
+        ChatPipeline.ToolLoopOutcome? loopOutcome = null;
         var sw = Stopwatch.StartNew();
 
         // combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada tentativa
@@ -405,12 +406,15 @@ public sealed class ChatRunExecutor(
                 };
                 // Teto de steps da run (SPEC-20261016-agent-steps-usage
                 // RF-001): min(agent.steps do kv da sub-run,
-                // agentLoop.maxRounds global — default 99999, efetivamente
-                // ilimitado; o agent.steps explícito continua vencendo).
+                // agentLoop.maxRounds — override por usuário
+                // u:{id}:agentLoop.maxRounds, global default 99999;
+                // o agent.steps explícito continua vencendo).
                 var agentSteps = await config.GetAsync<int?>(
                     $"r:{run.Id}:agent.steps", null, ct);
                 var maxSteps = Math.Min(agentSteps ?? int.MaxValue,
-                    await config.GetAsync("agentLoop.maxRounds", 99999, ct));
+                    await config.GetAsync<int?>(
+                        $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
+                    ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
                 var currentStep = 0;
                 var currentMaxSteps = 0;
                 var callbacks = new ChatPipeline.ToolLoopCallbacks(
@@ -608,6 +612,7 @@ public sealed class ChatRunExecutor(
                     effective, tools, toolExecutor, providers, ct, callbacks,
                     builtinContext, run.UserId, logger, maxSteps,
                     toolExecutor.MaxParallel, resumeSeed);
+                loopOutcome = outcome;
                 toolMessages = outcome?.ToolMessages;
                 if (outcome is not null)
                 {
@@ -688,6 +693,13 @@ public sealed class ChatRunExecutor(
             // [DONE] depois do FinishAsync: o cliente recarrega o chat ao ver o
             // marcador — a mensagem precisa já estar persistida.
             await FinishAsync(run, content.ToString(), ct, toolMessages: toolMessages);
+            // Auto-chain (SPEC-20261019-run-autonomy-continue RF-002): cap
+            // atingido com pendências → a run filha entra na fila ANTES do
+            // [DONE], então o reload do cliente já enxerga a continuação.
+            if (loopOutcome is not null)
+            {
+                await TryChainContinuationAsync(run, request, user, loopOutcome, ct);
+            }
             broadcaster.Publish(run.Id, "data: [DONE]");
             if (comboRef is not null)
             {
@@ -1100,6 +1112,145 @@ public sealed class ChatRunExecutor(
         await FinishAsync(
             run, $"Sub-agente enfileirado para o command — run `{childRun.Id}`.", ct);
         broadcaster.Publish(run.Id, "data: [DONE]");
+    }
+
+    /// <summary>Prompt sintético de retomada da auto-chain: vive só no
+    /// <c>RequestJson</c> da run filha — nunca vira mensagem user
+    /// persistida no chat (SPEC-20261019-run-autonomy-continue RF-002).</summary>
+    public const string ChainResumePrompt =
+        "Seu turno anterior atingiu o limite de passos com trabalho ainda "
+        + "pendente. Continue executando de onde parou — não resuma e não "
+        + "pergunte: retome a próxima tarefa agora.";
+
+    /// <summary>
+    /// Auto-chain no teto de steps (SPEC-20261019-run-autonomy-continue
+    /// RF-002): run <c>completed</c> com <see cref="ChatPipeline.ToolLoopOutcome.HitStepCap"/>
+    /// e pendências — ou sem lista de tarefas em modo build — ganha uma
+    /// run filha no MESMO chat (<see cref="ChatRun.ParentRunId"/> +
+    /// <c>meta.autoChain {index, of}</c>), despachada sem input do usuário.
+    /// Restrita a <c>build</c> + <c>always-allow</c> — único contexto onde
+    /// o dono declarou autonomia plena — e limitada por
+    /// <c>agentLoop.maxAutoChain</c> (default 3, clamp 0-10).
+    /// </summary>
+    private async Task TryChainContinuationAsync(
+        ChatRun run, ChatCompletionRequest request, User user,
+        ChatPipeline.ToolLoopOutcome outcome, CancellationToken ct)
+    {
+        if (!outcome.HitStepCap || outcome.PendingTodos == 0)
+        {
+            // Sem cap ou lista zerada (= trabalho concluído de verdade):
+            // encerra como sempre. PendingTodos == -1 (sem lista) segue —
+            // é o fallback autônomo do modo build.
+            return;
+        }
+        var gate = await db.Chats.AsNoTracking()
+            .Where(c => c.Id == run.ChatId)
+            .Select(c => new { c.ApprovalPreset, c.Mode })
+            .FirstOrDefaultAsync(ct);
+        if (gate is null
+            || gate.Mode != PermissionRuleset.BuildMode
+            || gate.ApprovalPreset != "always-allow")
+        {
+            return;
+        }
+        var autoChainEnabled =
+            await config.GetAsync<bool?>($"u:{user.Id}:agentLoop.autoChain", null, ct)
+            ?? await config.GetAsync("agentLoop.autoChain", true, ct);
+        if (!autoChainEnabled)
+        {
+            return;
+        }
+        var maxAutoChain = Math.Clamp(
+            await config.GetAsync<int?>($"u:{user.Id}:agentLoop.maxAutoChain", null, ct)
+                ?? await config.GetAsync("agentLoop.maxAutoChain", 3, ct),
+            0, 10);
+        var meta = ReadMetaDict(run.MetaJson);
+        var parentIndex =
+            meta.TryGetValue("autoChain", out var ac)
+            && ac is JsonElement je && je.ValueKind == JsonValueKind.Object
+            && je.TryGetProperty("index", out var ix) && ix.TryGetInt32(out var i)
+            ? i : 0;
+        if (parentIndex >= maxAutoChain)
+        {
+            logger.LogInformation(
+                "Run {RunId}: auto-chain esgotada ({Index}/{Max}) — encerrando sem filha.",
+                run.Id, parentIndex, maxAutoChain);
+            return;
+        }
+        var childIndex = parentIndex + 1;
+
+        // Histórico reconstruído do caminho ativo do chat — já inclui as
+        // tool messages e o wrap-up da run-mãe persistidos pelo FinishAsync.
+        var chat = await db.Chats.Include(c => c.Messages)
+            .FirstOrDefaultAsync(c => c.Id == run.ChatId, ct);
+        if (chat is null)
+        {
+            return;
+        }
+        var path = BranchService.WalkPath(chat);
+        var visible = await boundaries.FilterAsync(chat.Id, path, ct);
+        var history = visible
+            .Select(m => new ChatCompletionMessage(
+                m.Role, m.Content, m.ToolCallId, m.ToolCallsJson,
+                FileIds: ParseFileIds(m.FilesJson)))
+            .ToList();
+        history.Add(new ChatCompletionMessage("user", ChainResumePrompt));
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var childRun = new ChatRun
+        {
+            ChatId = run.ChatId,
+            UserId = run.UserId,
+            Model = run.Model,
+            RequestJson = JsonSerializer.Serialize(
+                request with { Messages = history }, JsonOptions),
+            ParentRunId = run.Id,
+            MetaJson = JsonSerializer.Serialize(
+                new Dictionary<string, object>
+                {
+                    ["autoChain"] = new { index = childIndex, of = maxAutoChain },
+                }, JsonOptions),
+            CreatedAt = now,
+        };
+        db.ChatRuns.Add(childRun);
+        await db.SaveChangesAsync(ct);
+
+        await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+            new
+            {
+                note = $"auto-chain {childIndex}/{maxAutoChain} → run filha "
+                    + childRun.Id,
+                childRunId = childRun.Id,
+                chainIndex = childIndex,
+                chainOf = maxAutoChain,
+            }, CancellationToken.None);
+        logger.LogInformation(
+            "Run {RunId}: cap com {Pending} tarefa(s) pendente(s) — "
+            + "auto-chain {Index}/{Max} enfileirou run filha {ChildId}.",
+            run.Id, outcome.PendingTodos, childIndex, maxAutoChain, childRun.Id);
+
+        using var scope = scopes.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ChatRunDispatcher>()
+            .Enqueue(childRun.Id);
+    }
+
+    /// <summary>Ids de anexo persistidos na mensagem (mesmo parse de ChatRunEndpoints).</summary>
+    private static List<string>? ParseFileIds(string? filesJson)
+    {
+        if (string.IsNullOrEmpty(filesJson))
+        {
+            return null;
+        }
+        try
+        {
+            var files = JsonSerializer.Deserialize<List<ChatMessageFileModel>>(
+                filesJson, JsonOptions);
+            return files is { Count: > 0 } ? files.Select(f => f.Id).ToList() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>apply_patch pode chegar como builtin por nome legado — cobre o nome cru.</summary>

@@ -8,9 +8,9 @@
 | Type | `Feature` |
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
-| Branch | `feature/devin-20261019-run-autonomy-continue` |
+| Branch | `feature/devin-20261019-run-autonomy-chain` |
 | Ticket | `[A DEFINIR — criada via create-issues após aprovação]` |
-| Status | `Approved` |
+| Status | `Done` |
 | Fonte | análise do chat `52c9929a-d3b4-45e6-9737-5d7f0688d2dc` no `/data/openwebui.db` (container `openwebui`), 2026-10-19 |
 
 ## 1. User Story
@@ -32,7 +32,7 @@ Evidência do banco do container `openwebui` (chat `52c9929a`, 38 runs, 607 `ste
 - RF-001: `ToolLoopOutcome` expõe `HitStepCap` e `PendingTodos` (contagem mais recente de itens `pending`/`in_progress` da lista `builtin_todo_write`).
 - RF-002: auto-chain no teto — run que termina com `HitStepCap && PendingTodos > 0` dispara continuação automática (steer queued sintético ou nova run encadeada), limitada por `agentLoop.maxAutoChain` (default 3, i.e. até 4×25 rounds).
 - RF-003: supressão de perguntas sob `always-allow` — o prompt base ganha linha explícita quando o preset é `always-allow` ("approvals are auto-granted — never ask for confirmation; ask only for inputs only the user can provide"); e o nudge de pending dispara também quando o turno termina no teto sem lista de tarefas populada (tratado pela chain do RF-002 como fallback `PendingTodos == -1` → continuar se `HitStepCap` e modo `build`).
-- RF-004: `agentLoop.maxRounds` (default agora **99999**), `agentLoop.autoChain` e `agentLoop.maxAutoChain` configuráveis — kv `ConfigEntries` já lido pelo executor; expor na UI de Admin Settings (seção de agente/loop) e documentar em `.env.exemplo`/`docs`.
+- RF-004: `agentLoop.maxRounds` (default agora **99999**), `agentLoop.autoChain` e `agentLoop.maxAutoChain` configuráveis **por usuário** — chaves `u:{userId}:agentLoop.*` sobrescrevem a camada global `agentLoop.*`; expostos no Settings do usuário (aba Agents, seção "Agent loop") via `GET/PUT /api/v1/configs/user/agent-loop`.
 - Telemetria: `run.MetaJson` registra `autoChain: {index, of}` e a run filha referencia `ParentRunId` (coluna já existe) para trilha de cadeia.
 
 **Out of scope:**
@@ -48,7 +48,7 @@ Evidência do banco do container `openwebui` (chat `52c9929a`, 38 runs, 607 `ste
 - `src/OpenWebUI.Api/Completions/ChatPipeline.cs` — `RunToolLoopAsync` (teto ~linhas 588/755/1073-1091), `ToolLoopOutcome` (definido no mesmo arquivo ou adjacente), `pendingTodos` (linhas 628/987-1001), `PendingTasksPrompt` (1111-1116), `DefaultSystemPrompt` (29-54).
 - `src/OpenWebUI.Api/Runs/ChatRunExecutor.cs` — resolução de `maxSteps` (405-411), `FinishAsync` (1901-1981), dispatcher/`Enqueue` em `ChatRunDispatcher.cs:46`, steers em `PollSteerAsync` (763-820).
 - `src/OpenWebUI.Api/Endpoints/ApiEndpoints.cs:364` — segundo callsite de `maxSteps` (chat completion legado) — mesmo comportamento de config.
-- Config UI: `src/OpenWebUI.Client/Pages/Admin.razor` + `ConfigService`/`ConfigEntries` — padrão de chaves `agentLoop.*`.
+- Config UI: `src/OpenWebUI.Client/Components/SettingsModal.razor` (aba Agents) + endpoints `configs/user/agent-loop` em `ConfigEndpoints.cs` — padrão de chaves `u:{id}:agentLoop.*` (mesma convenção `u:{id}:memsync.*`).
 
 **Files to read before implementing:**
 - `CLAUDE.md` · `docs/specs/SPEC-20261016-agent-steps-usage.md` · `docs/specs/SPEC-20261010-steer-queue.md` (se existir em docs/specs)
@@ -60,12 +60,14 @@ Evidência do banco do container `openwebui` (chat `52c9929a`, 38 runs, 607 `ste
 **Files to create or modify:**
 ```text
 src/OpenWebUI.Api/Completions/ChatPipeline.cs        # outcome HitStepCap/PendingTodos + prompt preset-aware
-src/OpenWebUI.Api/Runs/ChatRunExecutor.cs            # auto-chain após FinishAsync
-src/OpenWebUI.Api/Runs/ChatRunDispatcher.cs          # (se necessário) enqueue da continuação
-src/OpenWebUI.Client/Pages/Admin.razor               # campo(s) agentLoop.*
-src/OpenWebUI.Application/Contracts/*.cs             # DTO de config, se a UI precisar
-tests/OpenWebUI.Api.Tests/*.cs                       # testes de chain/cap
-.env.exemplo / docs/                                 # documentação das chaves
+src/OpenWebUI.Api/Runs/ChatRunExecutor.cs            # auto-chain após FinishAsync + u:{id}: override
+src/OpenWebUI.Api/Endpoints/ConfigEndpoints.cs       # GET/PUT /configs/user/agent-loop
+src/OpenWebUI.Api/Endpoints/ApiEndpoints.cs          # u:{id}: override no callsite legado
+src/OpenWebUI.Application/Contracts/ConfigContracts.cs # AgentLoopPrefs/AgentLoopResponse
+src/OpenWebUI.Client/Services/ApiService.cs          # Get/SetAgentLoopAsync
+src/OpenWebUI.Client/Components/SettingsModal.razor  # seção "Agent loop" na aba Agents
+src/OpenWebUI.Client/wwwroot/i18n/*.json             # 7 chaves novas × 8 locales
+tests/OpenWebUI.Api.Tests/AgentLoopAutoChainTests.cs # testes de chain/cap/settings
 ```
 
 ## 4. Requirements
@@ -84,22 +86,24 @@ tests/OpenWebUI.Api.Tests/*.cs                       # testes de chain/cap
 - **Rules:** injeção como bloco adicional após `DefaultSystemPrompt` (mesmo padrão dos demais `systemParts`); sem mudar o texto base existente.
 - **Input → Output:** request enriquecido carrega a diretiva sob always-allow.
 
-### RF-004: Config de loop na UI
-- **Description:** expor `agentLoop.maxRounds` (int, default 25, clamp 1-100), `agentLoop.autoChain` (bool, default true) e `agentLoop.maxAutoChain` (int, default 3, clamp 0-10) na seção de Agent/Loop do Admin Settings; chaves documentadas em `.env.exemplo` e `docs/`.
-- **Input → Output:** admin ajusta valores na UI → `ConfigEntries` atualizado → próxima run respeita (config já é relida por run).
+### RF-004: Config de loop por usuário
+- **Description:** expor `agentLoop.maxRounds` (int, default efetivo 99999, clamp 1-99999), `agentLoop.autoChain` (bool, default true) e `agentLoop.maxAutoChain` (int, default 3, clamp 0-10) como **override por usuário** (`u:{id}:agentLoop.*` sobre a camada global) na seção "Agent loop" da aba Agents do Settings do usuário. Requisito revisto pelo usuário: "se o usuario configurar o limite para um valor inferior tem de ter esses ajustes" — por isso per-user, não só admin.
+- **Input → Output:** usuário ajusta valores na UI → `PUT /configs/user/agent-loop` grava `u:{id}:agentLoop.*` → executor lê `u:{id}:... ?? agentLoop.* ?? default` na próxima run; `null` no PUT remove o override (volta a herdar).
 
 ## 5. API Contract
 
-Sem novos endpoints. `GET /api/v1/runs/{id}` passa a poder incluir `meta.autoChain: {index, of}` e `parentRunId` quando encadeada. Config endpoint existente passa a ler/gravar as 3 chaves `agentLoop.*` (formato já vigente de `ConfigEntries`).
+- `GET /api/v1/configs/user/agent-loop` → `AgentLoopResponse { maxRounds, autoChain, maxAutoChain, global, user }` (efetivo + camadas cruas).
+- `PUT /api/v1/configs/user/agent-loop` ← `AgentLoopPrefs { maxRounds?, autoChain?, maxAutoChain? }` — `null` num campo remove o override do usuário; valida `maxRounds ∈ [1,99999]`, `maxAutoChain ∈ [0,10]` (400).
+- `GET /api/v1/runs/{id}` passa a poder incluir `meta.autoChain: {index, of}` e `parentRunId` quando encadeada.
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** run que atinge `maxRounds` com `PendingTodos > 0` **when** `FinishAsync` completa **then** uma run filha (`ParentRunId` preenchido, `meta.autoChain.index = 1`) é despachada e executa sem input do usuário.
-- [ ] **Given** chain index = `maxAutoChain` **when** a run encadeada bate o cap de novo **then** a cadeia para (run final completed, sem nova filha).
-- [ ] **Given** run hit-cap com `PendingTodos == -1` (sem lista) em modo `build` **when** completa **then** chain dispara igualmente (fallback autônomo).
-- [ ] **Given** run hit-cap em modo `plan` ou preset não-`always-allow` **when** completa **then** NÃO há chain — comportamento atual preservado.
-- [ ] **Given** `always-allow` **when** request enriquecido **then** system prompt contém a diretiva de não pedir confirmação.
-- [ ] **Given** admin altera `agentLoop.maxRounds` para 40 **when** próxima run **then** `maxSteps` da run = 40.
+- [x] **Given** run que atinge `maxRounds` com `PendingTodos > 0` **when** `FinishAsync` completa **then** uma run filha (`ParentRunId` preenchido, `meta.autoChain.index = 1`) é despachada e executa sem input do usuário. — `AutoChain_CapComPendencias_CriaFilhasAteOLimite`
+- [x] **Given** chain index = `maxAutoChain` **when** a run encadeada bate o cap de novo **then** a cadeia para (run final completed, sem nova filha). — idem (3 runs com maxAutoChain=2)
+- [x] **Given** run hit-cap com `PendingTodos == -1` (sem lista) em modo `build` **when** completa **then** chain dispara igualmente (fallback autônomo). — `AutoChain_SemTodoList_FallbackBuildEncadeia`
+- [x] **Given** run hit-cap em modo `plan` ou preset não-`always-allow` **when** completa **then** NÃO há chain — comportamento atual preservado. — `AutoChain_PresetOuModoErrados_NaoEncadeia`
+- [x] **Given** `always-allow` **when** request enriquecido **then** system prompt contém a diretiva de não pedir confirmação. — entregue no PR #458 (testes de preset)
+- [x] **Given** usuário altera `agentLoop.maxRounds` para valor inferior **when** próxima run **then** `maxSteps` da run = valor do usuário. — todos os testes de chain rodam com `u:{id}:agentLoop.maxRounds = 2`
 
 **Edge cases:**
 
@@ -112,13 +116,13 @@ Sem novos endpoints. `GET /api/v1/runs/{id}` passa a poder incluir `meta.autoCha
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** confirmar assinatura de `ToolLoopOutcome`, ciclo de criação de run no dispatcher, onde `ApprovalPreset` chega no EnrichRequest, e padrão de chaves de config na Admin UI.
-- [ ] **T2 — Outcome:** `HitStepCap`/`PendingTodos` no outcome + preenchimento no loop (TDD: teste que bate cap e lê os campos).
-- [ ] **T3 — Chain:** continuação automática no executor com `autoChain`/`maxAutoChain`/`ParentRunId`/meta; teste de integração com executor fake/stub respeitando padrão `RunCoverageTests`.
-- [ ] **T4 — Prompt:** linha preset-aware sob `always-allow` + teste de conteúdo do system prompt.
-- [ ] **T5 — Config UI:** campos na seção de Agent do Admin + persistência nas chaves; doc `.env.exemplo`.
-- [ ] **T6 — Validation:** `dotnet build`, `dotnet test`, revisão dos ACs.
-- [ ] **T7 — Done + PR:** `Status = Done`, mover para `docs/specs/`, PR.
+- [x] **T1 — Discovery:** confirmar assinatura de `ToolLoopOutcome`, ciclo de criação de run no dispatcher, onde `ApprovalPreset` chega no EnrichRequest, e padrão de chaves de config por usuário (`u:{id}:*`).
+- [x] **T2 — Outcome:** `HitStepCap`/`PendingTodos` no outcome + preenchimento no loop (cap marcado no round final normal e no fallback patológico).
+- [x] **T3 — Chain:** continuação automática no executor com `autoChain`/`maxAutoChain`/`ParentRunId`/meta; testes de integração em `AgentLoopAutoChainTests` (mock Ollama, padrão `AgentModeE2ETests`).
+- [x] **T4 — Prompt:** linha preset-aware sob `always-allow` + teste de conteúdo do system prompt (PR #458).
+- [x] **T5 — Config UI (per-user):** seção "Agent loop" na aba Agents do `SettingsModal` + endpoints `configs/user/agent-loop` + 7 chaves i18n × 8 locales.
+- [x] **T6 — Validation:** `dotnet build` 0 erros; `AgentLoopAutoChainTests` 5/5; drift guards (i18n/css/a11y/spec) verdes.
+- [x] **T7 — Done + PR:** `Status = Done`, PR aberto.
 
 **7.1 Validation strategy**
 
