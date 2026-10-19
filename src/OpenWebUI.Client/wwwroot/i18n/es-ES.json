@@ -1135,5 +1135,17 @@
   "settings.personas_none": "Aún no hay personas.",
   "settings.persona_name": "Nombre de la persona",
   "settings.persona_prompt": "Prompt de sistema",
-  "settings.persona_editing": "Editando: {{name}}"
+  "settings.persona_editing": "Editando: {{name}}",
+  "admin.tab_policies": "Políticas",
+  "admin.policies_new": "Nueva política (hard-deny)",
+  "admin.policies_action": "Acción",
+  "admin.policies_resource": "Recurso (glob)",
+  "admin.policies_note": "Nota",
+  "admin.policies_hint": "Reglas deny evaluadas antes de los permisos del usuario.",
+  "admin.policies_empty": "Sin políticas.",
+  "admin.policies_simulate": "Simular",
+  "admin.policies_test": "Probar",
+  "admin.policies_denied": "Denegado por política",
+  "admin.policies_allowed": "Permitido (sin match)",
+  "admin.policies_denials": "Bloqueos recientes"
 }

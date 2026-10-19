@@ -1135,5 +1135,17 @@
   "settings.personas_none": "No personas yet.",
   "settings.persona_name": "Persona name",
   "settings.persona_prompt": "System prompt",
-  "settings.persona_editing": "Editing: {{name}}"
+  "settings.persona_editing": "Editing: {{name}}",
+  "admin.tab_policies": "Policies",
+  "admin.policies_new": "New policy (hard-deny)",
+  "admin.policies_action": "Action",
+  "admin.policies_resource": "Resource (glob)",
+  "admin.policies_note": "Note",
+  "admin.policies_hint": "Deny rules evaluated before user permissions. Examples: shell:rm *, openai/*, mcp:filesystem, skill:name.",
+  "admin.policies_empty": "No policies defined.",
+  "admin.policies_simulate": "Simulate",
+  "admin.policies_test": "Test",
+  "admin.policies_denied": "Denied by policy",
+  "admin.policies_allowed": "Allowed (no match)",
+  "admin.policies_denials": "Recent denials"
 }

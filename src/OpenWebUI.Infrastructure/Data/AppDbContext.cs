@@ -144,6 +144,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Servidores MCP registrados pelo admin.</summary>
     public DbSet<McpServer> McpServers => Set<McpServer>();
 
+    /// <summary>Statements de policy administrativa (hard-deny).</summary>
+    public DbSet<AdminPolicyStatement> AdminPolicyStatements => Set<AdminPolicyStatement>();
+
+    /// <summary>Auditoria de bloqueios por policy.</summary>
+    public DbSet<PolicyDenial> PolicyDenials => Set<PolicyDenial>();
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -1624,3 +1624,59 @@ public class AgentTurn
     /// <summary>Início do turno (epoch seconds).</summary>
     public long Timestamp { get; set; }
 }
+
+/// <summary>
+/// Statement de policy administrativa (SPEC-20261018-policies-admin):
+/// regra de hard-deny avaliada antes de qualquer permissão de usuário.
+/// <see cref="Action"/> em <c>provider.use|model.use|tool.use|integration.use</c>;
+/// <see cref="Resource"/> é glob sobre o identificador concreto
+/// (<c>shell:rm *</c>, <c>openai/*</c>, <c>mcp:filesystem</c>, <c>skill:name</c>).
+/// </summary>
+public class AdminPolicyStatement
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Ordem de avaliação — último match vence.</summary>
+    public int Order { get; set; }
+
+    /// <summary>Ação: <c>provider.use</c>, <c>model.use</c>, <c>tool.use</c> ou <c>integration.use</c>.</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>Glob aplicado ao recurso concreto (case-insensitive).</summary>
+    public string Resource { get; set; } = string.Empty;
+
+    /// <summary>Efeito — em v1 apenas <c>deny</c> (ausência de deny = allow).</summary>
+    public string Effect { get; set; } = "deny";
+
+    /// <summary>Nota/motivo exibida quando a regra bloqueia algo.</summary>
+    public string? Note { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Registro de auditoria de bloqueio por policy — cada deny efetivo
+/// gera uma linha (quem, ação, recurso, statement que casou).
+/// </summary>
+public class PolicyDenial
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Usuário afetado (null quando a negação não tem usuário).</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>Ação negada (mesma do statement).</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>Recurso concreto que casou com a regra.</summary>
+    public string Resource { get; set; } = string.Empty;
+
+    /// <summary>Id do <see cref="AdminPolicyStatement"/> que negou.</summary>
+    public string StatementId { get; set; } = string.Empty;
+
+    /// <summary>Quando (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}

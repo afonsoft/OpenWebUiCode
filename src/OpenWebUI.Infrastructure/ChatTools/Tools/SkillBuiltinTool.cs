@@ -11,7 +11,8 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// </summary>
 public sealed class SkillBuiltinTool(
     SkillDiscoveryService skills,
-    UserConfigOverlayService overlay) : IBuiltinChatTool
+    UserConfigOverlayService overlay,
+    PolicyService? policies = null) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "skill";
@@ -45,6 +46,16 @@ public sealed class SkillBuiltinTool(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
         var name = args.TryGetProperty("name", out var n) ? n.GetString() : null;
+        // Policies admin (SPEC-20261018-policies-admin RF-004): deny de
+        // integração por nome de skill antes de carregar.
+        if (!string.IsNullOrWhiteSpace(name) && policies is not null
+            && await policies.DenyAsync(PolicyService.ActionIntegrationUse,
+                new[] { $"skill:{name}" }, context.UserId, ct) is { } denied)
+        {
+            return new BuiltinToolResult(
+                "Erro: " + PolicyService.DeniedMessage(denied, $"skill:{name}"));
+        }
+
         // RF-007: sem workdir (chat sem repo) o scan cai no escopo global.
         var scan = skills.Scan(
             string.IsNullOrWhiteSpace(context.WorkspacePath) ? null : context.WorkspacePath);

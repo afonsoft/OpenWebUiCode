@@ -16,6 +16,37 @@ namespace OpenWebUI.Infrastructure.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
 
+            modelBuilder.Entity("OpenWebUI.Domain.AdminPolicyStatement", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Effect")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Resource")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdminPolicyStatements");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.AgentMemory", b =>
                 {
                     b.Property<string>("Id")
@@ -1620,6 +1651,34 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("PipelineServers");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.PolicyDenial", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Resource")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StatementId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("PolicyDenials");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.Prompt", b =>

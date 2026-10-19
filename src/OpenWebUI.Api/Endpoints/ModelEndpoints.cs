@@ -49,7 +49,8 @@ public static class ModelEndpoints
     private static async Task<IResult> ListCatalogAsync(
         HttpContext http, ProviderService providers, AppDbContext db,
         PipelineClientService pipelines, HybridCache cache,
-        ModelCapabilityResolver capabilities, CancellationToken ct)
+        ModelCapabilityResolver capabilities, PolicyService policies,
+        CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -60,14 +61,22 @@ public static class ModelEndpoints
         var response = await ApiEndpoints.GetCachedModelListAsync(
             user, providers, db, pipelines, cache, capabilities, ct);
         var disabled = ApiEndpoints.ParseDisabledModels(user.SettingsJson);
-        var data = response.Data.Select(m => new CatalogModel(
-            m.Id, m.Name, m.Provider, m.OwnedBy,
-            !disabled.Contains($"{m.Provider}:{m.Id}"), m.Capabilities)).ToList();
+        var providerRules = await policies.LoadAsync(PolicyService.ActionProviderUse, ct);
+        var modelRules = await policies.LoadAsync(PolicyService.ActionModelUse, ct);
+        var data = response.Data
+            .Where(m => PolicyService.MatchIn(providerRules,
+                    new[] { m.Provider, $"{m.Provider}/{m.Id}" }) is null
+                && PolicyService.MatchIn(modelRules,
+                    new[] { m.Id, m.Name ?? "", $"{m.Provider}/{m.Id}" }) is null)
+            .Select(m => new CatalogModel(
+                m.Id, m.Name, m.Provider, m.OwnedBy,
+                !disabled.Contains($"{m.Provider}:{m.Id}"), m.Capabilities)).ToList();
         return Results.Ok(new CatalogModelListResponse(data));
     }
 
     private static async Task<IResult> ListModelsAsync(
-        HttpContext http, AppDbContext db, AccessControlService access, CancellationToken ct)
+        HttpContext http, AppDbContext db, AccessControlService access,
+        PolicyService policies, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -78,10 +87,13 @@ public static class ModelEndpoints
         var all = await db.ModelEntries.AsNoTracking()
             .OrderBy(m => m.Name)
             .ToListAsync(ct);
+        var modelRules = await policies.LoadAsync(PolicyService.ActionModelUse, ct);
         var groups = await access.GetGroupIdsAsync(user.Id, ct);
         var models = all.Where(m =>
-            m.UserId == "public"
-            || access.Level(user, m.UserId, m.AccessGrantsJson, groups) is not AccessControlService.None);
+            (m.UserId == "public"
+            || access.Level(user, m.UserId, m.AccessGrantsJson, groups) is not AccessControlService.None)
+            && PolicyService.MatchIn(modelRules,
+                new[] { m.Name, m.BaseModelId ?? "", m.Id }) is null);
 
         return Results.Ok(models.Select(ToResponse).ToList());
     }

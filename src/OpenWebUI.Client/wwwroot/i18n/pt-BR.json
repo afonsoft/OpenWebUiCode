@@ -1135,5 +1135,17 @@
   "settings.personas_none": "Nenhuma persona ainda.",
   "settings.persona_name": "Nome da persona",
   "settings.persona_prompt": "Prompt de sistema",
-  "settings.persona_editing": "Editando: {{name}}"
+  "settings.persona_editing": "Editando: {{name}}",
+  "admin.tab_policies": "Políticas",
+  "admin.policies_new": "Nova política (hard-deny)",
+  "admin.policies_action": "Ação",
+  "admin.policies_resource": "Recurso (glob)",
+  "admin.policies_note": "Nota",
+  "admin.policies_hint": "Regras de deny avaliadas antes das permissões do usuário. Ex.: shell:rm *, openai/*, mcp:filesystem, skill:nome.",
+  "admin.policies_empty": "Nenhuma política definida.",
+  "admin.policies_simulate": "Simular",
+  "admin.policies_test": "Testar",
+  "admin.policies_denied": "Negado por política",
+  "admin.policies_allowed": "Permitido (sem match)",
+  "admin.policies_denials": "Bloqueios recentes"
 }

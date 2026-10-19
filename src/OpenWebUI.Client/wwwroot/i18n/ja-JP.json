@@ -1135,5 +1135,17 @@
   "settings.personas_none": "ペルソナはまだありません。",
   "settings.persona_name": "ペルソナ名",
   "settings.persona_prompt": "システムプロンプト",
-  "settings.persona_editing": "編集中: {{name}}"
+  "settings.persona_editing": "編集中: {{name}}",
+  "admin.tab_policies": "ポリシー",
+  "admin.policies_new": "しいポリシー (hard-deny)",
+  "admin.policies_action": "アクション",
+  "admin.policies_resource": "リソース (glob)",
+  "admin.policies_note": "メモ",
+  "admin.policies_hint": "deny ルールはユーザーよりにされます。: shell:rm *, openai/*, mcp:filesystem, skill:name",
+  "admin.policies_empty": "ポリシーはまだありません。",
+  "admin.policies_simulate": "シミュレート",
+  "admin.policies_test": "テスト",
+  "admin.policies_denied": "ポリシーによりされました",
+  "admin.policies_allowed": " (マッチなし)",
+  "admin.policies_denials": "の"
 }

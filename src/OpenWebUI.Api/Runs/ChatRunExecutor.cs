@@ -41,6 +41,7 @@ public sealed class ChatRunExecutor(
     McpClientService mcp,
     ComboService combos,
     RunEventWriter runEvents,
+    PolicyService? policies,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
@@ -1278,6 +1279,18 @@ public sealed class ChatRunExecutor(
         }
 
         var tool = ToolExecutor.FindTool(tools, call.Name);
+
+        // Policies admin (SPEC-20261018-policies-admin): hard-deny antes de
+        // qualquer camada de usuário. Candidatos: nome da tool (MCP já
+        // materializa como mcp_{server}_{tool}) e nome:arg-pattern.
+        var argPattern = PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson);
+        if (policies is not null
+            && await policies.DenyAsync(PolicyService.ActionToolUse,
+                new[] { call.Name, $"{call.Name}:{argPattern}" }, run.UserId, ct) is { } denied)
+        {
+            return new ToolGateDecision(true, Output:
+                "Erro: " + PolicyService.DeniedMessage(denied, call.Name));
+        }
 
         // Ruleset do modo do agente (RF-002): negação estruturada — nem
         // anunciada ao provider; uma call que escape devolve erro direto,
