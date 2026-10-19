@@ -3,6 +3,7 @@
 @inject ApiService Api
 @inject MarkdownService Markdown
 @inject LocalizationService L
+@inject IJSRuntime JS
 
 <PageTitle>@(_chat?.Title ?? L["shared.title_default"]) — Open WebUI</PageTitle>
 
@@ -31,7 +32,7 @@
                 @L.T("shared.by", ("name", _chat.User?.Name ?? L["shared.user"])) ·
                 @FormatDate(_chat.UpdatedAt)
             </div>
-            <div class="shared-messages">
+            <div class="shared-messages" @ref="_messagesRef">
                 @foreach (var message in _chat.Messages)
                 {
                     <div class="message @message.Role">
@@ -65,8 +66,40 @@
     private SharedChatResponse? _chat;
     private bool _loading = true;
     private bool _loadFailed;
+    private ElementReference _messagesRef;
+    private string? _enhancedFor;
 
     protected override async Task OnParametersSetAsync() => await LoadChatAsync();
+
+    /// <inheritdoc />
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // SPEC-20261019-codeblock-toolbar: shared chat ganha a mesma barra
+        // (copiar/formatar/wrap); execução não existe fora da sessão do dono.
+        var contentKey = _chat is null
+            ? null
+            : _chat.Messages.Count + ":" + _chat.UpdatedAt;
+        if (contentKey is not null && contentKey != _enhancedFor)
+        {
+            _enhancedFor = contentKey;
+            await JS.InvokeVoidAsync("openwebui.codeBlocks.enhance",
+                _messagesRef, new
+                {
+                    run = false,
+                    labels = new
+                    {
+                        copy = L["chat.copy"],
+                        copied = L["chat.copied"],
+                        format = L["chat.code.format"],
+                        minify = L["chat.code.minify"],
+                        wrap = L["chat.code.wrap"],
+                        unwrap = L["chat.code.unwrap"],
+                        run = L["chat.code.run"],
+                        invalidJson = L["chat.code.invalid_json"],
+                    },
+                });
+        }
+    }
 
     private async Task LoadChatAsync()
     {

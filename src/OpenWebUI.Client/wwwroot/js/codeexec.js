@@ -10,45 +10,25 @@ window.openwebui.codeExec = (function () {
 		python: 'python',
 		py: 'python'
 	};
-	const LABELS = {
-		js: 'JavaScript',
-		python: 'Python'
-	};
 
 	let pyWorker = null;
 	let pyReady = null;
 
-	// Injeta o botão "Executar" em blocos de código executáveis dentro de root.
-	function enhance(root) {
-		if (!root) {
+	// SPEC-20261019-codeblock-toolbar: o botão "Executar" não é mais
+	// injetado aqui — a barra de codeblocks.js o cria e delega a execução
+	// para isRunnable/runInBlock.
+	function isRunnable(codeEl) {
+		return !!detectLang(codeEl);
+	}
+
+	function runInBlock(codeEl, pre, button) {
+		const lang = detectLang(codeEl);
+		if (!lang) {
 			return;
 		}
-		root.querySelectorAll('pre > code').forEach(function (codeEl) {
-			const pre = codeEl.parentElement;
-			if (pre.dataset.codeexec) {
-				return;
-			}
-			const lang = detectLang(codeEl);
-			if (!lang) {
-				return;
-			}
-			pre.dataset.codeexec = '1';
-			pre.classList.add('relative');
-
-			const button = document.createElement('button');
-			button.type = 'button';
-			button.textContent = '▶ Executar';
-			button.title = 'Executar ' + LABELS[lang] + ' no navegador';
-			button.className =
-				'absolute top-1.5 right-1.5 px-2 py-1 text-[0.7rem] font-medium rounded-md ' +
-				'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 ' +
-				'hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer';
-			button.addEventListener('click', function () {
-				run(codeEl.innerText, lang, button, pre).catch(function (err) {
-					pre.textContent += '\n(execução falhou: ' + (err && err.message ? err.message : err) + ')';
-				});
-			});
-			pre.appendChild(button);
+		run(codeEl.innerText, lang, button, pre).catch(function (err) {
+			outputPanel(pre).textContent =
+				'Erro: ' + (err && err.message ? err.message : String(err));
 		});
 	}
 
@@ -343,5 +323,5 @@ window.openwebui.codeExec = (function () {
 		});
 	}
 
-	return { enhance: enhance };
+	return { isRunnable: isRunnable, runInBlock: runInBlock };
 })();

@@ -287,6 +287,44 @@
 		@apply text-xs text-gray-500 dark:text-gray-400 font-mono whitespace-pre-wrap mt-1;
 	}
 
+	/* SPEC-20261019-codeblock-toolbar: wrapper + barra injetados por
+	   codeblocks.js em cada <pre><code> do conteúdo renderizado. */
+	.codeblock {
+		@apply my-3 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800;
+	}
+
+	.codeblock-bar {
+		@apply flex items-center justify-between gap-2 px-3 py-1.5 text-[0.75rem]
+			bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 select-none;
+	}
+
+	.codeblock-lang {
+		@apply font-mono lowercase;
+	}
+
+	.codeblock-actions {
+		@apply flex items-center gap-1;
+	}
+
+	.codeblock-btn {
+		@apply px-2 py-0.5 rounded-md text-[0.7rem] font-medium cursor-pointer
+			text-gray-600 dark:text-gray-300
+			hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors;
+	}
+
+	.codeblock-pre {
+		@apply m-0! rounded-none border-0;
+	}
+
+	.codeblock-wrapped {
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.codeblock-inline {
+		@apply cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors;
+	}
+
 	.card-actions {
 		@apply flex items-center gap-1 shrink-0;
 	}
