@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -519,49 +520,107 @@ public class ProviderService(
     /// </summary>
     private static string? ExtractOpenAiReasoning(JsonNode? node)
     {
-        if (node?["reasoning_content"] is JsonValue rc
-            && rc.TryGetValue<string>(out var s) && s.Length > 0)
+        if (Str(Prop(node, "reasoning_content")) is { Length: > 0 } s)
         {
             return s;
         }
-        if (node?["reasoning"] is JsonValue r
-            && r.TryGetValue<string>(out s) && s.Length > 0)
+        if (Str(Prop(node, "reasoning")) is { Length: > 0 } r)
         {
-            return s;
+            return r;
         }
-        if (node?["reasoning_details"] is JsonArray details)
+        if (Prop(node, "reasoning_details") is JsonArray details)
         {
-            var joined = string.Concat(details
-                .Select(d => d?["text"] as JsonValue)
-                .Where(t => t is not null && t.TryGetValue<string>(out _))
-                .Select(t => t!.GetValue<string>()));
+            var joined = string.Concat(details.Select(d => Str(Prop(d, "text"))));
             return joined.Length > 0 ? joined : null;
         }
         return null;
     }
 
+    /// <summary>
+    /// Acesso defensivo a propriedade de nó: providers/gateways devolvem
+    /// String/Number onde o schema espera Object — o indexer cru lançava
+    /// <see cref="InvalidOperationException"/> e derrubava a run inteira
+    /// (SPEC-20261019-gemini-response-shape). Não-objeto → null.
+    /// </summary>
+    private static JsonNode? Prop(JsonNode? node, string name) =>
+        node is JsonObject obj ? obj[name] : null;
+
+    /// <summary>Leitura defensiva de string — só JsonValue realmente textual.</summary>
+    private static string? Str(JsonNode? node) =>
+        node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+
+    /// <summary>Leitura defensiva de inteiro — só JsonValue realmente numérico.</summary>
+    private static int? IntNum(JsonNode? node) =>
+        node is JsonValue v && v.TryGetValue<int>(out var i) ? i : null;
+
+    /// <summary>
+    /// <c>{"error": ...}</c> no meio de um stream SSE: monta
+    /// <see cref="ProviderHttpException"/> classificável pela retry
+    /// policy — rate/quota → 429, janela de contexto → 400 (o detector de
+    /// overflow lê o corpo), demais → 502 transitório. O nó de erro pode
+    /// ser string solta ou objeto <c>{message, type}</c>.
+    /// </summary>
+    private static ProviderHttpException MidStreamProviderError(JsonNode errorNode)
+    {
+        var message = Str(errorNode) ?? Str(Prop(errorNode, "message"))
+            ?? "erro de provider não identificado";
+        var snippet = errorNode.ToJsonString();
+        if (snippet.Length > ProviderHttpException.MaxBodyChars)
+        {
+            snippet = snippet[..ProviderHttpException.MaxBodyChars];
+        }
+        var status = message.Contains("rate", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("quota", StringComparison.OrdinalIgnoreCase)
+            ? HttpStatusCode.TooManyRequests
+            : message.Contains("context", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("token", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("length", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("too long", StringComparison.OrdinalIgnoreCase)
+            ? HttpStatusCode.BadRequest
+            : HttpStatusCode.BadGateway;
+        return new ProviderHttpException(status, null, snippet, midStream: true);
+    }
+
+    /// <summary>
+    /// Texto de um campo que pode chegar como string OU como array de
+    /// parts <c>[{type:"text",text:"..."}]</c> (shape multimodal que
+    /// gateways devolvem no lugar do content plano).
+    /// </summary>
+    private static string CoerceText(JsonNode? node) =>
+        Str(node) ?? (node is JsonArray parts
+            ? string.Concat(parts.Select(p => Str(Prop(p, "text"))))
+            : string.Empty);
+
     /// <summary>Normaliza <c>choices[0].message</c> (OpenAI) ou <c>message</c> (Ollama).</summary>
     private ProviderCompletion ParseCompletionMessage(JsonNode? json, bool openAi)
     {
-        var firstChoice = json?["choices"] is JsonArray { Count: > 0 } arr ? arr[0] : null;
-        var message = openAi ? firstChoice?["message"] : json?["message"];
+        // Resposta buffered com {"error":...} (gateway devolve 200 + corpo
+        // de erro): classifica como erro de provider em vez de completion
+        // vazia silenciosa.
+        if (Prop(json, "error") is { } bufferedError)
+        {
+            throw MidStreamProviderError(bufferedError);
+        }
+        var firstChoice = Prop(json, "choices") is JsonArray { Count: > 0 } arr ? arr[0] : null;
+        var message = openAi ? Prop(firstChoice, "message") : Prop(json, "message");
         var (content, reasoning, dsmlCalls) = ExtractDsmlFields(message, openAi);
         var calls = new List<ProviderToolCall>();
-        var callsNode = message?["tool_calls"]?.AsArray();
+        var callsNode = Prop(message, "tool_calls") as JsonArray;
         var callsJson = callsNode?.ToJsonString() ?? "[]";
         if (callsNode is not null)
         {
             foreach (var call in callsNode)
             {
-                var name = call!["function"]?["name"]?.GetValue<string>();
+                var function = Prop(call, "function");
+                var name = Str(Prop(function, "name"));
                 if (name is null)
                 {
                     continue;
                 }
-                var args = call!["function"]?["arguments"];
-                var argsJson = args is JsonValue ? args.GetValue<string>() : args?.ToJsonString() ?? "{}";
+                var args = Prop(function, "arguments");
+                var argsJson = Str(args) ?? args?.ToJsonString() ?? "{}";
                 calls.Add(new ProviderToolCall(
-                    call!["id"]?.GetValue<string>() ?? Guid.NewGuid().ToString("N"),
+                    Str(Prop(call, "id")) ?? Guid.NewGuid().ToString("N"),
                     name, argsJson));
             }
         }
@@ -575,7 +634,7 @@ public class ProviderService(
 
         return new ProviderCompletion(content, calls, callsJson, reasoning,
             ParseUsage(json, openAi),
-            FinishReason: firstChoice?["finish_reason"]?.GetValue<string>());
+            FinishReason: Str(Prop(firstChoice, "finish_reason")));
     }
 
     /// <summary>
@@ -589,19 +648,19 @@ public class ProviderService(
     {
         if (openAi)
         {
-            var u = root?["usage"];
-            if (u?["prompt_tokens"]?.GetValue<int>() is not { } prompt)
+            var u = Prop(root, "usage");
+            if (IntNum(Prop(u, "prompt_tokens")) is not { } prompt)
             {
                 return null;
             }
-            var completion = u["completion_tokens"]?.GetValue<int>() ?? 0;
-            var reasoning = u["completion_tokens_details"]?["reasoning_tokens"]
-                ?.GetValue<int>();
+            var completion = IntNum(Prop(u, "completion_tokens")) ?? 0;
+            var reasoning = IntNum(Prop(
+                Prop(u, "completion_tokens_details"), "reasoning_tokens"));
             return new ProviderUsage(prompt, completion, reasoning);
         }
 
-        var promptEval = root?["prompt_eval_count"]?.GetValue<int>();
-        var eval = root?["eval_count"]?.GetValue<int>();
+        var promptEval = IntNum(Prop(root, "prompt_eval_count"));
+        var eval = IntNum(Prop(root, "eval_count"));
         return promptEval is null && eval is null
             ? null
             : new ProviderUsage(promptEval ?? 0, eval ?? 0);
@@ -613,11 +672,10 @@ public class ProviderService(
         ExtractDsmlFields(JsonNode? message, bool openAi)
     {
         var (content, dsmlCalls) = DsmlToolCallFilter.Extract(
-            message?[ContentKey]?.GetValue<string>() ?? string.Empty);
+            CoerceText(Prop(message, ContentKey)));
         var rawReasoning = openAi
             ? ExtractOpenAiReasoning(message)
-            : message?["thinking"] is JsonValue th && th.TryGetValue<string>(out var t)
-                ? t : null;
+            : Str(Prop(message, "thinking"));
         if (rawReasoning is not null)
         {
             var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
@@ -682,7 +740,16 @@ public class ProviderService(
                 _ => await StreamOllamaToolsAsync(request, connections, payload, onDelta, onReasoning, ct),
             };
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException
+        catch (ProviderHttpException ex) when (!ex.MidStream)
+        {
+            // Erro da RESPOSTA inicial (não-2xx): a tentativa streamed é só
+            // um probe — devolve null e a reposição buffered refaz o pedido;
+            // o erro da reposição é quem a retry policy classifica (1 retry
+            // por round, contabilidade que os testes de resiliência travam).
+            return null;
+        }
+        catch (Exception ex) when ((ex is HttpRequestException and not ProviderHttpException)
+            || ex is IOException
             || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
             // Falha de transporte/setup antes da resposta — o chamador
@@ -691,6 +758,11 @@ public class ProviderService(
             // stream morto; cancelamento do usuário propaga): o texto já
             // emitido vira mensagem assistant parcial e a reposição pede
             // continuação (RF-006) em vez de recomeçar.
+            // ProviderHttpException mid-stream NÃO entra em nenhum dos dois
+            // catches: {"error":...} dentro do SSE sobe para a retry policy
+            // classificar — engoli-lo re-pediria sem backoff e a reposição
+            // buffered quebraria no parse do corpo SSE
+            // (SPEC-20261019-gemini-response-shape RF-003).
             return null;
         }
     }
@@ -766,6 +838,7 @@ public class ProviderService(
         var chunks = 0;
         var toolCallParts = 0;
         var nonArrayToolCalls = 0;
+        var nonObjectChunks = 0;
         var reasoningChars = 0;
         var sawDsmlMarker = false;
         string? finishReason = null;
@@ -796,30 +869,54 @@ public class ProviderService(
             }
             chunks++;
             sawDsmlMarker |= data.Contains("DSML", StringComparison.Ordinal);
+            // Chunk fora de objeto — heartbeat serializado como escalar
+            // ("keepalive", 42, true): nada a extrair, e o indexer cru era
+            // o que derrubava a run com 'Object' esperado vs 'String'
+            // (SPEC-20261019-gemini-response-shape RF-002).
+            if (node is not JsonObject)
+            {
+                nonObjectChunks++;
+                continue;
+            }
+
+            // {"error": ...} mid-stream: erro honesto de provider que a
+            // retry policy classifica — antes era engolido em silêncio.
+            if (Prop(node, "error") is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
+
             // Gateways como o OmniRoute roteiam o alias pedido para backends
             // diferentes por request — registrar o modelo real que respondeu
             // explica diferenças de comportamento (tool calling, tetos).
             // Chunks de heartbeat chegam com model="keepalive": ignorar.
             if (upstreamModel is null
-                && node?["model"]?.GetValue<string>() is { } m
+                && Str(Prop(node, "model")) is { } m
                 && m != "keepalive")
             {
                 upstreamModel = m;
             }
 
-            var choice = node?["choices"] is JsonArray { Count: > 0 } arr ? arr[0] : null;
-            var delta = choice?["delta"];
-            if (choice?["finish_reason"]?.GetValue<string>() is { Length: > 0 } fr)
+            var choice = Prop(node, "choices") is JsonArray { Count: > 0 } arr ? arr[0] : null;
+            var delta = Prop(choice, "delta");
+            if (Str(Prop(choice, "finish_reason")) is { Length: > 0 } fr)
             {
                 finishReason = fr;
             }
             // Chunk final com stream_options.include_usage traz usage
             // sem choices (SPEC-20261016-agent-steps-usage RF-004).
-            if (node?["usage"] is not null)
+            if (Prop(node, "usage") is not null)
             {
                 streamUsage = ParseUsage(node, openAi: true);
             }
-            var piece = delta?["content"]?.GetValue<string>();
+            // content chega string ou array de parts (CoerceText); um delta
+            // escalar solto — gateway que não estrutura o objeto — vale
+            // como o próprio texto.
+            var piece = CoerceText(Prop(delta, "content"));
+            if (piece.Length == 0 && delta is JsonValue)
+            {
+                piece = Str(delta) ?? string.Empty;
+            }
             if (!string.IsNullOrEmpty(piece))
             {
                 var visible = dsmlContent.Feed(piece);
@@ -849,11 +946,12 @@ public class ProviderService(
                 }
             }
 
-            if (delta?["tool_calls"] is not JsonArray callParts)
+            var callsNode = Prop(delta, "tool_calls");
+            if (callsNode is not JsonArray callParts)
             {
                 // Gateway emitiu tool_calls fora do shape OpenAI (objeto
                 // solto, string etc.) — contar em vez de engolir em silêncio.
-                if (delta?["tool_calls"] is not null)
+                if (callsNode is not null)
                 {
                     nonArrayToolCalls++;
                 }
@@ -863,23 +961,23 @@ public class ProviderService(
 
             foreach (var part in callParts)
             {
-                var position = part?["index"]?.GetValue<int>() ?? callBuffers.Count;
+                var position = IntNum(Prop(part, "index")) ?? callBuffers.Count;
                 if (!callBuffers.TryGetValue(position, out var buffer))
                 {
                     buffer = new OpenAiToolCallBuffer();
                     callBuffers[position] = buffer;
                 }
-                buffer.Id = part?["id"]?.GetValue<string>() ?? buffer.Id;
-                var name = part?["function"]?["name"]?.GetValue<string>();
+                buffer.Id = Str(Prop(part, "id")) ?? buffer.Id;
+                var function = Prop(part, "function");
+                var name = Str(Prop(function, "name"));
                 if (name is not null)
                 {
                     buffer.Name = name;
                 }
                 // arguments chega fragmentado como string; alguns gateways
                 // mandam o objeto já montado — serializa em vez de quebrar.
-                var argsNode = part?["function"]?["arguments"];
-                if (argsNode is JsonValue argsValue
-                    && argsValue.TryGetValue<string>(out var args))
+                var argsNode = Prop(function, "arguments");
+                if (Str(argsNode) is { } args)
                 {
                     buffer.Args.Append(args);
                 }
@@ -933,10 +1031,12 @@ public class ProviderService(
             logger.LogInformation(
                 "Upstream stream: model={UpstreamModel}, {Chunks} chunks, "
                 + "{ToolCallParts} tool_call part(s), "
-                + "{NonArrayToolCalls} tool_calls fora de array, finish_reason={FinishReason}, "
+                + "{NonArrayToolCalls} tool_calls fora de array, "
+                + "{NonObjectChunks} chunks escalares, finish_reason={FinishReason}, "
                 + "dsmlMarker={DsmlSeen}, content={ContentChars} chars, reasoning={ReasoningChars} chars.",
                 upstreamModel ?? "(none)", chunks, toolCallParts, nonArrayToolCalls,
-                finishReason ?? "(none)", sawDsmlMarker, content.Length, reasoningChars);
+                nonObjectChunks, finishReason ?? "(none)", sawDsmlMarker,
+                content.Length, reasoningChars);
         }
         if (calls.Count == 0 && content.Length == 0)
         {
@@ -944,9 +1044,11 @@ public class ProviderService(
                 "Round streamed encerrou vazio: model={UpstreamModel}, {Chunks} chunks, "
                 + "reasoning={ReasoningChars} chars, "
                 + "finish_reason={FinishReason}, dsmlMarker={DsmlSeen}, "
-                + "tool_call_parts={ToolCallParts}, tool_calls_fora_de_array={NonArray}.",
+                + "tool_call_parts={ToolCallParts}, tool_calls_fora_de_array={NonArray}, "
+                + "chunks_escalares={NonObject}.",
                 upstreamModel ?? "(none)", chunks, reasoningChars,
-                finishReason ?? "(none)", sawDsmlMarker, toolCallParts, nonArrayToolCalls);
+                finishReason ?? "(none)", sawDsmlMarker, toolCallParts,
+                nonArrayToolCalls, nonObjectChunks);
         }
         else if (nonArrayToolCalls > 0)
         {
@@ -1194,7 +1296,12 @@ public class ProviderService(
                 continue;
             }
 
-            var piece = node?["message"]?["content"]?.GetValue<string>();
+            if (Prop(node, "error") is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
+            var message = Prop(node, "message");
+            var piece = CoerceText(Prop(message, "content"));
             if (!string.IsNullOrEmpty(piece))
             {
                 content.Append(piece);
@@ -1207,9 +1314,7 @@ public class ProviderService(
             // Modelos "think" do Ollama emitem message.thinking separado
             // de message.content na mesma linha NDJSON.
             if (onReasoning is not null
-                && node?["message"]?["thinking"] is JsonValue think
-                && think.TryGetValue<string>(out var thought)
-                && thought.Length > 0)
+                && Str(Prop(message, "thinking")) is { Length: > 0 } thought)
             {
                 await onReasoning(thought, ct);
             }
@@ -1220,13 +1325,13 @@ public class ProviderService(
             {
                 usage = lineUsage;
             }
-            if (node?["message"]?["tool_calls"] is JsonArray { Count: > 0 } calls)
+            if (Prop(message, "tool_calls") is JsonArray { Count: > 0 } calls)
             {
                 callNodes.AddRange(calls.Select(c => c!.DeepClone()));
             }
             // done_reason da linha final do Ollama ("stop"/"length") — RF-003
             // do provider-resilience: continuação automática em truncamento.
-            if (node?["done_reason"]?.GetValue<string>() is { Length: > 0 } dr)
+            if (Str(Prop(node, "done_reason")) is { Length: > 0 } dr)
             {
                 doneReason = dr;
             }
@@ -1236,17 +1341,16 @@ public class ProviderService(
         var parsed = new List<ProviderToolCall>();
         foreach (var call in callNodes)
         {
-            var name = call!["function"]?["name"]?.GetValue<string>();
+            var function = Prop(call, "function");
+            var name = Str(Prop(function, "name"));
             if (name is null)
             {
                 continue;
             }
-            var args = call!["function"]?["arguments"];
-            var argsJson = args is JsonValue value && value.TryGetValue<string>(out var s)
-                ? s
-                : args?.ToJsonString() ?? "{}";
+            var args = Prop(function, "arguments");
+            var argsJson = Str(args) ?? args?.ToJsonString() ?? "{}";
             parsed.Add(new ProviderToolCall(
-                call!["id"]?.GetValue<string>() ?? Guid.NewGuid().ToString("N"),
+                Str(Prop(call, "id")) ?? Guid.NewGuid().ToString("N"),
                 name, argsJson));
         }
 
@@ -1649,9 +1753,13 @@ public class ProviderService(
 
         await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
         {
+            if (Prop(data, "error") is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
             if (eventName == "content_block_delta")
             {
-                var deltaType = data?["delta"]?["type"]?.GetValue<string>();
+                var deltaType = Str(Prop(Prop(data, "delta"), "type"));
                 // thinking_delta sai como delta.reasoning (canal separado);
                 // signature_delta (metadado criptográfico) é descartada.
                 var (field, prop) = deltaType switch
@@ -1661,7 +1769,7 @@ public class ProviderService(
                     _ => (null, null),
                 };
                 if (field is not null && prop is not null
-                    && data?["delta"]?[prop]?.GetValue<string>() is { Length: > 0 } text)
+                    && Str(Prop(Prop(data, "delta"), prop)) is { Length: > 0 } text)
                 {
                     var chunk = new JsonObject
                     {
@@ -1712,23 +1820,27 @@ public class ProviderService(
 
         await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
         {
-            var index = data?["index"]?.GetValue<int>() ?? 0;
+            if (Prop(data, "error") is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
+            var index = IntNum(Prop(data, "index")) ?? 0;
+            var block = Prop(data, "content_block");
             if (eventName == "content_block_start"
-                && data?["content_block"]?["type"]?.GetValue<string>() == "tool_use")
+                && Str(Prop(block, "type")) == "tool_use")
             {
                 openTools[index] = (
-                    data?["content_block"]?["id"]?.GetValue<string>()
-                        ?? Guid.NewGuid().ToString("N"),
-                    data?["content_block"]?["name"]?.GetValue<string>() ?? string.Empty,
+                    Str(Prop(block, "id")) ?? Guid.NewGuid().ToString("N"),
+                    Str(Prop(block, "name")) ?? string.Empty,
                     new StringBuilder());
             }
             else if (eventName == "content_block_delta")
             {
-                var delta = data?["delta"];
-                var deltaType = delta?["type"]?.GetValue<string>();
+                var delta = Prop(data, "delta");
+                var deltaType = Str(Prop(delta, "type"));
                 if (deltaType == "text_delta")
                 {
-                    var text = delta?["text"]?.GetValue<string>();
+                    var text = Str(Prop(delta, "text"));
                     if (!string.IsNullOrEmpty(text))
                     {
                         content.Append(text);
@@ -1741,7 +1853,7 @@ public class ProviderService(
                 else if (deltaType == "thinking_delta")
                 {
                     // Canal separado: thinking não entra no content da run.
-                    var thinking = delta?["thinking"]?.GetValue<string>();
+                    var thinking = Str(Prop(delta, "thinking"));
                     if (!string.IsNullOrEmpty(thinking) && onReasoning is not null)
                     {
                         await onReasoning(thinking, ct);
@@ -1750,7 +1862,7 @@ public class ProviderService(
                 else if (deltaType == "input_json_delta"
                     && openTools.TryGetValue(index, out var tool))
                 {
-                    tool.Args.Append(delta?["partial_json"]?.GetValue<string>());
+                    tool.Args.Append(Str(Prop(delta, "partial_json")));
                 }
             }
             else if (eventName == "content_block_stop"
@@ -1774,7 +1886,7 @@ public class ProviderService(
                 });
             }
             else if (eventName == "message_delta"
-                && data?["delta"]?["stop_reason"]?.GetValue<string>() is { Length: > 0 } sr)
+                && Str(Prop(Prop(data, "delta"), "stop_reason")) is { Length: > 0 } sr)
             {
                 // message_delta carrega stop_reason ("end_turn"/"max_tokens") —
                 // "max_tokens" sinaliza truncamento para a continuação RF-003.
@@ -2003,30 +2115,34 @@ public class ProviderService(
         var reasoning = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
-        var parts = json?["candidates"] is JsonArray { Count: > 0 } c
-            ? c[0]?["content"]?["parts"]?.AsArray()
+        if (Prop(json, "error") is { } bufferedError)
+        {
+            throw MidStreamProviderError(bufferedError);
+        }
+        var parts = Prop(json, "candidates") is JsonArray { Count: > 0 } c
+            ? Prop(Prop(c[0], "content"), "parts") as JsonArray
             : null;
         foreach (var part in parts ?? [])
         {
-            if (part?["text"] is { } text)
+            if (Str(Prop(part, "text")) is { } text)
             {
                 // part.thought=true é raciocínio — não vai para o Content.
-                var isThought = part["thought"] is JsonValue flag
+                var isThought = Prop(part, "thought") is JsonValue flag
                     && flag.TryGetValue<bool>(out var b) && b;
                 if (isThought)
                 {
-                    reasoning.Append(text.GetValue<string>());
+                    reasoning.Append(text);
                 }
                 else
                 {
-                    content.Append(text.GetValue<string>());
+                    content.Append(text);
                 }
             }
-            else if (part?["functionCall"] is { } call)
+            else if (Prop(part, "functionCall") is JsonObject call)
             {
                 var id = Guid.NewGuid().ToString("N");
-                var name = call["name"]?.GetValue<string>() ?? string.Empty;
-                var args = call["args"]?.ToJsonString() ?? "{}";
+                var name = Str(Prop(call, "name")) ?? string.Empty;
+                var args = Prop(call, "args")?.ToJsonString() ?? "{}";
                 calls.Add(new ProviderToolCall(id, name, args));
                 callsJson.Add(new JsonObject
                 {
@@ -2043,8 +2159,8 @@ public class ProviderService(
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
-            FinishReason: json?["candidates"] is JsonArray { Count: > 0 } fc
-                ? fc[0]?["finishReason"]?.GetValue<string>() : null);
+            FinishReason: Prop(json, "candidates") is JsonArray { Count: > 0 } fc
+                ? Str(Prop(fc[0], "finishReason")) : null);
     }
 
     private async Task<string> CompleteGoogleAsync(
@@ -2088,18 +2204,22 @@ public class ProviderService(
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
-            var parts = data?["candidates"] is JsonArray { Count: > 0 } c
-                ? c[0]?["content"]?["parts"]?.AsArray()
+            if (Prop(data, "error") is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
+            var parts = Prop(data, "candidates") is JsonArray { Count: > 0 } c
+                ? Prop(Prop(c[0], "content"), "parts") as JsonArray
                 : null;
             foreach (var part in parts ?? [])
             {
-                var text = part?["text"]?.GetValue<string>();
+                var text = Str(Prop(part, "text"));
                 if (string.IsNullOrEmpty(text))
                 {
                     continue;
                 }
                 // thought:true = raciocínio do modelo → delta.reasoning.
-                var field = part?["thought"] is JsonValue flag
+                var field = Prop(part, "thought") is JsonValue flag
                     && flag.TryGetValue<bool>(out var b) && b
                     ? "reasoning" : "content";
                 var chunk = new JsonObject
@@ -2144,26 +2264,29 @@ public class ProviderService(
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
-            if (data?["candidates"] is JsonArray { Count: > 0 } cand
-                && cand[0]?["finishReason"]?.GetValue<string>() is { Length: > 0 } fr)
+            if (Prop(data, "error") is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
+            if (Prop(data, "candidates") is JsonArray { Count: > 0 } cand
+                && Str(Prop(cand[0], "finishReason")) is { Length: > 0 } fr)
             {
                 finishReason = fr;
             }
-            var parts = data?["candidates"] is JsonArray { Count: > 0 } c
-                ? c[0]?["content"]?["parts"]?.AsArray()
+            var parts = Prop(data, "candidates") is JsonArray { Count: > 0 } c
+                ? Prop(Prop(c[0], "content"), "parts") as JsonArray
                 : null;
             foreach (var part in parts ?? [])
             {
-                if (part?["text"] is { } textNode)
+                if (Str(Prop(part, "text")) is { } text)
                 {
-                    var text = textNode.GetValue<string>();
                     if (string.IsNullOrEmpty(text))
                     {
                         continue;
                     }
                     // part.thought=true é a cadeia de raciocínio do Gemini —
                     // antes vazava para o content persistido da resposta.
-                    var isThought = part["thought"] is JsonValue flag
+                    var isThought = Prop(part, "thought") is JsonValue flag
                         && flag.TryGetValue<bool>(out var b) && b;
                     if (isThought)
                     {
@@ -2179,11 +2302,11 @@ public class ProviderService(
                         await onDelta(text, ct);
                     }
                 }
-                else if (part?["functionCall"] is { } call)
+                else if (Prop(part, "functionCall") is JsonObject call)
                 {
                     var id = Guid.NewGuid().ToString("N");
-                    var name = call["name"]?.GetValue<string>() ?? string.Empty;
-                    var args = call["args"]?.ToJsonString() ?? "{}";
+                    var name = Str(Prop(call, "name")) ?? string.Empty;
+                    var args = Prop(call, "args")?.ToJsonString() ?? "{}";
                     calls.Add(new ProviderToolCall(id, name, args));
                     callsJson.Add(new JsonObject
                     {
