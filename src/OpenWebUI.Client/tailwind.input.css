@@ -287,6 +287,14 @@
 		@apply text-xs text-gray-500 dark:text-gray-400 font-mono whitespace-pre-wrap mt-1;
 	}
 
+	/* SPEC-20261019-chat-window-perf RF-002: content-visibility pula
+	   layout/paint de mensagens fora da viewport — o tamanho estimado evita
+	   saltos de scrollbar ao entrar na tela. */
+	.msg-cv {
+		content-visibility: auto;
+		contain-intrinsic-size: auto 140px;
+	}
+
 	/* SPEC-20261019-codeblock-toolbar: wrapper + barra injetados por
 	   codeblocks.js em cada <pre><code> do conteúdo renderizado. */
 	.codeblock {

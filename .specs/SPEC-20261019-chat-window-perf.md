@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261019-chat-window-perf` |
-| Status | `Draft` |
+| Status | `Approved` |
 | Parent | report do usuário — chat com conteúdo grande trava a tela; exibir janela ~256k/512k e carregar o resto dinamicamente no scroll + compactação automática acima de 256k |
 
 ## 1. User Story

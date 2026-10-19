@@ -35,5 +35,6 @@
   ],
   "chat.src_prompt": "prompt",
   "chat.src_skill": "skill",
-  "chat.src_command": "cmd"
+  "chat.src_command": "cmd",
+  "chat.loading_older": "load older messages"
 }

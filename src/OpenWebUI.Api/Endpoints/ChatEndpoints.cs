@@ -43,6 +43,7 @@ public static class ChatEndpoints
 
         group.MapGet("/all", ListAllChatsAdminAsync);
         group.MapGet("/{id}", GetChatAsync);
+        group.MapGet("/{id}/messages", GetChatMessagesAsync);
         group.MapGet("/{id}/children", ListChildrenAsync);
         group.MapGet("/{id}/workspace-repo", GetWorkspaceRepoAsync);
         group.MapPut("/{id}/workspace-repo", PutWorkspaceRepoAsync);
@@ -400,7 +401,7 @@ public static class ChatEndpoints
     }
 
     private static async Task<IResult> GetChatAsync(
-        string id, HttpContext http, AppDbContext db, CancellationToken ct)
+        string id, HttpContext http, AppDbContext db, CancellationToken ct, int? tail = null)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         var chat = await LoadChatAsync(id, user?.Id, db, ct);
@@ -415,7 +416,42 @@ public static class ChatEndpoints
                 .Select(c => c.Title)
                 .FirstOrDefaultAsync(ct)
             : null;
-        return Results.Ok(ToResponse(chat, parentTitle));
+        return Results.Ok(ToResponse(chat, parentTitle, tail));
+    }
+
+    /// <summary>Página de mensagens anteriores a <paramref name="before"/> no caminho
+    /// ativo (SPEC-20261019-chat-window-perf RF-001). <paramref name="take"/> é
+    /// limitado a 1–200. A janela nunca quebra um grupo de tool messages no topo.</summary>
+    private static async Task<IResult> GetChatMessagesAsync(
+        string id, string? before, int take, HttpContext http, AppDbContext db, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var chat = await LoadChatAsync(id, user?.Id, db, ct);
+        if (chat is null)
+        {
+            return Results.NotFound();
+        }
+
+        var path = BranchService.WalkPath(chat);
+        var end = before is null
+            ? path.Count
+            : path.FindIndex(m => m.Id == before) is { } i && i >= 0 ? i : path.Count;
+        take = Math.Clamp(take <= 0 ? 50 : take, 1, 200);
+        var start = Math.Max(0, end - take);
+        // Snap de fronteira: nunca abrir a página no meio de um grupo "tool"
+        // consecutivo — a UI agrupa tools seguidas num único feed.
+        while (start > 0 && path[start].Role == "tool" && path[start - 1].Role == "tool")
+        {
+            start--;
+        }
+        var messages = path.Skip(start).Take(end - start)
+            .Select(m => new ChatMessageModel(
+                m.Id, m.Role, m.Content, m.Model, m.Timestamp,
+                JsonSerializer.Deserialize<List<ChatMessageVersionModel>>(m.VersionsJson, JsonOptions),
+                m.ToolCallId, m.ToolCallsJson,
+                ParseFiles(m.FilesJson), m.ParentId))
+            .ToList();
+        return Results.Ok(new ChatMessagesPage(messages, start > 0, path.Count));
     }
 
     /// <summary>
@@ -1314,13 +1350,22 @@ public static class ChatEndpoints
         chat.ParentChatId,
         childrenCount);
 
-    private static ChatResponse ToResponse(Chat chat, string? parentTitle = null) => new(
+    private static ChatResponse ToResponse(Chat chat, string? parentTitle = null, int? tail = null)
+    {
+        var path = BranchService.WalkPath(chat);
+        var start = tail is { } n && n > 0 && path.Count > n ? path.Count - n : 0;
+        // Snap de fronteira na cauda: mesma regra do endpoint paginado.
+        while (start > 0 && path[start].Role == "tool" && path[start - 1].Role == "tool")
+        {
+            start--;
+        }
+        return new ChatResponse(
         chat.Id,
         chat.Title,
         JsonSerializer.Deserialize<List<string>>(chat.ModelsJson, JsonOptions) ?? [],
         // O cliente renderiza o caminho ativo (leaf→raiz): fora dele, os
         // outros ramos não aparecem (SPEC-20261013-chat-branching RF-002).
-        BranchService.WalkPath(chat)
+        path.Skip(start)
             .Select(m => new ChatMessageModel(
                 m.Id, m.Role, m.Content, m.Model, m.Timestamp,
                 JsonSerializer.Deserialize<List<ChatMessageVersionModel>>(m.VersionsJson, JsonOptions),
@@ -1341,7 +1386,9 @@ public static class ChatEndpoints
         parentTitle,
         chat.AdvisorEnabled,
         BranchService.ResolveLeaf(chat)?.Id,
-        BranchService.ListLeaves(chat).Count);
+        BranchService.ListLeaves(chat).Count,
+        start > 0);
+    }
 
     /// <summary>Filtro por tags.</summary>
     public sealed record TagQueryRequest(IReadOnlyList<string> Tags);

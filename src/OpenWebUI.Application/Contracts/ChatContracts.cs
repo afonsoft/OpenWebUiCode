@@ -124,7 +124,17 @@ public sealed record ChatResponse(
     string? ParentTitle = null,
     bool AdvisorEnabled = false,
     string? ActiveLeafId = null,
-    int BranchCount = 0);
+    int BranchCount = 0,
+    bool MessagesHasMore = false);
+
+/// <summary>Página de mensagens do caminho ativo (SPEC-20261019-chat-window-perf RF-001).</summary>
+/// <param name="Messages">Janela em ordem cronológica (anterior a <c>before</c> ou a cauda).</param>
+/// <param name="HasMore">Há mensagens mais antigas além da janela.</param>
+/// <param name="Total">Total de mensagens no caminho ativo.</param>
+public sealed record ChatMessagesPage(
+    IReadOnlyList<ChatMessageModel> Messages,
+    bool HasMore,
+    int Total);
 
 /// <summary>Requisição para criar ou atualizar um chat.</summary>
 /// <param name="Title">Título do chat.</param>

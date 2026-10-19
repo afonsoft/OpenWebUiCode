@@ -80,6 +80,7 @@
   "chat.view_source": "View source",
   "chat.view_rendered": "View rendered",
   "chat.copied": "Copied",
+  "chat.loading_older": "load older messages",
   "chat.code.format": "Format",
   "chat.code.minify": "Minify",
   "chat.code.wrap": "Wrap lines",

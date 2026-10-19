@@ -115,7 +115,7 @@ public sealed class ContextCompactionService(
     /// <summary>Prefixo do bloco de turno parcial (RF-004) injetado após o resumo.</summary>
     public const string TurnPrefixHeader = "[Turno em andamento no ponto de corte — prefixo]\n";
 
-    private const int DefaultThresholdChars = 60_000;
+    private const int DefaultThresholdChars = 256_000;
     private const int DefaultTailMessages = 30;
     private const int DefaultTailChars = 25_000;
 
