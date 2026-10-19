@@ -547,6 +547,44 @@ public class ConfigLayersE2ETests
     }
 
     [Test]
+    public async Task ProviderKeys_ToggleGetEDeleteEValidacoes()
+    {
+        var user = await SignUpAsync("BPK", "bpk@cfg.local");
+
+        // GET do toggle é legível por qualquer usuário autenticado.
+        UseToken(user.Token);
+        var toggle = await _client.GetAsync("/api/v1/configs/user_provider_keys");
+        Assert.That(toggle.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        UseToken(_adminToken);
+        var on = await _client.PostAsJsonAsync(
+            "/api/v1/configs/user_provider_keys", new { enabled = true });
+        Assert.That(on.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        UseToken(user.Token);
+        // Validações: provider fora da allowlist e key vazia.
+        var badProvider = await _client.PutAsJsonAsync(
+            "/api/v1/configs/user/provider-keys/outlook", new { key = "sk-x" });
+        Assert.That(badProvider.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var emptyKey = await _client.PutAsJsonAsync(
+            "/api/v1/configs/user/provider-keys/openai", new { key = "  " });
+        Assert.That(emptyKey.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        var put = await _client.PutAsJsonAsync(
+            "/api/v1/configs/user/provider-keys/openai", new { key = "sk-del" });
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // DELETE remove a chave → GET não a expõe mais.
+        var del = await _client.DeleteAsync(
+            "/api/v1/configs/user/provider-keys/openai");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var list = await _client.GetFromJsonAsync<JsonElementDict>(
+            "/api/v1/configs/user/provider-keys");
+        Assert.That(list!.GetProperty("providers").EnumerateArray(),
+            Is.Empty);
+    }
+
+    [Test]
     public async Task MemorySync_OverrideEAdminDeny()
     {
         var user = await SignUpAsync("B3", "b3@cfg.local");
