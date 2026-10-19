@@ -4,9 +4,9 @@ permissions: {}
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: '0 2 * * 1'    # Semanal, segunda às 2h UTC
@@ -37,6 +37,8 @@ jobs:
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: 📦 Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
@@ -59,6 +61,145 @@ jobs:
         with:
           category: "/language:${{ matrix.language }}"
 
+  # Scanners instalados pinados via `gh release download` (autenticado,
+  # 5000 req/h) — chamadas não autenticadas à api.github.com limitam a
+  # 60/h e podem no-op silencioso quando throttled, transformando um gate
+  # de segurança num self-skip permanente.
+  secrets:
+    name: 🕵️ Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned, authenticated)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITLEAKS_VERSION: v8.30.1
+        run: |
+          mkdir -p "$HOME/.local/bin" /tmp/gl
+          gh release download "$GITLEAKS_VERSION" --repo gitleaks/gitleaks \
+            --pattern '*linux_x64.tar.gz' --dir /tmp/gl
+          tar -xzf /tmp/gl/*linux_x64.tar.gz -C "$HOME/.local/bin" gitleaks
+          "$HOME/.local/bin/gitleaks" version
+
+      - name: Gitleaks scan (blocking)
+        run: '"$HOME/.local/bin/gitleaks" git --redact --verbose .'
+
+  workflow-audit:
+    name: 🧾 Workflow lint (actionlint + zizmor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint + zizmor (pinned)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTIONLINT_VERSION: v1.7.12
+          ZIZMOR_VERSION: "1.25.2"
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          bash <(curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") \
+            "${ACTIONLINT_VERSION#v}" "$HOME/.local/bin"
+          pipx install "zizmor==$ZIZMOR_VERSION" || pip install --user "zizmor==$ZIZMOR_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/actionlint" -version
+          zizmor --version
+
+      - name: actionlint (blocking)
+        run: '"$HOME/.local/bin/actionlint" -color'
+
+      - name: zizmor (blocking, SARIF artifact)
+        run: |
+          zizmor --format sarif .github/workflows > zizmor.sarif || true
+          # --offline mantém o gate determinístico (sem fetch de refs remotos);
+          # findings acima de medium/medium bloqueiam — suppressions ficam no repo.
+          zizmor --offline --min-severity=medium --min-confidence=medium .github/workflows
+
+      - name: Upload zizmor SARIF
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7
+        with:
+          name: zizmor-sarif
+          path: zizmor.sarif
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dependency-audit:
+    name: 📦 Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
+
+      - name: 📦 Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore Dependencies
+        run: dotnet restore OpenWebUI.slnx --verbosity normal
+
+      - name: dotnet vulnerable-package gate (blocking)
+        run: |
+          dotnet list OpenWebUI.slnx package --vulnerable --include-transitive \
+            > /tmp/vuln.txt 2>&1 || true
+          cat /tmp/vuln.txt
+          if grep -qE "has the following vulnerable|Severity.*(High|Critical|Moderate|Low)" /tmp/vuln.txt; then
+            echo "::error::vulnerable packages found — bump or pin the affected PackageReference."
+            exit 1
+          fi
+
+      - name: Install osv-scanner (pinned, authenticated)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OSV_SCANNER_VERSION: v2.3.8
+        run: |
+          mkdir -p "$HOME/.local/bin" /tmp/osv
+          gh release download "$OSV_SCANNER_VERSION" --repo google/osv-scanner \
+            --pattern '*linux_amd64' --dir /tmp/osv
+          install -m 0755 /tmp/osv/*linux_amd64 "$HOME/.local/bin/osv-scanner"
+          "$HOME/.local/bin/osv-scanner" --version
+
+      - name: osv-scanner on the repo (blocking)
+        # CVE recém-divulgado em dep inalterada pode red esse gate — a correção
+        # é bump da dep, não enfraquecer o gate.
+        run: '"$HOME/.local/bin/osv-scanner" scan --recursive .'
+
+  docker-lint:
+    name: 🐳 hadolint (Dockerfile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
+
+      - name: hadolint (pinned digest, failure-threshold=error)
+        run: |
+          docker run --rm -i hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e \
+            hadolint --failure-threshold error - < Dockerfile
+
   snyk:
     name: 🛡️ Snyk Security
     runs-on: ubuntu-latest
@@ -70,6 +211,8 @@ jobs:
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: 🗄️ Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
@@ -83,9 +226,9 @@ jobs:
         id: snyk-token
         run: |
           if [ -n "${{ secrets.SNYK_TOKEN }}" ]; then
-            echo "present=true" >> $GITHUB_OUTPUT
+            echo "present=true" >> "$GITHUB_OUTPUT"
           else
-            echo "present=false" >> $GITHUB_OUTPUT
+            echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::notice::SNYK_TOKEN não configurado — pulando Snyk"
           fi
 
@@ -114,6 +257,8 @@ jobs:
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: 🐳 Build image to scan
         run: docker build -t openwebui:scan .

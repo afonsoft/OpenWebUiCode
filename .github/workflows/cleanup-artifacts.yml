@@ -1,0 +1,44 @@
+name: 🧹 Cleanup Artifacts
+
+permissions: {}
+
+# Artifacts de workflow acumulam silenciosamente — coverage, SARIF, relatórios
+# de a11y e perf. Deleta qualquer coisa com mais de 30 dias, diariamente.
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cleanup-artifacts
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    name: 🧹 Delete artifacts older than 30 days
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: delete artifacts older than 30 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d '30 days ago' +%s)
+          page=1; deleted=0
+          while :; do
+            items=$(gh api "repos/$GH_REPO/actions/artifacts?per_page=100&page=$page" \
+              --jq '.artifacts[] | select(.expired == false) | [.id, .created_at] | @tsv')
+            [ -z "$items" ] && break
+            while IFS=$'\t' read -r id created; do
+              ts=$(date -u -d "$created" +%s)
+              if [ "$ts" -lt "$cutoff" ]; then
+                gh api -X DELETE "repos/$GH_REPO/actions/artifacts/$id" && deleted=$((deleted + 1))
+              fi
+            done <<< "$items"
+            page=$((page + 1))
+          done
+          echo "deleted $deleted artifact(s) older than 30d" >> "$GITHUB_STEP_SUMMARY"

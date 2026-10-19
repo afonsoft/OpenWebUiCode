@@ -12,7 +12,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>
 /// Terminal PTY embutido: sessões de shell por usuário no workspace
 /// (<c>data/workspaces/{userId}</c>) multiplexadas por WebSocket — o terminal
-/// xterm.js da UI. Feature flag: off por padrão, admin ativa por
+/// xterm.js da UI. Feature flag: ligada por padrão — admin desativa por
 /// <c>PUT /api/v1/terminal/config</c> ou <c>Terminal:Enabled</c>/
 /// <c>TERMINAL_ENABLED</c>.
 /// </summary>

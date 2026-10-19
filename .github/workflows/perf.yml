@@ -55,6 +55,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
@@ -78,7 +80,7 @@ jobs:
       - name: Start mock Ollama
         run: |
           nohup python3 tools/perf/mock_ollama.py > mock-ollama.log 2>&1 &
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -sf http://127.0.0.1:11434/api/tags > /dev/null && exit 0
             sleep 1
           done
@@ -107,7 +109,7 @@ jobs:
           # content root = app-out: rodar fora dele deixa wwwroot/_framework inacessível.
           cd app-out
           nohup dotnet OpenWebUI.Api.dll > "$GITHUB_WORKSPACE/app.log" 2>&1 &
-          for i in $(seq 1 90); do
+          for _ in $(seq 1 90); do
             curl -sf http://127.0.0.1:${{ env.PERF_PORT }}/health > /dev/null && exit 0
             sleep 1
           done
@@ -188,13 +190,15 @@ jobs:
       - name: Reports no job summary
         if: always()
         run: |
-          for f in perf-results/report-mock.md perf-results/report-real.md; do
-            [ -f "$f" ] && { echo "# $(basename $f)"; cat "$f"; } >> "$GITHUB_STEP_SUMMARY"
-          done
-          echo "## app.log (tail)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          tail -40 app.log >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            for f in perf-results/report-mock.md perf-results/report-real.md; do
+              [ -f "$f" ] && { echo "# $(basename "$f")"; cat "$f"; }
+            done
+            echo "## app.log (tail)"
+            echo '```'
+            tail -40 app.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload perf results
         if: always()
@@ -207,3 +211,64 @@ jobs:
             mock-ollama.log
           if-no-files-found: ignore
           retention-days: 30
+
+  # Abre/atualiza issue de tracking quando o gate semanal falha — o perf roda
+  # por schedule e ninguém olha a aba Actions todo dia (padrão OmniRoute
+  # release-green, simplificado).
+  issue-on-failure:
+    name: 🚨 Alert on scheduled failure
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [load-test]
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: evaluate results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          FAILED=$(printf '%s' "$NEEDS_JSON" \
+            | jq -r 'to_entries | map(select(.value.result != "success" and .value.result != "skipped")) | .[].key' \
+            | paste -sd", " -)
+          echo "failed=$FAILED" >> "$GITHUB_ENV"
+          [ -z "$FAILED" ]
+
+      - name: ensure label exists
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create perf-red --repo "${{ github.repository }}" \
+            --color B60205 --description "Scheduled perf gate failure" \
+            2>/dev/null || true
+
+      - name: open tracking issue
+        if: failure()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3   # v9
+        with:
+          script: |
+            const needs = ${{ toJSON(needs) }};
+            const failed = Object.entries(needs)
+              .filter(([, v]) => v.result !== "success" && v.result !== "skipped")
+              .map(([k]) => k);
+            if (failed.length === 0) return;
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const title = "perf load-test failure: " + failed.join(", ");
+            const existing = (await github.rest.issues.listForRepo({
+              owner, repo, state: "open", labels: "perf-red", per_page: 10,
+            })).data[0];
+            const body = [
+              "Scheduled perf gate failed on `" + context.refName + "`.",
+              "",
+              "Failed jobs: " + failed.map((f) => "`" + f + "`").join(", "),
+              "",
+              "Run: " + runUrl,
+            ].join("\n");
+            if (existing) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title, body, labels: ["perf-red"] });
+            }

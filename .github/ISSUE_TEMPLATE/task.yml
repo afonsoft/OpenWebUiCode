@@ -1,0 +1,37 @@
+name: 🛠️ Task / Chore
+description: Trabalho técnico interno — refactor, débito técnico, CI, docs, bump de dependência. Não é bug nem feature de usuário.
+title: "[Task] "
+labels: []
+assignees: []
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: O que fazer
+      description: Descreva a tarefa de forma acionável.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivação
+      description: Por que vale o esforço? (débito técnico, risco, custo de manutenção)
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Critérios de aceite
+      description: Como saber que está pronto?
+      placeholder: |
+        - [ ] Critério 1
+        - [ ] Critério 2
+    validations:
+      required: true
+
+  - type: input
+    id: spec
+    attributes:
+      label: SPEC relacionada (se houver)
+      description: Arquivo em .specs/ ou docs/specs/ que governa essa tarefa.
+      placeholder: SPEC-20261008-ci-tool-guards

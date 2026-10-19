@@ -6,7 +6,6 @@ on:
   push:
     branches:
       - "main"
-      - "develop"
       - "feature/*"
       - "fix/*"
       - "bug/*"
@@ -16,11 +15,14 @@ on:
   pull_request:
     branches:
       - "main"
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 env:
   DOTNET_VERSION: "10.0.x"
   SOLUTION: "OpenWebUI.slnx"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
 
 # Cancela a run anterior do mesmo ref: push novo torna a antiga obsoleta.
 concurrency:
@@ -28,16 +30,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Classificação do diff (padrão OmniRoute/OpenHandsNET): jobs downstream só
+  # pagam pelo que pode quebrar — PR docs-only pula build/test/docker, e PRs
+  # em draft não rodam os jobs pesados (ready_for_review re-dispara).
+  changes:
+    name: Change classification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      docs: ${{ steps.classify.outputs.docs }}
+      workflow: ${{ steps.classify.outputs.workflow }}
+      docker: ${{ steps.classify.outputs.docker }}
+      testsOnly: ${{ steps.classify.outputs.testsOnly }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reject PR that targets its own branch
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$HEAD_REF" = "$BASE_REF" ]; then
+            echo "::error::PR targets its own head branch ($BASE_REF) — nothing can merge."
+            exit 1
+          fi
+
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            {
+              echo "code=true"; echo "docs=true"; echo "workflow=true"
+              echo "docker=true"; echo "testsOnly=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" | \
+            bash scripts/classify-changes.sh
+
   build-openwebui:
     name: Build OpenWebUI (.NET 10)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.code == 'true') }}
     permissions:
       contents: read
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
@@ -62,13 +117,17 @@ jobs:
     name: Tests + Coverage Gate (NUnit)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: build-openwebui
+    needs: [changes, build-openwebui]
+    if: ${{ !cancelled() && needs.build-openwebui.result == 'success' }}
     permissions:
       contents: read
+      pull-requests: write
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
@@ -89,6 +148,11 @@ jobs:
       - name: Run All Tests + Coverage
         run: dotnet test ${{ env.SOLUTION }} --configuration Release --verbosity minimal --logger "trx;LogFileName=tests.trx" --collect:"XPlat Code Coverage" --settings coverlet.runsettings --results-directory ./TestResults
 
+      # Vars lidas via GetEnvironmentVariable no código devem estar
+      # documentadas em .env.exemplo (SPEC drift check).
+      - name: Env drift check
+        run: ./scripts/check-env-drift.sh
+
       # Gate de cobertura: o piso vive em .ci/coverage-baseline.txt (linha) e
       # .ci/coverage-branch-baseline.txt (branch) — baselines commitadas, não
       # hardcoded. O job coverage-ratchet sobe os baselines quando a cobertura
@@ -100,6 +164,7 @@ jobs:
           # runsettings, seu XML não tem esse pacote).
           XML=$(find TestResults -name coverage.cobertura.xml -exec grep -l 'OpenWebUI.Infrastructure' {} \; | head -1)
           if [ -z "$XML" ]; then echo "::error::coverage.cobertura.xml not found"; exit 1; fi
+          mkdir -p .artifacts
           python3 - "$XML" <<'PY'
           import sys, xml.etree.ElementTree as ET
           r = ET.parse(sys.argv[1]).getroot()
@@ -108,14 +173,16 @@ jobs:
           with open('.ci/coverage-baseline.txt') as f: lb = float(f.read().strip() or 0)
           import os
           bb = float(open('.ci/coverage-branch-baseline.txt').read().strip() or 0) if os.path.exists('.ci/coverage-branch-baseline.txt') else 0.0
-          # resumo por projeto no step summary
+          # resumo por projeto no step summary e em arquivo p/ comentário no PR
           rows = ["", "## 📈 Cobertura", "", "| Projeto | Linha | Branch |", "|---|---|---|"]
           for p in r.iter('package'):
               n = p.get('name') or ''
               if 'Tests' in n: continue
               rows.append(f"| {n} | {float(p.get('line-rate'))*100:.1f}% | {float(p.get('branch-rate'))*100:.1f}% |")
           rows.append(f"| **Total** | **{line:.1f}%** | **{branch:.1f}%** |")
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write('\n'.join(rows)+'\n')
+          report = '\n'.join(rows)+'\n'
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f: f.write(report)
+          with open('.artifacts/coverage-summary.md', 'w') as f: f.write(report)
           ok = True
           TOL = 0.05  # banda de variância de medição entre runs idênticas (±0.04 observado)
           if line < lb - TOL: print(f"::error::Line coverage {line:.2f}% < baseline {lb}%"); ok = False
@@ -140,17 +207,47 @@ jobs:
           path: "**/coverage.cobertura.xml"
           if-no-files-found: ignore
 
+      # Sticky PR coverage comment (padrão OmniRoute): um comentário marcador,
+      # atualizado a cada run — só em PRs do próprio repo (token não sai em forks).
+      - name: PR coverage comment
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3   # v9
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- openwebui-coverage-report -->";
+            let body = marker + "\n## Coverage report\n\n";
+            try {
+              body += fs.readFileSync(".artifacts/coverage-summary.md", "utf8");
+            } catch {
+              body += "_coverage report unavailable for this run_\n";
+            }
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
   blazor-client-validation:
     name: Blazor WASM Client Validation
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: build-openwebui
+    needs: [changes, build-openwebui]
+    if: ${{ !cancelled() && needs.build-openwebui.result == 'success' }}
     permissions:
       contents: read
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68   # v6.0.0
@@ -165,7 +262,7 @@ jobs:
           # Build simples emite o payload fingerprinted em _framework/;
           # index.html fica em wwwroot e é servido pelo host OpenWebUI.Api.
           fw="src/OpenWebUI.Client/bin/Release/net10.0/wwwroot/_framework"
-          app_wasm=$(ls "$fw"/OpenWebUI.Client.*.wasm 2>/dev/null | head -1)
+          app_wasm=$(find "$fw" -maxdepth 1 -name 'OpenWebUI.Client.*.wasm' | head -1)
           if [ -z "$app_wasm" ]; then
             echo "::error::WASM do app nao gerado em $fw (OpenWebUI.Client.*.wasm)"
             exit 1
@@ -175,7 +272,7 @@ jobs:
             exit 1
           fi
           echo "Blazor WASM assets gerados com sucesso: $(basename "$app_wasm")"
-          echo "payloads em _framework: $(ls "$fw" | wc -l)"
+          echo "payloads em _framework: $(find "$fw" -maxdepth 1 -type f | wc -l)"
 
       # Drift guards do E13: classes CSS inexistentes, controles de
       # formulário sem nome acessível e chaves i18n sem paridade nos 8
@@ -192,12 +289,16 @@ jobs:
     name: Tailwind CSS em dia
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.code == 'true') }}
     permissions:
       contents: read
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: Cache Tailwind CLI
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9   # v6
@@ -227,13 +328,18 @@ jobs:
     name: Docker Image Build
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: build-openwebui
+    needs: [changes, build-openwebui]
+    # Roda quando código de produção ou a superfície docker mudou; diffs
+    # puros de docs/tests não alteram a imagem.
+    if: ${{ !cancelled() && needs.build-openwebui.result == 'success' && (github.event_name != 'pull_request' || needs.changes.outputs.docker == 'true' || needs.changes.outputs.code == 'true') }}
     permissions:
       contents: read
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069   # v4.4.1
@@ -247,6 +353,26 @@ jobs:
           tags: openwebui:ci-test
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
+
+  # Política de testes do PR (padrão OmniRoute): código de produção mudou ->
+  # teste precisa mudar junto. Determinístico, sem estado externo — bloqueante.
+  pr-test-policy:
+    name: PR test policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.changes.outputs.code == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate source changes include tests
+        run: bash scripts/check-pr-test-policy.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
 
   # Depois de push na main, sobe .ci/coverage-baseline.txt para a taxa medida
   # quando ela melhorou. O gate nos PRs passa a exigir "sem regressão vs main".
@@ -298,3 +424,90 @@ jobs:
           else
             echo "coverage did not improve — baselines unchanged"
           fi
+
+  # Veredito de admissão (padrão OmniRoute): UM status check que a branch
+  # protection exige. Job cancelado ou skipped-by-design é avaliado
+  # explicitamente — cancelled nunca lê como verde.
+  admission-verdict:
+    name: Gate / CI
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    needs:
+      - changes
+      - build-openwebui
+      - test
+      - blazor-client-validation
+      - tailwind-freshness
+      - docker-build
+      - pr-test-policy
+    steps:
+      - name: evaluate admission
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          failed, cancelled = [], []
+          print("| Job | Result |", "|---|---|", sep="\n")
+          for name, data in sorted(needs.items()):
+              r = data["result"]
+              print(f"| {name} | {r} |")
+              if r == "failure": failed.append(name)
+              if r in ("cancelled", "startup_failure"): cancelled.append(name)
+          if cancelled:
+              print(f"::error::job(s) cancelled — no verdict reported: {', '.join(cancelled)}")
+          if failed:
+              print(f"::error::gate(s) failed: {', '.join(failed)}")
+          sys.exit(1 if (failed or cancelled) else 0)
+          PY
+
+  ci-summary:
+    name: CI Dashboard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    needs:
+      - changes
+      - build-openwebui
+      - test
+      - blazor-client-validation
+      - tailwind-freshness
+      - docker-build
+      - pr-test-policy
+      - admission-verdict
+    steps:
+      - name: generate dashboard
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          status() {
+            case "$1" in
+              success) echo "🟢 PASS" ;; failure) echo "🔴 FAIL" ;;
+              cancelled) echo "⚫ CANCELLED" ;; skipped) echo "⚪ SKIPPED" ;;
+              *) echo "🟡 $1" ;;
+            esac
+          }
+          {
+            echo "# CI Dashboard"; echo ""
+            # Job cancelado nunca reportou veredito — nomeia-os no TOPO.
+            CANCELLED=$(printf '%s' "$NEEDS_JSON" \
+              | jq -r 'to_entries | map(select(.value.result == "cancelled")) | .[].key' \
+              | sort | paste -sd", " - || true)
+            if [ -n "$CANCELLED" ]; then
+              echo "> ### ⚫ Cancelled — no verdict was reported"
+              echo "> \`$CANCELLED\`"
+              echo "> These did not fail; they never finished. If the cancellation came"
+              echo "> from a newer push, that run covers it — otherwise re-run them."
+              echo ""
+            fi
+            echo "| Job | Status |"; echo "|---|---|"
+            for j in changes build-openwebui test blazor-client-validation tailwind-freshness docker-build pr-test-policy admission-verdict; do
+              echo "| $j | $(status "$(printf '%s' "$NEEDS_JSON" | jq -r ".[\"$j\"].result // \"unknown\"")") |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
