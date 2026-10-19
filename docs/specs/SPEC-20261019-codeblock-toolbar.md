@@ -9,7 +9,7 @@
 | Stack | `.NET` (Blazor WASM + JS interop) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261019-codeblock-toolbar` |
-| Status | `Approved` |
+| Status | `Delivered` |
 | Parent | report do usuário — `<pre><code class="language-bash">` no chat renderiza sem barra de ferramentas e sem opção de copiar |
 
 ## 1. User Story
@@ -108,3 +108,11 @@ tests/OpenWebUI.Client.Tests/*                         # cobertura do que dá pa
 - **Streaming**: enhance durante streaming pode pegar bloco incompleto — rodar a cada `OnAfterRender` com guard por conteúdo já cobre; `data-codeblock` evita duplicar toolbar em re-render.
 - **execCommand**: deprecated mas é o único fallback sem permissão de clipboard — isolar num try.
 - **Format em bloco executável**: formatar muda `innerText` → o Executar roda o texto visível — JSON não é executável, sem conflito.
+
+## 7. Delivered
+
+- Branch `feature/Devin-20261019-codeblock-toolbar` (PR com `Closes #468`).
+- `codeblocks.js` (barra: label + copiar + format JSON + wrap + Executar), `<code>` inline click-to-copy, `SharedChat` incluso.
+- `codeexec.js` virou biblioteca (`isRunnable`/`runInBlock`) — o Executar vive na barra.
+- i18n `chat.code.*` ×8 locales; `tailwind.css` regenerado; 2 testes bUnit novos (104/104 client).
+- Guards: css-classes, form-a11y, i18n-parity, spec-status — verdes.
