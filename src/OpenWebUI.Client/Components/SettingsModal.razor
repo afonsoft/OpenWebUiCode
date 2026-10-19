@@ -1753,7 +1753,8 @@
     // ── BYOK — chaves de provider do usuário (SPEC-20261014-config-layers RF-005) ──
     private static readonly string[] ByokProviders = ["openai", "anthropic", "google"];
     private UserProviderKeysResponse? _byok;
-    private readonly Dictionary<string, string?> _byokDrafts = new();
+    private readonly Dictionary<string, string?> _byokDrafts =
+        ByokProviders.ToDictionary(static p => p, static _ => (string?)null);
     private bool _byokSaving;
 
     /// <summary>Grava a chave BYOK do provider (valor nunca volta do servidor).</summary>
