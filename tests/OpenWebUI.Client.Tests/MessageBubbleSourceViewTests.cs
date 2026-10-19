@@ -34,22 +34,29 @@ public sealed class MessageBubbleSourceViewTests
             Encoding.UTF8, "application/json"),
     };
 
-    private static BunitContext Setup()
+    private HttpClient? _http;
+
+    [TearDown]
+    public void TearDown() => _http?.Dispose();
+
+    private BunitContext Setup()
     {
         var ctx = new BunitContext();
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
-        var http = new HttpClient(new FakeHandler(_ => Json(new
+        // O client vive no field e sai no TearDown (o ServiceProvider do
+        // ctx também o descarta — double-dispose de HttpClient é seguro).
+        _http = new HttpClient(new FakeHandler(_ => Json(new
         {
             features = new { enableCodeExecution = false, enableImageGeneration = false },
         })))
         {
             BaseAddress = new Uri("http://localhost/"),
         };
-        ctx.Services.AddSingleton(http);
-        var l10n = new LocalizationService(http, ctx.JSInterop.JSRuntime);
+        ctx.Services.AddSingleton(_http);
+        var l10n = new LocalizationService(_http, ctx.JSInterop.JSRuntime);
         var storage = new BrowserStorage(ctx.JSInterop.JSRuntime);
-        var auth = new AuthService(http, storage, l10n);
-        ctx.Services.AddSingleton(new ApiService(http, auth));
+        var auth = new AuthService(_http, storage, l10n);
+        ctx.Services.AddSingleton(new ApiService(_http, auth));
         ctx.Services.AddSingleton(l10n);
         ctx.Services.AddSingleton(auth);
         ctx.Services.AddSingleton(storage);

@@ -88,9 +88,11 @@ public static class ChatPipeline
         {
             systemParts.Add(
                 "User approvals are set to always-allow: tool permissions are "
-                + "auto-granted — do not ask for confirmation before acting; "
-                + "ask only for inputs only the user can provide (a decision, "
-                + "a secret, or a genuinely destructive step).");
+                + "auto-granted — do not ask for confirmation before acting. "
+                + "Exceptions: tools the owner explicitly marked "
+                + "always-ask still require confirmation, and ask for inputs "
+                + "only the user can provide (a decision, a secret, or a "
+                + "genuinely destructive step).");
         }
 
         // 1. Modelo personalizado do workspace → redireciona para o modelo base e aplica config.
@@ -489,7 +491,7 @@ public static class ChatPipeline
         /// do executor.</summary>
         bool HitStepCap = false,
         /// <summary>Última contagem de itens pending/in_progress reportada
-        /// por builtin_todo_write; -1 quando a lista nunca foi escrita na
+        /// pela tool de tarefas; -1 quando a lista nunca foi escrita na
         /// run (fallback autônomo da chain).</summary>
         int PendingTodos = -1);
 
@@ -655,7 +657,10 @@ public static class ChatPipeline
         var autoContinues = 0;
         // -1 = lista nunca escrita: a chain do executor usa como fallback
         // ("sem lista populada em modo build, continua mesmo assim").
-        var pendingTodos = -1;
+        // A retomada restaura a contagem do snapshot — sem isso a run
+        // reiniciada voltaria ao fallback mesmo com trabalho pendente
+        // (Devin #458).
+        var pendingTodos = resume?.PendingTodos ?? -1;
 
         async Task<ProviderCompletion> CompleteResilientAsync(
             Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
@@ -768,7 +773,7 @@ public static class ChatPipeline
                         u.Step, u.PromptTokens, u.CompletionTokens,
                         u.ReasoningTokens)).ToList(),
                     emptyRounds, lengthContinuations,
-                    continuedAnswer.ToString()), ct);
+                    continuedAnswer.ToString(), pendingTodos), ct);
             }
             if (callbacks?.OnStepAsync is not null)
             {
@@ -852,16 +857,36 @@ public static class ChatPipeline
                     var queued = await callbacks.OnRoundBoundaryAsync(true, ct);
                     if (queued.Count > 0)
                     {
+                        // O texto da rodada permanece no histórico — sumir
+                        // com ele desincroniza stream × persistência.
+                        var interimQueued = string.IsNullOrWhiteSpace(step.Content)
+                            ? null
+                            : new ChatCompletionMessage("assistant", step.Content);
+                        if (interimQueued is not null)
+                        {
+                            messages.Add(interimQueued);
+                            toolMessages.Add(interimQueued);
+                        }
                         messages.AddRange(queued);
+                        if (callbacks?.OnMessagesAddedAsync is not null)
+                        {
+                            await callbacks.OnMessagesAddedAsync(
+                                interimQueued is null ? queued
+                                    : [interimQueued, .. queued],
+                                interimQueued is null ? []
+                                    : [interimQueued], ct);
+                        }
                         round = -1;
                         continue;
                     }
                 }
-                if (pendingTodos > 0 && autoContinues < maxAutoContinues)
+                if (pendingTodos > 0 && autoContinues < maxAutoContinues && !lastStep)
                 {
                     // Turno encerrado com a lista aberta — o modo de falha
                     // "parou e perguntou se era para continuar". O nudge
-                    // manda executar a próxima tarefa já.
+                    // manda executar a próxima tarefa já. No lastStep o
+                    // próximo round já não tem tools — a continuação real
+                    // é a auto-chain do executor (SPEC-20261019 RF-002).
                     autoContinues++;
                     log?.LogInformation(
                         "Turno encerrado com {Pending} tarefa(s) pendente(s) — "
@@ -869,10 +894,22 @@ public static class ChatPipeline
                         pendingTodos, autoContinues, maxAutoContinues);
                     var nudge = new ChatCompletionMessage(
                         "user", PendingTasksPrompt(pendingTodos));
+                    // Idem: preserva o texto da rodada no histórico antes
+                    // do nudge (senão ele só vive no stream efêmero).
+                    var interim = string.IsNullOrWhiteSpace(step.Content)
+                        ? null
+                        : new ChatCompletionMessage("assistant", step.Content);
+                    if (interim is not null)
+                    {
+                        messages.Add(interim);
+                        toolMessages.Add(interim);
+                    }
                     messages.Add(nudge);
                     if (callbacks?.OnMessagesAddedAsync is not null)
                     {
-                        await callbacks.OnMessagesAddedAsync([nudge], [], ct);
+                        await callbacks.OnMessagesAddedAsync(
+                            interim is null ? [nudge] : [interim, nudge],
+                            interim is null ? [] : [interim], ct);
                     }
                     continue;
                 }
@@ -980,7 +1017,12 @@ public static class ChatPipeline
                     // Exceção de execução (IO, rede, MCP): até 3 tentativas
                     // com backoff curto antes de devolver o erro ao modelo —
                     // uma exceção aqui nunca pode escapar e derrubar a run.
-                    const int maxAttempts = 3;
+                    // Tools mutáveis não são repetidas: a exceção pode ter
+                    // vindo depois do efeito aplicado e reexecutar duplicaria
+                    // a ação (Devin Review PR#458).
+                    var mutable = ToolExecutor.FindTool(tools, call.Name)
+                        is { } executedTool && ToolExecutor.IsMutable(executedTool);
+                    var maxAttempts = mutable ? 1 : 3;
                     Exception? lastError = null;
                     for (var attempt = 1; attempt <= maxAttempts; attempt++)
                     {

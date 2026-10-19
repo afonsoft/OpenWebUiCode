@@ -199,6 +199,8 @@ public class AgentLoopAutoChainTests
                         {
                             "file_read" => "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-fr\",\"function\":{\"name\":\"builtin:file_read\",\"arguments\":{\"path\":\"x.txt\"}}}]}}",
                             "new_context" => "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-nc\",\"function\":{\"name\":\"builtin:new_context\",\"arguments\":{}}}]}}",
+                            "ask_senha" => "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-ask\",\"function\":{\"name\":\"builtin:ask_user\",\"arguments\":{\"question\":\"Qual a senha do sudo?\"}}}]}}",
+                            "ask_plain" => "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-ask\",\"function\":{\"name\":\"builtin:ask_user\",\"arguments\":{\"question\":\"Posso seguir com a tarefa?\"}}}]}}",
                             _ => "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-todo\",\"function\":{\"name\":\"builtin:todo_write\",\"arguments\":{\"todos\":[{\"content\":\"tarefa pendente\",\"status\":\"pending\"}]}}}]}}",
                         }
                         : "{\"message\":{\"role\":\"assistant\",\"content\":\"resposta final\"}}";
@@ -345,9 +347,9 @@ public class AgentLoopAutoChainTests
         var chat = await CriarChatBuildAsync("always-allow");
 
         await EnfileirarAsync(chat.Id, "builtin:todo_write");
-        var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
+        await AguardarRunsDoChatAsync(chat.Id, 1);
         await Task.Delay(1500); // janela para uma filha indevida aparecer
-        runs = await AguardarRunsDoChatAsync(chat.Id, 1);
+        var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
         Assert.That(runs, Has.Count.EqualTo(1));
     }
 
@@ -516,7 +518,7 @@ public class AgentLoopAutoChainTests
             await db.SaveChangesAsync();
         }
 
-        var run = await EnfileirarAsync(chat.Id, "builtin:todo_write", "builtin:file_read");
+        await EnfileirarAsync(chat.Id, "builtin:todo_write", "builtin:file_read");
         var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
         Assert.That(runs.Single().Status, Is.EqualTo(ChatRunStatus.Completed));
 
@@ -566,11 +568,148 @@ public class AgentLoopAutoChainTests
             await db.SaveChangesAsync();
         }
 
-        var run = await EnfileirarAsync(chat.Id,
+        await EnfileirarAsync(chat.Id,
             "builtin:new_context", "builtin:todo_write", "builtin:file_read");
         var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
         Assert.That(runs.Single().Status, Is.EqualTo(ChatRunStatus.Completed));
 
         Assert.That(_bodies.Any(b => b.Contains("Nova janela aplicada")), Is.True);
+    }
+
+    // ---- Devin Review sweep (PRs #458/#459): gates, herança e ask_user ----
+
+    /// <summary>
+    /// Devin #459: run que bate o cap SEM trabalho real (sem tool calls e
+    /// sem lista de tarefas — resposta de texto puro no único round) não
+    /// pode encadear. O fallback <c>PendingTodos == -1</c> só vale quando a
+    /// run executou tools.
+    /// </summary>
+    [Test]
+    public async Task AutoChain_CapSemTrabalho_NaoEncadeia()
+    {
+        _emit = "file_read";
+        // maxRounds=1 → round único já é lastStep (tools removidas) →
+        // HitStepCap com PendingTodos=-1 e ToolMessages vazio.
+        await SetAgentLoopAsync(maxRounds: 1, autoChain: true, maxAutoChain: 3);
+        var chat = await CriarChatBuildAsync("always-allow");
+
+        await EnfileirarAsync(chat.Id, "builtin:file_read");
+        await AguardarRunsDoChatAsync(chat.Id, 1);
+        await Task.Delay(2000); // janela para uma filha indevida aparecer
+        var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
+
+        Assert.That(runs, Has.Count.EqualTo(1));
+        Assert.That(runs[0].Status, Is.EqualTo(ChatRunStatus.Completed));
+    }
+
+    /// <summary>
+    /// Devin #459: continuação auto-chain é do MESMO chat — o marcador
+    /// "Subtarefa concluída" só faz sentido em chat pai de subtarefa
+    /// delegada; no próprio chat contaminaria o histórico.
+    /// </summary>
+    [Test]
+    public async Task AutoChain_NaoGravaMarcadorNoProprioChat()
+    {
+        _emit = "todo_write";
+        await SetAgentLoopAsync(maxRounds: 2, autoChain: true, maxAutoChain: 1);
+        var chat = await CriarChatBuildAsync("always-allow");
+
+        await EnfileirarAsync(chat.Id, "builtin:todo_write");
+        var runs = await AguardarRunsDoChatAsync(chat.Id, 2);
+        Assert.That(runs.Count(r => r.ParentRunId is not null), Is.EqualTo(1));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var marcadores = await db.ChatMessages.AsNoTracking()
+            .Where(m => m.ChatId == chat.Id && m.Role == "assistant"
+                && m.Content.Contains("Subtarefa concluída"))
+            .CountAsync();
+        Assert.That(marcadores, Is.EqualTo(0));
+    }
+
+    /// <summary>
+    /// Devin #458: o limite por-run <c>r:{id}:agent.steps</c> precisa ser
+    /// copiado para a filha — sem a herança ela cai no teto global.
+    /// </summary>
+    [Test]
+    public async Task AutoChain_FilhaHerdaAgentSteps()
+    {
+        _emit = "todo_write";
+        await SetAgentLoopAsync(maxRounds: 2, autoChain: true, maxAutoChain: 1);
+        var chat = await CriarChatBuildAsync("always-allow");
+
+        // Delay one-shot no 1º /api/chat: abre janela para gravar a chave
+        // agent.steps ANTES de a run completar — a cópia p/ a filha ocorre
+        // no momento da chain, depois de 2 rounds completos.
+        _firstDelayMs = 2000;
+        var run = await EnfileirarAsync(chat.Id, "builtin:todo_write");
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+            await config.SetAsync($"r:{run.Id}:agent.steps", 7, default);
+        }
+        var runs = await AguardarRunsDoChatAsync(chat.Id, 2);
+        var filha = runs.Single(r => r.ParentRunId == run.Id);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+            var herdado = await config.GetAsync<int?>(
+                $"r:{filha.Id}:agent.steps", null, default);
+            Assert.That(herdado, Is.EqualTo(7));
+        }
+    }
+
+    /// <summary>
+    /// Devin #458: pergunta livre que pede dado só-do-dono (senha) NÃO
+    /// recebe a resposta autônoma genérica em always-allow — bloqueia em
+    /// aprovação até o usuário responder.
+    /// </summary>
+    [Test]
+    public async Task AskUser_SenhaEmAlwaysAllow_VaiAoUsuario()
+    {
+        _emit = "ask_senha";
+        await SetAgentLoopAsync(null, null, null);
+        var chat = await CriarChatBuildAsync("always-allow");
+        var approvals = _factory.Services.GetRequiredService<OpenWebUI.Api.Runs.ChatRunApprovals>();
+
+        var run = await EnfileirarAsync(chat.Id, "builtin:ask_user");
+
+        // A pergunta tem de aparecer como pendência do chat (question_asked).
+        var limite = DateTime.UtcNow.AddSeconds(60);
+        while (!approvals.PendingChatIds().Contains(chat.Id))
+        {
+            Assert.That(DateTime.UtcNow, Is.LessThan(limite),
+                "ask_user com senha nunca chegou ao usuário em always-allow.");
+            await Task.Delay(200);
+        }
+
+        // Responde como o dono faria — a run destrava e conclui.
+        Assert.That(approvals.Resolve(run.Id, chat.Id, "call-ask",
+            approved: true, remember: false, message: "s3cr3t"), Is.True);
+        var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
+        Assert.That(runs[0].Status, Is.EqualTo(ChatRunStatus.Completed));
+    }
+
+    /// <summary>
+    /// Devin #458 (contrapartida): pergunta livre sem dado do dono segue
+    /// respondida autonomamente — a run não trava e o resultado da tool
+    /// carrega a diretriz autônoma.
+    /// </summary>
+    [Test]
+    public async Task AskUser_PerguntaComum_RespostaAutonoma()
+    {
+        _emit = "ask_plain";
+        await SetAgentLoopAsync(null, null, null);
+        var chat = await CriarChatBuildAsync("always-allow");
+
+        await EnfileirarAsync(chat.Id, "builtin:ask_user");
+        var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
+
+        Assert.That(runs[0].Status, Is.EqualTo(ChatRunStatus.Completed));
+        // O body é JSON escapado (System.Text.Json escapa não-ASCII) —
+        // substring ASCII da AutonomousAnswer: "…decida pela melhor…".
+        Assert.That(_bodies.Any(b => b.Contains("decida pela melhor")), Is.True,
+            "A resposta autônoma deveria ter voltado ao modelo como tool result.");
     }
 }

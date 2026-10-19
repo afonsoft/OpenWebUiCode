@@ -151,16 +151,17 @@ public static class RepoSkillEndpoints
     /// </summary>
     private static async Task<IResult> ExpandCommandAsync(
         string name, RepoCommandExpandRequest request,
-        string? chatId, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        RepoCommandService commands, CancellationToken ct)
+        string? chatId, HttpContext http, [AsParameters] ExpandCommandDeps deps,
+        CancellationToken ct)
     {
-        var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (userId, workdir, reject) = await BoundWorkdirAsync(
+            http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
         }
 
-        var (result, error) = await commands.ExpandAsync(
+        var (result, error) = await deps.Commands.ExpandAsync(
             userId!, workdir!, name, request.Args, ct);
         if (result is null)
         {
@@ -202,4 +203,11 @@ public static class RepoSkillEndpoints
 
         return (user.Id, await repos.ResolveWorkdirAsync(user.Id, chatId, ct), null);
     }
+
+    /// <summary>Bundle DI da expansão de commands — mantém a assinatura do
+    /// endpoint dentro do limite de parâmetros.</summary>
+    internal sealed record ExpandCommandDeps(
+        AppDbContext Db,
+        WorkspaceRepoService Repos,
+        RepoCommandService Commands);
 }

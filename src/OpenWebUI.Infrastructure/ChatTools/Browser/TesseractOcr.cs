@@ -70,10 +70,8 @@ public sealed class TesseractOcr(ILogger<TesseractOcr> logger)
         }
 
         int? left = null, top = null, right = null, bottom = null;
-        var matched = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var line in tsv.Split('\n'))
+        foreach (var cols in tsv.Split('\n').Select(line => line.Split('\t')))
         {
-            var cols = line.Split('\t');
             if (cols.Length < 12 || cols[0] != "5" || string.IsNullOrWhiteSpace(cols[11]))
             {
                 continue;
@@ -89,7 +87,6 @@ public sealed class TesseractOcr(ILogger<TesseractOcr> logger)
             {
                 continue;
             }
-            matched.Add(word);
             left = Math.Min(left ?? l, l);
             top = Math.Min(top ?? t, t);
             right = Math.Max(right ?? l + w, l + w);

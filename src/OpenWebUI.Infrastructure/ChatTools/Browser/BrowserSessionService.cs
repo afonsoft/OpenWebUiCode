@@ -84,7 +84,7 @@ public sealed class BrowserSessionService(
         });
         var page = await context.NewPageAsync();
         page.SetDefaultTimeout(ActionTimeoutMs);
-        page.SetDefaultNavigationTimeout(ActionTimeoutMs * 2);
+        page.SetDefaultNavigationTimeout(ActionTimeoutMs * 2f);
         if (existing is not null)
         {
             await DisposeQuietlyAsync(existing.Context);
