@@ -64,10 +64,30 @@ window.owuiTerminal = (() => {
             fontSize: isCompactViewport() ? 12 : 13,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
             scrollback: isCompactViewport() ? 800 : 2000,
+            // Paleta ANSI GitHub Dark completa — as 16 cores default do
+            // xterm ficam desbotadas sobre #0d1117 (SPEC terminal-color).
             theme: {
                 background: '#0d1117',
                 foreground: '#e6edf3',
-                cursor: '#58a6ff'
+                cursor: '#58a6ff',
+                cursorAccent: '#0d1117',
+                selectionBackground: '#264f78',
+                black: '#484f58',
+                red: '#ff7b72',
+                green: '#7ee787',
+                yellow: '#f2cc60',
+                blue: '#79c0ff',
+                magenta: '#d2a8ff',
+                cyan: '#39c5cf',
+                white: '#b1bac4',
+                brightBlack: '#6e7681',
+                brightRed: '#ffa198',
+                brightGreen: '#56d364',
+                brightYellow: '#e3b341',
+                brightBlue: '#79c0ff',
+                brightMagenta: '#d2a8ff',
+                brightCyan: '#56d4dd',
+                brightWhite: '#f0f6fc'
             }
         });
         const fit = new FitAddon.FitAddon();
