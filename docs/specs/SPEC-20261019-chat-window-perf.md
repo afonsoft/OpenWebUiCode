@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261019-chat-window-perf` |
-| Status | `Approved` |
+| Status | `Delivered` |
 | Parent | report do usuário — chat com conteúdo grande trava a tela; exibir janela ~256k/512k e carregar o resto dinamicamente no scroll + compactação automática acima de 256k |
 
 ## 1. User Story
@@ -95,3 +95,12 @@ tests/OpenWebUI.Client.Tests/*                           # janela bUnit onde der
 - **Streaming + janela**: append durante run deve sempre render na cauda — a janela nunca pode esconder a mensagem viva.
 - **Branch walk**: `_messages` janelado não pode quebrar `WalkPath`/versões — boundary alinhado a posições persistidas.
 - **Regressão visual**: janela não pode deixar buracos — sentinel + hasMore coerente.
+
+
+## Delivered
+
+- PR #471 (branch `feature/Devin-20261019-chat-window-perf`) — `Closes #469`.
+- `GET /{id}/messages?before&take` paginado no caminho ativo com snap de grupo `tool`; `GET /{id}?tail=N` + `MessagesHasMore`.
+- `ChatView`: cauda de 60, sentinel de scroll-up + botão, prepend com compensação de scroll; `ChatWindow` corta topo acima de 256k chars; `content-visibility:auto` por mensagem.
+- Compaction: `DefaultThresholdChars` 60k → 256k; `chat.loading_older` ×8 locales.
+- Testes: +4 API (ChatEndpointsTests) + 6 client (ChatWindowTests). Build 0/0; API 1944 pass (1 flake de infra readonly-SQLite, passa isolado); client 110/110; guards verdes.
