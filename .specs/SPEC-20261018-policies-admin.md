@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-policies-admin` |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Parent | `docs/analise-opencode-v2.md` (P1.1) |
 
 ## 1. User Story
