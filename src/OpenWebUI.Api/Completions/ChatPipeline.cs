@@ -75,6 +75,24 @@ public static class ChatPipeline
         // prompt do modelo custom e demais blocos de contexto.
         systemParts.Add(DefaultSystemPrompt);
 
+        // 0.1 Preset always-allow (SPEC-20261019-run-autonomy-continue
+        // RF-003): o preset auto-aprova o gate de tools, mas o modelo não
+        // sabe disso — sem a diretiva ele encerra o turno perguntando
+        // "posso continuar?". Só entra em chats com o preset (chatId
+        // nulo = completion avulsa sem preset).
+        if (chatId is not null
+            && await db.Chats.AsNoTracking()
+                .Where(c => c.Id == chatId)
+                .Select(c => c.ApprovalPreset)
+                .FirstOrDefaultAsync(ct) == "always-allow")
+        {
+            systemParts.Add(
+                "User approvals are set to always-allow: tool permissions are "
+                + "auto-granted — do not ask for confirmation before acting; "
+                + "ask only for inputs only the user can provide (a decision, "
+                + "a secret, or a genuinely destructive step).");
+        }
+
         // 1. Modelo personalizado do workspace → redireciona para o modelo base e aplica config.
         var customModel = await db.ModelEntries.AsNoTracking()
             .FirstOrDefaultAsync(
@@ -583,10 +601,12 @@ public static class ChatPipeline
         int maxParallelTools = 4,
         RunLoopCheckpoint? resume = null)
     {
-        // Teto global default do tool loop (SPEC-20261016-agent-steps-usage
-        // RF-001): 5 → 25 agora que agents podem declarar `steps:` próprios.
-        const int defaultMaxRounds = 25;
-        var maxRounds = Math.Clamp(maxSteps ?? defaultMaxRounds, 1, 100);
+        // Teto global default do tool loop: efetivamente ilimitado — a
+        // run só para por decisão do modelo, por `steps:` explícito do
+        // agent ou por agentLoop.maxRounds configurado. O default alto
+        // remove o modo de falha "pausou aos 25 steps esperando Continue".
+        const int defaultMaxRounds = 99999;
+        var maxRounds = Math.Clamp(maxSteps ?? defaultMaxRounds, 1, 99999);
         // Rodadas vazias (só reasoning, sem content nem tool_calls) não
         // encerram a run em silêncio: o modelo leva um nudge e tenta de
         // novo — autonomia para continuar o pensamento sem esperar o
