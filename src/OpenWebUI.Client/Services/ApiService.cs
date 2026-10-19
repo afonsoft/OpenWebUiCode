@@ -424,6 +424,14 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<bool> SetGlobalMemorySyncAsync(MemorySyncPrefs prefs) =>
         await SendStatusAsync(HttpMethod.Put, "/api/v1/configs/memory-sync", prefs);
 
+    /// <summary>Loop do agente: valores efetivos do usuário + camadas cruas.</summary>
+    public Task<AgentLoopResponse?> GetAgentLoopAsync() =>
+        SendAsync<AgentLoopResponse>(HttpMethod.Get, "/api/v1/configs/user/agent-loop");
+
+    /// <summary>Override do usuário do loop do agente (null num campo = herda do global).</summary>
+    public Task<AgentLoopResponse?> SetAgentLoopAsync(AgentLoopPrefs prefs) =>
+        SendAsync<AgentLoopResponse>(HttpMethod.Put, "/api/v1/configs/user/agent-loop", prefs);
+
     /// <summary>Catálogo efetivo de MCP do usuário (globais + próprios, com provenance).</summary>
     public async Task<List<UserMcpServerEntry>> GetUserMcpServersAsync() =>
         await SendAsync<List<UserMcpServerEntry>>(

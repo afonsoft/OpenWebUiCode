@@ -250,6 +250,24 @@ public sealed record MemorySyncResponse(
     bool Enabled, int IntervalHours, int MaxAgeDays,
     bool AdminDisabled, MemorySyncPrefs Global, MemorySyncPrefs User);
 
+/// <summary>Overrides por usuário do loop do agente (SPEC-20261019-
+/// run-autonomy-continue RF-004). Null em PUT remove o override — volta
+/// a herdar a camada global <c>agentLoop.*</c>.</summary>
+/// <param name="MaxRounds">Teto de steps por run (≥1; global default 99999).</param>
+/// <param name="AutoChain">Continuação automática ao bater o cap em build+always-allow.</param>
+/// <param name="MaxAutoChain">Máximo de runs filhas encadeadas (0–10; global default 3).</param>
+public sealed record AgentLoopPrefs(int? MaxRounds, bool? AutoChain, int? MaxAutoChain);
+
+/// <summary>GET /configs/user/agent-loop — valores efetivos + camadas cruas.</summary>
+/// <param name="MaxRounds">Efetivo (usuário ?? global ?? 99999).</param>
+/// <param name="AutoChain">Efetivo (usuário ?? global ?? true).</param>
+/// <param name="MaxAutoChain">Efetivo (usuário ?? global ?? 3).</param>
+/// <param name="Global">Valores crus da camada global (null = sem override admin).</param>
+/// <param name="User">Valores crus do override do usuário (null = herda).</param>
+public sealed record AgentLoopResponse(
+    int MaxRounds, bool AutoChain, int MaxAutoChain,
+    AgentLoopPrefs Global, AgentLoopPrefs User);
+
 /// <summary>Configuração de cadastro.</summary>
 /// <param name="EnableSignup">Cadastro aberto.</param>
 /// <param name="DefaultUserRole">Papel de novos usuários (pending/user/admin).</param>

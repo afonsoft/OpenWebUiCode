@@ -483,7 +483,15 @@ public static class ChatPipeline
         IReadOnlyList<RoundUsage>? StepUsages = null,
         /// <summary>Completions executadas no loop (steps totais — inclui
         /// rounds sem usage reportado).</summary>
-        int TotalSteps = 0);
+        int TotalSteps = 0,
+        /// <summary>Loop saiu por exaurir <c>maxRounds</c> (SPEC-20261019-
+        /// run-autonomy-continue RF-001) — insumo da decisão de auto-chain
+        /// do executor.</summary>
+        bool HitStepCap = false,
+        /// <summary>Última contagem de itens pending/in_progress reportada
+        /// por builtin_todo_write; -1 quando a lista nunca foi escrita na
+        /// run (fallback autônomo da chain).</summary>
+        int PendingTodos = -1);
 
     /// <summary>Uso de tokens de um step do loop (índice 1-based).</summary>
     public sealed record RoundUsage(
@@ -645,7 +653,9 @@ public static class ChatPipeline
         // o usuário. Cap de nudges para o modelo insistente poder parar.
         const int maxAutoContinues = 3;
         var autoContinues = 0;
-        var pendingTodos = 0;
+        // -1 = lista nunca escrita: a chain do executor usa como fallback
+        // ("sem lista populada em modo build, continua mesmo assim").
+        var pendingTodos = -1;
 
         async Task<ProviderCompletion> CompleteResilientAsync(
             Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
@@ -900,8 +910,14 @@ public static class ChatPipeline
                     }
                     continue;
                 }
+                // lastStep = último round toolless (MaxStepsPrompt): a
+                // saída graciosa do cap passa por aqui — marcar HitStepCap
+                // igual ao caminho de exaustão do for (SPEC-20261019
+                // RF-001); steer/queued que recomeçam o turno zeram o
+                // round e não chegam com lastStep true.
                 return new ToolLoopOutcome(
-                    continuedAnswer + step.Content, toolMessages, stepUsages, stepCount);
+                    continuedAnswer + step.Content, toolMessages, stepUsages,
+                    stepCount, HitStepCap: lastStep, PendingTodos: pendingTodos);
             }
 
             var assistantMessage = new ChatCompletionMessage(
@@ -1108,7 +1124,8 @@ public static class ChatPipeline
                 finalUsage.ReasoningTokens));
         }
         return new ToolLoopOutcome(
-            continuedAnswer + final.Content, toolMessages, stepUsages, stepCount);
+            continuedAnswer + final.Content, toolMessages, stepUsages,
+            stepCount, HitStepCap: true, PendingTodos: pendingTodos);
     }
 
     /// <summary>

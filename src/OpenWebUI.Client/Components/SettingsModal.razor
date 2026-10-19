@@ -876,6 +876,35 @@
                         }
                     </SettingsSection>
 
+                    <SettingsSection Title="@L["settings.sec_agent_loop"]" Description="@L["settings.agent_loop_hint"]">
+                        @if (_agentLoop is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            <div class="field">
+                                <label for="fld-agentloop-rounds">@L["settings.agent_loop_max_rounds"]</label>
+                                <input class="input" type="number" min="1" max="99999"
+                                       @bind="_agentMaxRounds" id="fld-agentloop-rounds" />
+                                <div class="field-note">@L["settings.agent_loop_rounds_note"]</div>
+                            </div>
+                            <label class="check">
+                                <input type="checkbox" @bind="_agentAutoChain" id="fld-agentloop-chain" />
+                                @L["settings.agent_loop_auto_chain"]
+                            </label>
+                            <div class="field">
+                                <label for="fld-agentloop-maxchain">@L["settings.agent_loop_max_chain"]</label>
+                                <input class="input" type="number" min="0" max="10"
+                                       @bind="_agentMaxAutoChain" id="fld-agentloop-maxchain" />
+                            </div>
+                            <div class="field-note">@L["settings.agent_loop_chain_note"]</div>
+                            <SettingsSaveBar Busy="@_agentLoopSaving" Dirty="@AgentLoopDirty"
+                                             Message="@_agentLoopMessage"
+                                             OnSave="SaveAgentLoopAsync" OnDiscard="DiscardAgentLoop" />
+                        }
+                    </SettingsSection>
+
                     <SettingsSection Title="@L["settings.sec_agent_external"]" Description="@L["settings.ext_agents_hint"]">
                         @if (_externalAgents is null)
                         {
@@ -1410,14 +1439,23 @@
             var catTask = Api.GetAgentCatalogAsync();
             var extTask = Api.GetExternalAgentsAsync();
             var personaTask = Api.GetAgentPersonasAsync();
+            var loopTask = Api.GetAgentLoopAsync();
             if (_modelCatalog is null)
             {
                 await LoadModelCatalogAsync();
             }
-            await Task.WhenAll(catTask, extTask, personaTask);
+            await Task.WhenAll(catTask, extTask, personaTask, loopTask);
             _agentCatalog = catTask.Result;
             _externalAgents = extTask.Result;
             _personas = personaTask.Result;
+            _agentLoop = loopTask.Result;
+            _agentLoopMessage = null;
+            if (_agentLoop is not null)
+            {
+                _agentMaxRounds = _agentLoop.MaxRounds;
+                _agentAutoChain = _agentLoop.AutoChain;
+                _agentMaxAutoChain = _agentLoop.MaxAutoChain;
+            }
         }
         if (tab == "maintenance")
         {
@@ -2025,6 +2063,12 @@
     private MemorySyncResponse? _memSync;
     private int _memSyncInterval = 6;
     private int _memSyncMaxAge = 30;
+    private AgentLoopResponse? _agentLoop;
+    private int _agentMaxRounds = 99999;
+    private bool _agentAutoChain = true;
+    private int _agentMaxAutoChain = 3;
+    private bool _agentLoopSaving;
+    private string? _agentLoopMessage;
 
     private bool _adminLoaded;
     private string _adminWebUiName = "Open WebUI";
@@ -2439,6 +2483,34 @@
         }
     }
 
+    /// <summary>Salva os overrides do loop do agente (SPEC-20261019-run-autonomy-continue).</summary>
+    private async Task SaveAgentLoopAsync()
+    {
+        _agentLoopSaving = true;
+        var updated = await Api.SetAgentLoopAsync(new AgentLoopPrefs(
+            _agentMaxRounds, _agentAutoChain, _agentMaxAutoChain));
+        _agentLoopSaving = false;
+        _agentLoopMessage = updated is null ? L["settings.save_failed"] : L["settings.saved"];
+        if (updated is not null)
+        {
+            _agentLoop = updated;
+            _agentMaxRounds = updated.MaxRounds;
+            _agentAutoChain = updated.AutoChain;
+            _agentMaxAutoChain = updated.MaxAutoChain;
+        }
+    }
+
+    private void DiscardAgentLoop()
+    {
+        if (_agentLoop is not null)
+        {
+            _agentMaxRounds = _agentLoop.MaxRounds;
+            _agentAutoChain = _agentLoop.AutoChain;
+            _agentMaxAutoChain = _agentLoop.MaxAutoChain;
+        }
+        _agentLoopMessage = null;
+    }
+
     private async Task DeleteMemoryAsync(MemoryResponse memory)
     {
         if (await Api.DeleteMemoryAsync(memory.Id))
@@ -2675,6 +2747,11 @@
 
     private bool MemSyncDirty => _memSync is not null
         && (_memSyncInterval != _memSync.IntervalHours || _memSyncMaxAge != _memSync.MaxAgeDays);
+
+    private bool AgentLoopDirty => _agentLoop is not null
+        && (_agentMaxRounds != _agentLoop.MaxRounds
+            || _agentAutoChain != _agentLoop.AutoChain
+            || _agentMaxAutoChain != _agentLoop.MaxAutoChain);
 
     /// <summary>Snapshot JSON das três listas de conexões para dirty tracking.</summary>
     private string ConnectionsSnapshot() => System.Text.Json.JsonSerializer.Serialize(new
