@@ -1,0 +1,106 @@
+name: 🐛 Bug Report
+description: Algo não funciona no fork .NET — chat, auth, providers, IDE, terminal, API ou UI.
+title: "[Bug] "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar! Este é o fork **.NET/Blazor** do Open WebUI.
+        Se o bug também existe no upstream (Python/Svelte), reporte lá:
+        https://github.com/open-webui/open-webui/issues
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrição do bug
+      description: O que aconteceu? Seja específico.
+      placeholder: Ao clicar em X, acontece Y...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Passos para reproduzir
+      description: Sequência mínima que dispara o problema.
+      placeholder: |
+        1. Suba o app com `docker compose up -d`
+        2. Faça login como admin
+        3. Vá em Configurações → ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+      description: O que deveria acontecer?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / erros
+      description: Console do app (docker logs / dotnet run) ou erros do browser (F12 → Console). Redija secrets antes de colar.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Versão
+      description: Tag de release, imagem Docker ou commit (git rev-parse HEAD).
+      placeholder: v0.2.0 ou ghcr.io/afonsoft/open-webui:latest ou sha
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Forma de execução
+      options:
+        - Docker Compose
+        - Imagem Docker (ghcr.io / Docker Hub)
+        - dotnet run (local)
+        - Outro
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área afetada
+      description: Marque todas que se aplicam.
+      multiple: true
+      options:
+        - Chat / streaming
+        - Auth / usuários / LDAP / OAuth
+        - Providers / conexões de IA
+        - RAG / documentos / embeddings
+        - Admin / configurações
+        - IDE / workspace / arquivos
+        - Terminal PTY
+        - Preview de apps
+        - API / endpoints
+        - UI / Blazor / i18n / CSS
+        - Docker / deploy
+        - CI / build / testes
+
+  - type: input
+    id: environment
+    attributes:
+      label: Ambiente
+      description: SO do host, browser (o client é Blazor WebAssembly), arquitetura (amd64/arm64).
+      placeholder: Ubuntu 24.04, Chrome 130, arm64
+
+  - type: checkboxes
+    id: upstream-check
+    attributes:
+      label: Paridade com o upstream
+      options:
+        - label: Verifiquei que o bug NÃO existe no upstream open-webui (é bug do port .NET)
+          required: false
+        - label: Não testei no upstream
+          required: false

@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: 🔍 Qodana Scan
         id: qodana
@@ -53,19 +54,21 @@ jobs:
       - name: 📋 Qodana Summary
         if: always()
         run: |
-          echo "## 🔍 Qodana Analysis" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.qodana.outcome }}" == "success" ]; then
-            echo "✅ **Qodana scan completed successfully**" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ steps.qodana.outcome }}" == "failure" ]; then
-            echo "❌ **Qodana scan failed**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🔧 Possíveis causas:" >> $GITHUB_STEP_SUMMARY
-            echo "- Token QODANA_TOKEN não configurado" >> $GITHUB_STEP_SUMMARY
-            echo "- Baseline de qualidade excedido" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ **Qodana scan skipped**" >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo "## 🔍 Qodana Analysis"
+            echo ""
+            if [ "${{ steps.qodana.outcome }}" == "success" ]; then
+              echo "✅ **Qodana scan completed successfully**"
+            elif [ "${{ steps.qodana.outcome }}" == "failure" ]; then
+              echo "❌ **Qodana scan failed**"
+              echo ""
+              echo "### 🔧 Possíveis causas:"
+              echo "- Token QODANA_TOKEN não configurado"
+              echo "- Baseline de qualidade excedido"
+            else
+              echo "⚠️ **Qodana scan skipped**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   sonarqube:
     name: 📊 SonarQube Analysis
@@ -79,14 +82,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 🔑 Check Sonar token
         id: sonar-token
         run: |
           if [ -n "${{ secrets.SONAR_TOKEN }}" ]; then
-            echo "present=true" >> $GITHUB_OUTPUT
+            echo "present=true" >> "$GITHUB_OUTPUT"
           else
-            echo "present=false" >> $GITHUB_OUTPUT
+            echo "present=false" >> "$GITHUB_OUTPUT"
             echo "::notice::SONAR_TOKEN não configurado — pulando SonarQube"
           fi
 

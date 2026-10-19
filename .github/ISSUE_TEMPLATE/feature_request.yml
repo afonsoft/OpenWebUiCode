@@ -1,0 +1,64 @@
+name: ✨ Feature Request
+description: Sugestão de funcionalidade nova ou melhoria no fork .NET.
+title: "[Feature] "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Para features que existem no **upstream** mas ainda não foram portadas,
+        prefira o template **🔄 Upstream Parity Gap** — ele já pede a referência.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema / motivação
+      description: Qual dor essa feature resolve? Contexto de uso ajuda a priorizar.
+      placeholder: Como usuário X, preciso de Y porque Z...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solução proposta
+      description: Como você imagina que funcione? Vale descrever UX, endpoint, config.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+      description: Outros caminhos avaliados, e por que foram descartados.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      multiple: true
+      options:
+        - Chat / streaming
+        - Auth / usuários / LDAP / OAuth
+        - Providers / conexões de IA
+        - RAG / documentos / embeddings
+        - Admin / configurações
+        - IDE / workspace / arquivos
+        - Terminal PTY
+        - Preview de apps
+        - API / endpoints
+        - UI / Blazor / i18n / CSS
+        - Docker / deploy
+        - CI / build / testes
+        - Documentação
+
+  - type: checkboxes
+    id: notes
+    attributes:
+      label: Checklist
+      options:
+        - label: Busquei issues abertas/fechadas antes de propor (não é duplicata)
+          required: false
+        - label: Estou disposto(a) a implementar ou prototipar
+          required: false

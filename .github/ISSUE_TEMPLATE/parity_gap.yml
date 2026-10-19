@@ -1,0 +1,57 @@
+name: 🔄 Upstream Parity Gap
+description: Feature/endpoint/comportamento que existe no open-webui original e falta (ou diverge) no fork .NET.
+title: "[Parity] "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        O mapa de paridade vive em `docs/MIGRACAO-DOTNET.md`. Antes de abrir,
+        confira se o gap já está listado lá.
+
+  - type: input
+    id: feature
+    attributes:
+      label: Feature do upstream
+      description: Nome/tela/endpoint no open-webui original (Python/Svelte).
+      placeholder: "ex.: Admin → Settings → Pipelines, POST /api/v1/pipelines/..."
+    validations:
+      required: true
+
+  - type: input
+    id: upstream-ref
+    attributes:
+      label: Referência upstream
+      description: Link do arquivo/commit/doc no repo open-webui/open-webui.
+      placeholder: https://github.com/open-webui/open-webui/blob/main/backend/open_webui/routers/....py
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Tipo de gap
+      options:
+        - Não implementado (feature inteira ausente)
+        - Parcial (existe mas faltam opções/comportamentos)
+        - Divergente (implementado diferente do upstream)
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Detalhes / comportamento esperado
+      description: O que o upstream faz, e o que o fork faz hoje (se aplicável).
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Impacto percebido
+      options:
+        - Alto — feature central do produto (chat/auth/admin)
+        - Médio — feature útil, mas há workaround
+        - Baixo — nice to have
+    validations:
+      required: false
