@@ -48,7 +48,7 @@ public sealed class ModelVisibilityTests
         },
     };
 
-    private static BunitContext Setup(out List<string> settingsPosts)
+    private static BunitContext Setup(out List<string> settingsPosts, bool byokEnabled = false)
     {
         var ctx = new BunitContext();
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
@@ -60,6 +60,14 @@ public sealed class ModelVisibilityTests
             if (req.Method == HttpMethod.Get && path == "/api/v1/models/all")
             {
                 return Json(Catalog);
+            }
+            if (req.Method == HttpMethod.Get && path == "/api/v1/configs/user/provider-keys")
+            {
+                return Json(new
+                {
+                    enabled = byokEnabled,
+                    providers = byokEnabled ? new[] { "openai" } : Array.Empty<string>(),
+                });
             }
             if (req.Method == HttpMethod.Get && path == "/api/v1/users/user/settings")
             {
@@ -163,6 +171,24 @@ public sealed class ModelVisibilityTests
             Assert.That(cut.FindAll("button[role='switch']")
                 .Select(b => b.GetAttribute("aria-label")),
                 Is.All.Not.EqualTo("fake:1").And.Not.Empty);
+        });
+    }
+
+    [Test]
+    public void ModelsTab_ByokHabilitado_RenderizaCamposDeChave()
+    {
+        // Regressão: com BYOK habilitado, a seção de chaves usava
+        // @bind="_byokDrafts[provider]" sobre um dicionário vazio —
+        // KeyNotFoundException("openai") derrubava o render da aba.
+        using var ctx = Setup(out _, byokEnabled: true);
+        var cut = OpenModelsTab(ctx);
+
+        var inputs = cut.FindAll("input[type='password']")
+            .Select(i => i.GetAttribute("aria-label")).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(inputs, Is.EqualTo(new[] { "openai", "anthropic", "google" }));
+            Assert.That(cut.Markup, Does.Contain("settings.byok_key_set"));
         });
     }
 

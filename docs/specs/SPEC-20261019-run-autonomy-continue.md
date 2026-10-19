@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261019-run-autonomy-chain` |
 | Ticket | `[A DEFINIR — criada via create-issues após aprovação]` |
-| Status | `Done` |
+| Status | `Delivered` |
 | Fonte | análise do chat `52c9929a-d3b4-45e6-9737-5d7f0688d2dc` no `/data/openwebui.db` (container `openwebui`), 2026-10-19 |
 
 ## 1. User Story
