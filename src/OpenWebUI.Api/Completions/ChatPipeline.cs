@@ -583,10 +583,12 @@ public static class ChatPipeline
         int maxParallelTools = 4,
         RunLoopCheckpoint? resume = null)
     {
-        // Teto global default do tool loop (SPEC-20261016-agent-steps-usage
-        // RF-001): 5 → 25 agora que agents podem declarar `steps:` próprios.
-        const int defaultMaxRounds = 25;
-        var maxRounds = Math.Clamp(maxSteps ?? defaultMaxRounds, 1, 100);
+        // Teto global default do tool loop: efetivamente ilimitado — a
+        // run só para por decisão do modelo, por `steps:` explícito do
+        // agent ou por agentLoop.maxRounds configurado. O default alto
+        // remove o modo de falha "pausou aos 25 steps esperando Continue".
+        const int defaultMaxRounds = 99999;
+        var maxRounds = Math.Clamp(maxSteps ?? defaultMaxRounds, 1, 99999);
         // Rodadas vazias (só reasoning, sem content nem tool_calls) não
         // encerram a run em silêncio: o modelo leva um nudge e tenta de
         // novo — autonomia para continuar o pensamento sem esperar o

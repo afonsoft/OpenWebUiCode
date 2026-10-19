@@ -575,7 +575,8 @@ public class ToolStreamingTests
         var final = await AguardarFinalAsync(_client, chat.Id, run.Id);
         Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
 
-        // SSE: generating carrega step/maxSteps (RF-006) — 1 e 2 de 25.
+        // SSE: generating carrega step/maxSteps (RF-006) — 1 e 2 de 99999
+        // (default global efetivamente ilimitado).
         var generating = eventos
             .Where(e => e.Event == "status" && e.Data.Contains("generating"))
             .Select(e => JsonDocument.Parse(e.Data).RootElement)
@@ -589,7 +590,7 @@ public class ToolStreamingTests
                 generating.Select(e => e.GetProperty("step").GetInt32()),
                 Is.EquivalentTo(new[] { 1, 2 }));
             Assert.That(generating.All(
-                e => e.GetProperty("maxSteps").GetInt32() == 25), Is.True);
+                e => e.GetProperty("maxSteps").GetInt32() == 99999), Is.True);
         });
 
         // meta.usage (RF-004/RF-005): 2 steps executados; só o step final

@@ -404,11 +404,12 @@ public sealed class ChatRunExecutor(
                 };
                 // Teto de steps da run (SPEC-20261016-agent-steps-usage
                 // RF-001): min(agent.steps do kv da sub-run,
-                // agentLoop.maxRounds global — default 25).
+                // agentLoop.maxRounds global — default 99999, efetivamente
+                // ilimitado; o agent.steps explícito continua vencendo).
                 var agentSteps = await config.GetAsync<int?>(
                     $"r:{run.Id}:agent.steps", null, ct);
                 var maxSteps = Math.Min(agentSteps ?? int.MaxValue,
-                    await config.GetAsync("agentLoop.maxRounds", 25, ct));
+                    await config.GetAsync("agentLoop.maxRounds", 99999, ct));
                 var currentStep = 0;
                 var currentMaxSteps = 0;
                 var callbacks = new ChatPipeline.ToolLoopCallbacks(
