@@ -3103,4 +3103,71 @@ public class ProviderServiceTests
                 Is.EqualTo(5));
         });
     }
+
+    // ---- SPEC-20261019-gemini-response-shape: parse defensivo de shape ----
+
+    [Test]
+    public async Task StreamOpenAiTools_ChunkEscalar_Sobrevive()
+    {
+        // Repro do erro das runs 4b72fadd/accb84e6/d3aee8c1: chunk `data:`
+        // escalar ("keepalive") ou campo fora de objeto fazia o indexer
+        // lançar 'Object' esperado vs 'String' e derrubava a run inteira.
+        _routes["/chat/completions"] = (200,
+            "data: \"keepalive\"\n\n" +
+            "data: 42\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"oi \"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"parts\"}]}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.That(result!.Content, Is.EqualTo("oi parts"));
+    }
+
+    [Test]
+    public async Task StreamGoogleTools_ChunkEscalar_Sobrevive()
+    {
+        _routes["/models/g1:streamGenerateContent"] = (200,
+            "data: \"heartbeat\"\n\n" +
+            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n", 0);
+        await SetProvidersAsync(new ProviderConnection("google", _mockUrl, "gk"));
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("g1", connection: "google"), null, null);
+
+        Assert.That(result!.Content, Is.EqualTo("ok"));
+    }
+
+    [Test]
+    public async Task CompleteWithTools_OpenAi_ContentEmParts_Sobrevive()
+    {
+        // Gateway responde message.content como array de parts (shape
+        // legítimo de multimodal) — o GetValue<string> cru quebrava.
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"oi\"},{\"type\":\"text\",\"text\":\" la\"}]}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsAsync(Req("g", connection: "openai"));
+
+        Assert.That(result!.Content, Is.EqualTo("oi la"));
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_ErroMidStream_ViraErroDeProvider()
+    {
+        // `{"error":...}` no meio do SSE: erro honesto de provider para a
+        // retry policy classificar — nunca descarte silencioso nem crash.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"oi\"}}]}\n\n" +
+            "data: {\"error\":{\"message\":\"rate limited\",\"type\":\"rate_limit\"}}\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var ex = await Assert.ThrowsAsync<ProviderHttpException>(async () =>
+            await NewService().CompleteWithToolsStreamingAsync(
+                Req("m1", connection: "openai"), null, null));
+
+        Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
+    }
 }
