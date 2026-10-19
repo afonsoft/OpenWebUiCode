@@ -1,0 +1,30 @@
+title = "open-webui gitleaks config"
+
+[extend]
+useDefault = true
+
+# Fixtures de teste e placeholders em docs — segredos sintéticos que
+# reaparecem sob um fingerprint novo a cada commit que toca o arquivo,
+# então o filtro é pelo conteúdo do secret, não pelo fingerprint.
+[[allowlists]]
+description = "Synthetic secrets in test fixtures and doc placeholders"
+regexTarget = "secret"
+regexes = [
+  '''segredo''',
+  '''ghp_teste''',
+  '''sk-abcdefghij''',
+  '''ck_xxx''',
+  '''SONAR_TOKEN''',
+]
+paths = [
+  '''src/OpenWebUI\.Client/wwwroot/lib/''',
+]
+
+# Flags bool HasApiKey da UI admin — a regra genérica captura o nome do
+# campo, nunca um segredo real.
+[[allowlists]]
+description = "HasApiKey flags in Blazor admin UI"
+regexTarget = "line"
+regexes = [
+  '''_n8nHasKey\s*=''',
+]

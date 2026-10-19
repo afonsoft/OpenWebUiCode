@@ -1,0 +1,15 @@
+# Falsos positivos auditados (fixtures de teste, exemplos em docs/skills,
+# placeholders de UI). Fingerprints pinados no commit do finding — um
+# finding NOVO no mesmo arquivo gera fingerprint diferente e continua
+# sendo detectado.
+6304f20acc654bda436b54b34a100bf390516848:tests/OpenWebUI.Api.Tests/UserSecretsTests.cs:github-pat:167
+9edce99f4164976277735e10b96392e499f9ca51:.claude/memory/sonar-vendor-cleanup.md:curl-auth-user:32
+9edce99f4164976277735e10b96392e499f9ca51:.claude/memory/sonar-vendor-cleanup.md:curl-auth-user:36
+d3ffa5cd32e3561d0ad131aed29de6f0d41303bb:tests/OpenWebUI.Api.Tests/ToolOutputServiceTests.cs:generic-api-key:122
+92649a6a07a70e6679c9e45bbfdd820ee1bea924:.agents/skills/composio-mcp/SKILL.md:generic-api-key:340
+92649a6a07a70e6679c9e45bbfdd820ee1bea924:.claude/skills/composio-mcp/SKILL.md:generic-api-key:340
+92649a6a07a70e6679c9e45bbfdd820ee1bea924:skills/composio-mcp/SKILL.md:generic-api-key:340
+7b1c777cb1e914a18bfbc6d915c14ea717c4e65a:src/OpenWebUI.Client/Pages/Admin.razor:generic-api-key:1762
+7b1c777cb1e914a18bfbc6d915c14ea717c4e65a:src/OpenWebUI.Client/wwwroot/lib/xterm/xterm.js:generic-api-key:1
+c4d1d80a7153e299d2f6ee7915b0a10126bbbda2:tests/OpenWebUI.Api.Tests/RetrievalEndpointsTests.cs:generic-api-key:231
+dfaf3b0015b12fd3db38f011052dd443e1d1a989:.devin/skills/composio-mcp/SKILL.md:generic-api-key:340
