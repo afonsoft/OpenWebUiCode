@@ -923,9 +923,7 @@
                                             }
                                         </div>
                                         <div class="text-xs text-gray-400">
-                                            @(ext.Installed
-                                                ? (ext.SkillInstalled ? L["settings.ext_skill_ok"] : L["settings.ext_skill_missing"])
-                                                : L["settings.ext_not_installed"])
+                                            @ExtSkillStatus(ext)
                                         </div>
                                     </div>
                                     <button type="button" role="switch" aria-checked="@(ext.Selected ? "true" : "false")"
@@ -980,9 +978,9 @@
                             @if (_modelCatalog is not null)
                             {
                                 <select aria-label="@L["settings.combo_pick_model"]" class="input" @bind="_personaModel">
-                                    @foreach (var m in _modelCatalog)
+                                    @foreach (var modelId in _modelCatalog.Select(m => m.Id))
                                     {
-                                        <option value="@m.Id">@m.Id</option>
+                                        <option value="@modelId">@modelId</option>
                                     }
                                 </select>
                             }
@@ -1408,87 +1406,108 @@
 
     private string _tab = "general";
 
-    private async Task SelectTab(string tab)
+    private Task SelectTab(string tab)
     {
         _tab = tab;
-        if (tab == "integrations")
+        return tab switch
         {
-            var gh = await Api.GetGitHubConfigAsync();
-            _ghConfigured = gh?.Configured == true;
-            _ghLogin = gh?.Login;
-            _ghSource = gh?.Source;
-            _ghMessage = null;
-            _intMessage = null;
-            await LoadUserMcpAsync();
-            await LoadSecretsAsync();
-            await LoadHooksAsync();
-        }
-        if (tab == "combos")
-        {
-            _combosMessage = null;
-            var combosTask = Api.GetCombosAsync();
-            if (_modelCatalog is null)
-            {
-                await LoadModelCatalogAsync();
-            }
-            _combos = await combosTask;
-        }
-        if (tab == "agents")
-        {
-            _agentsMessage = null;
-            var catTask = Api.GetAgentCatalogAsync();
-            var extTask = Api.GetExternalAgentsAsync();
-            var personaTask = Api.GetAgentPersonasAsync();
-            var loopTask = Api.GetAgentLoopAsync();
-            if (_modelCatalog is null)
-            {
-                await LoadModelCatalogAsync();
-            }
-            await Task.WhenAll(catTask, extTask, personaTask, loopTask);
-            _agentCatalog = catTask.Result;
-            _externalAgents = extTask.Result;
-            _personas = personaTask.Result;
-            _agentLoop = loopTask.Result;
-            _agentLoopMessage = null;
-            if (_agentLoop is not null)
-            {
-                _agentMaxRounds = _agentLoop.MaxRounds;
-                _agentAutoChain = _agentLoop.AutoChain;
-                _agentMaxAutoChain = _agentLoop.MaxAutoChain;
-            }
-        }
-        if (tab == "maintenance")
-        {
-            _maintMessage = null;
-            _maintStatus = await Api.GetMaintenanceStatusAsync();
-            if (_maintStatus is not null)
-            {
-                _maintChatDays = _maintStatus.ChatDays;
-            }
-        }
-        if (tab == "models")
+            "integrations" => LoadIntegrationsTabAsync(),
+            "combos" => LoadCombosTabAsync(),
+            "agents" => LoadAgentsTabAsync(),
+            "maintenance" => LoadMaintenanceTabAsync(),
+            "models" => LoadModelsTabAsync(),
+            "tools" => LoadToolApprovalsAsync(),
+            "admin" => LoadAdminConfigLayersAsync(),
+            "notifications" => LoadNotificationsTabAsync(),
+            _ => Task.CompletedTask,
+        };
+    }
+
+    private async Task LoadIntegrationsTabAsync()
+    {
+        var gh = await Api.GetGitHubConfigAsync();
+        _ghConfigured = gh?.Configured == true;
+        _ghLogin = gh?.Login;
+        _ghSource = gh?.Source;
+        _ghMessage = null;
+        _intMessage = null;
+        await LoadUserMcpAsync();
+        await LoadSecretsAsync();
+        await LoadHooksAsync();
+    }
+
+    private async Task LoadCombosTabAsync()
+    {
+        _combosMessage = null;
+        var combosTask = Api.GetCombosAsync();
+        if (_modelCatalog is null)
         {
             await LoadModelCatalogAsync();
-            _byok = await Api.GetUserProviderKeysAsync();
         }
-        if (tab == "tools")
+        _combos = await combosTask;
+    }
+
+    private async Task LoadAgentsTabAsync()
+    {
+        _agentsMessage = null;
+        var catTask = Api.GetAgentCatalogAsync();
+        var extTask = Api.GetExternalAgentsAsync();
+        var personaTask = Api.GetAgentPersonasAsync();
+        var loopTask = Api.GetAgentLoopAsync();
+        if (_modelCatalog is null)
         {
-            await LoadToolApprovalsAsync();
+            await LoadModelCatalogAsync();
         }
-        if (tab == "admin")
+        await Task.WhenAll(catTask, extTask, personaTask, loopTask);
+        _agentCatalog = await catTask;
+        _externalAgents = await extTask;
+        _personas = await personaTask;
+        _agentLoop = await loopTask;
+        _agentLoopMessage = null;
+        if (_agentLoop is not null)
         {
-            await LoadAdminConfigLayersAsync();
+            _agentMaxRounds = _agentLoop.MaxRounds;
+            _agentAutoChain = _agentLoop.AutoChain;
+            _agentMaxAutoChain = _agentLoop.MaxAutoChain;
         }
-        if (tab == "notifications")
+    }
+
+    private async Task LoadMaintenanceTabAsync()
+    {
+        _maintMessage = null;
+        _maintStatus = await Api.GetMaintenanceStatusAsync();
+        if (_maintStatus is not null)
         {
-            _notifyChatDone = await ChatNotify.GetPrefAsync(
-                ChatNotificationsService.PrefInApp, defaultValue: true);
-            _notifyBrowser = await ChatNotify.GetPrefAsync(
-                ChatNotificationsService.PrefBrowser, defaultValue: false);
-            _notifyPush = await ChatNotify.GetPrefAsync(
-                ChatNotificationsService.PrefPush, defaultValue: false);
-            _notifyPermission = await ChatNotify.BrowserPermissionAsync();
+            _maintChatDays = _maintStatus.ChatDays;
         }
+    }
+
+    private async Task LoadModelsTabAsync()
+    {
+        await LoadModelCatalogAsync();
+        _byok = await Api.GetUserProviderKeysAsync();
+    }
+
+    private async Task LoadNotificationsTabAsync()
+    {
+        _notifyChatDone = await ChatNotify.GetPrefAsync(
+            ChatNotificationsService.PrefInApp, defaultValue: true);
+        _notifyBrowser = await ChatNotify.GetPrefAsync(
+            ChatNotificationsService.PrefBrowser, defaultValue: false);
+        _notifyPush = await ChatNotify.GetPrefAsync(
+            ChatNotificationsService.PrefPush, defaultValue: false);
+        _notifyPermission = await ChatNotify.BrowserPermissionAsync();
+    }
+
+    private string ExtSkillStatus(ExternalAgentStatusResponse ext)
+    {
+        if (!ext.Installed)
+        {
+            return L["settings.ext_not_installed"];
+        }
+        return ext.SkillInstalled
+            ? L["settings.ext_skill_ok"]
+            : L["settings.ext_skill_missing"];
     }
 
     private async Task OnNotifyChatDoneChanged(ChangeEventArgs e)
@@ -2185,21 +2204,21 @@
             await Task.WhenAll(
                 versionTask, apiKeyTask, memoriesTask, webhookTask, memSyncTask);
 
-            _version = versionTask.Result?.Version;
+            _version = (await versionTask)?.Version;
             _name = Auth.CurrentUser?.Name ?? string.Empty;
             _profileImage = Auth.CurrentUser?.ProfileImageUrl ?? string.Empty;
             _loadedName = _name;
             _loadedImage = _profileImage;
-            _apiKeyInfo = apiKeyTask.Result;
-            _memories = memoriesTask.Result;
-            _memSync = memSyncTask.Result;
+            _apiKeyInfo = await apiKeyTask;
+            _memories = await memoriesTask;
+            _memSync = await memSyncTask;
             if (_memSync is not null)
             {
                 _memSyncInterval = _memSync.IntervalHours;
                 _memSyncMaxAge = _memSync.MaxAgeDays;
             }
 
-            _webhook = webhookTask.Result;
+            _webhook = await webhookTask;
             if (_webhook is not null)
             {
                 _webhookUrl = _webhook.Url;
@@ -2221,11 +2240,11 @@
             var ollamaTask = LoadOllamaModelsAsync();
             await Task.WhenAll(connectionsTask, adminConfigTask, ollamaTask);
 
-            _connections = connectionsTask.Result;
+            _connections = await connectionsTask;
             RebuildConnectionRows();
             _connSnapshot = ConnectionsSnapshot();
 
-            var adminConfig = adminConfigTask.Result;
+            var adminConfig = await adminConfigTask;
             if (adminConfig is not null)
             {
                 _adminWebUiName = adminConfig.WebUiName;
@@ -2243,9 +2262,9 @@
                 var adminWebhookTask = Api.GetAdminWebhookAsync();
                 await Task.WhenAll(capsTask, audioTask, adminWebhookTask);
 
-                _capabilities = capsTask.Result;
+                _capabilities = await capsTask;
 
-                var audio = audioTask.Result;
+                var audio = await audioTask;
                 if (audio is not null)
                 {
                     _ttsEngine = audio.TtsEngine;
@@ -2261,7 +2280,7 @@
                 // Bu ikisi provider alanlarına bağımlı — audio geldikten sonra.
                 await Task.WhenAll(LoadSttProviderModelsAsync(), LoadTtsProviderModelsAsync());
 
-                _adminWebhook = adminWebhookTask.Result;
+                _adminWebhook = await adminWebhookTask;
                 if (_adminWebhook is not null)
                 {
                     _adminWebhookUrl = _adminWebhook.Url;

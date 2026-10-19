@@ -67,7 +67,7 @@ public sealed class RunEventWriter(AppDbContext db, ILogger<RunEventWriter> logg
             });
             await db.SaveChangesAsync(ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "RunEvent {Type} da run {RunId} não persistiu.", type, runId);
         }

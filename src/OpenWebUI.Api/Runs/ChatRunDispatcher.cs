@@ -128,37 +128,15 @@ public sealed class ChatRunDispatcher(
 
             foreach (var run in orphans)
             {
-                if (run.Status == ChatRunStatus.Paused)
+                switch (ClassifyOrphan(run, resumableSet, now, staleAfter, requeue))
                 {
-                    continue;
+                    case OrphanAction.Resumed:
+                        resumed++;
+                        break;
+                    case OrphanAction.Interrupted:
+                        interrupted++;
+                        break;
                 }
-                if (run.Status == ChatRunStatus.Queued)
-                {
-                    requeue.Add(run.Id);
-                    continue;
-                }
-                // running: heartbeat fresco de QUALQUER dono = run viva
-                // (esta instância ou outra) — nunca retomar algo em
-                // execução. Stale/dono morto → avalia retomada abaixo.
-                var alive = run.OwnerInstance is { Length: > 0 }
-                    && run.HeartbeatAt is { } hb
-                    && now - hb < staleAfter;
-                if (alive)
-                {
-                    continue;
-                }
-                if (!resumableSet.Contains(run.Id))
-                {
-                    run.Status = ChatRunStatus.Interrupted;
-                    run.CompletedAt = now;
-                    run.Error ??= "Servidor reiniciado durante a execução.";
-                    interrupted++;
-                    continue;
-                }
-                run.OwnerInstance = InstanceId;
-                run.HeartbeatAt = now;
-                resumed++;
-                requeue.Add(run.Id);
             }
 
             await db.SaveChangesAsync(ct);
@@ -179,6 +157,47 @@ public sealed class ChatRunDispatcher(
         {
             logger.LogError(ex, "Falha no sweep de runs órfãs.");
         }
+    }
+
+    private enum OrphanAction { Skipped, Resumed, Interrupted }
+
+    /// <summary>Decide o destino de uma run do sweep (ver doc de
+    /// <see cref="SweepOrphansAsync"/>). Devolve a ação tomada para a
+    /// contabilidade do caller.</summary>
+    private static OrphanAction ClassifyOrphan(
+        ChatRun run, HashSet<string> resumableSet, long now,
+        int staleAfter, List<string> requeue)
+    {
+        if (run.Status == ChatRunStatus.Paused)
+        {
+            return OrphanAction.Skipped;
+        }
+        if (run.Status == ChatRunStatus.Queued)
+        {
+            requeue.Add(run.Id);
+            return OrphanAction.Skipped;
+        }
+        // running: heartbeat fresco de QUALQUER dono = run viva
+        // (esta instância ou outra) — nunca retomar algo em
+        // execução. Stale/dono morto → avalia retomada abaixo.
+        var alive = run.OwnerInstance is { Length: > 0 }
+            && run.HeartbeatAt is { } hb
+            && now - hb < staleAfter;
+        if (alive)
+        {
+            return OrphanAction.Skipped;
+        }
+        if (!resumableSet.Contains(run.Id))
+        {
+            run.Status = ChatRunStatus.Interrupted;
+            run.CompletedAt = now;
+            run.Error ??= "Servidor reiniciado durante a execução.";
+            return OrphanAction.Interrupted;
+        }
+        run.OwnerInstance = InstanceId;
+        run.HeartbeatAt = now;
+        requeue.Add(run.Id);
+        return OrphanAction.Resumed;
     }
 
     private async Task WorkerAsync(CancellationToken stoppingToken)
@@ -255,8 +274,10 @@ public sealed class ChatRunDispatcher(
                 {
                     await heartbeat;
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException ex)
                 {
+                    logger.LogTrace(ex,
+                        "Heartbeat da run {RunId} encerrado no finally.", runId);
                 }
                 await NotifyRunFinishedAsync(scope.ServiceProvider, run);
             }
@@ -299,7 +320,7 @@ public sealed class ChatRunDispatcher(
                         DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
                         CancellationToken.None);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Heartbeat da run {RunId} falhou.", runId);
             }
@@ -389,8 +410,11 @@ public sealed class ChatRunDispatcher(
                 .Where(r => r.Id == run.ParentRunId)
                 .Select(r => r.ChatId)
                 .FirstOrDefaultAsync(CancellationToken.None);
-            if (parentChatId is null)
+            if (parentChatId is null || parentChatId == run.ChatId)
             {
+                // Auto-chain (mesmo chat) não é subtarefa delegada — o
+                // marcador "Subtarefa concluída" contaminaria o histórico
+                // da própria conversa e das próximas continuações.
                 return;
             }
             var childTitle = await db.Chats.AsNoTracking()

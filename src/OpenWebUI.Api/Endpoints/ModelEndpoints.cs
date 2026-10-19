@@ -47,22 +47,20 @@ public static class ModelEndpoints
     /// <summary>Catálogo completo de modelos com a flag de visibilidade do
     /// usuário chamador — alimenta a aba Models das settings (qualquer role).</summary>
     private static async Task<IResult> ListCatalogAsync(
-        HttpContext http, ProviderService providers, AppDbContext db,
-        PipelineClientService pipelines, HybridCache cache,
-        ModelCapabilityResolver capabilities, PolicyService policies,
-        CancellationToken ct)
+        HttpContext http, [AsParameters] ModelCatalogDeps deps, CancellationToken ct)
     {
-        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var user = await AuthEndpoints.FindUserAsync(http, deps.Db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
         }
 
         var response = await ApiEndpoints.GetCachedModelListAsync(
-            user, providers, db, pipelines, cache, capabilities, ct);
+            user, deps.Providers, deps.Db, deps.Pipelines, deps.Cache,
+            deps.Capabilities, ct);
         var disabled = ApiEndpoints.ParseDisabledModels(user.SettingsJson);
-        var providerRules = await policies.LoadAsync(PolicyService.ActionProviderUse, ct);
-        var modelRules = await policies.LoadAsync(PolicyService.ActionModelUse, ct);
+        var providerRules = await deps.Policies.LoadAsync(PolicyService.ActionProviderUse, ct);
+        var modelRules = await deps.Policies.LoadAsync(PolicyService.ActionModelUse, ct);
         var data = response.Data
             .Where(m => PolicyService.MatchIn(providerRules,
                     new[] { m.Provider, $"{m.Provider}/{m.Id}" }) is null
@@ -448,4 +446,14 @@ public static class ModelEndpoints
         string Id, string? Name, string? BaseModelId, string? SystemPrompt,
         string? ParamsJson, string? ProfileImageUrl,
         string? MetaJson = null, string? AccessGrantsJson = null);
+
+    /// <summary>Bundle DI do catálogo de modelos — mantém a assinatura do
+    /// endpoint dentro do limite de parâmetros.</summary>
+    internal sealed record ModelCatalogDeps(
+        ProviderService Providers,
+        AppDbContext Db,
+        PipelineClientService Pipelines,
+        HybridCache Cache,
+        ModelCapabilityResolver Capabilities,
+        PolicyService Policies);
 }

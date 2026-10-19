@@ -22,7 +22,10 @@ public sealed record RunLoopCheckpoint(
     IReadOnlyList<StepUsage> StepUsages,
     int EmptyRounds,
     int LengthContinuations,
-    string ContinuedAnswer);
+    string ContinuedAnswer,
+    /// <summary>Última contagem de tarefas pendentes conhecida do loop;
+    /// -1 quando a lista nunca foi escrita (SPEC-20261019 RF-003).</summary>
+    int PendingTodos = -1);
 
 /// <summary>
 /// Plano de retomada reconstruído do stream de eventos
@@ -40,4 +43,7 @@ public sealed record RunResumePlan(
     int LengthContinuations,
     string ContinuedAnswer,
     int RecoveredTools,
-    long LastSeq);
+    long LastSeq,
+    /// <summary>Contagem de tarefas pendentes restaurada do snapshot;
+    /// -1 quando o snapshot não registrava a lista.</summary>
+    int PendingTodos = -1);

@@ -31,7 +31,8 @@ public static class RunRecoveryPlanner
         List<StepUsage>? StepUsages,
         int EmptyRounds,
         int LengthContinuations,
-        string? ContinuedAnswer);
+        string? ContinuedAnswer,
+        int PendingTodos = -1);
 
     private sealed record StepFinishedPayload(
         int Round,
@@ -58,95 +59,94 @@ public static class RunRecoveryPlanner
             return null;
         }
 
-        SnapshotPayload? baseState;
-        try
-        {
-            baseState = JsonSerializer.Deserialize<SnapshotPayload>(
-                snapshot.PayloadJson, JsonOptions);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        var baseState = TryRead<SnapshotPayload>(snapshot.PayloadJson);
         if (baseState?.Messages is null)
         {
             return null;
         }
 
-        var messages = baseState.Messages.ToList();
-        var toolMessages = (baseState.ToolMessages ?? []).ToList();
-        var pendingCalls = new List<string>();
-        int? lastFinishedRound = null;
-        var recovered = 0;
+        var state = new ReplayState(baseState);
         var lastSeq = snapshot.Seq;
-
         foreach (var ev in events.Where(e => e.Seq > snapshot.Seq))
         {
             lastSeq = ev.Seq;
-            switch (ev.Type)
-            {
-                case RunEventWriter.Types.StepFinished:
-                    var finished = TryRead<StepFinishedPayload>(ev.PayloadJson);
-                    if (finished is not null)
-                    {
-                        lastFinishedRound = finished.Round;
-                        pendingCalls.AddRange(finished.Calls ?? []);
-                    }
-                    break;
-                case RunEventWriter.Types.MessagesAdded:
-                    var added = TryRead<MessagesAddedPayload>(ev.PayloadJson);
-                    if (added is not null)
-                    {
-                        messages.AddRange(added.Messages ?? []);
-                        toolMessages.AddRange(added.ToolMessages ?? []);
-                    }
-                    break;
-                case RunEventWriter.Types.ToolResult:
-                    var result = TryRead<ToolResultPayload>(ev.PayloadJson);
-                    if (result?.CallId is { } callId)
-                    {
-                        var tool = new ChatCompletionMessage(
-                            "tool", result.Output ?? string.Empty,
-                            ToolCallId: callId);
-                        messages.Add(tool);
-                        toolMessages.Add(tool);
-                        pendingCalls.Remove(callId);
-                    }
-                    break;
-            }
+            ApplyEvent(ev, state);
         }
 
         // RF-004: calls registradas pelo step_finished sem tool_result —
         // nunca re-executar; fecha com resultado sintético interrupted.
-        foreach (var callId in pendingCalls)
-        {
-            var synthetic = new ChatCompletionMessage(
-                "tool", InterruptedToolResult, ToolCallId: callId);
-            messages.Add(synthetic);
-            toolMessages.Add(synthetic);
-            recovered++;
-        }
+        var synthetics = state.PendingCalls
+            .Select(callId => new ChatCompletionMessage(
+                "tool", InterruptedToolResult, ToolCallId: callId))
+            .ToList();
+        state.Messages.AddRange(synthetics);
+        state.ToolMessages.AddRange(synthetics);
 
         // Snapshot do topo do round R captura o estado pré-round: se o
         // completion de R terminou (step_finished), as mensagens já foram
         // re-aplicadas e o loop entra no round seguinte ao último
         // step_finished; se não, o texto parcial é descartado e o round do
         // snapshot refaz o call ao modelo.
-        var resumeRound = lastFinishedRound is { } finishedRound
+        var resumeRound = state.LastFinishedRound is { } finishedRound
             ? finishedRound + 1
             : Math.Max(baseState.Round, 0);
 
         return new RunResumePlan(
             resumeRound,
-            messages,
-            toolMessages,
+            state.Messages,
+            state.ToolMessages,
             baseState.StepCount,
             (baseState.StepUsages ?? []).ToList(),
             baseState.EmptyRounds,
             baseState.LengthContinuations,
             baseState.ContinuedAnswer ?? string.Empty,
-            recovered,
-            lastSeq);
+            synthetics.Count,
+            lastSeq,
+            baseState.PendingTodos);
+    }
+
+    /// <summary>Estado mutável acumulado pelo replay pós-snapshot.</summary>
+    private sealed class ReplayState(SnapshotPayload baseState)
+    {
+        public List<ChatCompletionMessage> Messages { get; } =
+            baseState.Messages!.ToList();
+        public List<ChatCompletionMessage> ToolMessages { get; } =
+            (baseState.ToolMessages ?? []).ToList();
+        public List<string> PendingCalls { get; } = [];
+        public int? LastFinishedRound { get; set; }
+    }
+
+    /// <summary>Aplica um evento pós-snapshot ao estado do replay.</summary>
+    private static void ApplyEvent(ChatRunEvent ev, ReplayState state)
+    {
+        switch (ev.Type)
+        {
+            case RunEventWriter.Types.StepFinished:
+                if (TryRead<StepFinishedPayload>(ev.PayloadJson) is { } finished)
+                {
+                    state.LastFinishedRound = finished.Round;
+                    state.PendingCalls.AddRange(finished.Calls ?? []);
+                }
+                break;
+            case RunEventWriter.Types.MessagesAdded:
+                if (TryRead<MessagesAddedPayload>(ev.PayloadJson) is { } added)
+                {
+                    state.Messages.AddRange(added.Messages ?? []);
+                    state.ToolMessages.AddRange(added.ToolMessages ?? []);
+                }
+                break;
+            case RunEventWriter.Types.ToolResult:
+                if (TryRead<ToolResultPayload>(ev.PayloadJson) is { CallId: { } callId } result)
+                {
+                    var tool = new ChatCompletionMessage(
+                        "tool", result.Output ?? string.Empty,
+                        ToolCallId: callId);
+                    state.Messages.Add(tool);
+                    state.ToolMessages.Add(tool);
+                    state.PendingCalls.Remove(callId);
+                }
+                break;
+        }
     }
 
     /// <summary>Serializa o checkpoint do loop para o payload do snapshot.</summary>
@@ -159,7 +159,8 @@ public static class RunRecoveryPlanner
             checkpoint.StepUsages.ToList(),
             checkpoint.EmptyRounds,
             checkpoint.LengthContinuations,
-            checkpoint.ContinuedAnswer), JsonOptions);
+            checkpoint.ContinuedAnswer,
+            checkpoint.PendingTodos), JsonOptions);
 
     private static T? TryRead<T>(string json) where T : class
     {

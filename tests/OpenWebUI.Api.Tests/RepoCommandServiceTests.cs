@@ -37,8 +37,14 @@ public class RepoCommandServiceTests
         {
             Directory.Delete(_root, recursive: true);
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException ex)
+        {
+            TestContext.Out.WriteLine($"cleanup do workdir falhou: {ex.Message}");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            TestContext.Out.WriteLine($"cleanup do workdir falhou: {ex.Message}");
+        }
     }
 
     private RepoCommandService NewSvc(

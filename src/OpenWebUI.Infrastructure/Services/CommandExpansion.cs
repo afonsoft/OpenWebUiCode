@@ -80,36 +80,18 @@ public static class CommandExpansion
         var tokens = Tokenize(args);
         var numeric = HighestNumericPlaceholder(template);
         var sb = new StringBuilder(template.Length + args.Length);
-        for (var i = 0; i < template.Length; i++)
+        var i = 0;
+        while (i < template.Length)
         {
             if (template[i] == '$')
             {
-                if (template.AsSpan(i).StartsWith("$ARGUMENTS", StringComparison.Ordinal))
-                {
-                    sb.Append(args);
-                    i += "$ARGUMENTS".Length - 1;
-                    continue;
-                }
-
-                // $N com N de um dígito 1..9 NÃO seguido de outro dígito
-                // ($10+ são literais); o último placeholder do template
-                // absorve os tokens restantes ("rest capture").
-                if (i + 1 < template.Length && template[i + 1] is >= '1' and <= '9'
-                    && (i + 2 >= template.Length
-                        || !char.IsDigit(template[i + 2])))
-                {
-                    var n = template[i + 1] - '0';
-                    var token = n - 1 < tokens.Count ? tokens[n - 1] : string.Empty;
-                    if (n == numeric && n - 1 < tokens.Count)
-                    {
-                        token = string.Join(' ', tokens.Skip(n - 1));
-                    }
-                    sb.Append(token);
-                    i++;
-                    continue;
-                }
+                i = ExpandPlaceholderAt(sb, template, i, tokens, numeric, args);
             }
-            sb.Append(template[i]);
+            else
+            {
+                sb.Append(template[i]);
+                i++;
+            }
         }
 
         var result = sb.ToString();
@@ -122,6 +104,42 @@ public static class CommandExpansion
             result = result.TrimEnd() + "\n\n" + args;
         }
         return result;
+    }
+
+    /// <summary>Expande o placeholder na posição <paramref name="i"/>
+    /// (<c>$ARGUMENTS</c> ou <c>$N</c> com rest-capture) ou copia o
+    /// literal <c>$</c>. Devolve o índice seguinte ao trecho consumido.
+    /// </summary>
+    private static int ExpandPlaceholderAt(
+        StringBuilder sb, string template, int i,
+        List<string> tokens, int numeric, string args)
+    {
+        if (template.AsSpan(i).StartsWith("$ARGUMENTS", StringComparison.Ordinal))
+        {
+            sb.Append(args);
+            return i + "$ARGUMENTS".Length;
+        }
+
+        // $N com N de um dígito 1..9 NÃO seguido de outro dígito
+        // ($10+ são literais); o último placeholder do template
+        // absorve os tokens restantes ("rest capture").
+        if (i + 1 < template.Length && template[i + 1] is >= '1' and <= '9'
+            && (i + 2 >= template.Length || !char.IsDigit(template[i + 2])))
+        {
+            var n = template[i + 1] - '0';
+            var token = string.Empty;
+            if (n - 1 < tokens.Count)
+            {
+                token = n == numeric
+                    ? string.Join(' ', tokens.Skip(n - 1))
+                    : tokens[n - 1];
+            }
+            sb.Append(token);
+            return i + 2;
+        }
+
+        sb.Append(template[i]);
+        return i + 1;
     }
 
     /// <summary>Maior <c>$N</c> (1..9) presente no template — 0 se nenhum.</summary>

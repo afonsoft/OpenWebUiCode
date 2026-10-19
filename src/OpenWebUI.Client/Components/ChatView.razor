@@ -990,21 +990,21 @@
             var storedTask = StoredWebSearchAsync();
             await Task.WhenAll(promptsTask, toolsTask, modelsTask, configTask, storedTask);
 
-            _prompts = promptsTask.Result;
-            _tools = toolsTask.Result;
-            _suggestions = modelsTask.Result?.PromptSuggestions ?? [];
+            _prompts = await promptsTask;
+            _tools = await toolsTask;
+            _suggestions = (await modelsTask)?.PromptSuggestions ?? [];
             // SPEC-15: repo é por chat — o binding global não aparece em
             // conversa nova; o do chat carrega junto no load abaixo.
             _repo = null;
             _repoSkills = [];
             _repoCommands = [];
-            var features = configTask.Result?.Features;
+            var features = (await configTask)?.Features;
             _webSearchAvailable = features?.EnableWebSearch ?? false;
             _imageGenEnabled = features?.EnableImageGeneration ?? false;
             _videoGenEnabled = features?.EnableVideoGeneration ?? false;
             // Busca web desligada por padrão (o usuário habilita no ícone);
             // a escolha explícita do usuário (localStorage) tem precedência.
-            _webSearch = storedTask.Result == "true" && _webSearchAvailable;
+            _webSearch = await storedTask == "true" && _webSearchAvailable;
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
@@ -1528,37 +1528,34 @@
             _pendingCommand = null;
             return;
         }
-
-        // skill → corpo markdown no input; command → template com $N interpolado.
-        var args = RepoSlashCommands.ArgsAfter(_input);
         if (item.Source == "skill")
         {
             var detail = await Api.GetRepoSkillAsync(item.Command);
             _input = detail?.Content ?? _input;
             _pendingCommand = null;
+            return;
         }
-        else
+
+        // command → o servidor é a fonte canônica da expansão (suporta
+        // !`shell`, rest-capture e devolve os overrides declarados).
+        var args = RepoSlashCommands.ArgsAfter(_input);
+        var expanded = await Api.ExpandRepoCommandAsync(item.Command, args, _loadedChatId);
+        if (expanded is not null)
         {
-            // T6: o servidor é a fonte canônica da expansão (suporta
-            // !`shell`, rest-capture e devolve os overrides declarados).
-            var expanded = await Api.ExpandRepoCommandAsync(item.Command, args, _loadedChatId);
-            if (expanded is not null)
-            {
-                _input = expanded.Prompt;
-                _pendingCommand = expanded.Agent is not null
-                    || expanded.Model is not null
-                    || expanded.Mode is not null
-                    || expanded.Subagent
-                    ? (item.Command, args, expanded.Prompt)
-                    : null;
-            }
-            else
-            {
-                var detail = await Api.GetRepoCommandAsync(item.Command);
-                _input = detail is null ? _input : RepoSlashCommands.Interpolate(detail.Content, args);
-                _pendingCommand = null;
-            }
+            _input = expanded.Prompt;
+            var hasOverrides = expanded.Agent is not null
+                || expanded.Model is not null
+                || expanded.Mode is not null
+                || expanded.Subagent;
+            _pendingCommand = hasOverrides ? (item.Command, args, expanded.Prompt) : null;
+            return;
         }
+
+        var commandDetail = await Api.GetRepoCommandAsync(item.Command);
+        _input = commandDetail is null
+            ? _input
+            : RepoSlashCommands.Interpolate(commandDetail.Content, args);
+        _pendingCommand = null;
     }
 
     private async Task OnKeyDown(KeyboardEventArgs e)

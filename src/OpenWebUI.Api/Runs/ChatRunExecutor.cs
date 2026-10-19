@@ -49,6 +49,9 @@ public sealed class ChatRunExecutor(
     /// <summary>Bytes de delta acumulados antes de gravar um checkpoint.</summary>
     private const int CheckpointBytes = 2048;
 
+    /// <summary>Role das notas de sistema injetadas no histórico do loop.</summary>
+    private const string RoleSystem = "system";
+
     /// <summary>Tamanho máximo do preview de args/resultado publicado no SSE.</summary>
     private const int PreviewChars = 2048;
 
@@ -138,7 +141,7 @@ public sealed class ChatRunExecutor(
         var commandAgent = ParamStr(request.Params, "agent");
         if (ParamBool(request.Params, "subagent"))
         {
-            await SpawnCommandSubagentAsync(run, request, user, ct);
+            await SpawnCommandSubagentAsync(run, request, ct);
             return;
         }
         if (commandAgent is not null)
@@ -153,7 +156,7 @@ public sealed class ChatRunExecutor(
             {
                 request = request with
                 {
-                    Messages = [new ChatCompletionMessage("system", def.SystemPrompt),
+                    Messages = [new ChatCompletionMessage(RoleSystem, def.SystemPrompt),
                         .. request.Messages],
                 };
             }
@@ -296,7 +299,7 @@ public sealed class ChatRunExecutor(
                 effective = effective with
                 {
                     Messages = [new ChatCompletionMessage(
-                        "system", $"[context notes]\n{contextNotebook}"), .. effective.Messages],
+                        RoleSystem, $"[context notes]\n{contextNotebook}"), .. effective.Messages],
                 };
             }
 
@@ -309,7 +312,7 @@ public sealed class ChatRunExecutor(
                 // sistema fica visível para o modelo e a fase resumed
                 // reporta round/recuperados no SSE.
                 resumePlan.Messages.Add(new ChatCompletionMessage(
-                    "system",
+                    RoleSystem,
                     $"[run resumed after restart — {resumePlan.RecoveredTools} "
                     + "tool results recovered]"));
                 effective = effective with { Messages = resumePlan.Messages };
@@ -318,7 +321,7 @@ public sealed class ChatRunExecutor(
                     resumePlan.ToolMessages, resumePlan.StepCount,
                     resumePlan.StepUsages, resumePlan.EmptyRounds,
                     resumePlan.LengthContinuations,
-                    resumePlan.ContinuedAnswer);
+                    resumePlan.ContinuedAnswer, resumePlan.PendingTodos);
                 await BumpResumeMetaAsync(run, resumePlan.LastSeq, ct);
                 await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
                     new
@@ -902,7 +905,7 @@ public sealed class ChatRunExecutor(
                 lock (_contextNotes)
                 {
                     _contextNotes.Enqueue(new ChatCompletionMessage(
-                        "system", $"[advisor] {advice}"));
+                        RoleSystem, $"[advisor] {advice}"));
                 }
             }
             catch (Exception ex)
@@ -951,7 +954,7 @@ public sealed class ChatRunExecutor(
                     lock (_contextNotes)
                     {
                         _contextNotes.Enqueue(new ChatCompletionMessage(
-                            "system",
+                            RoleSystem,
                             "[contexto] Nova janela aplicada — o histórico anterior foi "
                             + "resumido; o que deve persistir pertence ao notebook."));
                     }
@@ -997,10 +1000,24 @@ public sealed class ChatRunExecutor(
         // Com repo vinculado o workdir vira o checkout do repo (mesmo jail);
         // binding por chat precede o global (SPEC-20261010-chat-repo-binding).
         var workdir = await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct);
-        // SPEC-20261010-subagent-worktree: sub-runs (delegate_task) SEMPRE
-        // isolam em worktree; runs raiz respeitam Workspace:RunIsolation.
-        var (isolated, warning) = await worktrees.TryCreateForRunAsync(
-            user.Id, run.Id, workdir, ct, force: run.ParentRunId is not null);
+        // SPEC-20261010-subagent-worktree: sub-runs em CHAT FILHO
+        // (delegate_task / command subagent) SEMPRE isolam em worktree;
+        // continuações auto-chain do MESMO chat reutilizam o worktree da
+        // mãe — um checkout novo a partir de HEAD perderia as alterações
+        // não commitadas produzidas até o cap (Devin #459).
+        var sameChatParent = run.ParentRunId is not null
+            && await db.ChatRuns.AsNoTracking()
+                .Where(p => p.Id == run.ParentRunId)
+                .Select(p => p.ChatId)
+                .FirstOrDefaultAsync(ct) == run.ChatId;
+        var parentWorktree = sameChatParent
+            ? worktrees.ResolveIsolated(user.Id, run.ParentRunId!)
+            : null;
+        var (isolated, warning) = parentWorktree is not null
+            ? (parentWorktree, null)
+            : await worktrees.TryCreateForRunAsync(
+                user.Id, run.Id, workdir, ct,
+                force: run.ParentRunId is not null && !sameChatParent);
         if (warning is not null)
         {
             // Fallback shared: visível no stream como fase informativa.
@@ -1035,19 +1052,31 @@ public sealed class ChatRunExecutor(
     /// <summary>Lê marcador string de <c>Params</c> (valores chegam como
     /// <see cref="JsonElement"/> depois do round-trip por RequestJson).</summary>
     private static string? ParamStr(
-        IReadOnlyDictionary<string, object>? p, string key) =>
-        p is not null && p.TryGetValue(key, out var v)
-            ? v is JsonElement je
-                ? je.ValueKind == JsonValueKind.String ? je.GetString() : null
-                : v?.ToString()
-            : null;
+        IReadOnlyDictionary<string, object>? p, string key)
+    {
+        if (p is null || !p.TryGetValue(key, out var v))
+        {
+            return null;
+        }
+        if (v is not JsonElement je)
+        {
+            return v?.ToString();
+        }
+        return je.ValueKind == JsonValueKind.String ? je.GetString() : null;
+    }
 
     /// <summary>Lê marcador bool de <c>Params</c> (JsonElement True).</summary>
     private static bool ParamBool(
-        IReadOnlyDictionary<string, object>? p, string key) =>
-        p is not null && p.TryGetValue(key, out var v)
-        && (v is JsonElement je ? je.ValueKind == JsonValueKind.True
-            : v is bool b && b);
+        IReadOnlyDictionary<string, object>? p, string key)
+    {
+        if (p is null || !p.TryGetValue(key, out var v))
+        {
+            return false;
+        }
+        return v is JsonElement je
+            ? je.ValueKind == JsonValueKind.True
+            : v is bool b && b;
+    }
 
     /// <summary>
     /// Command <c>subagent:true</c> (SPEC-20261016-commands-v2 RF-005): a
@@ -1057,7 +1086,7 @@ public sealed class ChatRunExecutor(
     /// </summary>
     private async Task SpawnCommandSubagentAsync(
         ChatRun run, ChatCompletionRequest request,
-        User user, CancellationToken ct)
+        CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var title = request.Messages.LastOrDefault(m => m.Role == "user")
@@ -1136,11 +1165,13 @@ public sealed class ChatRunExecutor(
         ChatRun run, ChatCompletionRequest request, User user,
         ChatPipeline.ToolLoopOutcome outcome, CancellationToken ct)
     {
-        if (!outcome.HitStepCap || outcome.PendingTodos == 0)
+        if (!outcome.HitStepCap || outcome.PendingTodos == 0
+            || (outcome.PendingTodos < 0 && outcome.ToolMessages.Count == 0))
         {
             // Sem cap ou lista zerada (= trabalho concluído de verdade):
-            // encerra como sempre. PendingTodos == -1 (sem lista) segue —
-            // é o fallback autônomo do modo build.
+            // encerra como sempre. PendingTodos == -1 (sem lista) só segue
+            // quando a run executou tools — resposta de texto puro no cap
+            // é conclusão normal, não trabalho pendente (Devin #459).
             return;
         }
         var gate = await db.Chats.AsNoTracking()
@@ -1214,6 +1245,16 @@ public sealed class ChatRunExecutor(
         };
         db.ChatRuns.Add(childRun);
         await db.SaveChangesAsync(ct);
+
+        // Herda os limites por-run do agente (agent.steps gravado no
+        // enqueue em r:{id}:agent.steps) — sem a cópia a filha cairia no
+        // teto global do usuário (Devin #459).
+        if (await config.GetAsync<int?>($"r:{run.Id}:agent.steps", null, ct)
+                is { } agentSteps)
+        {
+            await config.SetAsync(
+                $"r:{childRun.Id}:agent.steps", agentSteps, ct);
+        }
 
         await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
             new
@@ -1686,7 +1727,10 @@ public sealed class ChatRunExecutor(
         // run — opções → a recomendada (marcada) ou a primeira; resposta
         // livre → diretriz autônoma padrão. Antes, qualquer pergunta sem
         // opções travava a run esperando o dono, mesmo em always-allow/auto.
-        if (IsAutoPickPreset(preset))
+        // Devin #458: pergunta livre que pede dado só-do-dono (senha,
+        // token, credencial...) NÃO recebe a resposta genérica — ela
+        // continua no fluxo de aprovação abaixo e alcança o usuário.
+        if (IsAutoPickPreset(preset) && !items.Any(RequiresOwnerInput))
         {
             static string Auto(RunQuestionItem i) => i.Options.Length > 0
                 ? PickRecommended(i.Options)
@@ -1818,6 +1862,22 @@ public sealed class ChatRunExecutor(
             return false;
         }
     }
+
+    /// <summary>Pergunta livre (sem opções) cujo texto pede um dado que
+    /// só o dono pode fornecer — senhas, tokens, credenciais, decisões de
+    /// acesso. Em preset autônomo, essas ainda vão ao usuário.</summary>
+    private static bool RequiresOwnerInput(RunQuestionItem item) =>
+        item.Options.Length == 0 && UserInputKeywords.Any(k =>
+            item.Question.Contains(k, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Marcadores de "input só do usuário" (pt/en) usados por
+    /// <see cref="RequiresOwnerInput"/>.</summary>
+    private static readonly string[] UserInputKeywords =
+    [
+        "senha", "password", "passwd", "token", "secret", "api key",
+        "apikey", "api-key", "credencial", "credential", "username",
+        "usuário", "usuario", "email", "e-mail", "sudo", "login",
+    ];
 
     /// <summary>
     /// Presets que respondem perguntas com opções sozinhos (SPEC-15 RF-003).

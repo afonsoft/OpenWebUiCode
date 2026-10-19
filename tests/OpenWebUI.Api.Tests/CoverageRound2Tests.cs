@@ -228,7 +228,7 @@ public class CoverageRound2Tests
 
     // ---------------- WorkspaceGitService ----------------
 
-    private static void Git(string dir, params string[] args)
+    private static async Task GitAsync(string dir, params string[] args)
     {
         var psi = new ProcessStartInfo("git")
         {
@@ -242,35 +242,51 @@ public class CoverageRound2Tests
             psi.ArgumentList.Add(a);
         }
         using var p = Process.Start(psi);
-        p!.WaitForExit(15000);
+        using var timeout = new CancellationTokenSource(15000);
+        await p!.WaitForExitAsync(timeout.Token);
     }
 
-    private static void CommitAll(string dir, string msg)
+    private static async Task CommitAllAsync(string dir, string msg)
     {
-        Git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A");
-        Git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", msg);
+        await GitAsync(dir, "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A");
+        await GitAsync(dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", msg);
     }
 
-    private static void RequireGit()
+    /// <summary>Pula o teste quando o binário <c>git</c> não existe no
+    /// host — Process.Start lança antes de qualquer ExitCode.</summary>
+    private static async Task RequireGitAsync()
     {
-        var p = Process.Start(new ProcessStartInfo("git", "--version")
-        { RedirectStandardOutput = true, UseShellExecute = false });
-        p!.WaitForExit(5000);
-        if (p.ExitCode != 0)
+        try
         {
-            Assert.Ignore("git indisponível");
+            using var p = Process.Start(new ProcessStartInfo("git", "--version")
+            { RedirectStandardOutput = true, UseShellExecute = false });
+            if (p is null)
+            {
+                Assert.Ignore("git indisponível");
+                return;
+            }
+            using var timeout = new CancellationTokenSource(5000);
+            await p.WaitForExitAsync(timeout.Token);
+            if (p.ExitCode != 0)
+            {
+                Assert.Ignore("git indisponível");
+            }
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            Assert.Ignore($"git indisponível: {ex.Message}");
         }
     }
 
     [Test]
     public async Task Git_RenameCommitado_StatusREmOldPath()
     {
-        RequireGit();
+        await RequireGitAsync();
         var dir = Path.Join(_tmp, "repo-r");
         Directory.CreateDirectory(dir);
-        Git(dir, "init");
+        await GitAsync(dir, "init");
         File.WriteAllText(Path.Join(dir, "velho.txt"), "a\nb\nc\nd\ne\nf\ng\nh\n");
-        CommitAll(dir, "base");
+        await CommitAllAsync(dir, "base");
         var bpsi = new ProcessStartInfo("git")
         {
             WorkingDirectory = dir,
@@ -280,12 +296,12 @@ public class CoverageRound2Tests
         bpsi.ArgumentList.Add("branch");
         bpsi.ArgumentList.Add("--show-current");
         using var bp = Process.Start(bpsi);
-        var baseBranch = bp!.StandardOutput.ReadToEnd().Trim();
-        bp.WaitForExit();
+        var baseBranch = (await bp!.StandardOutput.ReadToEndAsync()).Trim();
+        await bp.WaitForExitAsync();
 
-        Git(dir, "checkout", "-b", "run-r");
-        Git(dir, "mv", "velho.txt", "novo.txt");
-        CommitAll(dir, "rename");
+        await GitAsync(dir, "checkout", "-b", "run-r");
+        await GitAsync(dir, "mv", "velho.txt", "novo.txt");
+        await CommitAllAsync(dir, "rename");
 
         var info = await new WorkspaceGitService()
             .GetInfoAsync(dir, default, baseRef: baseBranch);
@@ -299,12 +315,12 @@ public class CoverageRound2Tests
     [Test]
     public async Task Git_CommitDoServico_CriaCommit()
     {
-        RequireGit();
+        await RequireGitAsync();
         var dir = Path.Join(_tmp, "repo-c");
         Directory.CreateDirectory(dir);
-        Git(dir, "init");
+        await GitAsync(dir, "init");
         File.WriteAllText(Path.Join(dir, "x.txt"), "1\n");
-        CommitAll(dir, "base");
+        await CommitAllAsync(dir, "base");
         File.WriteAllText(Path.Join(dir, "x.txt"), "1\n2\n");
 
         var svc = new WorkspaceGitService();
@@ -320,9 +336,9 @@ public class CoverageRound2Tests
         lpsi.ArgumentList.Add("log");
         lpsi.ArgumentList.Add("--oneline");
         lpsi.ArgumentList.Add("-1");
-        var log = Process.Start(lpsi)!;
-        var msg = log.StandardOutput.ReadToEnd();
-        log.WaitForExit();
+        using var log = Process.Start(lpsi)!;
+        var msg = await log.StandardOutput.ReadToEndAsync();
+        await log.WaitForExitAsync();
         Assert.That(msg, Does.Contain("commit via servico"));
     }
 
@@ -597,10 +613,10 @@ public class CoverageRound2Tests
     {
         var dir = Path.Join(_tmp, "repo-del");
         Directory.CreateDirectory(dir);
-        Git(dir, "init");
+        await GitAsync(dir, "init");
         File.WriteAllText(Path.Join(dir, "vai.txt"), "x\n");
-        CommitAll(dir, "base");
-        Git(dir, "checkout", "-b", "run-del");
+        await CommitAllAsync(dir, "base");
+        await GitAsync(dir, "checkout", "-b", "run-del");
         File.Delete(Path.Join(dir, "vai.txt"));
 
         var svc = new WorkspaceGitService();

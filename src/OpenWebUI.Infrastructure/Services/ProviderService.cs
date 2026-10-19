@@ -530,7 +530,7 @@ public class ProviderService(
         }
         if (Prop(node, "reasoning_details") is JsonArray details)
         {
-            var joined = string.Concat(details.Select(d => Str(Prop(d, "text"))));
+            var joined = string.Concat(details.Select(d => Str(Prop(d, TextKey))));
             return joined.Length > 0 ? joined : null;
         }
         return null;
@@ -562,22 +562,26 @@ public class ProviderService(
     /// </summary>
     private static ProviderHttpException MidStreamProviderError(JsonNode errorNode)
     {
-        var message = Str(errorNode) ?? Str(Prop(errorNode, "message"))
+        var message = Str(errorNode) ?? Str(Prop(errorNode, MessageKey))
             ?? "erro de provider não identificado";
         var snippet = errorNode.ToJsonString();
         if (snippet.Length > ProviderHttpException.MaxBodyChars)
         {
             snippet = snippet[..ProviderHttpException.MaxBodyChars];
         }
-        var status = message.Contains("rate", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("quota", StringComparison.OrdinalIgnoreCase)
-            ? HttpStatusCode.TooManyRequests
-            : message.Contains("context", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("token", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("length", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("too long", StringComparison.OrdinalIgnoreCase)
-            ? HttpStatusCode.BadRequest
-            : HttpStatusCode.BadGateway;
+        var status = HttpStatusCode.BadGateway;
+        if (message.Contains("rate", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("quota", StringComparison.OrdinalIgnoreCase))
+        {
+            status = HttpStatusCode.TooManyRequests;
+        }
+        else if (message.Contains("context", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("token", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("length", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("too long", StringComparison.OrdinalIgnoreCase))
+        {
+            status = HttpStatusCode.BadRequest;
+        }
         return new ProviderHttpException(status, null, snippet, midStream: true);
     }
 
@@ -588,7 +592,7 @@ public class ProviderService(
     /// </summary>
     private static string CoerceText(JsonNode? node) =>
         Str(node) ?? (node is JsonArray parts
-            ? string.Concat(parts.Select(p => Str(Prop(p, "text"))))
+            ? string.Concat(parts.Select(p => Str(Prop(p, TextKey))))
             : string.Empty);
 
     /// <summary>Normaliza <c>choices[0].message</c> (OpenAI) ou <c>message</c> (Ollama).</summary>
@@ -597,27 +601,27 @@ public class ProviderService(
         // Resposta buffered com {"error":...} (gateway devolve 200 + corpo
         // de erro): classifica como erro de provider em vez de completion
         // vazia silenciosa.
-        if (Prop(json, "error") is { } bufferedError)
+        if (Prop(json, ErrorKey) is { } bufferedError)
         {
             throw MidStreamProviderError(bufferedError);
         }
-        var firstChoice = Prop(json, "choices") is JsonArray { Count: > 0 } arr ? arr[0] : null;
-        var message = openAi ? Prop(firstChoice, "message") : Prop(json, "message");
+        var firstChoice = Prop(json, ChoicesKey) is JsonArray { Count: > 0 } arr ? arr[0] : null;
+        var message = openAi ? Prop(firstChoice, MessageKey) : Prop(json, MessageKey);
         var (content, reasoning, dsmlCalls) = ExtractDsmlFields(message, openAi);
         var calls = new List<ProviderToolCall>();
-        var callsNode = Prop(message, "tool_calls") as JsonArray;
+        var callsNode = Prop(message, ToolCallsKey) as JsonArray;
         var callsJson = callsNode?.ToJsonString() ?? "[]";
         if (callsNode is not null)
         {
             foreach (var call in callsNode)
             {
-                var function = Prop(call, "function");
+                var function = Prop(call, FunctionKey);
                 var name = Str(Prop(function, "name"));
                 if (name is null)
                 {
                     continue;
                 }
-                var args = Prop(function, "arguments");
+                var args = Prop(function, ArgumentsKey);
                 var argsJson = Str(args) ?? args?.ToJsonString() ?? "{}";
                 calls.Add(new ProviderToolCall(
                     Str(Prop(call, "id")) ?? Guid.NewGuid().ToString("N"),
@@ -675,7 +679,7 @@ public class ProviderService(
             CoerceText(Prop(message, ContentKey)));
         var rawReasoning = openAi
             ? ExtractOpenAiReasoning(message)
-            : Str(Prop(message, "thinking"));
+            : Str(Prop(message, ThinkingKey));
         if (rawReasoning is not null)
         {
             var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
@@ -697,7 +701,7 @@ public class ProviderService(
         JsonSerializer.Serialize(calls.Select(c => new
         {
             id = c.Id,
-            type = "function",
+            type = FunctionKey,
             function = new { name = c.Name, arguments = c.ArgumentsJson },
         }));
 
@@ -881,7 +885,7 @@ public class ProviderService(
 
             // {"error": ...} mid-stream: erro honesto de provider que a
             // retry policy classifica — antes era engolido em silêncio.
-            if (Prop(node, "error") is { } errorNode)
+            if (Prop(node, ErrorKey) is { } errorNode)
             {
                 throw MidStreamProviderError(errorNode);
             }
@@ -897,8 +901,8 @@ public class ProviderService(
                 upstreamModel = m;
             }
 
-            var choice = Prop(node, "choices") is JsonArray { Count: > 0 } arr ? arr[0] : null;
-            var delta = Prop(choice, "delta");
+            var choice = Prop(node, ChoicesKey) is JsonArray { Count: > 0 } arr ? arr[0] : null;
+            var delta = Prop(choice, DeltaKey);
             if (Str(Prop(choice, "finish_reason")) is { Length: > 0 } fr)
             {
                 finishReason = fr;
@@ -912,7 +916,7 @@ public class ProviderService(
             // content chega string ou array de parts (CoerceText); um delta
             // escalar solto — gateway que não estrutura o objeto — vale
             // como o próprio texto.
-            var piece = CoerceText(Prop(delta, "content"));
+            var piece = CoerceText(Prop(delta, ContentKey));
             if (piece.Length == 0 && delta is JsonValue)
             {
                 piece = Str(delta) ?? string.Empty;
@@ -946,7 +950,7 @@ public class ProviderService(
                 }
             }
 
-            var callsNode = Prop(delta, "tool_calls");
+            var callsNode = Prop(delta, ToolCallsKey);
             if (callsNode is not JsonArray callParts)
             {
                 // Gateway emitiu tool_calls fora do shape OpenAI (objeto
@@ -961,14 +965,14 @@ public class ProviderService(
 
             foreach (var part in callParts)
             {
-                var position = IntNum(Prop(part, "index")) ?? callBuffers.Count;
+                var position = IntNum(Prop(part, IndexKey)) ?? callBuffers.Count;
                 if (!callBuffers.TryGetValue(position, out var buffer))
                 {
                     buffer = new OpenAiToolCallBuffer();
                     callBuffers[position] = buffer;
                 }
                 buffer.Id = Str(Prop(part, "id")) ?? buffer.Id;
-                var function = Prop(part, "function");
+                var function = Prop(part, FunctionKey);
                 var name = Str(Prop(function, "name"));
                 if (name is not null)
                 {
@@ -976,7 +980,7 @@ public class ProviderService(
                 }
                 // arguments chega fragmentado como string; alguns gateways
                 // mandam o objeto já montado — serializa em vez de quebrar.
-                var argsNode = Prop(function, "arguments");
+                var argsNode = Prop(function, ArgumentsKey);
                 if (Str(argsNode) is { } args)
                 {
                     buffer.Args.Append(args);
@@ -1296,12 +1300,12 @@ public class ProviderService(
                 continue;
             }
 
-            if (Prop(node, "error") is { } errorNode)
+            if (Prop(node, ErrorKey) is { } errorNode)
             {
                 throw MidStreamProviderError(errorNode);
             }
-            var message = Prop(node, "message");
-            var piece = CoerceText(Prop(message, "content"));
+            var message = Prop(node, MessageKey);
+            var piece = CoerceText(Prop(message, ContentKey));
             if (!string.IsNullOrEmpty(piece))
             {
                 content.Append(piece);
@@ -1314,7 +1318,7 @@ public class ProviderService(
             // Modelos "think" do Ollama emitem message.thinking separado
             // de message.content na mesma linha NDJSON.
             if (onReasoning is not null
-                && Str(Prop(message, "thinking")) is { Length: > 0 } thought)
+                && Str(Prop(message, ThinkingKey)) is { Length: > 0 } thought)
             {
                 await onReasoning(thought, ct);
             }
@@ -1325,7 +1329,7 @@ public class ProviderService(
             {
                 usage = lineUsage;
             }
-            if (Prop(message, "tool_calls") is JsonArray { Count: > 0 } calls)
+            if (Prop(message, ToolCallsKey) is JsonArray { Count: > 0 } calls)
             {
                 callNodes.AddRange(calls.Select(c => c!.DeepClone()));
             }
@@ -1341,13 +1345,13 @@ public class ProviderService(
         var parsed = new List<ProviderToolCall>();
         foreach (var call in callNodes)
         {
-            var function = Prop(call, "function");
+            var function = Prop(call, FunctionKey);
             var name = Str(Prop(function, "name"));
             if (name is null)
             {
                 continue;
             }
-            var args = Prop(function, "arguments");
+            var args = Prop(function, ArgumentsKey);
             var argsJson = Str(args) ?? args?.ToJsonString() ?? "{}";
             parsed.Add(new ProviderToolCall(
                 Str(Prop(call, "id")) ?? Guid.NewGuid().ToString("N"),
@@ -1394,6 +1398,18 @@ public class ProviderService(
 
     private const string AnthropicVersion = "2023-06-01";
     private const string ContentKey = "content";
+    private const string MessageKey = "message";
+    private const string ErrorKey = "error";
+    private const string ChoicesKey = "choices";
+    private const string ToolCallsKey = "tool_calls";
+    private const string FunctionKey = "function";
+    private const string ArgumentsKey = "arguments";
+    private const string ThinkingKey = "thinking";
+    private const string DeltaKey = "delta";
+    private const string IndexKey = "index";
+    private const string CandidatesKey = "candidates";
+    private const string TextKey = "text";
+    private const string PartsKey = "parts";
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 
     private static ProviderConnection FindTypedConnection(
@@ -1447,11 +1463,11 @@ public class ProviderService(
                 {
                     ["type"] = "tool_result",
                     ["tool_use_id"] = m.ToolCallId,
-                    ["content"] = m.Content,
+                    [ContentKey] = m.Content,
                 };
                 if (messages.Count > 0
                     && messages[^1]["role"]?.GetValue<string>() == "user"
-                    && messages[^1]["content"] is JsonArray prev
+                    && messages[^1][ContentKey] is JsonArray prev
                     && prev.All(n => n?["type"]?.GetValue<string>() == "tool_result"))
                 {
                     // Tool results da mesma rodada entram numa única mensagem user.
@@ -1462,7 +1478,7 @@ public class ProviderService(
                     messages.Add(new JsonObject
                     {
                         ["role"] = "user",
-                        ["content"] = new JsonArray(block),
+                        [ContentKey] = new JsonArray(block),
                     });
                 }
                 continue;
@@ -1473,16 +1489,16 @@ public class ProviderService(
                 var blocks = new JsonArray();
                 if (!string.IsNullOrEmpty(m.Content))
                 {
-                    blocks.Add(new JsonObject { ["type"] = "text", ["text"] = m.Content });
+                    blocks.Add(new JsonObject { ["type"] = TextKey, [TextKey] = m.Content });
                 }
                 foreach (var call in JsonNode.Parse(m.ToolCallsJson)!.AsArray())
                 {
-                    var name = call?["function"]?["name"]?.GetValue<string>();
+                    var name = call?[FunctionKey]?["name"]?.GetValue<string>();
                     if (name is null)
                     {
                         continue;
                     }
-                    var argsRaw = call?["function"]?["arguments"];
+                    var argsRaw = call?[FunctionKey]?[ArgumentsKey];
                     JsonNode? input;
                     try
                     {
@@ -1506,7 +1522,7 @@ public class ProviderService(
                 messages.Add(new JsonObject
                 {
                     ["role"] = "assistant",
-                    ["content"] = blocks,
+                    [ContentKey] = blocks,
                 });
                 continue;
             }
@@ -1517,7 +1533,7 @@ public class ProviderService(
             {
                 var blocks = new JsonArray
                 {
-                    new JsonObject { ["type"] = "text", ["text"] = m.Content },
+                    new JsonObject { ["type"] = TextKey, [TextKey] = m.Content },
                 };
                 foreach (var img in images)
                 {
@@ -1535,7 +1551,7 @@ public class ProviderService(
                 messages.Add(new JsonObject
                 {
                     ["role"] = "user",
-                    ["content"] = blocks,
+                    [ContentKey] = blocks,
                 });
                 continue;
             }
@@ -1543,7 +1559,7 @@ public class ProviderService(
             messages.Add(new JsonObject
             {
                 ["role"] = m.Role == "assistant" ? "assistant" : "user",
-                ["content"] = m.Content,
+                [ContentKey] = m.Content,
             });
         }
 
@@ -1564,7 +1580,7 @@ public class ProviderService(
             var tools = new JsonArray();
             foreach (var tool in request.Tools)
             {
-                var fn = JsonNode.Parse(tool.GetRawText())?["function"];
+                var fn = JsonNode.Parse(tool.GetRawText())?[FunctionKey];
                 var name = fn?["name"]?.GetValue<string>();
                 if (name is null)
                 {
@@ -1632,17 +1648,17 @@ public class ProviderService(
         var reasoning = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
-        foreach (var block in json?["content"]?.AsArray() ?? [])
+        foreach (var block in json?[ContentKey]?.AsArray() ?? [])
         {
             switch (block?["type"]?.GetValue<string>())
             {
-                case "text":
-                    content.Append(block?["text"]?.GetValue<string>());
+                case TextKey:
+                    content.Append(block?[TextKey]?.GetValue<string>());
                     break;
-                case "thinking":
+                case ThinkingKey:
                     // Bloco de raciocínio (extended thinking): canal separado —
                     // não entra no Content persistido.
-                    reasoning.Append(block?["thinking"]?.GetValue<string>());
+                    reasoning.Append(block?[ThinkingKey]?.GetValue<string>());
                     break;
                 case "tool_use":
                     var id = block?["id"]?.GetValue<string>()
@@ -1653,11 +1669,11 @@ public class ProviderService(
                     callsJson.Add(new JsonObject
                     {
                         ["id"] = id,
-                        ["type"] = "function",
-                        ["function"] = new JsonObject
+                        ["type"] = FunctionKey,
+                        [FunctionKey] = new JsonObject
                         {
                             ["name"] = name,
-                            ["arguments"] = input,
+                            [ArgumentsKey] = input,
                         },
                     });
                     break;
@@ -1753,31 +1769,31 @@ public class ProviderService(
 
         await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
         {
-            if (Prop(data, "error") is { } errorNode)
+            if (Prop(data, ErrorKey) is { } errorNode)
             {
                 throw MidStreamProviderError(errorNode);
             }
             if (eventName == "content_block_delta")
             {
-                var deltaType = Str(Prop(Prop(data, "delta"), "type"));
+                var deltaType = Str(Prop(Prop(data, DeltaKey), "type"));
                 // thinking_delta sai como delta.reasoning (canal separado);
                 // signature_delta (metadado criptográfico) é descartada.
                 var (field, prop) = deltaType switch
                 {
-                    "text_delta" => ("content", "text"),
-                    "thinking_delta" => ("reasoning", "thinking"),
+                    "text_delta" => (ContentKey, TextKey),
+                    "thinking_delta" => ("reasoning", ThinkingKey),
                     _ => (null, null),
                 };
                 if (field is not null && prop is not null
-                    && Str(Prop(Prop(data, "delta"), prop)) is { Length: > 0 } text)
+                    && Str(Prop(Prop(data, DeltaKey), prop)) is { Length: > 0 } text)
                 {
                     var chunk = new JsonObject
                     {
                         ["object"] = "chat.completion.chunk",
-                        ["choices"] = new JsonArray(new JsonObject
+                        [ChoicesKey] = new JsonArray(new JsonObject
                         {
-                            ["index"] = 0,
-                            ["delta"] = new JsonObject { [field] = text },
+                            [IndexKey] = 0,
+                            [DeltaKey] = new JsonObject { [field] = text },
                         }),
                     };
                     yield return $"data: {chunk.ToJsonString()}";
@@ -1820,11 +1836,11 @@ public class ProviderService(
 
         await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
         {
-            if (Prop(data, "error") is { } errorNode)
+            if (Prop(data, ErrorKey) is { } errorNode)
             {
                 throw MidStreamProviderError(errorNode);
             }
-            var index = IntNum(Prop(data, "index")) ?? 0;
+            var index = IntNum(Prop(data, IndexKey)) ?? 0;
             var block = Prop(data, "content_block");
             if (eventName == "content_block_start"
                 && Str(Prop(block, "type")) == "tool_use")
@@ -1836,11 +1852,11 @@ public class ProviderService(
             }
             else if (eventName == "content_block_delta")
             {
-                var delta = Prop(data, "delta");
+                var delta = Prop(data, DeltaKey);
                 var deltaType = Str(Prop(delta, "type"));
                 if (deltaType == "text_delta")
                 {
-                    var text = Str(Prop(delta, "text"));
+                    var text = Str(Prop(delta, TextKey));
                     if (!string.IsNullOrEmpty(text))
                     {
                         content.Append(text);
@@ -1853,7 +1869,7 @@ public class ProviderService(
                 else if (deltaType == "thinking_delta")
                 {
                     // Canal separado: thinking não entra no content da run.
-                    var thinking = Str(Prop(delta, "thinking"));
+                    var thinking = Str(Prop(delta, ThinkingKey));
                     if (!string.IsNullOrEmpty(thinking) && onReasoning is not null)
                     {
                         await onReasoning(thinking, ct);
@@ -1877,16 +1893,16 @@ public class ProviderService(
                 callsJson.Add(new JsonObject
                 {
                     ["id"] = closed.Id,
-                    ["type"] = "function",
-                    ["function"] = new JsonObject
+                    ["type"] = FunctionKey,
+                    [FunctionKey] = new JsonObject
                     {
                         ["name"] = closed.Name,
-                        ["arguments"] = args,
+                        [ArgumentsKey] = args,
                     },
                 });
             }
             else if (eventName == "message_delta"
-                && Str(Prop(Prop(data, "delta"), "stop_reason")) is { Length: > 0 } sr)
+                && Str(Prop(Prop(data, DeltaKey), "stop_reason")) is { Length: > 0 } sr)
             {
                 // message_delta carrega stop_reason ("end_turn"/"max_tokens") —
                 // "max_tokens" sinaliza truncamento para a continuação RF-003.
@@ -1963,7 +1979,7 @@ public class ProviderService(
                 };
                 if (contents.Count > 0
                     && contents[^1]["role"]?.GetValue<string>() == "user"
-                    && contents[^1]["parts"] is JsonArray prevParts
+                    && contents[^1][PartsKey] is JsonArray prevParts
                     && prevParts.All(p => p?["functionResponse"] is not null))
                 {
                     prevParts.Add(part);
@@ -1973,7 +1989,7 @@ public class ProviderService(
                     contents.Add(new JsonObject
                     {
                         ["role"] = "user",
-                        ["parts"] = new JsonArray(part),
+                        [PartsKey] = new JsonArray(part),
                     });
                 }
                 continue;
@@ -1984,13 +2000,13 @@ public class ProviderService(
                 var parts = new JsonArray();
                 if (!string.IsNullOrEmpty(m.Content))
                 {
-                    parts.Add(new JsonObject { ["text"] = m.Content });
+                    parts.Add(new JsonObject { [TextKey] = m.Content });
                 }
                 if (m.ToolCallsJson is not null)
                 {
                     foreach (var call in JsonNode.Parse(m.ToolCallsJson)!.AsArray())
                     {
-                        var name = call?["function"]?["name"]?.GetValue<string>();
+                        var name = call?[FunctionKey]?["name"]?.GetValue<string>();
                         if (name is null)
                         {
                             continue;
@@ -2000,7 +2016,7 @@ public class ProviderService(
                         {
                             toolNames[id] = name;
                         }
-                        var argsRaw = call?["function"]?["arguments"];
+                        var argsRaw = call?[FunctionKey]?[ArgumentsKey];
                         JsonNode? args;
                         try
                         {
@@ -2022,14 +2038,14 @@ public class ProviderService(
                         });
                     }
                 }
-                contents.Add(new JsonObject { ["role"] = "model", ["parts"] = parts });
+                contents.Add(new JsonObject { ["role"] = "model", [PartsKey] = parts });
                 continue;
             }
 
             contents.Add(new JsonObject
             {
                 ["role"] = "user",
-                ["parts"] = new JsonArray(new JsonObject { ["text"] = m.Content }),
+                [PartsKey] = new JsonArray(new JsonObject { [TextKey] = m.Content }),
             });
         }
 
@@ -2041,8 +2057,8 @@ public class ProviderService(
         {
             payload["systemInstruction"] = new JsonObject
             {
-                ["parts"] = new JsonArray(
-                    new JsonObject { ["text"] = string.Join("\n", system) }),
+                [PartsKey] = new JsonArray(
+                    new JsonObject { [TextKey] = string.Join("\n", system) }),
             };
         }
 
@@ -2051,7 +2067,7 @@ public class ProviderService(
             var declarations = new JsonArray();
             foreach (var tool in request.Tools)
             {
-                var fn = JsonNode.Parse(tool.GetRawText())?["function"];
+                var fn = JsonNode.Parse(tool.GetRawText())?[FunctionKey];
                 var name = fn?["name"]?.GetValue<string>();
                 if (name is null)
                 {
@@ -2115,16 +2131,16 @@ public class ProviderService(
         var reasoning = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
-        if (Prop(json, "error") is { } bufferedError)
+        if (Prop(json, ErrorKey) is { } bufferedError)
         {
             throw MidStreamProviderError(bufferedError);
         }
-        var parts = Prop(json, "candidates") is JsonArray { Count: > 0 } c
-            ? Prop(Prop(c[0], "content"), "parts") as JsonArray
+        var parts = Prop(json, CandidatesKey) is JsonArray { Count: > 0 } c
+            ? Prop(Prop(c[0], ContentKey), PartsKey) as JsonArray
             : null;
         foreach (var part in parts ?? [])
         {
-            if (Str(Prop(part, "text")) is { } text)
+            if (Str(Prop(part, TextKey)) is { } text)
             {
                 // part.thought=true é raciocínio — não vai para o Content.
                 var isThought = Prop(part, "thought") is JsonValue flag
@@ -2147,11 +2163,11 @@ public class ProviderService(
                 callsJson.Add(new JsonObject
                 {
                     ["id"] = id,
-                    ["type"] = "function",
-                    ["function"] = new JsonObject
+                    ["type"] = FunctionKey,
+                    [FunctionKey] = new JsonObject
                     {
                         ["name"] = name,
-                        ["arguments"] = args,
+                        [ArgumentsKey] = args,
                     },
                 });
             }
@@ -2159,7 +2175,7 @@ public class ProviderService(
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
-            FinishReason: Prop(json, "candidates") is JsonArray { Count: > 0 } fc
+            FinishReason: Prop(json, CandidatesKey) is JsonArray { Count: > 0 } fc
                 ? Str(Prop(fc[0], "finishReason")) : null);
     }
 
@@ -2204,16 +2220,16 @@ public class ProviderService(
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
-            if (Prop(data, "error") is { } errorNode)
+            if (Prop(data, ErrorKey) is { } errorNode)
             {
                 throw MidStreamProviderError(errorNode);
             }
-            var parts = Prop(data, "candidates") is JsonArray { Count: > 0 } c
-                ? Prop(Prop(c[0], "content"), "parts") as JsonArray
+            var parts = Prop(data, CandidatesKey) is JsonArray { Count: > 0 } c
+                ? Prop(Prop(c[0], ContentKey), PartsKey) as JsonArray
                 : null;
             foreach (var part in parts ?? [])
             {
-                var text = Str(Prop(part, "text"));
+                var text = Str(Prop(part, TextKey));
                 if (string.IsNullOrEmpty(text))
                 {
                     continue;
@@ -2225,10 +2241,10 @@ public class ProviderService(
                 var chunk = new JsonObject
                 {
                     ["object"] = "chat.completion.chunk",
-                    ["choices"] = new JsonArray(new JsonObject
+                    [ChoicesKey] = new JsonArray(new JsonObject
                     {
-                        ["index"] = 0,
-                        ["delta"] = new JsonObject { [field] = text },
+                        [IndexKey] = 0,
+                        [DeltaKey] = new JsonObject { [field] = text },
                     }),
                 };
                 yield return $"data: {chunk.ToJsonString()}";
@@ -2264,21 +2280,21 @@ public class ProviderService(
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
-            if (Prop(data, "error") is { } errorNode)
+            if (Prop(data, ErrorKey) is { } errorNode)
             {
                 throw MidStreamProviderError(errorNode);
             }
-            if (Prop(data, "candidates") is JsonArray { Count: > 0 } cand
+            if (Prop(data, CandidatesKey) is JsonArray { Count: > 0 } cand
                 && Str(Prop(cand[0], "finishReason")) is { Length: > 0 } fr)
             {
                 finishReason = fr;
             }
-            var parts = Prop(data, "candidates") is JsonArray { Count: > 0 } c
-                ? Prop(Prop(c[0], "content"), "parts") as JsonArray
+            var parts = Prop(data, CandidatesKey) is JsonArray { Count: > 0 } c
+                ? Prop(Prop(c[0], ContentKey), PartsKey) as JsonArray
                 : null;
             foreach (var part in parts ?? [])
             {
-                if (Str(Prop(part, "text")) is { } text)
+                if (Str(Prop(part, TextKey)) is { } text)
                 {
                     if (string.IsNullOrEmpty(text))
                     {
@@ -2311,11 +2327,11 @@ public class ProviderService(
                     callsJson.Add(new JsonObject
                     {
                         ["id"] = id,
-                        ["type"] = "function",
-                        ["function"] = new JsonObject
+                        ["type"] = FunctionKey,
+                        [FunctionKey] = new JsonObject
                         {
                             ["name"] = name,
-                            ["arguments"] = args,
+                            [ArgumentsKey] = args,
                         },
                     });
                 }
@@ -2353,7 +2369,7 @@ public class ProviderService(
                     var node = new JsonObject
                     {
                         ["role"] = m.Role,
-                        ["content"] = content,
+                        [ContentKey] = content,
                     };
                     if (m.Images is { Count: > 0 } images)
                     {
@@ -2369,8 +2385,8 @@ public class ProviderService(
                             {
                                 new JsonObject
                                 {
-                                    ["type"] = "text",
-                                    ["text"] = content,
+                                    ["type"] = TextKey,
+                                    [TextKey] = content,
                                 },
                             };
                             foreach (var img in images)
@@ -2384,7 +2400,7 @@ public class ProviderService(
                                     },
                                 });
                             }
-                            node["content"] = parts;
+                            node[ContentKey] = parts;
                         }
                     }
                     if (m.ToolCallId is not null)
@@ -2393,7 +2409,7 @@ public class ProviderService(
                     }
                     if (m.ToolCallsJson is not null)
                     {
-                        node["tool_calls"] = JsonNode.Parse(m.ToolCallsJson);
+                        node[ToolCallsKey] = JsonNode.Parse(m.ToolCallsJson);
                     }
                     return (JsonNode)node;
                 })
@@ -2454,7 +2470,7 @@ public class ProviderService(
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
-        return json?["message"]?["content"]?.GetValue<string>() ?? string.Empty;
+        return json?[MessageKey]?[ContentKey]?.GetValue<string>() ?? string.Empty;
     }
 
     private async Task<string> CompleteOpenAiAsync(
@@ -2478,8 +2494,8 @@ public class ProviderService(
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
-        return json?["choices"] is JsonArray { Count: > 0 } arr
-            ? arr[0]?["message"]?["content"]?.GetValue<string>() ?? string.Empty
+        return json?[ChoicesKey] is JsonArray { Count: > 0 } arr
+            ? arr[0]?[MessageKey]?[ContentKey]?.GetValue<string>() ?? string.Empty
             : string.Empty;
     }
 
@@ -2539,14 +2555,14 @@ public class ProviderService(
             }
 
             var done = node?["done"]?.GetValue<bool>() ?? false;
-            var content = node?["message"]?["content"]?.GetValue<string>();
+            var content = node?[MessageKey]?[ContentKey]?.GetValue<string>();
             var delta = new JsonObject
             {
                 ["role"] = "assistant",
-                ["content"] = content ?? string.Empty,
+                [ContentKey] = content ?? string.Empty,
             };
             // Modelos "think" do Ollama: message.thinking sai separado.
-            if (node?["message"]?["thinking"] is JsonValue think
+            if (node?[MessageKey]?[ThinkingKey] is JsonValue think
                 && think.TryGetValue<string>(out var thinking)
                 && thinking.Length > 0)
             {
@@ -2558,10 +2574,10 @@ public class ProviderService(
                 ["object"] = "chat.completion.chunk",
                 ["created"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 ["model"] = request.Model,
-                ["choices"] = new JsonArray(new JsonObject
+                [ChoicesKey] = new JsonArray(new JsonObject
                 {
-                    ["index"] = 0,
-                    ["delta"] = delta,
+                    [IndexKey] = 0,
+                    [DeltaKey] = delta,
                     ["finish_reason"] = done ? "stop" : null,
                 }),
             };
@@ -2668,9 +2684,9 @@ public class ProviderService(
         {
             return line;
         }
-        if (node?["choices"] is not JsonArray { Count: > 0 } choices
+        if (node?[ChoicesKey] is not JsonArray { Count: > 0 } choices
             || choices[0] is not JsonObject first
-            || first["delta"] is not JsonObject delta)
+            || first[DeltaKey] is not JsonObject delta)
         {
             return line;
         }
@@ -2713,10 +2729,10 @@ public class ProviderService(
         }
         var chunk = new JsonObject
         {
-            ["choices"] = new JsonArray(new JsonObject
+            [ChoicesKey] = new JsonArray(new JsonObject
             {
-                ["index"] = 0,
-                ["delta"] = delta,
+                [IndexKey] = 0,
+                [DeltaKey] = delta,
             }),
         };
         return $"data: {chunk.ToJsonString(JsonOptions)}";

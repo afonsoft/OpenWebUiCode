@@ -631,11 +631,11 @@ else
             var channelsTask = Api.GetChannelsAsync();
             var runsTask = Api.GetRunsConsoleAsync();
             await Task.WhenAll(chatsTask, pinnedTask, foldersTask, channelsTask, runsTask);
-            _chats = chatsTask.Result;
-            _pinned = pinnedTask.Result;
-            _folders = foldersTask.Result;
-            _channels = channelsTask.Result;
-            _runs = runsTask.Result;
+            _chats = await chatsTask;
+            _pinned = await pinnedTask;
+            _folders = await foldersTask;
+            _channels = await channelsTask;
+            _runs = await runsTask;
             _loadFailed = false;
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))

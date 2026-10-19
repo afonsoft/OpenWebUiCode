@@ -10,7 +10,7 @@ namespace OpenWebUI.Infrastructure.Services;
 /// statements de hard-deny avaliados ANTES das permissões de usuário,
 /// aprovações salvas e risk gates. Cobre <c>tool.use</c>,
 /// <c>provider.use</c>, <c>model.use</c> e <c>integration.use</c>.
-/// Paridade com as policies do opencode v2 — deny é absoluto e todo
+/// Paridade com as policies do opencode v2 — deny é absoluto e cada
 /// bloqueio efetivo é auditado em <see cref="PolicyDenial"/>.
 /// </summary>
 public class PolicyService(AppDbContext db)
@@ -48,15 +48,11 @@ public class PolicyService(AppDbContext db)
         IReadOnlyList<AdminPolicyStatement> statements, IEnumerable<string> resources)
     {
         var candidates = resources.Where(r => !string.IsNullOrEmpty(r)).ToList();
-        AdminPolicyStatement? matched = null;
-        foreach (var s in statements)
-        {
-            if (s.Effect == "deny" && candidates.Any(r => GlobMatch(s.Resource, r)))
-            {
-                matched = s;
-            }
-        }
-        return matched;
+        // Último match vence (avaliação ordenada) — LastOrDefault preserva.
+        return statements
+            .Where(s => s.Effect == "deny"
+                && candidates.Any(r => GlobMatch(s.Resource, r)))
+            .LastOrDefault();
     }
 
     /// <summary>
