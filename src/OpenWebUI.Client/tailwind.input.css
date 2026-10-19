@@ -184,6 +184,26 @@
 		}
 	}
 
+	/* Anel de streaming do avatar: a `animate-ping` do Tailwind escala a
+	   200% e invade o texto ao lado — esta versão fica colada na borda
+	   (o span usa -inset-0.5) e esmaece antes de passar de 1.3×. */
+	.avatar-ping {
+		animation: avatar-ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+	}
+
+	@keyframes avatar-ping {
+		0% {
+			transform: scale(1);
+			opacity: 0.9;
+		}
+
+		75%,
+		100% {
+			transform: scale(1.3);
+			opacity: 0;
+		}
+	}
+
 	/* prefers-reduced-motion: neutraliza animações/transições/blink no app
 	   inteiro. O estado funcional continua visível (spinner estático, dot
 	   parado) — só o movimento some. */

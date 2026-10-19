@@ -835,6 +835,9 @@
     private int _historyIndex = -1;
     private string? _error;
     private bool _loading;
+    // Abertura de /c/{id}: armado após a carga das mensagens e consumido
+    // uma única vez no primeiro render com conteúdo (RF-003).
+    private bool _needsInitialScroll;
     private bool _streaming;
     private bool _callActive;
     private bool _voiceSupported;
@@ -1070,6 +1073,13 @@
             {
                 StateHasChanged();
             }
+        }
+        // Abertura de chat existente: desce ao fim uma única vez — depois
+        // disso o pinned-scroll do stream e o scroll do usuário mandam.
+        if (_needsInitialScroll && !_loading)
+        {
+            _needsInitialScroll = false;
+            await ScrollToEndAsync();
         }
         if (_focusToolsMenu)
         {
@@ -1343,6 +1353,10 @@
             _branches = [];
             _messages.Clear();
             _messages.AddRange(chat.Messages);
+            // Posiciona no fim após o primeiro render com as mensagens —
+            // cobre também o placeholder de run ativa, adicionado de forma
+            // síncrona por AttachActiveRunAsync antes do loading cair.
+            _needsInitialScroll = true;
             await LoadComposerStateAsync(chat.Id);
             if (chat.Models.Count > 0)
             {
