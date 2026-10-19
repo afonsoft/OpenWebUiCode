@@ -79,6 +79,7 @@
   "chat.view_source": "Quelltext anzeigen",
   "chat.view_rendered": "Gerendert anzeigen",
   "chat.copied": "Kopiert",
+  "chat.loading_older": "Ältere Nachrichten laden",
   "chat.code.format": "Formatieren",
   "chat.code.minify": "Minimieren",
   "chat.code.wrap": "Zeilen umbrechen",

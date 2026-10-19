@@ -51,6 +51,17 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<ChatResponse?> GetChatAsync(string id) =>
         SendAsync<ChatResponse>(HttpMethod.Get, $"/api/v1/chats/{id}");
 
+    /// <summary>Obtém um chat com apenas a cauda de <paramref name="tail"/>
+    /// mensagens do caminho ativo (SPEC-20261019-chat-window-perf RF-001).</summary>
+    public Task<ChatResponse?> GetChatTailAsync(string id, int tail) =>
+        SendAsync<ChatResponse>(HttpMethod.Get, $"/api/v1/chats/{id}?tail={tail}");
+
+    /// <summary>Página de mensagens anteriores a <paramref name="beforeId"/> no
+    /// caminho ativo (SPEC-20261019-chat-window-perf RF-001).</summary>
+    public Task<ChatMessagesPage?> GetChatMessagesAsync(string id, string? beforeId, int take = 50) =>
+        SendAsync<ChatMessagesPage>(HttpMethod.Get,
+            $"/api/v1/chats/{id}/messages?take={take}{(beforeId is null ? "" : $"&before={Uri.EscapeDataString(beforeId)}")}");
+
     /// <summary>Obtém um chat compartilhado publicamente (sem autenticação).</summary>
     public async Task<SharedChatResponse?> GetSharedChatAsync(string shareId)
     {

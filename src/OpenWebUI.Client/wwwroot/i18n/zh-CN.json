@@ -79,6 +79,7 @@
   "chat.view_source": "查看源码",
   "chat.view_rendered": "查看渲染",
   "chat.copied": "已复制",
+  "chat.loading_older": "加载更早的消息",
   "chat.code.format": "格式化",
   "chat.code.minify": "压缩",
   "chat.code.wrap": "自动换行",

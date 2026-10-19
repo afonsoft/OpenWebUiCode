@@ -715,4 +715,102 @@ public class ChatEndpointsTests
             new ChatPatchRequest(null, null, "build"));
         Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
+
+    // ── SPEC-20261019-chat-window-perf RF-001: paginação da janela ──
+
+    [Test]
+    public async Task GetChatTail_RetornaCaudaEHasMore()
+    {
+        var auth = await SignUpAsync("Tail", "tail@chats.local", "senha123");
+        UseToken(auth.Token);
+        var msgs = Enumerable.Range(1, 120)
+            .Select(i => new ChatMessageModel($"m{i}", i % 2 == 1 ? "user" : "assistant", $"msg {i}", null, 100 + i))
+            .ToList();
+        var chat = await CriarChatAsync("tail", msgs);
+
+        var tail = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}?tail=30");
+        Assert.That(tail!.Messages, Has.Count.EqualTo(30));
+        Assert.That(tail.MessagesHasMore, Is.True);
+        Assert.That(tail.Messages[0].Id, Is.EqualTo("m91"));
+        Assert.That(tail.Messages[^1].Id, Is.EqualTo("m120"));
+
+        var full = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        Assert.That(full!.Messages, Has.Count.EqualTo(120));
+        Assert.That(full.MessagesHasMore, Is.False);
+    }
+
+    [Test]
+    public async Task Paginacao_AntesDeTakeOrdemEHasMore()
+    {
+        var auth = await SignUpAsync("Page", "page@chats.local", "senha123");
+        UseToken(auth.Token);
+        var msgs = Enumerable.Range(1, 120)
+            .Select(i => new ChatMessageModel($"m{i}", i % 2 == 1 ? "user" : "assistant", $"msg {i}", null, 100 + i))
+            .ToList();
+        var chat = await CriarChatAsync("page", msgs);
+
+        var page = await _client.GetFromJsonAsync<ChatMessagesPage>(
+            $"/api/v1/chats/{chat.Id}/messages?before=m91&take=50");
+        Assert.That(page!.Messages, Has.Count.EqualTo(50));
+        Assert.That(page.Messages[0].Id, Is.EqualTo("m41"));
+        Assert.That(page.Messages[^1].Id, Is.EqualTo("m90"));
+        Assert.That(page.HasMore, Is.True);
+        Assert.That(page.Total, Is.EqualTo(120));
+
+        // Esgotamento no início do caminho.
+        var first = await _client.GetFromJsonAsync<ChatMessagesPage>(
+            $"/api/v1/chats/{chat.Id}/messages?before=m41&take=50");
+        Assert.That(first!.Messages, Has.Count.EqualTo(40));
+        Assert.That(first.HasMore, Is.False);
+    }
+
+    [Test]
+    public async Task Paginacao_NaoQuebraGrupoToolNoTopo()
+    {
+        var auth = await SignUpAsync("Snap", "snap@chats.local", "senha123");
+        UseToken(auth.Token);
+        // m3..m5 = grupo de tools; take cruza a fronteira no meio do grupo.
+        var msgs = new List<ChatMessageModel>
+        {
+            new("m1", "user", "u1", null, 101),
+            new("m2", "assistant", "a1", null, 102),
+            new("m3", "tool", "t1", null, 103),
+            new("m4", "tool", "t2", null, 104),
+            new("m5", "tool", "t3", null, 105),
+            new("m6", "assistant", "a2", null, 106),
+            new("m7", "user", "u2", null, 107),
+            new("m8", "assistant", "a3", null, 108),
+        };
+        var chat = await CriarChatAsync("snap", msgs);
+
+        var page = await _client.GetFromJsonAsync<ChatMessagesPage>(
+            $"/api/v1/chats/{chat.Id}/messages?before=m7&take=2");
+        // Sem snap seria [m5(tool),m6] — feed nasceria cortado.
+        Assert.That(page!.Messages.Select(m => m.Id),
+            Is.EqualTo(new[] { "m3", "m4", "m5", "m6" }));
+        Assert.That(page.HasMore, Is.True);
+
+        var tail = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}?tail=5");
+        // tail=5 abriria em m4 (meio do grupo) — snap estende para m3.
+        Assert.That(tail!.Messages.Select(m => m.Id),
+            Is.EqualTo(new[] { "m3", "m4", "m5", "m6", "m7", "m8" }));
+        Assert.That(tail.MessagesHasMore, Is.True);
+    }
+
+    [Test]
+    public async Task Paginacao_BeforeInexistente_UsaFimDoCaminho()
+    {
+        var auth = await SignUpAsync("End", "end@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("end", Mensagens("a", "b", "c"));
+
+        var page = await _client.GetFromJsonAsync<ChatMessagesPage>(
+            $"/api/v1/chats/{chat.Id}/messages?before=nope&take=2");
+        Assert.That(page!.Messages, Has.Count.EqualTo(2));
+        Assert.That(page.Messages[^1].Id, Is.EqualTo("m3"));
+        Assert.That(page.Total, Is.EqualTo(3));
+    }
 }

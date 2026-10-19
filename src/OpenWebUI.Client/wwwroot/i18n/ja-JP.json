@@ -79,6 +79,7 @@
   "chat.view_source": "ソースを表示",
   "chat.view_rendered": "レンダリングを表示",
   "chat.copied": "コピーしました",
+  "chat.loading_older": "古いメッセージを読み込む",
   "chat.code.format": "整形",
   "chat.code.minify": "圧縮",
   "chat.code.wrap": "折り返し",

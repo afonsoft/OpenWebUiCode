@@ -204,6 +204,16 @@
             else
             {
                 <div class="flex flex-col gap-5 py-4" role="log" aria-live="polite" aria-relevant="additions">
+                    @if (_hasMoreMessages)
+                    {
+                        @* SPEC-20261019-chat-window-perf RF-002: sentinel de
+                           scroll-up — clicável (a11y) e também disparado pelo
+                           listener JS quando o topo se aproxima. *@
+                        <button type="button" @onclick="LoadOlderMessagesAsync" disabled="@_loadingOlder"
+                                class="self-center text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 py-1 px-3">
+                            @L["chat.loading_older"]
+                        </button>
+                    }
                     @for (var i = 0; i < _messages.Count; i++)
                     {
                         var index = i;
@@ -221,7 +231,7 @@
                             var persisted = _messages
                                 .Skip(index).Take(lastTool - index + 1)
                                 .Select(PersistedToolCall).ToList();
-                            <RunActivityFeed Calls="persisted" Streaming="false" Collapsed="true" />
+                            <div class="msg-cv"><RunActivityFeed Calls="persisted" Streaming="false" Collapsed="true" /></div>
                             i = lastTool;
                             continue;
                         }
@@ -230,7 +240,7 @@
                             @* Marcador de contexto colapsado (resumo automático ou
                                rewind do agente): linha divisória sutil — o
                                relatório/resumo completo fica no tooltip. *@
-                            <div class="flex items-center gap-3 py-1 px-2 text-[11px] text-gray-400 dark:text-gray-500 select-none" title="@message.Content">
+                            <div class="msg-cv flex items-center gap-3 py-1 px-2 text-[11px] text-gray-400 dark:text-gray-500 select-none" title="@message.Content">
                                 <span class="flex-1 border-t border-gray-200 dark:border-gray-800"></span>
                                 <span class="truncate max-w-[60%]">@L["chat.context_collapsed"]</span>
                                 <span class="flex-1 border-t border-gray-200 dark:border-gray-800"></span>
@@ -239,6 +249,7 @@
                         }
                         var isLastAssistant = message.Role == "assistant" && i == _messages.Count - 1;
                         var msgKey = message.Id ?? $"m{index}";
+                        <div class="msg-cv flex flex-col gap-5">
                         @if (isLastAssistant && _reasoning.Length > 0)
                         {
                             @* Pensamento do modelo (SPEC-20261015 RF-004):
@@ -271,6 +282,7 @@
                             TtsSupported="_ttsSupported"
                             OnSpeak="() => SpeakAtAsync(index)"
                             OnBranch="() => ActivateLeafAsync(message.Id!)" />
+                        </div>
                     }
                 </div>
             }
@@ -858,6 +870,15 @@
     /// <summary>Aba que o painel abre na próxima renderização (clique no chip git).</summary>
     private string? _requestedPanelTab;
     private ElementReference _scrollContainer;
+    // SPEC-20261019-chat-window-perf RF-002/003: janela deslizante — a página
+    // de mensagens mais antigas sobe por sentinel/scroll; o topo é descartado
+    // quando a janela passa do teto de caracteres.
+    private bool _hasMoreMessages;
+    private bool _loadingOlder;
+    private bool _sentinelInit;
+    private bool _pendingPrepend;
+    private double _prePrependHeight;
+    private DotNetObjectReference<ChatView>? _selfRef;
     /// <summary>Composer textarea — medido pelo autoResize a cada mudança de _input.</summary>
     private ElementReference _composerEl;
     /// <summary>Último valor de _input já medido pelo autoResize (dedup por render).</summary>
@@ -1074,6 +1095,26 @@
                 StateHasChanged();
             }
         }
+        if (!_sentinelInit && _hasMoreMessages)
+        {
+            // Sentinel da janela deslizante (RF-002): instala o listener uma
+            // única vez — HasMore pode ligar depois do primeiro render.
+            _sentinelInit = true;
+            _selfRef ??= DotNetObjectReference.Create(this);
+            try
+            {
+                await JS.InvokeVoidAsync("openwebui.initTopSentinel", _scrollContainer, _selfRef);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+            {
+                await Console.Error.WriteLineAsync($"[ChatView] sentinel falhou: {ex.Message}");
+            }
+        }
+        if (_pendingPrepend)
+        {
+            _pendingPrepend = false;
+            await JS.InvokeVoidAsync("openwebui.adjustScrollAfterPrepend", _scrollContainer, _prePrependHeight);
+        }
         // Abertura de chat existente: desce ao fim uma única vez — depois
         // disso o pinned-scroll do stream e o scroll do usuário mandam.
         if (_needsInitialScroll && !_loading)
@@ -1282,7 +1323,7 @@
         ChatResponse? chat;
         try
         {
-            chat = await Api.GetChatAsync(ChatId);
+            chat = await Api.GetChatTailAsync(ChatId, ChatWindow.InitialTail);
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
@@ -1353,6 +1394,7 @@
             _branches = [];
             _messages.Clear();
             _messages.AddRange(chat.Messages);
+            _hasMoreMessages = chat.MessagesHasMore;
             // Posiciona no fim após o primeiro render com as mensagens —
             // cobre também o placeholder de run ativa, adicionado de forma
             // síncrona por AttachActiveRunAsync antes do loading cair.
@@ -1488,6 +1530,7 @@
         _mentionCts?.Dispose();
         _draftCts?.Dispose();
         _ttsRef?.Dispose();
+        _selfRef?.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -2077,13 +2120,60 @@
                 return;
             }
             _messages.Clear();
-            _messages.AddRange(chat.Messages);
+            // Branch devolve o caminho inteiro — a janela corta para a cauda
+            // localmente (o endpoint paginado resolve o resto no scroll-up).
+            var branchMsgs = chat.Messages.ToList();
+            _hasMoreMessages = ChatWindow.TrimToTail(branchMsgs, ChatWindow.InitialTail) > 0;
+            _messages.AddRange(branchMsgs);
             _branchCount = chat.BranchCount;
             _activeLeafId = chat.ActiveLeafId;
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
             _error = ex.Message;
+        }
+    }
+
+    /// <summary>Sentinel JS: topo do scroll aproximou — busca a página anterior.</summary>
+    [JSInvokable]
+    public Task OnTopSentinelAsync() => LoadOlderMessagesAsync();
+
+    /// <summary>Prepend de mensagens mais antigas no topo da janela, com
+    /// compensação de scroll e corte pelo teto de caracteres (RF-002/003).</summary>
+    private async Task LoadOlderMessagesAsync()
+    {
+        if (_loadingOlder || !_hasMoreMessages || _loadedChatId is null
+            || _messages.Count == 0 || _messages[0].Id is not { } firstId)
+        {
+            return;
+        }
+        _loadingOlder = true;
+        try
+        {
+            var page = await Api.GetChatMessagesAsync(
+                _loadedChatId, firstId, ChatWindow.OlderPageSize);
+            if (page is null || page.Messages.Count == 0)
+            {
+                _hasMoreMessages = false;
+                return;
+            }
+            _prePrependHeight = await JS.InvokeAsync<double>("openwebui.getScrollHeight", _scrollContainer);
+            _messages.InsertRange(0, page.Messages);
+            _hasMoreMessages = page.HasMore;
+            // Teto da janela (RF-003): sobra no topo sai — re-busca cobre.
+            if (ChatWindow.TrimToCharCap(_messages, ChatWindow.CharCap) > 0)
+            {
+                _hasMoreMessages = true;
+            }
+            _pendingPrepend = true;
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is JSException)
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] página antiga falhou: {ex.Message}");
+        }
+        finally
+        {
+            _loadingOlder = false;
         }
     }
 
@@ -2895,7 +2985,7 @@
             return;
         }
 
-        var chat = await Api.GetChatAsync(_loadedChatId);
+        var chat = await Api.GetChatTailAsync(_loadedChatId, ChatWindow.InitialTail);
         if (chat is null)
         {
             return;
@@ -2903,6 +2993,7 @@
 
         _messages.Clear();
         _messages.AddRange(chat.Messages);
+        _hasMoreMessages = chat.MessagesHasMore;
         _chatTitle = chat.Title;
         ChatList.NotifyChanged();
         await InvokeAsync(StateHasChanged);

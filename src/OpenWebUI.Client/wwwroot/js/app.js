@@ -29,6 +29,29 @@ window.openwebui = {
 			element.scrollTop = element.scrollHeight;
 		}
 	},
+	// SPEC-20261019-chat-window-perf RF-002: sentinel de scroll-up — quando o
+	// usuário aproxima do topo, pede ao Blazor a página anterior de mensagens.
+	initTopSentinel: function (element, dotNetRef) {
+		if (!element || element._owTopSentinel) return;
+		element._owTopSentinel = true;
+		element.addEventListener('scroll', function () {
+			if (element.scrollTop < 240 && !element._owLoadingOlder) {
+				element._owLoadingOlder = true;
+				dotNetRef.invokeMethodAsync('OnTopSentinelAsync')
+					.finally(function () { element._owLoadingOlder = false; });
+			}
+		});
+	},
+	getScrollHeight: function (element) {
+		return element ? element.scrollHeight : 0;
+	},
+	// Compensação pós-prepend: devolve ao usuário o mesmo ponto de leitura
+	// somando o delta de altura ao scrollTop.
+	adjustScrollAfterPrepend: function (element, previousHeight) {
+		if (element) {
+			element.scrollTop += element.scrollHeight - previousHeight;
+		}
+	},
 	copyText: function (text) {
 		return navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.resolve();
 	},
