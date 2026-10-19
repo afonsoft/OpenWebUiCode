@@ -327,6 +327,59 @@ public class GitHubWorkspaceTests
             .And.Contain("builtin_memory_search"));
     }
 
+    // ---------------- EnrichRequestAsync (preset-aware, RF-003) ----------------
+
+    private async Task<Chat> SemearChatComPresetAsync(string preset)
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        _db.Users.Add(new User { Id = "u-preset", Name = "U", Email = "u@x" });
+        var chat = new Chat
+        {
+            UserId = "u-preset",
+            Title = "t",
+            ModelsJson = "[\"fake:1\"]",
+            ApprovalPreset = preset,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        _db.Chats.Add(chat);
+        await _db.SaveChangesAsync();
+        return chat;
+    }
+
+    [Test]
+    public async Task Enrich_PresetAlwaysAllow_InjetaDiretivaDeNaoPerguntar()
+    {
+        // always-allow auto-aprova o gate — o modelo precisa saber para
+        // não encerrar o turno perguntando "posso continuar?".
+        var chat = await SemearChatComPresetAsync("always-allow");
+        var request = new ChatCompletionRequest(
+            "fake:1", [new ChatCompletionMessage("user", "oi")]);
+        var effective = await ChatPipeline.EnrichRequestAsync(
+            request,
+            new User { Id = "u-preset", Name = "U", Email = "u@x" },
+            _db, _config, rag: null!, webSearch: null!, _repos, default,
+            chatId: chat.Id);
+        var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
+        Assert.That(system?.Content, Does.Contain("always-allow")
+            .And.Contain("do not ask for confirmation"));
+    }
+
+    [Test]
+    public async Task Enrich_PresetApproveMutations_SemDiretivaAlwaysAllow()
+    {
+        var chat = await SemearChatComPresetAsync("approve-mutations");
+        var request = new ChatCompletionRequest(
+            "fake:1", [new ChatCompletionMessage("user", "oi")]);
+        var effective = await ChatPipeline.EnrichRequestAsync(
+            request,
+            new User { Id = "u-preset", Name = "U", Email = "u@x" },
+            _db, _config, rag: null!, webSearch: null!, _repos, default,
+            chatId: chat.Id);
+        var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
+        Assert.That(system?.Content, Does.Not.Contain("always-allow"));
+    }
+
     // ---------------- GitHubService: caminhos de erro ----------------
 
     [Test]
