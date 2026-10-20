@@ -135,6 +135,6 @@ Padrão: **Plan-and-Execute**.
 - `.claude/WORKFLOWS.md` — automação e pipelines
 - `.claude/MEMORY.md` — decisões e lições cross-session
 - `.devin/blueprint.yaml` — setup do ambiente Devin
-- `.specs/` — SPECs SDD em andamento
+- `.specs/` — SPECs SDD em andamento (execução no modelo ADD — `docs/AI-DRIVEN-DEVELOPMENT.md`)
 - `docs/` — documentação do sistema (overview, tecnologias, pacotes, features, API)
 - `docs/MIGRACAO-DOTNET.md` — mapa de paridade com o upstream
