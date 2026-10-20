@@ -28,7 +28,7 @@ Client ──▶ Application
 | `docs/` | documentação do sistema + `MIGRACAO-DOTNET.md` |
 | `.claude/` | harness de agentes (rules, agents, skills, memory) |
 | `.devin/` | `blueprint.yaml`, `config.json`, `skills/` (catálogo afonsoft/skills) |
-| `.specs/` | SPECs SDD em andamento |
+| `.specs/` | SPECs SDD em andamento — executadas no modelo ADD |
 
 ## Quick Start
 
@@ -50,3 +50,4 @@ Primeiro usuário registrado vira admin — ou semeado no primeiro boot via `ADM
 - [features.md](./features.md) — funcionalidades implementadas
 - [api.md](./api.md) — endpoints da API
 - [MIGRACAO-DOTNET.md](./MIGRACAO-DOTNET.md) — paridade com o upstream
+- [AI-DRIVEN-DEVELOPMENT.md](./AI-DRIVEN-DEVELOPMENT.md) — modelo ADD: SDD na especificação, agentes na execução
