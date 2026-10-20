@@ -396,8 +396,13 @@ public static class ApiEndpoints
         {
             await WriteSseErrorAsync(writer, ex.Message, http.RequestAborted);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (ex is HttpRequestException or IOException
+            || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
+            // HttpIOException (stream do provider morto no meio) herda de
+            // IOException, não de HttpRequestException — sem ela no filtro
+            // a resposta cortava sem evento de erro. OCE com ct íntegro é
+            // timeout do HttpClient upstream; o da própria ct propaga.
             await WriteSseErrorAsync(writer, $"Falha ao contactar o provedor: {ex.Message}", http.RequestAborted);
         }
     }
