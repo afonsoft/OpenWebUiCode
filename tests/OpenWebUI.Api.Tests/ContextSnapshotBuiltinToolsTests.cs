@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NUnit.Framework;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.ChatTools.Tools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
@@ -274,6 +276,28 @@ public class ContextSnapshotBuiltinToolsTests : SnapshotTestBase
             Args("""{"items":[{"kind":"note","content":"n"}]}"""),
             Ctx(chatId: null), CancellationToken.None);
         Assert.That(save.Text, Does.Contain("requer chat persistido"));
+    }
+
+    [Test]
+    public async Task Schemas_ParametersJson_SaoJsonValido()
+    {
+        await using var db = NewDb();
+        var config = new ConfigService(db, TestCache.Create());
+        var tools = new IBuiltinChatTool[]
+        {
+            SaveTool(db, config), RecoveryTool(db, config), CompactTool(db, config),
+        };
+        foreach (var t in tools)
+        {
+            var doc = JsonDocument.Parse(t.ParametersJson);
+            Assert.Multiple(() =>
+            {
+                Assert.That(doc.RootElement.GetProperty("type").GetString(),
+                    Is.EqualTo("object"));
+                Assert.That(doc.RootElement.GetProperty("properties")
+                    .ValueKind, Is.EqualTo(JsonValueKind.Object));
+            });
+        }
     }
 
     [Test]

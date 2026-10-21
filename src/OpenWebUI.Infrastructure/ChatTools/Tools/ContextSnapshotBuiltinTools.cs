@@ -27,24 +27,12 @@ public sealed class ContextSaveBuiltinTool(
             + "and compaction — use context_recovery to read it back.";
 
     /// <inheritdoc />
-    public string ParametersJson => """
-        {
-          "type": "object",
-          "properties": {
-            "label": {
-              "type": "string",
-              "description": "Optional snapshot label."
-            },
-            "items": ITEMS_SCHEMA,
-            "compact": {
-              "type": "string",
-              "enum": ["none", "elision", "elision+summary"],
-              "description": "Pre-compact items before saving (default 'none')."
-            }
-          },
-          "required": ["items"]
-        }
-        """.Replace("ITEMS_SCHEMA", ContextSnapshotTools.ItemsParamJson);
+    public string ParametersJson => ContextSnapshotTools.ParamsJson(
+        "\"label\":{\"type\":\"string\",\"description\":\"Optional snapshot label.\"},"
+            + ContextSnapshotTools.ItemsPropJson + ","
+            + ContextSnapshotTools.StrategyPropJson("compact",
+                "Pre-compact items before saving (default 'none')."),
+        "[\"items\"]");
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Write;
@@ -137,21 +125,9 @@ public sealed class ContextRecoveryBuiltinTool(
             + "copy to fit 'tokenBudget'; the stored snapshot never changes.";
 
     /// <inheritdoc />
-    public string ParametersJson => """
-        {
-          "type": "object",
-          "properties": {
-            "version": {
-              "type": "integer",
-              "description": "Snapshot version (default: latest)."
-            },
-            "tokenBudget": {
-              "type": "integer",
-              "description": "Token budget for the returned copy (default 16000)."
-            }
-          }
-        }
-        """;
+    public string ParametersJson => ContextSnapshotTools.ParamsJson(
+        "\"version\":{\"type\":\"integer\",\"description\":\"Snapshot version (default: latest).\"},"
+            + ContextSnapshotTools.BudgetPropJson);
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Read;
@@ -222,31 +198,13 @@ public sealed class ContextCompactBuiltinTool(
             + "Set 'save' to persist the result as a new version.";
 
     /// <inheritdoc />
-    public string ParametersJson => """
-        {
-          "type": "object",
-          "properties": {
-            "items": ITEMS_SCHEMA,
-            "fromVersion": {
-              "type": "integer",
-              "description": "Compact a saved snapshot version (mutually exclusive with 'items')."
-            },
-            "strategy": {
-              "type": "string",
-              "enum": ["none", "elision", "elision+summary"],
-              "description": "Compaction strategy (default 'elision+summary')."
-            },
-            "tokenBudget": {
-              "type": "integer",
-              "description": "Token budget (default 16000)."
-            },
-            "save": {
-              "type": "boolean",
-              "description": "Persist the compacted items as a new version (default false)."
-            }
-          }
-        }
-        """.Replace("ITEMS_SCHEMA", ContextSnapshotTools.ItemsParamJson);
+    public string ParametersJson => ContextSnapshotTools.ParamsJson(
+        ContextSnapshotTools.ItemsPropJson + ","
+            + "\"fromVersion\":{\"type\":\"integer\",\"description\":\"Compact a saved snapshot version (mutually exclusive with 'items').\"},"
+            + ContextSnapshotTools.StrategyPropJson("strategy",
+                "Compaction strategy (default 'elision+summary').") + ","
+            + ContextSnapshotTools.BudgetPropJson + ","
+            + "\"save\":{\"type\":\"boolean\",\"description\":\"Persist the compacted items as a new version (default false).\"}");
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Write;
@@ -344,7 +302,7 @@ public sealed class ContextCompactBuiltinTool(
 internal static class ContextSnapshotTools
 {
     /// <summary>JSON Schema do parâmetro <c>items</c> — compartilhado por save e compact.</summary>
-    internal const string ItemsParamJson = """
+    private const string ItemsParamJson = """
         {
           "type": "array",
           "description": "Context items {kind: decision|note|passage|tool_output|summary, title?, content, score?}.",
@@ -363,6 +321,23 @@ internal static class ContextSnapshotTools
           }
         }
         """;
+
+    /// <summary>Fragmento <c>"items": …</c> pronto para <see cref="ParamsJson"/>.</summary>
+    internal const string ItemsPropJson = "\"items\":" + ItemsParamJson;
+
+    /// <summary>Fragmento <c>"tokenBudget": …</c> compartilhado por recovery e compact.</summary>
+    internal const string BudgetPropJson =
+        "\"tokenBudget\":{\"type\":\"integer\",\"description\":\"Token budget (default 16000).\"}";
+
+    /// <summary>Monta o schema de parâmetros a partir dos fragmentos de propriedades.</summary>
+    internal static string ParamsJson(string properties, string? required = null) =>
+        "{\"type\":\"object\",\"properties\":{" + properties + "}"
+            + (required is null ? "" : ",\"required\":" + required) + "}";
+
+    /// <summary>Fragmento de parâmetro enum de estratégia (<c>compact</c>/<c>strategy</c>).</summary>
+    internal static string StrategyPropJson(string name, string description) =>
+        $"\"{name}\":{{\"type\":\"string\",\"enum\":[\"none\",\"elision\",\"elision+summary\"],"
+            + $"\"description\":\"{description}\"}}";
 
     /// <summary>Resultado padrão de gate desligado (contexttools.enabled=false).</summary>
     internal static BuiltinToolResult Disabled() =>
