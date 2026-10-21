@@ -341,6 +341,12 @@ public sealed class ContextCompactBuiltinTool(
             {
                 return ContextSnapshotTools.Error(Name, parseError);
             }
+            // Itens inline não foram gravados ainda: valida segredos/
+            // control chars antes de mandar transcript ao provider (RF-004).
+            if (ContextSnapshotService.ValidateItems(parsed!) is { } vError)
+            {
+                return ContextSnapshotTools.Error(Name, vError);
+            }
             items = parsed!;
         }
 

@@ -142,10 +142,10 @@ CLAUDE.md / README.md / docs/                                    # catálogo de 
 | `TokenEstimate` | INTEGER | `ceil(chars/4)` — chars = soma de `content` (+ `title`) dos itens |
 | `Compacted` | INTEGER (bool) | true quando gravado por/após compactação |
 | `Strategy` | TEXT(32) NULL | `none`, `elision`, `elision+summary` |
-| `CreatedAt` | TEXT (UTC ISO 8601) | NOT NULL |
+| `CreatedAt` | INTEGER (epoch UTC s) | NOT NULL — convenção do repo: timestamps são `long` epoch (não TEXT ISO) |
 | `CreatedByUserId` | TEXT NULL | `BuiltinToolContext.UserId` da run |
 
-- **Índices:** `UX_ContextSnapshots_ChatId_Version` (único); `IX_ContextSnapshots_ChatId_CreatedAt`.
+- **Índices:** único `(ChatId, Version)`; `(ChatId, CreatedAt)` — nomes gerados pelo EF (`IX_ContextSnapshots_*`).
 - **Retenção:** `compaction:max_snapshots_per_chat` (default 20): ao exceder após insert, remove os mais antigos por `Version` no mesmo `SaveChanges`.
 - **Migration:** `dotnet ef migrations add AddContextSnapshots --project src/OpenWebUI.Infrastructure --startup-project src/OpenWebUI.Api`; revisar o `.cs` gerado (só cria tabela+índices, sem tocar tabelas existentes); `DatabaseMigrator` aplica no startup e faz baseline de bases legadas.
 - **Configuração EF:** `DbSet<ContextSnapshot> ContextSnapshots` + `modelBuilder.Entity<ContextSnapshot>` seguindo o padrão das demais entidades.
@@ -314,14 +314,14 @@ Cenário: gate admin
 
 ## 9. Definition of Done
 
-- [ ] T1–T11 concluídas; Status → aprovado → em implementação.
-- [ ] Compactação dispara por `compaction:threshold_tokens` (regra OR) com teste.
-- [ ] Migration `AddContextSnapshots` aplica no startup em base limpa e existente.
-- [ ] As 3 tools aparecem no catálogo de builtins (`builtin:` picker) e passam pelo gate `contexttools.enabled`.
-- [ ] `context_compact` declara `Tier = Write`; `context_save` Write; `context_recovery` Read.
-- [ ] `BuiltinToolContext.Model` preenchido pelo `ChatRunExecutor`; sumarização via papel `memory` com fallback.
-- [ ] Cenários da seção 6 cobertos por teste.
-- [ ] Nenhum conteúdo de contexto nem chave em log.
+- [x] T1–T9 concluídas (T10–T11 = review/QA, docs e PR — em andamento).
+- [x] Compactação dispara por `compaction:threshold_tokens` (regra OR) com teste (`ContextTokenThresholdTests`).
+- [x] Migration `AddContextSnapshots` aplica em base limpa e existente (`dotnet ef database update` verificado).
+- [x] As 3 tools no catálogo de builtins (`Program.cs`) e no gate `contexttools.enabled` (`IsContextTool`).
+- [x] `context_compact` declara `Tier = Write`; `context_save` Write; `context_recovery` Read.
+- [x] `BuiltinToolContext.Model` preenchido pelo `ChatRunExecutor`; sumarização via papel `memory` com fallback.
+- [x] Cenários da seção 6 cobertos por teste (`ContextSnapshotServiceTests`, `ContextSnapshotBuiltinToolsTests`).
+- [x] Nenhum conteúdo de contexto nem chave em log (erros levam só código + metadados).
 - [ ] `dotnet build` e `dotnet test` verdes; `check-spec-status.py` verde.
 - [ ] Docs atualizadas; PR para `main` sem force-push.
 
