@@ -35,23 +35,7 @@ public sealed class ContextSaveBuiltinTool(
               "type": "string",
               "description": "Optional snapshot label."
             },
-            "items": {
-              "type": "array",
-              "description": "Context items to persist.",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": ["decision", "note", "passage", "tool_output", "summary"]
-                  },
-                  "title": { "type": "string" },
-                  "content": { "type": "string" },
-                  "score": { "type": "number" }
-                },
-                "required": ["kind", "content"]
-              }
-            },
+            "items": ITEMS_SCHEMA,
             "compact": {
               "type": "string",
               "enum": ["none", "elision", "elision+summary"],
@@ -60,7 +44,7 @@ public sealed class ContextSaveBuiltinTool(
           },
           "required": ["items"]
         }
-        """;
+        """.Replace("ITEMS_SCHEMA", ContextSnapshotTools.ItemsParamJson);
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Write;
@@ -246,23 +230,7 @@ public sealed class ContextCompactBuiltinTool(
         {
           "type": "object",
           "properties": {
-            "items": {
-              "type": "array",
-              "description": "Items to compact (mutually exclusive with 'fromVersion').",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": ["decision", "note", "passage", "tool_output", "summary"]
-                  },
-                  "title": { "type": "string" },
-                  "content": { "type": "string" },
-                  "score": { "type": "number" }
-                },
-                "required": ["kind", "content"]
-              }
-            },
+            "items": ITEMS_SCHEMA,
             "fromVersion": {
               "type": "integer",
               "description": "Compact a saved snapshot version (mutually exclusive with 'items')."
@@ -282,7 +250,7 @@ public sealed class ContextCompactBuiltinTool(
             }
           }
         }
-        """;
+        """.Replace("ITEMS_SCHEMA", ContextSnapshotTools.ItemsParamJson);
 
     /// <inheritdoc />
     public ApprovalTier Tier => ApprovalTier.Write;
@@ -381,6 +349,27 @@ public sealed class ContextCompactBuiltinTool(
 /// <summary>Helpers compartilhados das tools de snapshot (args, erros, payload).</summary>
 internal static class ContextSnapshotTools
 {
+    /// <summary>JSON Schema do parâmetro <c>items</c> — compartilhado por save e compact.</summary>
+    internal const string ItemsParamJson = """
+        {
+          "type": "array",
+          "description": "Context items {kind: decision|note|passage|tool_output|summary, title?, content, score?}.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["decision", "note", "passage", "tool_output", "summary"]
+              },
+              "title": { "type": "string" },
+              "content": { "type": "string" },
+              "score": { "type": "number" }
+            },
+            "required": ["kind", "content"]
+          }
+        }
+        """;
+
     /// <summary>Resultado padrão de gate desligado (contexttools.enabled=false).</summary>
     internal static BuiltinToolResult Disabled() =>
         new("Tools de contexto estão desabilitadas pelo administrador.");

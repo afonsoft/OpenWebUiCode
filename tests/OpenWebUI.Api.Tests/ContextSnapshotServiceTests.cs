@@ -425,14 +425,14 @@ public class ContextSnapshotServiceTests
         Assert.That(stats.WithinBudget, Is.False);
     }
 
-    private sealed class FakeSummarizer(string? result) : IContextSummarizer
+    internal sealed class FakeSummarizer(string? result) : IContextSummarizer
     {
         public Task<ContextSummary?> SummarizeAsync(
             string model, string transcript, string? userId, CancellationToken ct) =>
             Task.FromResult(result is null ? null : new ContextSummary(result, [], [], []));
     }
 
-    private sealed class ThrowingSummarizer : IContextSummarizer
+    internal sealed class ThrowingSummarizer : IContextSummarizer
     {
         public Task<ContextSummary?> SummarizeAsync(
             string model, string transcript, string? userId, CancellationToken ct) =>
@@ -440,7 +440,7 @@ public class ContextSnapshotServiceTests
     }
 
     /// <summary>IHostEnvironment mínimo apontando para a raiz temporária.</summary>
-    private sealed class TestEnv(string contentRoot) : IHostEnvironment
+    internal sealed class TestEnv(string contentRoot) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = "Test";
         public string ApplicationName { get; set; } = "t";

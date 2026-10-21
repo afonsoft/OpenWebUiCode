@@ -49,7 +49,8 @@ public class ContextSnapshotBuiltinToolsTests
     }
 
     private ContextSnapshotService Snapshots(AppDbContext db, ConfigService config) =>
-        new(db, config, new WorkspaceRepoService(config, new TestEnv(_dir)));
+        new(db, config, new WorkspaceRepoService(config,
+            new ContextSnapshotServiceTests.TestEnv(_dir)));
 
     private static ModelRoleResolver Roles(AppDbContext db, ConfigService config) =>
         new(db, config, _ => Task.FromResult(new List<ModelInfo>()),
@@ -58,7 +59,7 @@ public class ContextSnapshotBuiltinToolsTests
     private ContextSaveBuiltinTool SaveTool(
         AppDbContext db, ConfigService config, IContextSummarizer? summarizer = null) =>
         new(Snapshots(db, config), new ContextBoundaryService(db, config),
-            summarizer ?? new FakeSummarizer("RES"), Roles(db, config));
+            summarizer ?? new ContextSnapshotServiceTests.FakeSummarizer("RES"), Roles(db, config));
 
     private ContextRecoveryBuiltinTool RecoveryTool(AppDbContext db, ConfigService config) =>
         new(Snapshots(db, config), new ContextBoundaryService(db, config));
@@ -66,7 +67,7 @@ public class ContextSnapshotBuiltinToolsTests
     private ContextCompactBuiltinTool CompactTool(
         AppDbContext db, ConfigService config, IContextSummarizer? summarizer = null) =>
         new(Snapshots(db, config), new ContextBoundaryService(db, config),
-            summarizer ?? new FakeSummarizer("RES"), Roles(db, config));
+            summarizer ?? new ContextSnapshotServiceTests.FakeSummarizer("RES"), Roles(db, config));
 
     private static BuiltinToolContext Ctx(string? chatId = "c1") =>
         new("u1", chatId, "r1", "/tmp", "/tmp", Model: "m1");
@@ -254,7 +255,7 @@ public class ContextSnapshotBuiltinToolsTests
         var big = new string('p', 9_000);
 
         var res = await CompactTool(db, config,
-                new FakeSummarizer("RESUMO Y")).ExecuteAsync(
+                new ContextSnapshotServiceTests.FakeSummarizer("RESUMO Y")).ExecuteAsync(
             Args($$"""
                 {"items":[
                 {"kind":"decision","content":"d"},
@@ -336,19 +337,4 @@ public class ContextSnapshotBuiltinToolsTests
         });
     }
 
-    private sealed class FakeSummarizer(string? result) : IContextSummarizer
-    {
-        public Task<ContextSummary?> SummarizeAsync(
-            string model, string transcript, string? userId, CancellationToken ct) =>
-            Task.FromResult(result is null ? null : new ContextSummary(result, [], [], []));
-    }
-
-    /// <summary>IHostEnvironment mínimo apontando para a raiz temporária.</summary>
-    private sealed class TestEnv(string contentRoot) : IHostEnvironment
-    {
-        public string EnvironmentName { get; set; } = "Test";
-        public string ApplicationName { get; set; } = "t";
-        public string ContentRootPath { get; set; } = contentRoot;
-        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
-    }
 }
