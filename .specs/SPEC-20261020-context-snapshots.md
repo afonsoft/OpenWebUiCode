@@ -322,8 +322,8 @@ Cenário: gate admin
 - [x] `BuiltinToolContext.Model` preenchido pelo `ChatRunExecutor`; sumarização via papel `memory` com fallback.
 - [x] Cenários da seção 6 cobertos por teste (`ContextSnapshotServiceTests`, `ContextSnapshotBuiltinToolsTests`).
 - [x] Nenhum conteúdo de contexto nem chave em log (erros levam só código + metadados).
-- [ ] `dotnet build` e `dotnet test` verdes; `check-spec-status.py` verde.
-- [ ] Docs atualizadas; PR para `main` sem force-push.
+- [x] `dotnet build` Release verde; `dotnet test` 1981/1990 (0 falhas, 9 skipped); `check-spec-status.py` verde.
+- [x] Docs atualizadas (README, docs/features); PR para `main` sem force-push.
 
 ## Open Questions / Pending Ambiguity
 
