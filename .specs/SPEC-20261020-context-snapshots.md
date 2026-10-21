@@ -112,6 +112,7 @@ CLAUDE.md / README.md / docs/                                    # catálogo de 
   - Nova KV `compaction:threshold_tokens`, default **224_000** (≈ 87% de 256k — margem para o turno de resposta). Faixa válida: 32_000–256_000 (clamp na leitura).
   - `Thresholds` record ganha `ThresholdTokens`; `ThresholdsAsync` lê a nova KV.
   - Regra de disparo: compacta se `tokensEstimados >= compaction:threshold_tokens` **OU** `chars >= compaction:threshold` (compatibilidade — a KV de chars existente **não** é removida).
+  - **Default de `compaction:threshold` sobe para 1_000_000 chars** (~250k tokens, acima do limiar de tokens): com o default antigo de 256_000 chars a regra OR dispararia em ~64k tokens e a feature viraria no-op — o 2º cenário de aceite exige que 400k chars não compactem. A KV permanece como override para o admin compactar **mais cedo**; deployments que a definiram explicitamente não mudam de comportamento.
   - `force` e `tailScale` inalterados (`tailScale` escala só tail, não o limiar).
   - Sem alteração de comportamento quando abaixo de ambos os limiares.
 - **Input → Output:** `(history, model) → bool didCompact` — contrato de `MaybeCompactAsync` inalterado.
@@ -181,7 +182,7 @@ Três classes `IBuiltinChatTool` no arquivo `ContextSnapshotBuiltinTools.cs`, re
 | Chave | Default | Validação (clamp na leitura) |
 | --- | --- | --- |
 | `compaction:threshold_tokens` | 224_000 | 32_000–256_000 |
-| `compaction:threshold` (existente, chars) | 256_000 | mantida |
+| `compaction:threshold` (existente, chars) | 1_000_000 (era 256_000 — ver RF-001) | mantida |
 | `compaction:max_snapshots_per_chat` | 20 | 1–100 |
 | `compaction:max_items_per_snapshot` | 200 | 1–1000 |
 | `compaction:max_payload_bytes` | 524_288 | 64_000–2_000_000 |

@@ -115,7 +115,12 @@ public sealed class ContextCompactionService(
     /// <summary>Prefixo do bloco de turno parcial (RF-004) injetado após o resumo.</summary>
     public const string TurnPrefixHeader = "[Turno em andamento no ponto de corte — prefixo]\n";
 
-    private const int DefaultThresholdChars = 256_000;
+    // SPEC-20261020-context-snapshots RF-001: o disparo normal é por
+    // tokens estimados (ceil chars/4) — o default de chars sobe para ~1M
+    // (~250k tokens) para a KV de tokens mandar; compaction:threshold
+    // segue como override do admin para compactar mais cedo.
+    private const int DefaultThresholdChars = 1_000_000;
+    private const int DefaultThresholdTokens = 224_000;
     private const int DefaultTailMessages = 30;
     private const int DefaultTailChars = 25_000;
 
@@ -131,7 +136,9 @@ public sealed class ContextCompactionService(
     private sealed record CompactionState(
         int Cutoff, string Summary,
         ContextSummary? Digest = null, string? TurnPrefix = null);
-    internal sealed record Thresholds(int TotalChars, int TailMessages, int TailChars);
+    internal sealed record Thresholds(
+        int TotalChars, int TailMessages, int TailChars,
+        int ThresholdTokens = int.MaxValue);
 
     private static string KvKey(string chatId) => $"chat:{chatId}:compaction";
 
@@ -220,10 +227,14 @@ public sealed class ContextCompactionService(
                 t = new Thresholds(
                     t.TotalChars,
                     Math.Max(4, (int)(t.TailMessages * tailScale)),
-                    Math.Max(2000, (int)(t.TailChars * tailScale)));
+                    Math.Max(2000, (int)(t.TailChars * tailScale)),
+                    t.ThresholdTokens);
             }
             var total = history.Sum(m => (m.Content?.Length ?? 0) + (m.ToolCallsJson?.Length ?? 0));
-            if (!force && total <= t.TotalChars)
+            // RF-001: dispara quando tokens OU chars estouram o limiar —
+            // a KV de chars sobrevive como override para compactar antes.
+            if (!force && ContextTokens.Estimate(total) < t.ThresholdTokens
+                && total <= t.TotalChars)
             {
                 return false;
             }
@@ -363,6 +374,9 @@ public sealed class ContextCompactionService(
         var total = await config.GetAsync("compaction:threshold", DefaultThresholdChars, ct);
         var tailMsgs = await config.GetAsync("compaction:tail_messages", DefaultTailMessages, ct);
         var tailChars = await config.GetAsync("compaction:tail_chars", DefaultTailChars, ct);
-        return new Thresholds(total, tailMsgs, tailChars);
+        var thresholdTokens = Math.Clamp(
+            await config.GetAsync("compaction:threshold_tokens", DefaultThresholdTokens, ct),
+            32_000, 256_000);
+        return new Thresholds(total, tailMsgs, tailChars, thresholdTokens);
     }
 }
