@@ -1001,6 +1001,53 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("ConfigEntries");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ContextSnapshot", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Compacted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepoKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Strategy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TokenEstimate")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChatId", "CreatedAt");
+
+                    b.HasIndex("ChatId", "Version")
+                        .IsUnique();
+
+                    b.ToTable("ContextSnapshots");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.EmbeddingChunk", b =>
                 {
                     b.Property<string>("Id")

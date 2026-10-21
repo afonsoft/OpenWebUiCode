@@ -150,6 +150,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Auditoria de bloqueios por policy.</summary>
     public DbSet<PolicyDenial> PolicyDenials => Set<PolicyDenial>();
 
+    /// <summary>Snapshots versionados do contexto de trabalho por chat.</summary>
+    public DbSet<ContextSnapshot> ContextSnapshots => Set<ContextSnapshot>();
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -461,6 +464,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(m => m.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ContextSnapshot>(entity =>
+        {
+            entity.HasKey(s => s.Id);
+            // Versão monotônica por chat (SPEC-20261020-context-snapshots RF-003).
+            entity.HasIndex(s => new { s.ChatId, s.Version }).IsUnique();
+            entity.HasIndex(s => new { s.ChatId, s.CreatedAt });
         });
     }
 }
