@@ -11,9 +11,14 @@ namespace OpenWebUI.Infrastructure.ChatTools;
 /// <param name="RunId">Run ativa, quando dentro do dispatcher.</param>
 /// <param name="WorkspacePath">Diretório de trabalho do usuário.</param>
 /// <param name="UploadDir">Diretório de uploads do usuário (imagens geradas).</param>
+/// <param name="Model">
+/// Modelo da run — usado por tools que chamam provider (ex.:
+/// context_compact sumariza com ele; SPEC-20261020-context-snapshots RF-008).
+/// </param>
 public sealed record BuiltinToolContext(
     string UserId,
     string? ChatId,
     string? RunId,
     string WorkspacePath,
-    string UploadDir);
+    string UploadDir,
+    string? Model = null);

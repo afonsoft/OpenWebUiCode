@@ -81,6 +81,7 @@ builder.Services.AddScoped<RunEventWriter>();
 // Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
 // context-management): boundaries + notebook + flag new_context via kv.
 builder.Services.AddScoped<ContextBoundaryService>();
+builder.Services.AddScoped<ContextSnapshotService>();
 // Camadas de configuração por usuário (SPEC-20261014-config-layers).
 builder.Services.AddScoped<UserConfigOverlayService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
@@ -139,6 +140,9 @@ builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RewindBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ContextNotesBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, NewContextBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ContextSaveBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ContextRecoveryBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ContextCompactBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, DelegateTaskBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RunResultBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, WorktreeDiffBuiltinTool>();
