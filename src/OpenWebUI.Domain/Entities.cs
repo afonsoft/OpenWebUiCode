@@ -1657,6 +1657,51 @@ public class AdminPolicyStatement
 }
 
 /// <summary>
+/// Snapshot versionado do contexto de trabalho de um chat
+/// (SPEC-20261020-context-snapshots RF-003): itens compactáveis
+/// (decisões, notas, passages, tool outputs) gravados pelas tools
+/// <c>builtin_context_save</c>/<c>builtin_context_compact</c> e relidos
+/// por <c>builtin_context_recovery</c>. O escopo é o chat;
+/// <see cref="RepoKey"/> registra o binding de repo vigente na gravação
+/// (informativo — não há consulta cross-chat por repo no v1).
+/// </summary>
+public class ContextSnapshot
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Chat dono do snapshot.</summary>
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Slug do repo (owner/repo, lowercase) do binding do chat; null sem binding.</summary>
+    public string? RepoKey { get; set; }
+
+    /// <summary>Versão monotônica por chat, começando em 1.</summary>
+    public int Version { get; set; }
+
+    /// <summary>Rótulo opcional dado pelo agente.</summary>
+    public string? Label { get; set; }
+
+    /// <summary>Itens serializados (RF-004): kind/title/content/score.</summary>
+    public string PayloadJson { get; set; } = "[]";
+
+    /// <summary>Estimativa de tokens do payload (ceil chars/4).</summary>
+    public int TokenEstimate { get; set; }
+
+    /// <summary>Se foi gravado já compactado (por tool ou pós-compactação).</summary>
+    public bool Compacted { get; set; }
+
+    /// <summary>Estratégia aplicada: <c>none</c>, <c>elision</c> ou <c>elision+summary</c>.</summary>
+    public string? Strategy { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Usuário dono da run que gravou.</summary>
+    public string? CreatedByUserId { get; set; }
+}
+
+/// <summary>
 /// Registro de auditoria de bloqueio por policy — cada deny efetivo
 /// gera uma linha (quem, ação, recurso, statement que casou).
 /// </summary>

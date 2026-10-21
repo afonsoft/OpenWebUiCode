@@ -1029,7 +1029,8 @@ public sealed class ChatRunExecutor(
             run.ChatId,
             run.Id,
             isolated ?? workdir,
-            Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id));
+            Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id),
+            Model: run.Model);
     }
 
     /// <summary>

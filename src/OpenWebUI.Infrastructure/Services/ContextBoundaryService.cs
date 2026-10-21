@@ -39,10 +39,12 @@ public sealed class ContextBoundaryService(AppDbContext db, ConfigService config
     /// <summary>
     /// Nomes das tools de gerenciamento de contexto (RF-005) — gate admin
     /// <c>contexttools.enabled</c> (default on; <c>false</c> remove do
-    /// anúncio/picker e bloqueia a execução).
+    /// anúncio/picker e bloqueia a execução). Inclui as 3 tools de
+    /// snapshot (SPEC-20261020-context-snapshots RF-005).
     /// </summary>
     public static bool IsContextTool(string name) =>
-        name is "checkpoint" or "rewind" or "context_notes" or "new_context";
+        name is "checkpoint" or "rewind" or "context_notes" or "new_context"
+            or "context_save" or "context_recovery" or "context_compact";
 
     /// <summary>Gate admin: ausente/null = ligado; false desliga as 4 tools.</summary>
     public async Task<bool> EnabledAsync(CancellationToken ct) =>

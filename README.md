@@ -42,7 +42,7 @@ context-tooling design shaped several features below.
 | Model roles +<br>fallback chains | ❌ single model | partial | ✅ `modelRoles` +<br>`fallbackChains` | ✅ `tasks`/`memory` /<br>`advisor` + vision<br>capability map |
 | Tool approval<br>tiers | binary<br>approve-all | ✅ permission<br>model | ✅ tier + tool policy<br>+ user override | ✅ `Read`/`Write`/`Exec`,<br>fail-closed, per-tool<br>overrides |
 | Advisor /<br>watchdog | ❌ | ❌ | ✅ read-only 2nd<br>opinion | ✅ advisor inspects<br>runs, no approval<br>power |
-| Agent-directed<br>context | ❌ | partial | ✅ `checkpoint`/`rewind`,<br>`context_notes`,<br>`new_context` | ✅ same trio + pruning<br>+ `history://` |
+| Agent-directed<br>context | ❌ | partial | ✅ `checkpoint`/`rewind`,<br>`context_notes`,<br>`new_context`,<br>`context_save`/`recovery`/`<br>compact` | ✅ same trio + pruning<br>+ `history://` |
 | Layered config +<br>provenance | env + admin UI | partial | ✅ env>runtime>overlay><br>project>global | ✅ global/admin/user<br>layers + source |
 | Declarative<br>agent defs | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools,<br>model, spawns) via<br>`delegate_task` |
 | Plan mode →<br>structured output | ❌ | ✅ plan/build<br>modes | ❌ | ✅ `/plan` → **SPEC SDD**<br>markdown; `plan_exit`<br>validates + saves to<br>`.openwebui/plans/` |
@@ -124,6 +124,9 @@ context-tooling design shaped several features below.
   → collapse), `context_notes` (per-branch notebook that survives rollover) and
   `new_context` (on-request compaction); mechanical pruning elides superseded
   tool results and `history://` URIs recover full pre-compaction turns.
+  `context_save`/`context_recovery`/`context_compact` persist versioned context
+  snapshots per chat (table `ContextSnapshots`) and compaction auto-triggers at
+  `compaction:threshold_tokens` estimated tokens (~256k-token window).
 - **Chat branching** — messages form a tree (`ParentId`/`LeafMessageId`);
   "branch from here" forks any turn into a sibling chat, with a branch summary
   for the abandoned path.

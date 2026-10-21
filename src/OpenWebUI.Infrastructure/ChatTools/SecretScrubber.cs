@@ -27,8 +27,24 @@ public static partial class SecretScrubber
         result = AwsKeyRegex().Replace(result, Redacted);
         result = BearerTokenRegex().Replace(result, $"Bearer {Redacted}");
         result = PrivateKeyRegex().Replace(result, Redacted);
+        result = AftTokenRegex().Replace(result, Redacted);
         return result;
     }
+
+    /// <summary>
+    /// Se o texto contém algum padrão de segredo conhecido
+    /// (SPEC-20261020-context-snapshots RF-004) — detecção sem alocar a
+    /// versão mascarada; o conteúdo nunca é logado.
+    /// </summary>
+    public static bool ContainsSecret(string? text) =>
+        !string.IsNullOrEmpty(text)
+        && (GitHubTokenRegex().IsMatch(text)
+            || GitHubPatRegex().IsMatch(text)
+            || ApiKeyRegex().IsMatch(text)
+            || AwsKeyRegex().IsMatch(text)
+            || BearerTokenRegex().IsMatch(text)
+            || PrivateKeyRegex().IsMatch(text)
+            || AftTokenRegex().IsMatch(text));
 
     /// <summary>
     /// <see cref="Scrub(string?)"/> + scrub <b>literal</b> dos valores
@@ -76,4 +92,8 @@ public static partial class SecretScrubber
     // PEM private key headers.
     [GeneratedRegex(@"-----BEGIN [A-Z ]*PRIVATE KEY-----", RegexOptions.Compiled)]
     private static partial Regex PrivateKeyRegex();
+
+    // Chaves proprietárias aft_ (32+ hex) — SPEC-20261020-context-snapshots RF-004.
+    [GeneratedRegex(@"aft_[0-9a-fA-F]{32,}", RegexOptions.Compiled)]
+    private static partial Regex AftTokenRegex();
 }

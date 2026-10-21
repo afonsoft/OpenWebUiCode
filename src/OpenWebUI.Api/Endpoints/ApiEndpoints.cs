@@ -357,7 +357,8 @@ public static class ApiEndpoints
                     RunId: null,
                     // Com repo vinculado o workdir vira o checkout do repo (mesmo jail).
                     await repos.ResolveWorkdirAsync(user.Id, ct),
-                    Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id));
+                    Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id),
+                    Model: effective.Model);
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct,
                     builtinContext: builtinContext, userId: user.Id,
