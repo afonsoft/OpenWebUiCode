@@ -10,7 +10,7 @@
 | Repository | afonsoft/open-webui (SPEC adaptada — não copiada — da SPEC-v3 de afonsoft/KnowledgeRAG) |
 | Branch | `feature/OpenWebUI-20261020-context-snapshots` |
 | Ticket | [#483](https://github.com/afonsoft/open-webui/issues/483) |
-| Status | In implementation |
+| Status | Completed |
 | Supersedes | Adapta SPEC-v3 (KnowledgeRAG): tools MCP viram builtin tools; parâmetro `repo` vira binding do chat (`WorkspaceRepoService`) |
 
 ## 1. User Story
