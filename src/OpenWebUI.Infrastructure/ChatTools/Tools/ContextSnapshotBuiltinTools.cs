@@ -53,15 +53,13 @@ public sealed class ContextSaveBuiltinTool(
     public async Task<BuiltinToolResult> ExecuteAsync(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
-        if (!await boundaries.EnabledAsync(ct))
+        if (await ContextSnapshotTools.GuardAsync(boundaries, context, Name, ct)
+            is { } denied)
         {
-            return ContextSnapshotTools.Disabled();
-        }
-        if (string.IsNullOrEmpty(context.ChatId))
-        {
-            return ContextSnapshotTools.NoChat(Name);
+            return denied;
         }
 
+        var chatId = context.ChatId!;
         var limits = await snapshots.LimitsAsync(ct);
         var strategy = ContextSnapshotTools.StrategyArg(
             args, "compact", out var strategyError);
@@ -92,7 +90,7 @@ public sealed class ContextSaveBuiltinTool(
             var model = await ContextSnapshotTools.SummaryModelAsync(roles, context, ct);
             var (compactedItems, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
                 items!, strategy, limits.ThresholdTokens, summarizer, model,
-                context.UserId, context.ChatId,
+                context.UserId, chatId,
                 TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds), ct);
             items = compactedItems;
             compacted = true;
@@ -100,7 +98,7 @@ public sealed class ContextSaveBuiltinTool(
         }
 
         var (snap, error) = await snapshots.SaveAsync(
-            context.ChatId, context.UserId, label, items!, strategy, compacted, ct);
+            chatId, context.UserId, label, items!, strategy, compacted, ct);
         if (error is not null)
         {
             return ContextSnapshotTools.Error(Name, error);
@@ -162,22 +160,20 @@ public sealed class ContextRecoveryBuiltinTool(
     public async Task<BuiltinToolResult> ExecuteAsync(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
-        if (!await boundaries.EnabledAsync(ct))
+        if (await ContextSnapshotTools.GuardAsync(boundaries, context, Name, ct)
+            is { } denied)
         {
-            return ContextSnapshotTools.Disabled();
-        }
-        if (string.IsNullOrEmpty(context.ChatId))
-        {
-            return ContextSnapshotTools.NoChat(Name);
+            return denied;
         }
 
+        var chatId = context.ChatId!;
         var limits = await snapshots.LimitsAsync(ct);
         var budget = ContextSnapshotTools.BudgetArg(args, limits);
 
         var snap = args.TryGetProperty("version", out var v)
             && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var version)
-                ? await snapshots.GetAsync(context.ChatId, version, ct)
-                : await snapshots.LatestAsync(context.ChatId, ct);
+                ? await snapshots.GetAsync(chatId, version, ct)
+                : await snapshots.LatestAsync(chatId, ct);
         if (snap is null)
         {
             return ContextSnapshotTools.Error(Name,
@@ -188,7 +184,7 @@ public sealed class ContextRecoveryBuiltinTool(
         var items = ContextSnapshotService.DeserializeItems(snap.PayloadJson);
         var (fitted, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
             items, "elision", budget, summarizer: null, model: null,
-            userId: null, context.ChatId,
+            userId: null, chatId,
             TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds), ct);
 
         var payload = new
@@ -259,15 +255,13 @@ public sealed class ContextCompactBuiltinTool(
     public async Task<BuiltinToolResult> ExecuteAsync(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
-        if (!await boundaries.EnabledAsync(ct))
+        if (await ContextSnapshotTools.GuardAsync(boundaries, context, Name, ct)
+            is { } denied)
         {
-            return ContextSnapshotTools.Disabled();
-        }
-        if (string.IsNullOrEmpty(context.ChatId))
-        {
-            return ContextSnapshotTools.NoChat(Name);
+            return denied;
         }
 
+        var chatId = context.ChatId!;
         var limits = await snapshots.LimitsAsync(ct);
         var strategy = ContextSnapshotTools.StrategyArg(
             args, "strategy", out var strategyError, "elision+summary");
@@ -293,7 +287,7 @@ public sealed class ContextCompactBuiltinTool(
         List<ContextSnapshotService.SnapshotItem> items;
         if (hasVersion)
         {
-            var snap = await snapshots.GetAsync(context.ChatId, fromVersion, ct);
+            var snap = await snapshots.GetAsync(chatId, fromVersion, ct);
             if (snap is null)
             {
                 return ContextSnapshotTools.Error(Name,
@@ -321,13 +315,13 @@ public sealed class ContextCompactBuiltinTool(
         var model = await ContextSnapshotTools.SummaryModelAsync(roles, context, ct);
         var (compacted, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
             items, strategy, budget, summarizer, model, context.UserId,
-            context.ChatId, TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds), ct);
+            chatId, TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds), ct);
 
         int? savedVersion = null;
         if (args.TryGetProperty("save", out var saveEl) && saveEl.ValueKind == JsonValueKind.True)
         {
             var (snap, error) = await snapshots.SaveAsync(
-                context.ChatId, context.UserId, label: null, compacted,
+                chatId, context.UserId, label: null, compacted,
                 strategy, compacted: true, ct);
             if (error is not null)
             {
@@ -377,6 +371,18 @@ internal static class ContextSnapshotTools
     /// <summary>Resultado padrão quando não há chat persistido (playground).</summary>
     internal static BuiltinToolResult NoChat(string name) =>
         new($"{name} requer chat persistido — indisponível no playground.");
+
+    /// <summary>Gate compartilhado: contexttools.enabled + chat persistido; null = passou.</summary>
+    internal static async Task<BuiltinToolResult?> GuardAsync(
+        ContextBoundaryService boundaries, BuiltinToolContext context,
+        string name, CancellationToken ct)
+    {
+        if (!await boundaries.EnabledAsync(ct))
+        {
+            return Disabled();
+        }
+        return string.IsNullOrEmpty(context.ChatId) ? NoChat(name) : null;
+    }
 
     /// <summary>Erro estável (RF-005): código na mensagem + structured {error}.</summary>
     internal static BuiltinToolResult Error(

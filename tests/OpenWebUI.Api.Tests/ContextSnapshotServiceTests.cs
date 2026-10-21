@@ -1,8 +1,5 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
@@ -18,36 +15,10 @@ namespace OpenWebUI.Api.Tests;
 /// compactação de itens sob budget (elision → summary → corte ordenado).
 /// </summary>
 [TestFixture]
-public class ContextSnapshotServiceTests
+public class ContextSnapshotServiceTests : SnapshotTestBase
 {
-    private string _dir = null!;
-    private string _dbPath = null!;
-
-    [SetUp]
-    public void SetUp()
-    {
-        _dir = Path.Join(Path.GetTempPath(), $"owui-snap-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_dir);
-        _dbPath = Path.Join(_dir, "t.db");
-    }
-
-    [TearDown]
-    public void TearDown()
-    {
-        try { if (Directory.Exists(_dir)) { Directory.Delete(_dir, true); } }
-        catch { /* ignore */ }
-    }
-
-    private AppDbContext NewDb()
-    {
-        var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite($"Data Source={_dbPath}").Options);
-        db.Database.EnsureCreated();
-        return db;
-    }
-
     private ContextSnapshotService NewService(AppDbContext db, ConfigService config) =>
-        new(db, config, new WorkspaceRepoService(config, new TestEnv(_dir)));
+        Snapshots(db, config);
 
     private static ContextSnapshotService.SnapshotItem Item(
         string kind, string content, string? title = null, double? score = null) =>
@@ -133,7 +104,7 @@ public class ContextSnapshotServiceTests
         // AC: chat com binding → RepoKey = slug owner/repo normalizado.
         await using var db = NewDb();
         var config = new ConfigService(db, TestCache.Create());
-        var repos = new WorkspaceRepoService(config, new TestEnv(_dir));
+        var repos = new WorkspaceRepoService(config, new TestEnv(Dir));
         await repos.SetChatBindingAsync("c1",
             new WorkspaceRepoBinding("Afonsoft/KnowledgeRAG", "main", "d"), CancellationToken.None);
         var svc = new ContextSnapshotService(db, config, repos);
@@ -423,28 +394,5 @@ public class ContextSnapshotServiceTests
             userId: null, "c1", TimeSpan.FromSeconds(5), CancellationToken.None);
 
         Assert.That(stats.WithinBudget, Is.False);
-    }
-
-    internal sealed class FakeSummarizer(string? result) : IContextSummarizer
-    {
-        public Task<ContextSummary?> SummarizeAsync(
-            string model, string transcript, string? userId, CancellationToken ct) =>
-            Task.FromResult(result is null ? null : new ContextSummary(result, [], [], []));
-    }
-
-    internal sealed class ThrowingSummarizer : IContextSummarizer
-    {
-        public Task<ContextSummary?> SummarizeAsync(
-            string model, string transcript, string? userId, CancellationToken ct) =>
-            throw new InvalidOperationException("boom");
-    }
-
-    /// <summary>IHostEnvironment mínimo apontando para a raiz temporária.</summary>
-    internal sealed class TestEnv(string contentRoot) : IHostEnvironment
-    {
-        public string EnvironmentName { get; set; } = "Test";
-        public string ApplicationName { get; set; } = "t";
-        public string ContentRootPath { get; set; } = contentRoot;
-        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

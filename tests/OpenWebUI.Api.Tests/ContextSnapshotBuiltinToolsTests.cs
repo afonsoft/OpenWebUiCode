@@ -1,12 +1,6 @@
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging.Abstractions;
 using NUnit.Framework;
-using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
-using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.ChatTools.Tools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
@@ -20,46 +14,12 @@ namespace OpenWebUI.Api.Tests;
 /// gate contexttools.enabled e reuso de poda/sumarização.
 /// </summary>
 [TestFixture]
-public class ContextSnapshotBuiltinToolsTests
+public class ContextSnapshotBuiltinToolsTests : SnapshotTestBase
 {
-    private string _dir = null!;
-    private string _dbPath = null!;
-
-    [SetUp]
-    public void SetUp()
-    {
-        _dir = Path.Join(Path.GetTempPath(), $"owui-snap-tools-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_dir);
-        _dbPath = Path.Join(_dir, "t.db");
-    }
-
-    [TearDown]
-    public void TearDown()
-    {
-        try { if (Directory.Exists(_dir)) { Directory.Delete(_dir, true); } }
-        catch { /* ignore */ }
-    }
-
-    private AppDbContext NewDb()
-    {
-        var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite($"Data Source={_dbPath}").Options);
-        db.Database.EnsureCreated();
-        return db;
-    }
-
-    private ContextSnapshotService Snapshots(AppDbContext db, ConfigService config) =>
-        new(db, config, new WorkspaceRepoService(config,
-            new ContextSnapshotServiceTests.TestEnv(_dir)));
-
-    private static ModelRoleResolver Roles(AppDbContext db, ConfigService config) =>
-        new(db, config, _ => Task.FromResult(new List<ModelInfo>()),
-            NullLogger<ModelRoleResolver>.Instance);
-
     private ContextSaveBuiltinTool SaveTool(
         AppDbContext db, ConfigService config, IContextSummarizer? summarizer = null) =>
         new(Snapshots(db, config), new ContextBoundaryService(db, config),
-            summarizer ?? new ContextSnapshotServiceTests.FakeSummarizer("RES"), Roles(db, config));
+            summarizer ?? new SnapshotTestBase.FakeSummarizer("RES"), Roles(db, config));
 
     private ContextRecoveryBuiltinTool RecoveryTool(AppDbContext db, ConfigService config) =>
         new(Snapshots(db, config), new ContextBoundaryService(db, config));
@@ -67,16 +27,7 @@ public class ContextSnapshotBuiltinToolsTests
     private ContextCompactBuiltinTool CompactTool(
         AppDbContext db, ConfigService config, IContextSummarizer? summarizer = null) =>
         new(Snapshots(db, config), new ContextBoundaryService(db, config),
-            summarizer ?? new ContextSnapshotServiceTests.FakeSummarizer("RES"), Roles(db, config));
-
-    private static BuiltinToolContext Ctx(string? chatId = "c1") =>
-        new("u1", chatId, "r1", "/tmp", "/tmp", Model: "m1");
-
-    private static JsonElement Args(string json) =>
-        JsonDocument.Parse(json).RootElement;
-
-    private static JsonElement ResultJson(BuiltinToolResult r) =>
-        JsonDocument.Parse(r.Text).RootElement;
+            summarizer ?? new SnapshotTestBase.FakeSummarizer("RES"), Roles(db, config));
 
     // ---------- context_save / context_recovery ----------
 
