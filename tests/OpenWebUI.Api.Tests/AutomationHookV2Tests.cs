@@ -186,8 +186,12 @@ public class AutomationHookV2Tests
         UseToken(auth.Token);
         var depois = await _client.GetFromJsonAsync<ChatResponse>(
             $"/api/v1/chats/{chat.Id}");
+        // SPEC-20261023 cap. D: campos interpolados chegam envelopados em
+        // <untrusted_input source field> — proveniência explícita no prompt.
         Assert.That(depois!.Messages.Any(m =>
-            m.Content.Contains("Issue 7: bug no login")), Is.True);
+            m.Content.Contains("Issue")
+            && m.Content.Contains($"<untrusted_input source=\"hook:{hook.Id}\" field=\"issue.number\">7</untrusted_input>")
+            && m.Content.Contains($"<untrusted_input source=\"hook:{hook.Id}\" field=\"issue.title\">bug no login</untrusted_input>")), Is.True);
 
         _client.DefaultRequestHeaders.Authorization = null;
         var missing = await FireRawAsync(hook.Url,

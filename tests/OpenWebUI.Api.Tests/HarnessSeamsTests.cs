@@ -338,7 +338,8 @@ public class HarnessSeamsTests
         // histórico (paridade byte-a-byte com o systemParts original).
         using var db = NewDb();
         var contributors = OpenWebUI.Api.Completions.Contributors
-            .SystemPromptContributors.Default(db, null!, null!, null!, null!);
+            .SystemPromptContributors.Default(
+                db, null!, null!, null!, null!, null!, null!);
         var user = new User { Id = "u1", Name = "U", Email = "u@c.local" };
         var ctx = new PromptContext
         {

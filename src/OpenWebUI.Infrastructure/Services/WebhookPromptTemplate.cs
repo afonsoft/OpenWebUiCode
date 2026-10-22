@@ -31,51 +31,75 @@ public static partial class WebhookPromptTemplate
     /// <summary>
     /// Renderiza o template sobre o payload. Lança
     /// <see cref="WebhookTemplateException"/> quando um campo não existe.
+    /// Quando <paramref name="source"/> é informado, cada valor interpolado
+    /// é envelopado em
+    /// <c>&lt;untrusted_input source="…" field="…"&gt;</c>
+    /// (SPEC-20261023-sdd-orchestrator-prompts cap. D) — proveniência
+    /// explícita de cada campo externo no prompt resultante.
     /// </summary>
-    public static string Render(string template, JsonElement payload)
+    /// <param name="template">Template com placeholders <c>{{path}}</c>.</param>
+    /// <param name="payload">Payload JSON do disparo.</param>
+    /// <param name="source">Proveniência do envelope (ex.: <c>hook:{id}</c>);
+    /// <see langword="null"/> renderiza os valores crus.</param>
+    public static string Render(
+        string template, JsonElement payload, string? source = null)
     {
         var rendered = PlaceholderRegex().Replace(template, m =>
         {
             var path = m.Groups[1].Value.Trim();
+            string value;
             if (path == "$raw")
             {
-                return payload.GetRawText();
+                value = payload.GetRawText();
+            }
+            else
+            {
+                var current = payload;
+                foreach (var seg in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (current.ValueKind == JsonValueKind.Object
+                        && current.TryGetProperty(seg, out var next))
+                    {
+                        current = next;
+                    }
+                    else if (current.ValueKind == JsonValueKind.Array
+                        && int.TryParse(seg, out var idx)
+                        && idx >= 0 && idx < current.GetArrayLength())
+                    {
+                        current = current[idx];
+                    }
+                    else
+                    {
+                        throw new WebhookTemplateException(path);
+                    }
+                }
+
+                value = current.ValueKind switch
+                {
+                    JsonValueKind.String => current.GetString() ?? string.Empty,
+                    JsonValueKind.Null or JsonValueKind.Undefined => string.Empty,
+                    JsonValueKind.Object or JsonValueKind.Array =>
+                        current.GetRawText(),
+                    _ => current.ToString(),
+                };
             }
 
-            var current = payload;
-            foreach (var seg in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (current.ValueKind == JsonValueKind.Object
-                    && current.TryGetProperty(seg, out var next))
-                {
-                    current = next;
-                }
-                else if (current.ValueKind == JsonValueKind.Array
-                    && int.TryParse(seg, out var idx)
-                    && idx >= 0 && idx < current.GetArrayLength())
-                {
-                    current = current[idx];
-                }
-                else
-                {
-                    throw new WebhookTemplateException(path);
-                }
-            }
-
-            return current.ValueKind switch
-            {
-                JsonValueKind.String => current.GetString() ?? string.Empty,
-                JsonValueKind.Null or JsonValueKind.Undefined => string.Empty,
-                JsonValueKind.Object or JsonValueKind.Array =>
-                    current.GetRawText(),
-                _ => current.ToString(),
-            };
+            return source is null
+                ? value
+                : $"<untrusted_input source=\"{source}\" field=\"{path}\">"
+                    + EscapeUntrusted(value) + "</untrusted_input>";
         });
 
         return rendered.Length <= MaxRenderedChars
             ? rendered
             : rendered[..MaxRenderedChars];
     }
+
+    /// <summary>Neutraliza a tag de fechamento dentro do valor para que
+    /// conteúdo hostil não quebre o envelope (injection defence).</summary>
+    private static string EscapeUntrusted(string value) =>
+        value.Replace("</untrusted_input>", "<\\/untrusted_input>",
+            StringComparison.OrdinalIgnoreCase);
 
     [GeneratedRegex(@"\{\{\s*([^{}]+?)\s*\}\}")]
     private static partial Regex PlaceholderRegex();

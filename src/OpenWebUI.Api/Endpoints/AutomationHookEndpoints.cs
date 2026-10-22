@@ -305,7 +305,8 @@ public static class AutomationHookEndpoints
                 using var doc = JsonDocument.Parse(
                     string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
                 content = WebhookPromptTemplate.Render(
-                    hook.PromptTemplate, doc.RootElement);
+                    hook.PromptTemplate, doc.RootElement,
+                    source: $"hook:{hook.Id}");
             }
             catch (JsonException)
             {

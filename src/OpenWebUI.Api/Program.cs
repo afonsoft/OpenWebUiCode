@@ -95,6 +95,10 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AlwaysAllowContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.SddWorkflowContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.DelegationPolicyContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.CustomModelContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.ModelSkillsContributor>();
@@ -185,6 +189,7 @@ builder.Services.AddScoped<IBuiltinChatTool, MemorySaveBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemorySearchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemoryLearnBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, AgentCatalogBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, SpecsBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RoutineBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReminderBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, BrowserScreenshotBuiltinTool>();

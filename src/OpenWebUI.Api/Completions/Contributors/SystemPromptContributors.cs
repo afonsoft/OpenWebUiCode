@@ -27,10 +27,13 @@ public static class SystemPromptContributors
         ConfigService config,
         RagService rag,
         WebSearchService webSearch,
-        WorkspaceRepoService repos) =>
+        WorkspaceRepoService repos,
+        AgentDefinitionService agents,
+        IConfiguration configuration) =>
     [
         new BaseAgentContributor(),
         new AlwaysAllowContributor(db),
+        new SddWorkflowContributor(configuration),
         new CustomModelContributor(db),
         new ModelSkillsContributor(db),
         new FileContextContributor(db, rag),
@@ -38,6 +41,7 @@ public static class SystemPromptContributors
         new MemoriesContributor(db, config),
         new RepoBindingContributor(),
         new AgentMemoryContributor(db, config),
+        new DelegationPolicyContributor(agents, db),
         new MentionsContributor(),
         new AgentModeContributor(),
     ];
@@ -85,6 +89,59 @@ public sealed class AlwaysAllowContributor(AppDbContext db) : ISystemPromptContr
                 + "only the user can provide (a decision, a secret, or a "
                 + "genuinely destructive step).",
         ];
+    }
+}
+
+/// <summary>
+/// Bloco 0.5: ciclo de vida SDD (SPEC-20261023-sdd-orchestrator-prompts
+/// cap. B) — emitido quando o workdir contém <c>.specs/</c> ou
+/// <c>docs/specs/</c> (detecção <c>auto</c>), ou sempre com
+/// <c>Agent:Sdd=on</c>; <c>off</c> desliga. Ensina convenção SPEC/RF/AC,
+/// modo entrevista e modo execução TDD.
+/// </summary>
+public sealed class SddWorkflowContributor(IConfiguration cfg)
+    : ISystemPromptContributor
+{
+    /// <inheritdoc />
+    public int Order => 15;
+
+    private const string Block =
+        "Spec-driven development (SDD) applies in this workspace: "
+            + ".specs/SPEC-*.md files are the source of truth for planned "
+            + "work — requirements RF-###, acceptance criteria AC-##. "
+            + "Lifecycle: Draft → Approved → In implementation → Completed; "
+            + "completed SPECs archive under docs/specs/ and the Ticket "
+            + "field links a GitHub issue whose label mirrors progress. "
+            + "Manage SPECs via builtin_specs (list/show/transition). Two "
+            + "modes: (1) Spec-writing — when the request is ambiguous or "
+            + "lacks a SPEC, interview the user in rounds (design-tree "
+            + "frontier questions), never guess; mark undecided points "
+            + "[A DEFINIR] and do not implement — deliver the SPEC. "
+            + "(2) Execution — when a SPEC is Approved: implement in TDD "
+            + "slices (red→green→refactor), tag each test with the "
+            + "requirement it covers (\"# Covers RF-001\"), revalidate the "
+            + "suite per slice, never pause for permission between slices "
+            + "of an approved SPEC, and keep SPEC/issue status in sync.";
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
+    {
+        var mode = cfg["Agent:Sdd"] ?? "auto";
+        if (mode.Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+        if (mode.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            var workdir = await ctx.GetWorkdirAsync();
+            if (workdir.Length == 0
+                || (!Directory.Exists(Path.Combine(workdir, ".specs"))
+                    && !Directory.Exists(Path.Combine(workdir, "docs", "specs"))))
+            {
+                return [];
+            }
+        }
+        return [Block];
     }
 }
 
@@ -370,6 +427,47 @@ public sealed class AgentMemoryContributor(AppDbContext db, ConfigService config
             + "anteriores — heurísticas, podem estar desatualizadas)\n"
             + string.Join("\n", lines) + "\n</agent_memory>";
         return [block.Length <= 1800 ? block : block[..1800] + "\n…\n</agent_memory>"];
+    }
+}
+
+/// <summary>
+/// Bloco 3.5c: política de delegação (SPEC-20261023 cap. C) — emitida
+/// quando há agentes declarativos no catálogo ou o chat pertence a um
+/// team; orienta "delegue ao especialista" (leader fatia/revisa, members
+/// executam).
+/// </summary>
+public sealed class DelegationPolicyContributor(
+    AgentDefinitionService agents, AppDbContext db)
+    : ISystemPromptContributor
+{
+    /// <inheritdoc />
+    public int Order => 85;
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
+    {
+        var workdir = await ctx.GetWorkdirAsync();
+        var catalog = await agents.ListAsync(
+            ctx.User.Id, workdir.Length > 0 ? workdir : null, ctx.Ct);
+        var inTeam = ctx.ChatId is not null
+            && await db.Chats.AsNoTracking()
+                .Where(c => c.Id == ctx.ChatId)
+                .Select(c => c.TeamId)
+                .FirstOrDefaultAsync(ctx.Ct) is not null;
+        if (catalog.Count == 0 && !inTeam)
+        {
+            return [];
+        }
+
+        return
+        [
+            "Specialist delegation: for multi-slice or specialized work "
+                + "prefer builtin_delegate_task with an agent or persona "
+                + "matching the task type — query builtin_agent_catalog "
+                + "before choosing. As leader you plan, slice, assign and "
+                + "review; members execute. Use team:true + resume_chat_id "
+                + "for continuity across runs.",
+        ];
     }
 }
 

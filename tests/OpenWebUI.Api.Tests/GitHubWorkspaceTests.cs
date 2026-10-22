@@ -286,7 +286,7 @@ public class GitHubWorkspaceTests
                 new User { Id = "u1", Name = "U", Email = "u@x" },
                 _db, _config, rag: null!, webSearch: null!, _repos,
                 OpenWebUI.Api.Completions.Contributors.SystemPromptContributors
-                    .Default(_db, _config, null!, null!, _repos), default);
+                    .Default(_db, _config, null!, null!, _repos, null!, null!), default);
             var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
             Assert.That(system?.Content, Does.Contain("Repositório vinculado ao workspace: a/b")
                 .And.Contain("branch 'main'"));
@@ -307,7 +307,7 @@ public class GitHubWorkspaceTests
             new User { Id = "u2", Name = "U", Email = "u2@x" },
             _db, _config, rag: null!, webSearch: null!, _repos,
                 OpenWebUI.Api.Completions.Contributors.SystemPromptContributors
-                    .Default(_db, _config, null!, null!, _repos), default);
+                    .Default(_db, _config, null!, null!, _repos, null!, null!), default);
         Assert.That(
             effective.Messages.Any(m => m.Role == "system" && m.Content.Contains("Repositório vinculado")),
             Is.False);
@@ -323,7 +323,7 @@ public class GitHubWorkspaceTests
             new User { Id = "u3", Name = "U3", Email = "u3@x" },
             _db, _config, rag: null!, webSearch: null!, _repos,
                 OpenWebUI.Api.Completions.Contributors.SystemPromptContributors
-                    .Default(_db, _config, null!, null!, _repos), default);
+                    .Default(_db, _config, null!, null!, _repos, null!, null!), default);
         var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
         Assert.That(system?.Content, Does.Contain("Open WebUI agent")
             .And.Contain("autonomous").And.Contain("user's language")
@@ -366,7 +366,7 @@ public class GitHubWorkspaceTests
             new User { Id = "u-preset", Name = "U", Email = "u@x" },
             _db, _config, rag: null!, webSearch: null!, _repos,
             OpenWebUI.Api.Completions.Contributors.SystemPromptContributors
-                .Default(_db, _config, null!, null!, _repos), default,
+                .Default(_db, _config, null!, null!, _repos, null!, null!), default,
             chatId: chat.Id);
         var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
         Assert.That(system?.Content, Does.Contain("always-allow")
@@ -384,7 +384,7 @@ public class GitHubWorkspaceTests
             new User { Id = "u-preset", Name = "U", Email = "u@x" },
             _db, _config, rag: null!, webSearch: null!, _repos,
             OpenWebUI.Api.Completions.Contributors.SystemPromptContributors
-                .Default(_db, _config, null!, null!, _repos), default,
+                .Default(_db, _config, null!, null!, _repos, null!, null!), default,
             chatId: chat.Id);
         var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
         Assert.That(system?.Content, Does.Not.Contain("always-allow"));
