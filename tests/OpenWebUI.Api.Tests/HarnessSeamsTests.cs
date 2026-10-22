@@ -590,6 +590,66 @@ public class HarnessSeamsTests
         Assert.That(seen, Is.EqualTo(new[] { "run.started" }));
     }
 
+    [Test]
+    public async Task Bus_Observer_Lento_Timeout_Nao_Bloqueia_Os_Demais()
+    {
+        var seen = new List<string>();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["interceptors.timeout_ms"] = "100",
+            }).Build();
+        var bus = new AgentRunEventBus(
+            [new SlowObserver(), new RecordingObserver(seen)],
+            config,
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<AgentRunEventBus>.Instance);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await bus.PublishAsync(
+            new AgentRunEvent("r1", "c1", "u1", "run.started", "{}"),
+            CancellationToken.None);
+        sw.Stop();
+        Assert.Multiple(() =>
+        {
+            Assert.That(seen, Is.EqualTo(new[] { "run.started" }));
+            Assert.That(sw.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
+        });
+    }
+
+    private sealed class SlowObserver : IAgentRunObserver
+    {
+        public Task OnRunEventAsync(AgentRunEvent e, CancellationToken ct) =>
+            Task.Delay(TimeSpan.FromSeconds(30), ct);
+    }
+
+    [Test]
+    public async Task Interceptor_ToolCall_Lento_Timeout_Veta()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["interceptors.timeout_ms"] = "100",
+            }).Build();
+        var runner = new RunInterceptorRunner(
+            [new HangingInterceptor()], config,
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<RunInterceptorRunner>.Instance);
+        var outcome = await runner.RunToolCallAsync(
+            Ctx(), CancellationToken.None);
+        Assert.That(outcome.Vetoed, Is.True);
+    }
+
+    private sealed class HangingInterceptor : IRunInterceptor
+    {
+        public int Order => 0;
+        public async Task<ToolCallDecision> OnToolCallAsync(
+            ToolCallContext ctx, CancellationToken ct)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            return ToolCallDecision.Pass;
+        }
+    }
+
     // ---------- RF-C1: validação de args do headless ----------
 
     [Test]

@@ -244,6 +244,61 @@ public class AutomationHookV2Tests
         Assert.That(depois!.Mode, Is.EqualTo("plan"));
     }
 
+    [Test]
+    public async Task Webhook_Delete_Remove_Hook_E_Deliveries_Lista_Vazia()
+    {
+        var auth = await SignUpAsync("D", "d@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat d", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "del", chat.Id));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "ping" });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+
+        UseToken(auth.Token);
+        var deliveries = await _client.GetFromJsonAsync<
+            List<AutomationHookDeliveryResponse>>(
+            $"/api/v1/hooks/{hook.Id}/deliveries");
+        Assert.That(deliveries!.Count, Is.EqualTo(1));
+
+        var del = await _client.DeleteAsync($"/api/v1/hooks/{hook.Id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var list = await _client.GetFromJsonAsync<
+            List<AutomationHookResponse>>("/api/v1/hooks");
+        Assert.That(list!.Any(h => h.Id == hook.Id), Is.False);
+
+        // Fire após delete → 404.
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire2 = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "ping" });
+        Assert.That(fire2.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Webhook_ListAsync_Expoe_Hooks_Do_Usuario()
+    {
+        var auth = await SignUpAsync(
+            "L", $"list-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat l", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "list", chat.Id, Provider: "github", Secret: "s3"));
+
+        var list = await _client.GetFromJsonAsync<
+            List<AutomationHookResponse>>("/api/v1/hooks");
+        var found = list!.FirstOrDefault(h => h.Id == hook.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(found, Is.Not.Null);
+            Assert.That(found!.Name, Is.EqualTo("list"));
+            Assert.That(found.Url, Does.Contain(hook.Id));
+        });
+    }
+
     // ---------------- helpers ----------------
 
     private async Task<AuthResponse> SignUpAsync(string name, string email)

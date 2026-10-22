@@ -170,4 +170,30 @@ public class RpcEndpointsTests
     private void UseToken(string token) =>
         _client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", token);
+
+    /// <summary>Happy path completo: create → runs.start → runs.get —
+    /// cobre RunsStartAsync/RunsGetAsync de ponta a ponta (a run falha sem
+    /// provider configurado, mas todo o caminho de enqueue/status roda).</summary>
+    [Test]
+    public async Task Rpc_RunsStart_E_RunsGet_HappyPath()
+    {
+        var auth = await SignUpAsync("H", "h@rpc.local");
+        UseToken(auth.Token);
+
+        var created = await CallAsync(_client, "chats.create",
+            new { title = "run via rpc", model = "llama3" });
+        var chatId = created.GetProperty("result")
+            .GetProperty("chatId").GetString()!;
+
+        var started = await CallAsync(_client, "runs.start",
+            new { chatId, prompt = "diga oi", model = "llama3" });
+        var runId = started.GetProperty("result")
+            .GetProperty("runId").GetString();
+        Assert.That(runId, Is.Not.Null.And.Not.Empty);
+
+        var got = await CallAsync(_client, "runs.get", new { runId });
+        var status = got.GetProperty("result")
+            .GetProperty("status").GetString();
+        Assert.That(status, Is.Not.Null.And.Not.Empty);
+    }
 }
