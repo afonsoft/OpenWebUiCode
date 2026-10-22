@@ -104,6 +104,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Tarefas compartilhadas de agent teams (SPEC-20261021-harness-seams RF-E2).</summary>
     public DbSet<TeamTask> TeamTasks => Set<TeamTask>();
 
+    /// <summary>Inbox persistido de atenção do usuário (SPEC-20261022-ade-surfaces RF-C1).</summary>
+    public DbSet<UserAttention> UserAttentions => Set<UserAttention>();
+
     /// <summary>Combos de modelos com failover (SPEC-20261016-model-combos).</summary>
     public DbSet<ModelCombo> ModelCombos => Set<ModelCombo>();
 
@@ -349,6 +352,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // Task list por team e pendentes por status.
             entity.HasIndex(t => new { t.TeamId, t.Status });
             entity.HasIndex(t => t.AssigneeChatId);
+        });
+
+        modelBuilder.Entity<UserAttention>(entity =>
+        {
+            entity.HasKey(a => a.Id);
+            // Upsert por origem: um item por (usuário, chave).
+            entity.HasIndex(a => new { a.UserId, a.Key }).IsUnique();
+            entity.HasIndex(a => a.ChatId);
         });
 
         modelBuilder.Entity<ModelCombo>(entity =>

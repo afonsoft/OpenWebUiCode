@@ -5,6 +5,7 @@
     <Project Path="src/OpenWebUI.Infrastructure/OpenWebUI.Infrastructure.csproj" />
     <Project Path="src/OpenWebUI.Api/OpenWebUI.Api.csproj" />
     <Project Path="src/OpenWebUI.Acp/OpenWebUI.Acp.csproj" />
+    <Project Path="src/OpenWebUI.Mcp/OpenWebUI.Mcp.csproj" />
     <Project Path="src/OpenWebUI.Client/OpenWebUI.Client.csproj" />
   </Folder>
   <Folder Name="/tests/">

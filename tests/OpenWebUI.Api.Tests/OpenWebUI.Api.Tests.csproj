@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OpenWebUI.Api\OpenWebUI.Api.csproj" />
+    <ProjectReference Include="..\..\src\OpenWebUI.Mcp\OpenWebUI.Mcp.csproj" />
   </ItemGroup>
 
 </Project>

@@ -51,7 +51,7 @@
                 }
                 break;
             case "terminal":
-                <TerminalView />
+                <TerminalView ChatId="@ChatId" />
                 break;
             case "jobs":
                 @if (Jobs.Count == 0)
@@ -85,7 +85,12 @@
 </div>
 
 @code {
+    /// <summary>Chat dono — propaga binding pras sessões de terminal
+    /// (SPEC-20261022).</summary>
+    [Parameter] public string? ChatId { get; set; }
+
     /// <summary>Jobs de background do usuário.</summary>
+
     [Parameter] public List<ChatJobResponse> Jobs { get; set; } = [];
 
     /// <summary>Diagnósticos LSP agregados (do editor).</summary>

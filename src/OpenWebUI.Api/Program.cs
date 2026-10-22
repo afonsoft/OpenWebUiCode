@@ -85,6 +85,9 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.Runs.AgentRunEventBus>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.Runs.RunInterceptorRunner>();
 builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IAgentRunObserver,
     OpenWebUI.Infrastructure.Runs.TelemetryObserver>();
+// Inbox de atenção: run.completed/failed → item persistido (SPEC-20261022 RF-C2).
+builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IAgentRunObserver,
+    OpenWebUI.Infrastructure.Runs.AttentionObserver>();
 builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IRunInterceptor,
     OpenWebUI.Infrastructure.Runs.RepeatToolGuard>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
@@ -548,6 +551,7 @@ static void MapPlatformEndpoints(WebApplication app)
     app.MapTerminalPtyEndpoints();
     app.MapBrowserToolEndpoints();
     app.MapTerminalWebSocket();
+    app.MapTerminalMultiplexWebSocket();
     app.MapScimEndpoints();
     app.MapSamlEndpoints();
     app.MapPluginEndpoints();
@@ -557,6 +561,7 @@ static void MapPlatformEndpoints(WebApplication app)
 static void MapDomainEndpoints(WebApplication app)
 {
     app.MapChatEndpoints();
+    app.MapAttentionEndpoints();
     app.MapUserEndpoints();
     app.MapWorkspaceEndpoints();
     app.MapUtilsEndpoints();

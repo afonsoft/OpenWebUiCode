@@ -172,5 +172,146 @@ window.owuiTerminal = (() => {
         try { entry.term?.dispose(); } catch { }
     }
 
-    return { open, close };
+    // ---- SPEC-20261022: conexão multiplexada (/ws/terminal) ----
+    // Uma WS compartilhada carrega N sessões — frames {type, sid, ...}.
+    // terms passa a guardar sid em vez de ws próprio por elemento.
+    let mux = null; // { ws, ready, pending: Map<sid, {elementId, dotNetRef}> }
+
+    function muxSend(payload) {
+        if (mux && mux.ws.readyState === WebSocket.OPEN) {
+            mux.ws.send(JSON.stringify(payload));
+        }
+    }
+
+    function ensureMux(wsUrl) {
+        if (mux && mux.ws.readyState <= WebSocket.OPEN) {
+            return mux.ready;
+        }
+        const ws = new WebSocket(wsUrl);
+        mux = { ws, pending: new Map(), ready: null };
+        mux.ready = new Promise(resolve => {
+            ws.onopen = () => resolve(true);
+            ws.onerror = () => resolve(false);
+        });
+        ws.onmessage = ev => {
+            let msg;
+            try { msg = JSON.parse(ev.data); } catch { return; }
+            if (msg.type === 'sessions' || msg.type === 'created') {
+                return; // lista inicial/criação é tratada pelo chamador .NET
+            }
+            const sid = msg.sid;
+            if (!sid) { return; }
+            for (const [elementId, entry] of terms) {
+                if (entry.sid !== sid) { continue; }
+                if (msg.type === 'output') {
+                    entry.term.write(msg.data || '');
+                } else if (msg.type === 'exit') {
+                    entry.term.write(`\r\n\x1b[90m[sessão encerrada: ${msg.code}]\x1b[0m\r\n`);
+                    entry.dotNetRef?.invokeMethodAsync('OnTerminalExited', sid);
+                }
+            }
+        };
+        ws.onclose = () => {
+            for (const [, entry] of terms) {
+                if (entry.muxed) {
+                    entry.dotNetRef?.invokeMethodAsync('OnTerminalClosed', entry.elementId);
+                }
+            }
+            mux = null;
+        };
+        return mux.ready;
+    }
+
+    async function openMux(elementId, wsUrl, sessionId, dotNetRef) {
+        try {
+            await ensureLoaded();
+        } catch {
+            return false;
+        }
+        const el = document.getElementById(elementId);
+        if (!el || typeof Terminal === 'undefined') {
+            return false;
+        }
+        if (!(await ensureMux(wsUrl))) {
+            return false;
+        }
+        close(elementId);
+
+        const term = new Terminal({
+            cursorBlink: true,
+            fontSize: isCompactViewport() ? 12 : 13,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+            scrollback: isCompactViewport() ? 800 : 2000,
+            theme: {
+                background: '#0d1117', foreground: '#e6edf3', cursor: '#58a6ff',
+                cursorAccent: '#0d1117', selectionBackground: '#264f78',
+                black: '#484f58', red: '#ff7b72', green: '#7ee787',
+                yellow: '#f2cc60', blue: '#79c0ff', magenta: '#d2a8ff',
+                cyan: '#39c5cf', white: '#b1bac4', brightBlack: '#6e7681',
+                brightRed: '#ffa198', brightGreen: '#56d364',
+                brightYellow: '#e3b341', brightBlue: '#79c0ff',
+                brightMagenta: '#d2a8ff', brightCyan: '#56d4dd',
+                brightWhite: '#f0f6fc'
+            }
+        });
+        const fit = new FitAddon.FitAddon();
+        term.loadAddon(fit);
+        term.open(el);
+        fit.fit();
+
+        const entry = {
+            term, fit, observer: null, el, sid: sessionId, muxed: true,
+            dotNetRef, elementId, lastCols: 0, lastRows: 0, ws: null
+        };
+        term.onData(d => muxSend({ type: 'input', sid: sessionId, data: d }));
+        term.attachCustomKeyEventHandler(ev => {
+            if (ev.type !== 'keydown') { return true; }
+            const ctrl = ev.ctrlKey && !ev.altKey && !ev.metaKey;
+            if (ctrl && ev.key.toLowerCase() === 'c' && term.hasSelection()) {
+                const sel = term.getSelection();
+                if (sel && navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(sel).catch(() => { });
+                }
+                return false;
+            }
+            return true;
+        });
+        entry.observer = new ResizeObserver(() => {
+            try { reportMuxResize(entry); } catch { /* element gone */ }
+        });
+        entry.observer.observe(el);
+        terms.set(elementId, entry);
+        muxSend({ type: 'attach', sid: sessionId });
+        reportMuxResize(entry);
+        return true;
+    }
+
+    function reportMuxResize(entry) {
+        const el = entry.el;
+        if (!el || el.offsetParent === null || el.clientHeight === 0 || el.clientWidth === 0) {
+            return;
+        }
+        entry.fit.fit();
+        const { cols, rows } = entry.term;
+        if (cols < 2 || rows < 2 || (cols === entry.lastCols && rows === entry.lastRows)) {
+            return;
+        }
+        entry.lastCols = cols;
+        entry.lastRows = rows;
+        muxSend({ type: 'resize', sid: entry.sid, cols, rows });
+    }
+
+    function detach(elementId) {
+        const entry = terms.get(elementId);
+        if (!entry) { return; }
+        terms.delete(elementId);
+        if (entry.muxed && entry.sid) {
+            muxSend({ type: 'detach', sid: entry.sid });
+        }
+        try { entry.observer?.disconnect(); } catch { }
+        try { entry.ws?.close(); } catch { }
+        try { entry.term?.dispose(); } catch { }
+    }
+
+    return { open, close, openMux, detach };
 })();

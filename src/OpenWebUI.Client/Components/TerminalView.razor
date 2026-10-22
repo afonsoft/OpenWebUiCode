@@ -67,6 +67,10 @@ else
 }
 
 @code {
+    /// <summary>Chat dono — quando informado, cria/lista sessões bindadas
+    /// (SPEC-20261022): o PTY cai no workdir do workspace do chat.</summary>
+    [Parameter] public string? ChatId { get; set; }
+
     private List<TerminalSessionInfoResponse> _sessions = [];
     private readonly HashSet<string> _opened = [];
     private string? _active;
@@ -129,7 +133,7 @@ else
     {
         try
         {
-            _sessions = await Api.GetTerminalSessionsAsync();
+            _sessions = await Api.GetTerminalSessionsAsync(ChatId);
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
@@ -149,7 +153,7 @@ else
 
     private async Task NewSessionAsync()
     {
-        var id = await Api.CreateTerminalSessionAsync();
+        var id = await Api.CreateTerminalSessionAsync(chatId: ChatId);
         if (id is not null)
         {
             await RefreshAsync();
@@ -183,10 +187,11 @@ else
         }
 
         var scheme = Nav.Uri.StartsWith("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
-        var url = $"{scheme}://{new Uri(Nav.Uri).Authority}/ws/terminal/{sessionId}?access_token={Uri.EscapeDataString(token)}";
+        var url = $"{scheme}://{new Uri(Nav.Uri).Authority}/ws/terminal?access_token={Uri.EscapeDataString(token)}";
         _selfRef ??= DotNetObjectReference.Create(this);
         _loadError = false;
-        var opened = await JS.InvokeAsync<bool>("owuiTerminal.open", $"term-{sessionId}", url, _selfRef);
+        var opened = await JS.InvokeAsync<bool>(
+            "owuiTerminal.openMux", $"term-{sessionId}", url, sessionId, _selfRef);
         if (!opened)
         {
             _opened.Remove(sessionId);
@@ -198,7 +203,7 @@ else
     private async Task CloseTermAsync(string sessionId)
     {
         _opened.Remove(sessionId);
-        await JS.InvokeVoidAsync("owuiTerminal.close", $"term-{sessionId}");
+        await JS.InvokeVoidAsync("owuiTerminal.detach", $"term-{sessionId}");
     }
 
     /// <summary>Callback do JS quando o WebSocket fecha — atualiza o dot de status.</summary>

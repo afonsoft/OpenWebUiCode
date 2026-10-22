@@ -43,6 +43,7 @@ Primeiro usuário registrado vira admin — ou semeado no primeiro boot via `ADM
 ## Referências
 
 - [en/DEPLOY-DOCKER.md](./en/DEPLOY-DOCKER.md) / [pt/DEPLOY-DOCKER.md](./pt/DEPLOY-DOCKER.md) — deploy com Docker (imagem publicada, compose, `.env`, volumes)
+- [en/ADE-HARNESS.md](./en/ADE-HARNESS.md) / [pt/ADE-HARNESS.md](./pt/ADE-HARNESS.md) — ADE / AI Orchestrator: event seams, superfícies (headless, RPC, ACP, MCP), webhooks v2, agent teams, terminal ADE, inbox de atenção
 - [dockerhub/overview.md](./dockerhub/overview.md) — overview publicado na página do Docker Hub
 - [technologies.md](./technologies.md) — tecnologias e versões
 - [packages.md](./packages.md) — dependências NuGet

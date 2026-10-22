@@ -1846,3 +1846,39 @@ public class PolicyDenial
     /// <summary>Quando (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 }
+
+/// <summary>
+/// Item persistido do inbox de atenção do usuário (SPEC-20261022-ade-surfaces
+/// RF-C1): algo que pede olhar — run concluída/falha, saída de terminal não
+/// lida. Complementa as aprovações em memória (chat esperando decisão) que
+/// já alimentam <c>/chats/attention/count</c>; estes sobrevivem a restart e
+/// desaparecem ao serem vistos (<c>POST /attention/{key}/seen</c>) ou ao
+/// deletar o chat de origem. A chave é estável por origem
+/// (<c>run:{id}</c>, <c>term:{id}</c>) — rearmar a mesma origem atualiza o
+/// item em vez de duplicar (upsert por <c>UserId+Key</c>).
+/// </summary>
+public class UserAttention
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono do item.</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Chave estável da origem (<c>run:{id}</c>, <c>term:{id}</c>).</summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>Tipo do item: <c>run_completed</c>, <c>run_failed</c>,
+    /// <c>terminal</c>.</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>Título curto exibido no inbox (nome da run/chat/sessão).</summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Chat relacionado, quando houver (permite deep-link e limpeza
+    /// junto do chat).</summary>
+    public string? ChatId { get; set; }
+
+    /// <summary>Quando o item foi (re)armado (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
