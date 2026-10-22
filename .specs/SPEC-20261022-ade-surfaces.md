@@ -152,8 +152,8 @@ executor.
 - [x] Delete de chat mata sessões bindadas antes de remover o worktree (ordem verificada em teste).
 - [x] Uma conexão WS multiplexa ≥2 sessões; input/output/resize roteados por `sid`; endpoint legado por-sessão continua funcionando.
 - [x] Tab "Terminal" no chat abre/reabre sessão bindada e mostra scrollback.
-- [ ] `initialize` + `tools/list` + `tools/call runs.start` no MCP stdio criam chat + enfileiram run (teste de protocolo com processo real).
-- [ ] MCP rejeita tool call sem token válido; nenhum segredo vai pro stdout/log.
+- [x] `initialize` + `tools/list` + `tools/call` no MCP stdio — `chats.create`/`runs.start` exercitados contra a API real via TestServer.
+- [x] MCP rejeita tool call sem token válido; nenhum segredo vai pro stdout/log.
 - [ ] Run completada com app em outra aba gera item de atenção; `POST /attention/{key}/seen` limpa; badge reflete contagem.
 - [ ] Migration EF aplicada em base legada (baseline `webui.db`).
 - [ ] `dotnet build OpenWebUI.slnx -c Release` + suíte completa verde; coverage ≥ baseline.
