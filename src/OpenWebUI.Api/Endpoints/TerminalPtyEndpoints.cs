@@ -405,9 +405,11 @@ public static class TerminalPtyEndpoints
                 using var doc = JsonDocument.Parse(text);
                 var root = doc.RootElement;
                 var type = root.TryGetProperty("type", out var t)
-                    ? t.GetString() : null;
+                    && t.ValueKind is JsonValueKind.String
+                        ? t.GetString() : null;
                 var sid = root.TryGetProperty("sid", out var s)
-                    ? s.GetString() : null;
+                    && s.ValueKind is JsonValueKind.String
+                        ? s.GetString() : null;
 
                 switch (type)
                 {
@@ -423,13 +425,20 @@ public static class TerminalPtyEndpoints
                     case "input" when sid is not null
                         && handles.TryGetValue(sid, out var inp)
                         && root.TryGetProperty("data", out var data):
-                        await inp.WriteAsync(data.GetString() ?? string.Empty);
+                        await inp.WriteAsync(
+                            data.ValueKind is JsonValueKind.String
+                                ? data.GetString() ?? string.Empty
+                                : string.Empty);
                         break;
                     case "resize" when sid is not null
                         && handles.TryGetValue(sid, out var rsz):
                         await rsz.ResizeAsync(
-                            root.TryGetProperty("cols", out var c) && c.TryGetInt32(out var cv) ? cv : 120,
-                            root.TryGetProperty("rows", out var r) && r.TryGetInt32(out var rv) ? rv : 30);
+                            root.TryGetProperty("cols", out var c)
+                                && c.ValueKind is JsonValueKind.Number
+                                && c.TryGetInt32(out var cv) ? cv : 120,
+                            root.TryGetProperty("rows", out var r)
+                                && r.ValueKind is JsonValueKind.Number
+                                && r.TryGetInt32(out var rv) ? rv : 30);
                         break;
                     case "kill" when sid is not null:
                         if (handles.Remove(sid, out var kh))
@@ -441,14 +450,19 @@ public static class TerminalPtyEndpoints
                     case "create":
                     {
                         var chatId = root.TryGetProperty("chatId", out var ci)
-                            ? ci.GetString() : null;
+                            && ci.ValueKind is JsonValueKind.String
+                                ? ci.GetString() : null;
                         var runId = root.TryGetProperty("runId", out var ri)
-                            ? ri.GetString() : null;
+                            && ri.ValueKind is JsonValueKind.String
+                                ? ri.GetString() : null;
                         var wdir = root.TryGetProperty("workdir", out var wd)
-                            ? wd.GetString() : null;
+                            && wd.ValueKind is JsonValueKind.String
+                                ? wd.GetString() : null;
                         var cols = root.TryGetProperty("cols", out var cc)
+                            && cc.ValueKind is JsonValueKind.Number
                             && cc.TryGetInt32(out var ccv) ? ccv : 120;
                         var rows = root.TryGetProperty("rows", out var rr)
+                            && rr.ValueKind is JsonValueKind.Number
                             && rr.TryGetInt32(out var rrv) ? rrv : 30;
 
                         var (resolved, resolveError) =

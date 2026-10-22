@@ -607,6 +607,100 @@ public class TerminalPtyTests
         catch (WebSocketException) { }
     }
 
+    [Test]
+    public async Task Terminal_Multiplex_FramesRoteados_E_Hostis()
+    {
+        if (!File.Exists("/usr/bin/script"))
+        {
+            Assert.Ignore("binário 'script' indisponível neste host");
+        }
+
+        UseToken(_user.Token);
+        var created = await _client.PostAsJsonAsync(
+            "/api/v1/terminal/sessions", new { });
+        var sid = (await created.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("id").GetString()!;
+
+        var wsClient = _factory.Server.CreateWebSocketClient();
+        var uri = new Uri(
+            $"http://localhost/ws/terminal?access_token={_user.Token}");
+        using var ws = await wsClient.ConnectAsync(uri, CancellationToken.None);
+
+        var buffer = new byte[8192];
+        // Receive com timeout real — sem token o teste trava se o servidor
+        // ficar mudo (o deadline externo só é checado entre receives).
+        async Task<string?> NextTypeAsync(int timeoutMs = 4000)
+        {
+            using var cts = new CancellationTokenSource(timeoutMs);
+            try
+            {
+                var result = await ws.ReceiveAsync(
+                    buffer, cts.Token);
+                using var doc = JsonDocument.Parse(
+                    Encoding.UTF8.GetString(buffer, 0, result.Count));
+                return doc.RootElement.TryGetProperty("type", out var t)
+                    ? t.GetString() : null;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
+
+        // Hello inicial.
+        Assert.That(await NextTypeAsync(), Is.EqualTo("sessions"));
+
+        // attach a sid inexistente → frame "error".
+        await ws.SendAsync(Encoding.UTF8.GetBytes(
+                """{"type":"attach","sid":"nao-existe"}"""),
+            WebSocketMessageType.Text, true, CancellationToken.None);
+        var gotError = false;
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!gotError && DateTime.UtcNow < deadline)
+        {
+            var t = await NextTypeAsync();
+            if (t is null)
+            {
+                break;
+            }
+            gotError = t == "error";
+        }
+        Assert.That(gotError, Is.True, "attach a sid inválido não respondeu error");
+
+        // attach real + detach + kill + frames ignorados/hostis — nada
+        // deve quebrar a conexão (input em sid desanexado, resize com
+        // tipos errados, tipo desconhecido, sid não-string).
+        var marker = $"mx{Guid.NewGuid():N}"[..10];
+        var frames = new[]
+        {
+            $$"""{"type":"attach","sid":"{{sid}}"}""",
+            $$"""{"type":"input","sid":"{{sid}}","data":"echo {{marker}}\n"}""",
+            $$"""{"type":"resize","sid":"{{sid}}","cols":"x"}""",
+            $$"""{"type":"detach","sid":"{{sid}}"}""",
+            $$"""{"type":"input","sid":"{{sid}}","data":"echo never\n"}""",
+            $$"""{"type":"input","sid":"{{sid}}"}""",
+            $$"""{"type":"input","sid":123,"data":"x"}""",
+            """{"type":"attach"}""",
+            """{"type":"desconhecido"}""",
+            $$"""{"type":"kill","sid":"{{sid}}"}""",
+        };
+        foreach (var f in frames)
+        {
+            await ws.SendAsync(Encoding.UTF8.GetBytes(f),
+                WebSocketMessageType.Text, true, CancellationToken.None);
+            await Task.Delay(60);
+        }
+
+        // Drena frames de saída (output/exit) com timeout por receive.
+        var drained = 0;
+        while (drained < 12 && await NextTypeAsync(3000) is not null)
+        {
+            drained++;
+        }
+        Assert.That(drained, Is.GreaterThanOrEqualTo(1),
+            "mux não emitiu nenhum frame após attach/input/kill");
+    }
+
     private static async Task SpinWaitAsync(Func<bool> condition, int timeoutMs)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);

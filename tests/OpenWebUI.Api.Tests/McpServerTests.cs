@@ -165,4 +165,71 @@ public class McpServerTests
         Assert.That(res.RootElement.GetProperty("result")
             .GetProperty("isError").GetBoolean(), Is.True);
     }
+
+    [Test]
+    public async Task Mcp_Erros_De_Protocolo_E_Tools_Restantes()
+    {
+        var server = new McpServer();
+        var api = Api();
+
+        // Linha não-JSON → -32700; envelope sem method → -32600; ping → ok.
+        var bad = Parse(await server.HandleLineAsync(
+            "{isto não é json", api, CancellationToken.None));
+        Assert.That(bad.RootElement.GetProperty("error")
+            .GetProperty("code").GetInt32(), Is.EqualTo(-32700));
+
+        var noMethod = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":7}""", api, CancellationToken.None));
+        Assert.That(noMethod.RootElement.GetProperty("error")
+            .GetProperty("code").GetInt32(), Is.EqualTo(-32600));
+
+        var ping = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":8,"method":"ping"}""",
+            api, CancellationToken.None));
+        Assert.That(ping.RootElement.TryGetProperty("result", out _),
+            Is.True);
+
+        // tools/call sem "name" → -32602; tool desconhecida → isError.
+        var noName = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{}}""",
+            api, CancellationToken.None));
+        Assert.That(noName.RootElement.GetProperty("error")
+            .GetProperty("code").GetInt32(), Is.EqualTo(-32602));
+
+        var unknown = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"x.y","arguments":{}}}""",
+            api, CancellationToken.None));
+        Assert.That(unknown.RootElement.GetProperty("result")
+            .GetProperty("isError").GetBoolean(), Is.True);
+
+        // runs.start com chatId ausente → marcador inválido → API 404 →
+        // isError; cobre Req() + o braço runs.start do switch.
+        var runStart = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"runs.start","arguments":{}}}""",
+            api, CancellationToken.None));
+        Assert.That(runStart.RootElement.GetProperty("result")
+            .GetProperty("isError").GetBoolean(), Is.True);
+
+        // runs.status/runs.stop com ids ausentes — mesmo caminho.
+        var runsStatus = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"runs.status","arguments":{}}}""",
+            api, CancellationToken.None));
+        Assert.That(runsStatus.RootElement.GetProperty("result")
+            .GetProperty("isError").GetBoolean(), Is.True);
+
+        var runsStop = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"runs.stop","arguments":{}}}""",
+            api, CancellationToken.None));
+        Assert.That(runsStop.RootElement.GetProperty("result")
+            .GetProperty("isError").GetBoolean(), Is.True);
+
+        // attention.list — resposta real (lista vazia ou com itens).
+        var att = Parse(await server.HandleLineAsync(
+            """{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"attention.list","arguments":{}}}""",
+            api, CancellationToken.None));
+        var attResult = att.RootElement.GetProperty("result");
+        var attIsError = attResult.TryGetProperty("isError", out var ae)
+            && ae.GetBoolean();
+        Assert.That(attIsError, Is.False);
+    }
 }
