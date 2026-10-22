@@ -121,7 +121,11 @@ public sealed class McpServer
                 Schema(new JsonObject
                 {
                     ["chatId"] = Prop("string", "Any member chat id."),
-                }, required: ["chatId"]))),
+                }, required: ["chatId"])),
+            Tool("attention.list",
+                "Attention inbox: pending approvals, finished/failed runs and "
+                + "closed terminals waiting to be seen.",
+                Schema(new JsonObject()))),
     };
 
     private static JsonObject Tool(
@@ -190,6 +194,7 @@ public sealed class McpServer
                 $"{Uri.EscapeDataString(Req(args, "runId"))}/stop", null, ct),
             "teams.status" => await api.GetAsync(
                 $"api/v1/chats/{Uri.EscapeDataString(Req(args, "chatId"))}/team", ct),
+            "attention.list" => await api.GetAsync("api/v1/attention", ct),
             _ => (null, $"tool desconhecida: {name}"),
         };
 

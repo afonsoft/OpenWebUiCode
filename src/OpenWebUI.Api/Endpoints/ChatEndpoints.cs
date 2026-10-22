@@ -159,6 +159,9 @@ public static class ChatEndpoints
         var awaiting = approvals.PendingChatIds();
         var count = await db.Chats.CountAsync(
             c => c.UserId == user.Id && !c.Archived && awaiting.Contains(c.Id), ct);
+        // SPEC-20261022 RF-C3: badge = aprovações pendentes + itens
+        // persistidos (run concluída/falha, terminal não lido).
+        count += await AttentionService.CountAsync(db, user.Id, ct);
         return Results.Ok(new AttentionCountResponse(count));
     }
 
@@ -766,6 +769,7 @@ public static class ChatEndpoints
         // — liberação de espaço imediata, sem esperar sweeper de retenção.
         await ReleaseChatDiskAsync(
             db, repos, worktrees, checkpoints, terminals, user!.Id, id, ct);
+        await AttentionService.RemoveForChatAsync(db, id, ct);
 
         db.Chats.Remove(chat);
         await db.SaveChangesAsync(ct);
@@ -794,6 +798,7 @@ public static class ChatEndpoints
             await ReleaseChatDiskAsync(
                 db, repos, worktrees, checkpoints, terminals,
                 user.Id, chatId, ct);
+            await AttentionService.RemoveForChatAsync(db, chatId, ct);
         }
 
         await db.Chats.Where(c => c.UserId == user.Id).ExecuteDeleteAsync(ct);

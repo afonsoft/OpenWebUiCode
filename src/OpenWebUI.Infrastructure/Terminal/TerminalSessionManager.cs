@@ -1,9 +1,12 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Collections.Concurrent;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.Data;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Infrastructure.Terminal;
 
@@ -52,6 +55,9 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         public string? RunId { get; init; }
         /// <summary>cwd resolvido no Create.</summary>
         public string? Workdir { get; init; }
+        /// <summary>Kill deliberado (botão/delete de chat) não gera
+        /// item de atenção — só saída espontânea do processo.</summary>
+        public bool SkipAttention { get; set; }
         public StringBuilder Scrollback { get; } = new();
         public List<Subscriber> Subscribers { get; } = [];
     }
@@ -113,6 +119,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     private readonly IHostEnvironment _env;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<TerminalSessionManager> _logger;
+    private readonly IServiceScopeFactory? _scopes;
     private readonly Func<string, int, int, IPtySession>? _sessionFactory;
     private readonly TimeSpan _idleTimeout;
     private readonly CancellationTokenSource _sweepCts = new();
@@ -121,8 +128,9 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     /// <summary>Cria o manager com o factory real de PTY.</summary>
     public TerminalSessionManager(
         IHostEnvironment env, ILoggerFactory loggerFactory,
-        ILogger<TerminalSessionManager> logger)
-        : this(env, loggerFactory, logger, null, IdleTimeout)
+        ILogger<TerminalSessionManager> logger,
+        IServiceScopeFactory scopes)
+        : this(env, loggerFactory, logger, null, IdleTimeout, scopes)
     {
     }
 
@@ -130,11 +138,13 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     internal TerminalSessionManager(
         IHostEnvironment env, ILoggerFactory loggerFactory,
         ILogger<TerminalSessionManager> logger,
-        Func<string, int, int, IPtySession>? sessionFactory, TimeSpan idleTimeout)
+        Func<string, int, int, IPtySession>? sessionFactory, TimeSpan idleTimeout,
+        IServiceScopeFactory? scopes = null)
     {
         _env = env;
         _loggerFactory = loggerFactory;
         _logger = logger;
+        _scopes = scopes;
         _sessionFactory = sessionFactory;
         _idleTimeout = idleTimeout;
         _sweepTask = Task.Run(SweepLoopAsync, _sweepCts.Token);
@@ -178,10 +188,9 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             RunId = runId,
             Workdir = workspace,
         };
-        session.OutputReceived += chunk => OnOutput(entry, chunk);
-        session.Exited += code => OnExit(entry, code);
-
         var id = $"t{Guid.NewGuid():N}"[..13];
+        session.OutputReceived += chunk => OnOutput(entry, chunk);
+        session.Exited += code => OnExit(id, entry, code);
         _sessions[id] = entry;
         try
         {
@@ -274,6 +283,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             return false;
         }
 
+        entry.SkipAttention = true;
         try
         {
             await entry.Session.DisposeAsync().ConfigureAwait(false);
@@ -309,7 +319,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         }
     }
 
-    private void OnExit(Entry entry, int code)
+    private void OnExit(string id, Entry entry, int code)
     {
         entry.ExitCode = code;
         List<Subscriber> subs;
@@ -321,6 +331,32 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         foreach (var sub in subs)
         {
             _ = SafeInvokeAsync(sub.OnExit, code);
+        }
+
+        // RF-C4: sessão encerrada vira item de atenção — o usuário acha o
+        // resultado ao voltar, mesmo sem ninguém assinando o output.
+        _ = RaiseTerminalAttentionAsync(id, entry);
+    }
+
+    private async Task RaiseTerminalAttentionAsync(string id, Entry entry)
+    {
+        if (_scopes is null || entry.SkipAttention)
+        {
+            return;
+        }
+        try
+        {
+            await using var scope = _scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await AttentionService.RaiseAsync(
+                db, entry.UserId, $"term:{id}", "terminal",
+                $"terminal encerrado ({entry.Workdir})", entry.ChatId,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "Falha ao registrar attention de terminal {Id}.", id);
         }
     }
 

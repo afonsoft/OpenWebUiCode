@@ -154,8 +154,8 @@ executor.
 - [x] Tab "Terminal" no chat abre/reabre sessão bindada e mostra scrollback.
 - [x] `initialize` + `tools/list` + `tools/call` no MCP stdio — `chats.create`/`runs.start` exercitados contra a API real via TestServer.
 - [x] MCP rejeita tool call sem token válido; nenhum segredo vai pro stdout/log.
-- [ ] Run completada com app em outra aba gera item de atenção; `POST /attention/{key}/seen` limpa; badge reflete contagem.
-- [ ] Migration EF aplicada em base legada (baseline `webui.db`).
+- [x] Run completada com app em outra aba gera item de atenção; `POST /attention/{key}/seen` limpa; badge reflete contagem.
+- [x] Migration EF aplicada em base legada (baseline `webui.db`).
 - [ ] `dotnet build OpenWebUI.slnx -c Release` + suíte completa verde; coverage ≥ baseline.
 - [ ] `tools/check-*.py` (css, a11y, i18n, spec-status) verdes.
 

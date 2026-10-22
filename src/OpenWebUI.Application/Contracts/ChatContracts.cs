@@ -215,3 +215,23 @@ public sealed record ActivateBranchRequest(string LeafId);
 public sealed record AdminChatListResponse(
     IReadOnlyList<AdminChatSummaryResponse> Items,
     int Total);
+
+/// <summary>
+/// Item do inbox de atenção (SPEC-20261022-ade-surfaces RF-C1). Itens
+/// persistidos (<c>run:{id}</c>, <c>term:{id}</c>) convivem com itens
+/// sintéticos de aprovação (<c>chat:{id}</c> — chat com run esperando
+/// decisão), estes últimos sem <c>seen</c>: saem quando o usuário age.
+/// </summary>
+/// <param name="Key">Chave estável da origem.</param>
+/// <param name="Kind"><c>run_completed</c> | <c>run_failed</c> |
+/// <c>terminal</c> | <c>approval</c>.</param>
+/// <param name="Title">Título curto exibido no inbox.</param>
+/// <param name="ChatId">Chat relacionado, quando houver (deep-link).</param>
+/// <param name="CreatedAt">Quando foi armado (epoch seconds; 0 nos itens
+/// sintéticos de aprovação, que não têm timestamp persistido).</param>
+public sealed record AttentionItemResponse(
+    string Key,
+    string Kind,
+    string Title,
+    string? ChatId,
+    long CreatedAt);
