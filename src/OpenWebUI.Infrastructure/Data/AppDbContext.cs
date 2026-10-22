@@ -98,6 +98,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Webhooks de automação (disparam runs no chat vinculado).</summary>
     public DbSet<AutomationHook> AutomationHooks => Set<AutomationHook>();
 
+    /// <summary>Entregas/auditoria de webhooks (SPEC-20261021-harness-seams RF-D2).</summary>
+    public DbSet<AutomationHookDelivery> AutomationHookDeliveries => Set<AutomationHookDelivery>();
+
+    /// <summary>Tarefas compartilhadas de agent teams (SPEC-20261021-harness-seams RF-E2).</summary>
+    public DbSet<TeamTask> TeamTasks => Set<TeamTask>();
+
     /// <summary>Combos de modelos com failover (SPEC-20261016-model-combos).</summary>
     public DbSet<ModelCombo> ModelCombos => Set<ModelCombo>();
 
@@ -180,6 +186,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasIndex(c => c.ShareId).IsUnique();
             entity.HasIndex(c => new { c.UserId, c.FolderId });
             entity.HasIndex(c => c.ParentChatId);
+            // Roster de agent teams (SPEC-20261021-harness-seams RF-E1).
+            entity.HasIndex(c => c.TeamId);
             entity.HasMany(c => c.Messages)
                 .WithOne(m => m.Chat!)
                 .HasForeignKey(m => m.ChatId)
@@ -325,6 +333,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 .WithMany()
                 .HasForeignKey(h => h.ChatId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AutomationHookDelivery>(entity =>
+        {
+            entity.HasKey(d => d.Id);
+            // Auditoria por hook + dedup por chave do remetente.
+            entity.HasIndex(d => new { d.HookId, d.ReceivedAt });
+            entity.HasIndex(d => new { d.HookId, d.DeliveryKey });
+        });
+
+        modelBuilder.Entity<TeamTask>(entity =>
+        {
+            entity.HasKey(t => t.Id);
+            // Task list por team e pendentes por status.
+            entity.HasIndex(t => new { t.TeamId, t.Status });
+            entity.HasIndex(t => t.AssigneeChatId);
         });
 
         modelBuilder.Entity<ModelCombo>(entity =>

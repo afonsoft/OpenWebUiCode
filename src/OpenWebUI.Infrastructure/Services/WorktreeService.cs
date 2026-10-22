@@ -107,6 +107,26 @@ public sealed class WorktreeService(
     }
 
     /// <summary>
+    /// Remove o worktree isolado de uma run específica (delete de chat):
+    /// resolve <c>data/worktrees/{user}/{run}</c> e aplica
+    /// <see cref="RemoveAsync"/> — libera o disco imediatamente em vez de
+    /// esperar o sweep de órfãos por TTL.
+    /// </summary>
+    /// <returns>O diretório removido (para limpeza dos checkpoints do
+    /// chamador) ou null quando não existia.</returns>
+    public async Task<string?> DeleteForRunAsync(
+        string userId, string runId, string mainWorkdir, CancellationToken ct)
+    {
+        var dir = ResolveIsolated(userId, runId);
+        if (dir is null)
+        {
+            return null;
+        }
+        await RemoveAsync(mainWorkdir, dir, ct);
+        return dir;
+    }
+
+    /// <summary>
     /// Remove o worktree: <c>git worktree remove --force</c> + <c>prune</c>;
     /// se o repo principal não responder, deleta o diretório direto.
     /// </summary>

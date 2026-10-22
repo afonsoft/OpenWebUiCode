@@ -16,37 +16,78 @@ pipeline.
 
 > **Versão em português:** [README.pt-BR.md](README.pt-BR.md)
 
-## Open WebUI (original) vs opencode vs oh-my-pi vs this fork
+## Open WebUI (original) vs opencode vs oh-my-pi vs deepseek-harness vs this fork
 
 The agent roadmap was benchmarked against [opencode](https://github.com/sst/opencode)
 (incl. the [alltomatos/opencode](https://github.com/alltomatos/opencode) fork —
-see [the full analysis](docs/analise-fork-alltomatos-opencode.md)) and
-[oh-my-pi](https://github.com/can1357/oh-my-pi), whose session-tree, advisor and
-context-tooling design shaped several features below.
+see [the full analysis](docs/analise-fork-alltomatos-opencode.md)),
+[oh-my-pi](https://github.com/can1357/oh-my-pi) — whose session-tree, advisor and
+context-tooling design shaped several features below — and
+[deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`),
+DeepSeek's "everything-is-a-plugin" agent harness built on
+[Cordis](https://github.com/cordiverse/cordis).
 
-| Capability | Open WebUI | opencode | oh-my-pi | **This fork (.NET/Blazor)** |
-|---|---|---|---|---|
-| Chat + streaming,<br>multi-provider | ✅ Ollama/OpenAI,<br>RAG/pipelines | ✅ any LLM<br>via gateway | ✅ multi-provider<br>(TUI) | ✅ parity +<br>OmniRoute-friendly |
-| Repo/workspace<br>bound to session | ❌ single<br>workspace | ✅ per-project | ✅ per-project | ✅ **per-chat git<br>worktree** — strict<br>scope, global<br>never leaks |
-| Sub-agents /<br>parallel sessions | ❌ | ✅ task tool<br>+ sessions | ✅ declarative<br>`.md` task agents | ✅ `delegate_task`<br>(+ `*.agent.md`),<br>depth ≤3, worktree-<br>isolated |
-| Review before<br>merge | ❌ | ✅ orchestrator<br>reviews diffs | ❌ | ✅ `worktree_diff` /<br>`worktree_merge` +<br>auto-merge opt-in |
-| Steer/queue<br>mid-run input | ❌ | ✅ durable<br>steer/queue | ❌ | ✅ `…/runs/{id}/steer`<br>(steer + queue) |
-| Durable agent<br>memory | ❌ | ✅ memory tools<br>+ auto-sync | ✅ memory tools | ✅ `memory_save` /<br>`memory_search` + 6h<br>auto-distill `auto:*` |
-| Routines /<br>reminders | ❌ | ✅ routine tool<br>+ scheduler | ❌ | ✅ `routine`/`reminder`<br>+ `once` schedules |
-| Task list tool | ❌ | ✅ todo write | ✅ | ✅ `todo_write`,<br>stable ids |
-| Context<br>compaction | ❌ | ✅ auto-summarize | ✅ auto + on-demand,<br>with pruning | ✅ LLM summary +<br>pruning + digest +<br>`history://` recovery |
-| Parent/child<br>run tree UI | ❌ | ✅ session tree | ✅ session tree | ✅ sidebar tree +<br>badge + parent<br>markers |
-| Parallel runs<br>console | ❌ | ✅ | ✅ | ✅ "Active runs"<br>sidebar |
-| Runs survive<br>browser close | partial | ✅ | ✅ | ✅ server-side +<br>`Last-Event-ID` |
-| Session branching<br>(fork any turn) | ❌ | ❌ | ✅ `parentId` +<br>`/fork` | ✅ `ParentId`/`Leaf`<br>tree + "branch<br>from here" + summary |
-| Model roles +<br>fallback chains | ❌ single model | partial | ✅ `modelRoles` +<br>`fallbackChains` | ✅ `tasks`/`memory` /<br>`advisor` + vision<br>capability map |
-| Tool approval<br>tiers | binary<br>approve-all | ✅ permission<br>model | ✅ tier + tool policy<br>+ user override | ✅ `Read`/`Write`/`Exec`,<br>fail-closed, per-tool<br>overrides |
-| Advisor /<br>watchdog | ❌ | ❌ | ✅ read-only 2nd<br>opinion | ✅ advisor inspects<br>runs, no approval<br>power |
-| Agent-directed<br>context | ❌ | partial | ✅ `checkpoint`/`rewind`,<br>`context_notes`,<br>`new_context`,<br>`context_save`/`recovery`/`<br>compact` | ✅ same trio + pruning<br>+ `history://` |
-| Layered config +<br>provenance | env + admin UI | partial | ✅ env>runtime>overlay><br>project>global | ✅ global/admin/user<br>layers + source |
-| Declarative<br>agent defs | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ `*.agent.md` (tools,<br>model, spawns) via<br>`delegate_task` |
-| Plan mode →<br>structured output | ❌ | ✅ plan/build<br>modes | ❌ | ✅ `/plan` → **SPEC SDD**<br>markdown; `plan_exit`<br>validates + saves to<br>`.openwebui/plans/` |
-| Media attachments<br>in chat | ✅ uploads | partial | ❌ | ✅ composer thumbnails,<br>inline + click-enlarge,<br>vision analysis |
+| Capability | Open WebUI | opencode | oh-my-pi | deepseek-harness | **This fork (.NET/Blazor)** |
+|---|---|---|---|---|---|
+| Chat + streaming,<br>multi-provider | ✅ Ollama/OpenAI,<br>RAG/pipelines | ✅ any LLM<br>via gateway | ✅ multi-provider<br>(TUI) | ✅ `ctx.llm`<br>adapter plugins | ✅ parity +<br>OmniRoute-friendly |
+| Repo/workspace<br>bound to session | ❌ single<br>workspace | ✅ per-project | ✅ per-project | ✅ per-session<br>working dir + exp.<br>`tool-worktree` | ✅ **per-chat git<br>worktree** — strict<br>scope, global<br>never leaks |
+| Sub-agents /<br>parallel sessions | ❌ | ✅ task tool<br>+ sessions | ✅ declarative<br>`.md` task agents | ✅ `tool-subagent` +<br>backend seam (in-proc,<br>SDK, ACP, Claude<br>Code, Codex) | ✅ `delegate_task`<br>(+ `*.agent.md`),<br>depth ≤3, worktree-<br>isolated |
+| Review before<br>merge | ❌ | ✅ orchestrator<br>reviews diffs | ❌ | partial — diff<br>view, no merge<br>tool | ✅ `worktree_diff` /<br>`worktree_merge` +<br>auto-merge opt-in |
+| Steer/queue<br>mid-run input | ❌ | ✅ durable<br>steer/queue | ❌ | ✅ durable inbox<br>+ `agent.inject()` | ✅ `…/runs/{id}/steer`<br>(steer + queue) |
+| Durable agent<br>memory | ❌ | ✅ memory tools<br>+ auto-sync | ✅ memory tools | ❌ no memory<br>subsystem | ✅ `memory_save` /<br>`memory_search` + 6h<br>auto-distill `auto:*` |
+| Routines /<br>reminders | ❌ | ✅ routine tool<br>+ scheduler | ❌ | ✅ `schedule` /<br>`tool-schedule` | ✅ `routine`/`reminder`<br>+ `once` schedules |
+| Task list tool | ❌ | ✅ todo write | ✅ | ✅ `tool-todo` | ✅ `todo_write`,<br>stable ids |
+| Context<br>compaction | ❌ | ✅ auto-summarize | ✅ auto + on-demand,<br>with pruning | ✅ compaction seam<br>+ result pruner +<br>image offload | ✅ LLM summary +<br>pruning + digest +<br>`history://` recovery |
+| Parent/child<br>run tree UI | ❌ | ✅ session tree | ✅ session tree | ✅ subagent<br>conversations | ✅ sidebar tree +<br>badge + parent<br>markers |
+| Parallel runs<br>console | ❌ | ✅ | ✅ | ✅ jobs +<br>subagent views | ✅ "Active runs"<br>sidebar |
+| Runs survive<br>browser close | partial | ✅ | ✅ | ✅ durable<br>session log | ✅ server-side +<br>`Last-Event-ID` |
+| Session branching<br>(fork any turn) | ❌ | ❌ | ✅ `parentId` +<br>`/fork` | ✅ turn-boundary<br>fork (`seedLength`) | ✅ `ParentId`/`Leaf`<br>tree + "branch<br>from here" + summary |
+| Model roles +<br>fallback chains | ❌ single model | partial | ✅ `modelRoles` +<br>`fallbackChains` | partial — per-cap.<br>providers +<br>`llm-retry` | ✅ `tasks`/`memory` /<br>`advisor` + vision<br>capability map |
+| Tool approval<br>tiers | binary<br>approve-all | ✅ permission<br>model | ✅ tier + tool policy<br>+ user override | ✅ presets +<br>approval +<br>`sandbox-policy` | ✅ `Read`/`Write`/`Exec`,<br>fail-closed, per-tool<br>overrides |
+| Advisor /<br>watchdog | ❌ | ❌ | ✅ read-only 2nd<br>opinion | partial — exp.<br>`auto-review` +<br>guard plugins | ✅ advisor inspects<br>runs, no approval<br>power |
+| Agent-directed<br>context | ❌ | partial | ✅ `checkpoint`/`rewind`,<br>`context_notes`,<br>`new_context`,<br>`context_save`/`recovery`/`<br>compact` | ✅ `agent.inject()`<br>+ context plugins<br>(file/session/time<br>refs) | ✅ same trio + pruning<br>+ `history://` |
+| Layered config +<br>provenance | env + admin UI | partial | ✅ env>runtime>overlay><br>project>global | ✅ profile→bundles→<br>`cordis.patch.yml`→<br>`--patch` | ✅ global/admin/user<br>layers + source |
+| Declarative<br>agent defs | ❌ | ✅ AgentUI | ✅ `.md` + frontmatter | ✅ agent presets /<br>personas + skill<br>files | ✅ `*.agent.md` (tools,<br>model, spawns) via<br>`delegate_task` |
+| Plan mode →<br>structured output | ❌ | ✅ plan/build<br>modes | ❌ | ✅ `plan-mode`<br>plugin | ✅ `/plan` → **SPEC SDD**<br>markdown; `plan_exit`<br>validates + saves to<br>`.openwebui/plans/` |
+| Media attachments<br>in chat | ✅ uploads | partial | ❌ | ✅ attachments<br>+ image offload | ✅ composer thumbnails,<br>inline + click-enlarge,<br>vision analysis |
+
+### deepseek-harness: architecture deltas & ideas to adopt
+
+`dsh` is a **harness kernel**, not a product: every subsystem — model adapter,
+tool registry, session log, agent loop, even each UI block — is a Cordis plugin
+composed at boot from ordered layers (profile → bundles → `cordis.patch.yml` →
+home → `--patch`), with reversible effects that unwind on unload, config HMR and
+a plugin market (`dsh-plugin` topic). This fork is a **product**: the same class
+of capabilities ships compiled into ASP.NET Core services behind a single
+multi-user web surface.
+
+| Axis | deepseek-harness | This fork |
+|---|---|---|
+| Extension model | everything-is-a-plugin — `ctx` services, typed events incl. `agent/*`/`tools/*` waterfall interceptors, HMR | compiled-in services + internal run-event bus with DI observers and ordered waterfall interceptors (`pre-step`, `tool.call`) — no dynamic loading; extensibility via MCP servers, `*.agent.md`, skills/personas |
+| Surfaces | `web` · `headless` · TS/Python SDK (JSON-RPC) · `acp` (editor) · Electron desktop | web (Blazor WASM) · `--headless` one-shot (JSON Lines) · `POST /api/v1/rpc` (JSON-RPC 2.0) · `open-webui-acp` stdio host |
+| Execution seam | swappable `ctx.fs`/`subprocess`/`sandbox` providers — SSH backend relocates Bash/PTY/LSP wholesale | local tools + approval tiers |
+| Session store | append-only JSONL event log, versioned format migrations (v0→v4), "model-visible means logged", incremental projections | EF Core/SQLite entities + persisted run events, checkpoint replay |
+| Multi-user | single-user (DeepSeek account/credentials plugins) | users/RBAC/admin UI, JWT + `sk-*` API keys |
+| Distribution | `npx @deepseek-ai/dsh` + plugin market | single multi-arch Docker image / `dotnet run`; ACP host ships as `src/OpenWebUI.Acp` (publish as single-file binary or run via `dotnet run`) |
+
+Ported ideas (SPEC-20261021-harness-seams, branch
+`feature/Devin-20261021-harness-seams`): internal `agent/*`/`tools/*`-style
+event seams — `IAgentRunObserver` + `RunInterceptorRunner` (ordered waterfall,
+5s timeout, fail-closed on `tool.call`), shipping `TelemetryObserver` and
+`RepeatToolGuard` (vetoes a tool call repeated identically 3×) · composable
+prompt sections — `ISystemPromptContributor` with DI ordering; the former
+`systemParts` blocks are now contributors with byte-identical output ·
+launch surfaces — `--headless` (JSON Lines stdout, exit code = run status),
+`POST /api/v1/rpc` (`ping`, `chats.list/create`, `runs.start/get`), ACP stdio
+(`initialize` gated by `OPENWEBUI_ACP_TOKEN`, `session/new`→chat,
+`session/prompt`→run streamed as `session/update`) · webhook-triggered runs —
+provider-aware `AutomationHook` (generic/github) with `X-Hub-Signature-256`
+HMAC, event filters, `{{path}}` prompt templates, repo/persona/mode binding
+and an `AutomationHookDelivery` audit/idempotency log · agent teams —
+`Chat.TeamId`/`TeamRole` roster over `delegate_task` children, `TeamTask`
+durable tasks, steer/queue as inter-agent inbox, `team_task`/`team_message`/
+`team_status` built-in tools and `GET /api/v1/chats/{id}/team`. Still open:
+execution-provider seam (remote sandbox for `shell_exec`/terminal/`lsp_*`).
 
 ## Screenshots
 

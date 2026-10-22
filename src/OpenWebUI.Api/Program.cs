@@ -78,6 +78,37 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<ChatRunDispatcher>
 builder.Services.AddScoped<ChatRunExecutor>();
 builder.Services.AddScoped<ContextCompactionService>();
 builder.Services.AddScoped<RunEventWriter>();
+// Seams internos de run (SPEC-20261021-harness-seams RF-A1/A2/A3):
+// barramento de eventos read-only + waterfall de interceptors +
+// contribuidores compostáveis de system prompt.
+builder.Services.AddScoped<OpenWebUI.Infrastructure.Runs.AgentRunEventBus>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.Runs.RunInterceptorRunner>();
+builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IAgentRunObserver,
+    OpenWebUI.Infrastructure.Runs.TelemetryObserver>();
+builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IRunInterceptor,
+    OpenWebUI.Infrastructure.Runs.RepeatToolGuard>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.BaseAgentContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.AlwaysAllowContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.CustomModelContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.ModelSkillsContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.FileContextContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.WebSearchContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.MemoriesContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.RepoBindingContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.AgentMemoryContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.MentionsContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.AgentModeContributor>();
 // Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
 // context-management): boundaries + notebook + flag new_context via kv.
 builder.Services.AddScoped<ContextBoundaryService>();
@@ -164,6 +195,10 @@ builder.Services.AddScoped<IBuiltinChatTool, SkillBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, GenerateVideoBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, AskUserBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, PlanExitBuiltinTool>();
+// Agent teams (SPEC-20261021-harness-seams RF-E2).
+builder.Services.AddScoped<IBuiltinChatTool, TeamTaskBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, TeamMessageBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, TeamStatusBuiltinTool>();
 // LSP (SPEC-20261009-lsp-diagnostics): singleton dono dos processos
 // filhos + tools read-only builtin:lsp_*.
 builder.Services.AddSingleton<LspService>();
@@ -244,7 +279,22 @@ builder.Services.AddResponseCompression(options =>
     options.EnableForHttps = true;
 });
 
+// Modo headless one-shot (SPEC-20261021-harness-seams RF-C1): registra o
+// observer JSON Lines antes de construir o provider — os eventos da run
+// saem em stdout e o processo termina com o status da run.
+if (OpenWebUI.Api.Headless.HeadlessRunner.IsHeadless(args))
+{
+    builder.Services.AddSingleton<IAgentRunObserver,
+        OpenWebUI.Api.Headless.JsonLinesRunObserver>();
+}
+
 var app = builder.Build();
+
+if (OpenWebUI.Api.Headless.HeadlessRunner.IsHeadless(args))
+{
+    return await OpenWebUI.Api.Headless.HeadlessRunner.RunAsync(
+        app.Services, args, CancellationToken.None);
+}
 
 app.UseResponseCompression();
 
@@ -280,6 +330,7 @@ app.UseWebSockets();
 MapAllEndpoints(app);
 
 app.Run();
+return 0;
 
 /// <summary>SignalR envia o JWT via query string no handshake do WebSocket.</summary>
 static Task AcceptTokenFromQueryString(MessageReceivedContext context)
@@ -537,6 +588,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapExternalAgentEndpoints();
     app.MapAgentPersonaEndpoints();
     app.MapAutomationHookEndpoints();
+    app.MapRpcEndpoints();
     app.MapN8nEndpoints();
     app.MapVideoEndpoints();
     app.MapConfigEndpoints();

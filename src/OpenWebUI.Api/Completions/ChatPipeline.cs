@@ -26,7 +26,7 @@ public static class ChatPipeline
     /// (builtin_todo_write) e de memória durável (builtin_memory_save/
     /// builtin_memory_search); o system prompt do modelo custom e os
     /// demais blocos vêm depois e refinam.</summary>
-    private const string DefaultSystemPrompt =
+    internal const string DefaultSystemPrompt =
         "You are the Open WebUI agent — an autonomous agent that executes tasks, "
         + "not a passive assistant. Always answer in the user's language. "
         + "Before answering, analyze the user's intent and the conversation context; "
@@ -61,6 +61,7 @@ public static class ChatPipeline
         RagService rag,
         WebSearchService webSearch,
         WorkspaceRepoService repos,
+        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors,
         CancellationToken ct,
         string? agentMode = null,
         string? chatId = null,
@@ -71,265 +72,53 @@ public static class ChatPipeline
         var parameters = request.Params?.ToDictionary(kv => kv.Key, kv => kv.Value);
         var systemParts = new List<string>();
 
-        // 0. Prompt base do assistente: injetado sempre, antes do system
-        // prompt do modelo custom e demais blocos de contexto.
-        systemParts.Add(DefaultSystemPrompt);
-
-        // 0.1 Preset always-allow (SPEC-20261019-run-autonomy-continue
-        // RF-003): o preset auto-aprova o gate de tools, mas o modelo não
-        // sabe disso — sem a diretiva ele encerra o turno perguntando
-        // "posso continuar?". Só entra em chats com o preset (chatId
-        // nulo = completion avulsa sem preset).
-        if (chatId is not null
-            && await db.Chats.AsNoTracking()
-                .Where(c => c.Id == chatId)
-                .Select(c => c.ApprovalPreset)
-                .FirstOrDefaultAsync(ct) == "always-allow")
-        {
-            systemParts.Add(
-                "User approvals are set to always-allow: tool permissions are "
-                + "auto-granted — do not ask for confirmation before acting. "
-                + "Exceptions: tools the owner explicitly marked "
-                + "always-ask still require confirmation, and ask for inputs "
-                + "only the user can provide (a decision, a secret, or a "
-                + "genuinely destructive step).");
-        }
-
-        // 1. Modelo personalizado do workspace → redireciona para o modelo base e aplica config.
-        var customModel = await db.ModelEntries.AsNoTracking()
-            .FirstOrDefaultAsync(
-                m => m.IsActive && (m.Id == model || m.Name == model)
-                    && (m.UserId == user.Id || m.UserId == "public"), ct);
-        if (customModel is not null
-            && !await ModelEndpoints.HasModelAccessAsync(user, customModel, db, ct))
-        {
-            customModel = null;
-        }
-        if (customModel is not null)
-        {
-            if (!string.IsNullOrWhiteSpace(customModel.BaseModelId))
-            {
-                model = customModel.BaseModelId;
-            }
-            if (!string.IsNullOrWhiteSpace(customModel.SystemPrompt))
-            {
-                systemParts.Add(customModel.SystemPrompt);
-            }
-
-            if (!string.IsNullOrWhiteSpace(customModel.ParamsJson))
-            {
-                try
-                {
-                    var customParams = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                        customModel.ParamsJson);
-                    if (customParams is not null)
-                    {
-                        parameters ??= [];
-                        foreach (var (key, value) in customParams)
-                        {
-                            parameters.TryAdd(key, value);
-                        }
-                    }
-                }
-                catch (JsonException)
-                {
-                    // Payload auxiliar malformado — segue sem ele.
-                }
-            }
-        }
-
-        // 1.5. Skills anexadas ao modelo custom (MetaJson.skill_ids) → system prompt.
-        if (customModel?.MetaJson is not null)
-        {
-            try
-            {
-                using var meta = JsonDocument.Parse(customModel.MetaJson);
-                if (meta.RootElement.TryGetProperty("skill_ids", out var skillIds)
-                    && skillIds.ValueKind == JsonValueKind.Array)
-                {
-                    var ids = skillIds.EnumerateArray()
-                        .Select(e => e.GetString()).Where(s => s is not null).ToList();
-                    var contents = await db.Skills.AsNoTracking()
-                        .Where(s => ids.Contains(s.Id) && s.IsActive)
-                        .Select(s => s.Content).ToListAsync(ct);
-                    systemParts.AddRange(contents.Where(c => !string.IsNullOrWhiteSpace(c)));
-                }
-            }
-            catch (JsonException)
-            {
-                // Payload auxiliar malformado — segue sem ele.
-            }
-        }
-
-        // 2. Contexto de arquivos/referências: anexos + #arquivo/#coleção.
-        //    Com embeddings disponíveis injeta os top-K chunks por similaridade;
-        //    sem provider cai no fallback de texto integral atual.
+        // SPEC-20261021-harness-seams RF-B1/B2: as seções do system
+        // prompt são produzidas por ISystemPromptContributor ordenados —
+        // mesma ordem/conteúdo do systemParts hardcoded original
+        // (paridade verificada pelo teste golden). Um contributor que
+        // lança exceção é pulado com LogWarning — a tolerância a falha é
+        // a mesma dos blocos inline.
         var lastUserText = messages.LastOrDefault(m => m.Role == "user")?.Content ?? string.Empty;
-        var referenced = await ResolveReferenceFileIdsAsync(lastUserText, user.Id, db, ct);
-        var scopedFileIds = (request.FileIds ?? [])
-            .Concat(referenced).Distinct().ToList();
-        if (scopedFileIds.Count > 0)
+        var pctx = new OpenWebUI.Infrastructure.SystemPrompt.PromptContext
         {
-            var fileContext = lastUserText.Length > 0
-                ? await rag.RetrieveAsync(user.Id, lastUserText, scopedFileIds, ct)
-                : null;
-            fileContext ??= await FileEndpoints.BuildFileContextAsync(
-                scopedFileIds, user.Id, db, ct);
-            if (!string.IsNullOrEmpty(fileContext))
-            {
-                systemParts.Add(fileContext);
-            }
+            Request = request,
+            User = user,
+            ChatId = chatId,
+            AgentMode = agentMode,
+            Ct = ct,
+            LastUserText = lastUserText,
+            Model = model,
+            Parameters = parameters,
+            BindingFactory = async t =>
+                (await repos.ResolveBindingAsync(user.Id, chatId, t)).Binding,
+            WorkdirFactory = t => repos.ResolveWorkdirAsync(user.Id, chatId, t),
+        };
+        var orderedContributors = promptContributors.OrderBy(c => c.Order).ToList();
+        if (orderedContributors.Count == 0)
+        {
+            // Sem DI (host headless mínimo/teste avulso): pelo menos o
+            // prompt base nunca pode sumir.
+            systemParts.Add(DefaultSystemPrompt);
         }
-
-        // 2.5. Busca web opcional: injeta os resultados como contexto com fontes.
-        if (request.WebSearch == true && lastUserText.Length > 0)
+        foreach (var contributor in orderedContributors)
         {
             try
             {
-                var results = await webSearch.SearchAsync(lastUserText, count: 5, ct);
-                if (results is { Count: > 0 })
+                var sections = await contributor.ContributeAsync(pctx);
+                if (sections is { Count: > 0 })
                 {
-                    var lines = results.Select((r, i) =>
-                        $"[{i + 1}] {r.Title}\nURL: {r.Url}\n{r.Snippet}");
-                    systemParts.Add(
-                        "Resultados da busca web (use-os para responder e cite as fontes como [n]):\n"
-                        + string.Join("\n\n", lines));
+                    systemParts.AddRange(sections);
                 }
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Engine indisponível: segue sem contexto web.
+                log?.LogWarning(ex,
+                    "Prompt contributor {Type} falhou — seção omitida.",
+                    contributor.GetType().Name);
             }
         }
-
-        // 3. Memórias persistentes do usuário.
-        var adminConfig = await config.GetAdminConfigAsync(ct);
-        if (adminConfig.EnableMemories)
-        {
-            var memories = await db.Memories.AsNoTracking()
-                .Where(m => m.UserId == user.Id)
-                .Select(m => m.Content)
-                .ToListAsync(ct);
-            if (memories.Count > 0)
-            {
-                systemParts.Add(
-                    "Memórias do usuário:\n" + string.Join("\n", memories.Select(m => $"- {m}")));
-            }
-        }
-
-        // 3.5. Repositório vinculado ao workspace (SPEC-20261008-github-repo-workspace):
-        // o modelo precisa saber que as tools file_*/shell_exec operam dentro
-        // do checkout do repo vinculado (a raiz do workspace vira a raiz do repo).
-        // Binding por chat precede o global do usuário
-        // (SPEC-20261010-chat-repo-binding).
-        var (repoBinding, _) = await repos.ResolveBindingAsync(user.Id, chatId, ct);
-        if (repoBinding is not null)
-        {
-            systemParts.Add(
-                $"Repositório vinculado ao workspace: {repoBinding.Repo} " +
-                $"(branch '{repoBinding.Branch}'). As tools de arquivo e shell " +
-                "operam dentro do checkout desse repositório — a raiz do " +
-                "workspace é a raiz do repo.");
-
-            // SPEC-20261009-repo-skills-slash-commands RF-005: instruções do
-            // projeto (AGENTS.md → CLAUDE.md → .cursor/rules/*.md → README.md,
-            // cap 32KB) entram como bloco marcado no system prompt.
-            var workdir = await repos.ResolveWorkdirAsync(user.Id, chatId, ct);
-            var instructions = SkillDiscoveryService.LoadProjectInstructions(workdir);
-            if (!string.IsNullOrWhiteSpace(instructions))
-            {
-                systemParts.Add(
-                    "<project_instructions>\n" + instructions + "\n</project_instructions>");
-            }
-        }
-
-        // 3.5a. Memórias duráveis do agente (SPEC-20261010-agent-memory):
-        // globais + as do repo bound deste chat — as 12 mais recentes, cap
-        // ~1800 chars, num bloco marcado. O agente grava/edita via
-        // builtin_memory_save/builtin_memory_learn; a busca completa é
-        // builtin_memory_search.
-        // SPEC-20261014-memory-pipeline RF-004: o mesmo kv em camadas do
-        // auto-sync controla a injeção — off é silenciador (não purge).
-        // Leitura em camadas manual: `u:` ausente (ou override removido —
-        // ValueJson="null" desserializa como null em bool?) herda o global;
-        // global unset assume o default true. `memAdminOff` mantém a
-        // negativa absoluta do admin mesmo com opt-in do usuário.
-        var memAdminOff = await config.GetAsync<bool?>(
-            "memsync.enabled", null, ct) == false;
-        var memEnabled = !memAdminOff
-            && (await config.GetAsync<bool?>(
-                    $"u:{user.Id}:memsync.enabled", null, ct)
-                ?? await config.GetAsync("memsync.enabled", true, ct));
-        if (memEnabled)
-        {
-            var memories = await db.AgentMemories.AsNoTracking()
-                .Where(m => m.UserId == user.Id
-                    && (m.Scope == "global"
-                        || (repoBinding != null && m.RepoSlug == repoBinding.Repo)))
-                .OrderByDescending(m => m.UpdatedAt)
-                .Take(12)
-                .Select(m => new { m.Title, m.Scope, m.RepoSlug, m.Content })
-                .ToListAsync(ct);
-            if (memories.Count > 0)
-            {
-                var lines = memories.Select(m =>
-                    $"- [{m.Scope}{(m.RepoSlug is not null ? $" {m.RepoSlug}" : "")}] "
-                    + $"{m.Title}: {m.Content}");
-                // SPEC-20261014-memory-pipeline RF-002: ressalva
-                // não-autoritativa — memória é heurística e pode estar
-                // desatualizada; o modelo deve validar antes de confiar.
-                var block = "<agent_memory>\n(memórias derivadas de sessões "
-                    + "anteriores — heurísticas, podem estar desatualizadas)\n"
-                    + string.Join("\n", lines) + "\n</agent_memory>";
-                systemParts.Add(block.Length <= 1800
-                    ? block
-                    : block[..1800] + "\n…\n</agent_memory>");
-            }
-        }
-
-        // 3.5b. Menções @path do composer (SPEC-20261009-ide-mentions-tests
-        // RF-002): cada chip vira um bloco <file path="…"> no prompt — cap
-        // 16KB/arquivo, 64KB total; fora do jail é descartado em silêncio.
-        if (request.MentionPaths is { Count: > 0 } mentionPaths)
-        {
-            var mentionWorkdir = await repos.ResolveWorkdirAsync(user.Id, chatId, ct);
-            var mentions = await OpenWebUI.Infrastructure.ChatTools.WorkspaceMentionContext
-                .BuildAsync(mentionWorkdir, mentionPaths, ct);
-            if (!string.IsNullOrEmpty(mentions))
-            {
-                systemParts.Add(mentions);
-            }
-        }
-
-        // 3.6. Modo plan do agente (SPEC-20261009-agent-modes-plan-build
-        // RF-002/RF-004): instrução de somente-leitura + encerramento via
-        // plan_exit — o spec de tools anunciado já reflete o ruleset, mas
-        // o prompt reforça o contrato para modelos teimosos.
-        if (PermissionRuleset.Normalize(agentMode) == PermissionRuleset.PlanMode)
-        {
-            systemParts.Add(
-                "Modo PLAN ativo: você está em modo de planejamento somente-leitura. "
-                + "NÃO crie, modifique ou apague arquivos, NÃO execute comandos que "
-                + "alterem o sistema e NÃO chame tools de escrita — apenas leia, "
-                + "pesquise e analise. "
-                // SPEC-20261015-plan-spec-sdd RF-001: a análise do requisito e
-                // a estrutura SDD são contrato — plan_exit recusa plano fora dele.
-                + OpenWebUI.Infrastructure.ChatTools.PlanSpecTemplate.Prompt
-                + " O usuário decide se executa (modo build) — nunca comece a "
-                + "implementar sem aprovação (Status = Approved).");
-        }
-        else if (PermissionRuleset.Normalize(agentMode) == PermissionRuleset.ChatMode)
-        {
-            // SPEC-15: chat sem workspace — o spec de tools já vem filtrado,
-            // mas o prompt deixa claro que não há acesso a arquivos/shell.
-            systemParts.Add(
-                "Modo CHAT ativo: conversa comum sem workspace — NÃO existem "
-                + "tools de arquivo, shell, jobs ou worktree nesta conversa e "
-                + "nenhuma call desse tipo será aceita. Responda com texto "
-                + "(web_search/fetch_url seguem disponíveis se anunciadas). "
-                + "Para trabalhar num repositório o usuário precisa vincular "
-                + "um repo ao chat e mudar para o modo build.");
-        }
+        model = pctx.Model;
+        parameters = pctx.Parameters;
 
         // 4. Mescla partes de sistema numa única mensagem inicial.
         if (systemParts.Count > 0)
@@ -422,14 +211,14 @@ public static class ChatPipeline
         };
 
         // 5. Filtros declarativos do modelo custom (inlet) em ordem estável.
-        var inletFilters = ModelFilterService.Parse(customModel?.MetaJson);
+        var inletFilters = ModelFilterService.Parse(pctx.CustomModel?.MetaJson);
         return inletFilters.Count > 0
             ? ModelFilterService.ApplyInlet(built, inletFilters)
             : built;
     }
 
     /// <summary>Resolve referências #nome (arquivo ou coleção) para ids de arquivo.</summary>
-    private static async Task<List<string>> ResolveReferenceFileIdsAsync(
+    internal static async Task<List<string>> ResolveReferenceFileIdsAsync(
         string text, string userId, AppDbContext db, CancellationToken ct)
     {
         var fileIds = new List<string>();
@@ -1028,8 +817,12 @@ public static class ChatPipeline
                     {
                         try
                         {
+                            // RF-A2 harness-seams: gate aprovado pode ter
+                            // reescrito os args (interceptor tool.call).
                             return await toolExecutor.ExecuteAsync(
-                                tools, call.Name, call.ArgumentsJson, builtinContext, ct);
+                                tools, call.Name,
+                                gate.RewriteArgsJson ?? call.ArgumentsJson,
+                                builtinContext, ct);
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         {
@@ -1324,7 +1117,8 @@ public static class ChatPipeline
         WebSearchService webSearch,
         WorkspaceRepoService repos,
         Func<string, Task> emitLineAsync,
-        CancellationToken ct)
+        CancellationToken ct,
+        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor>? promptContributors = null)
     {
         var arenaEntry = await db.ModelEntries.AsNoTracking()
             .FirstOrDefaultAsync(
@@ -1358,7 +1152,8 @@ public static class ChatPipeline
             {
                 var effective = await EnrichRequestAsync(
                     request with { Model = competitor, Stream = false },
-                    user, db, config, rag, webSearch, repos, ct);
+                    user, db, config, rag, webSearch, repos,
+                    promptContributors ?? [], ct);
                 responses.Add(await providers.CompleteAsync(effective, user.Id, ct));
             }
         }

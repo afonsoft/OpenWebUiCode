@@ -458,4 +458,71 @@ public class TerminalPtyTests
 
         Assert.That(condition(), Is.True, "condição não atingida dentro do timeout");
     }
+
+    [Test]
+    public async Task Terminal_Ws_FramesControle_Incompletos_NaoQuebram()
+    {
+        if (!File.Exists("/usr/bin/script"))
+        {
+            Assert.Ignore("binário 'script' indisponível neste host");
+        }
+
+        UseToken(_user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/terminal/sessions", new { });
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("id").GetString()!;
+
+        var wsClient = _factory.Server.CreateWebSocketClient();
+        var uri = new Uri(
+            $"http://localhost/ws/terminal/{id}?access_token={_user.Token}");
+        using var ws = await wsClient.ConnectAsync(uri, CancellationToken.None);
+
+        // Frames de controle cobrindo os ternários de cols/rows e o
+        // fallback do JsonException — nenhum deve derrubar a sessão.
+        var frames = new[]
+        {
+            "{\"type\":\"resize\"}",
+            "{\"type\":\"resize\",\"cols\":\"x\",\"rows\":200}",
+            "{\"type\":\"resize\",\"cols\":90,\"rows\":40}",
+            "{\"type\":\"input\"}",
+            "{\"type\":\"input\",\"data\":123}",
+            "{\"type\":123}",
+            "{\"type\":\"desconhecido\",\"x\":1}",
+            "{isto-parecia-json-mas-nao-e",
+        };
+        foreach (var f in frames)
+        {
+            await ws.SendAsync(Encoding.UTF8.GetBytes(f),
+                WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+
+        // Sessão segue viva: input normal ainda ecoa.
+        var marker = $"ok{Guid.NewGuid():N}"[..10];
+        await ws.SendAsync(
+            Encoding.UTF8.GetBytes(
+                $"{{\"type\":\"input\",\"data\":\"echo {marker}\\n\"}}"),
+            WebSocketMessageType.Text, true, CancellationToken.None);
+
+        var received = new StringBuilder();
+        var buffer = new byte[8192];
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!received.ToString().Contains(marker)
+               && DateTime.UtcNow < deadline)
+        {
+            var result = await ws.ReceiveAsync(buffer, CancellationToken.None);
+            received.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+        }
+        Assert.That(received.ToString(), Does.Contain(marker));
+
+        try
+        {
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done",
+                CancellationToken.None);
+        }
+        catch (IOException) { }
+        catch (WebSocketException) { }
+
+        UseToken(_user.Token);
+        await _client.DeleteAsync($"/api/v1/terminal/sessions/{id}");
+    }
 }

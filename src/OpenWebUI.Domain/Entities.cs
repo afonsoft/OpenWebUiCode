@@ -133,6 +133,18 @@ public class Chat
     /// </summary>
     public string? ParentChatId { get; set; }
 
+    /// <summary>
+    /// Time do chat (SPEC-20261021-harness-seams RF-E1): id do chat raiz do
+    /// time — filhos herdam no spawn via <c>delegate_task team:true</c>;
+    /// a raiz aponta para si mesma. <see langword="null"/> = fora de team.
+    /// </summary>
+    public string? TeamId { get; set; }
+
+    /// <summary>
+    /// Papel no team: <c>leader</c> (raiz) ou <c>member</c> (delegado).
+    /// </summary>
+    public string? TeamRole { get; set; }
+
     /// <summary>Ids das tools habilitadas neste chat, serializados como JSON.</summary>
     public string ToolIdsJson { get; set; } = "[]";
 
@@ -1157,6 +1169,115 @@ public class AutomationHook
 
     /// <summary>Último disparo aceito (epoch seconds); null se nunca disparou.</summary>
     public long? LastFiredAt { get; set; }
+
+    /// <summary>
+    /// Segredo HMAC-SHA256 do webhook (SPEC-20261021-harness-seams RF-D1):
+    /// quando setado exige <c>X-Hub-Signature-256: sha256=&lt;hmac&gt;</c>
+    /// com comparação timing-safe. Null = hook legado sem assinatura.
+    /// </summary>
+    public string? Secret { get; set; }
+
+    /// <summary>
+    /// Provider do remetente: <c>generic</c> (default; header
+    /// <c>X-Event-Type</c> opcional) ou <c>github</c> (<c>X-GitHub-Event</c>
+    /// + dedup por <c>X-GitHub-Delivery</c>).
+    /// </summary>
+    public string Provider { get; set; } = "generic";
+
+    /// <summary>
+    /// Filtro de eventos aceitos (JSON array de tipos); null/vazio = todos.
+    /// </summary>
+    public string? EventsJson { get; set; }
+
+    /// <summary>
+    /// Template do prompt com placeholders <c>{{campo.path}}</c> resolvidos
+    /// do payload JSON (máx. 4KB interpolado); null = payload cru vira prompt.
+    /// </summary>
+    public string? PromptTemplate { get; set; }
+
+    /// <summary>Repo <c>owner/name</c> a vincular no chat da run disparada.</summary>
+    public string? RepoSlug { get; set; }
+
+    /// <summary>Persona (slug/id de Skill ativa) aplicada como system do disparo.</summary>
+    public string? PersonaId { get; set; }
+
+    /// <summary>Modo do agente para a run (<c>chat</c>|<c>plan</c>|<c>build</c>).</summary>
+    public string? AgentMode { get; set; }
+}
+
+/// <summary>
+/// Entrega/auditoria de um disparo de webhook
+/// (SPEC-20261021-harness-seams RF-D2): uma linha por entrega aceita,
+/// filtrada ou rejeitada — <see cref="DeliveryKey"/> é a chave de
+/// idempotência (mesmo delivery ⇒ retorna a run original).
+/// </summary>
+public class AutomationHookDelivery
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Hook que recebeu a entrega.</summary>
+    public string HookId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Chave de dedup do remetente (<c>X-GitHub-Delivery</c>,
+    /// <c>X-Delivery-Id</c>); null = entrega sem idempotência declarada.
+    /// </summary>
+    public string? DeliveryKey { get; set; }
+
+    /// <summary>Tipo de evento (<c>X-GitHub-Event</c>/<c>X-Event-Type</c>).</summary>
+    public string? EventType { get; set; }
+
+    /// <summary>Recebimento (epoch seconds).</summary>
+    public long ReceivedAt { get; set; }
+
+    /// <summary><c>accepted</c> | <c>filtered</c> | <c>rejected</c> | <c>failed</c>.</summary>
+    public string Status { get; set; } = "accepted";
+
+    /// <summary>Run criada pelo disparo, quando aceito.</summary>
+    public string? RunId { get; set; }
+
+    /// <summary>Erro interno, quando <c>failed</c>.</summary>
+    public string? Error { get; set; }
+
+    /// <summary>Aviso de segurança (ex.: hook legado sem assinatura).</summary>
+    public string? SecurityWarning { get; set; }
+}
+
+/// <summary>
+/// Tarefa compartilhada de um agent team
+/// (SPEC-20261021-harness-seams RF-E2): coordenação durável por
+/// <see cref="TeamId"/> — membros criam/claimam/concluem via
+/// <c>builtin:team_task</c>.
+/// </summary>
+public class TeamTask
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Team (id do chat raiz).</summary>
+    public string TeamId { get; set; } = string.Empty;
+
+    /// <summary>Título da tarefa.</summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary><c>pending</c> | <c>in_progress</c> | <c>done</c>.</summary>
+    public string Status { get; set; } = "pending";
+
+    /// <summary>Chat membro que claimou a tarefa.</summary>
+    public string? AssigneeChatId { get; set; }
+
+    /// <summary>Chat membro que criou a tarefa.</summary>
+    public string? CreatedByChatId { get; set; }
+
+    /// <summary>Resumo do resultado ao concluir.</summary>
+    public string? Result { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
 }
 
 /// <summary>

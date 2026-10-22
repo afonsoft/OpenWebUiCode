@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Application.Interfaces;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
@@ -24,6 +25,9 @@ public static class AutomationHookEndpoints
     private const int MaxNameChars = 120;
     private const int MaxPromptChars = 4000;
 
+    /// <summary>Teto do payload do webhook (SPEC-20261021-harness-seams RF-D2).</summary>
+    private const int MaxPayloadBytes = 256 * 1024;
+
     /// <summary>Mapeia CRUD autenticado e rotas públicas de disparo.</summary>
     public static IEndpointRouteBuilder MapAutomationHookEndpoints(this IEndpointRouteBuilder app)
     {
@@ -32,6 +36,7 @@ public static class AutomationHookEndpoints
         group.MapGet("/", ListAsync);
         group.MapPost("/", CreateAsync);
         group.MapDelete("/{id}", DeleteAsync);
+        group.MapGet("/{id}/deliveries", ListDeliveriesAsync);
 
         // Disparo — anônimo (o token é o segredo), com rate limit.
         app.MapPost("/api/v1/hooks/{token}", FireAsync).AllowAnonymous();
@@ -99,6 +104,19 @@ public static class AutomationHookEndpoints
             db.Chats.Add(chat);
         }
 
+        var provider = (request?.Provider ?? "generic").Trim().ToLowerInvariant();
+        if (provider is not ("generic" or "github"))
+        {
+            return Results.BadRequest(
+                new { detail = "provider deve ser 'generic' ou 'github'." });
+        }
+        if (request?.AgentMode is { Length: > 0 } am
+            && PermissionRuleset.Normalize(am) is null)
+        {
+            return Results.BadRequest(
+                new { detail = "agentMode deve ser chat|plan|build." });
+        }
+
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var hook = new AutomationHook
         {
@@ -106,6 +124,20 @@ public static class AutomationHookEndpoints
             ChatId = chat.Id,
             Name = name,
             CreatedAt = now,
+            Secret = string.IsNullOrWhiteSpace(request?.Secret)
+                ? null : request!.Secret.Trim(),
+            Provider = provider,
+            EventsJson = request?.Events is { Length: > 0 } events
+                ? JsonSerializer.Serialize(events, JsonOptions)
+                : null,
+            PromptTemplate = string.IsNullOrWhiteSpace(request?.PromptTemplate)
+                ? null : request!.PromptTemplate,
+            RepoSlug = string.IsNullOrWhiteSpace(request?.RepoSlug)
+                ? null : request!.RepoSlug.Trim(),
+            PersonaId = string.IsNullOrWhiteSpace(request?.PersonaId)
+                ? null : request!.PersonaId.Trim(),
+            AgentMode = string.IsNullOrWhiteSpace(request?.AgentMode)
+                ? null : request!.AgentMode.Trim().ToLowerInvariant(),
         };
         db.AutomationHooks.Add(hook);
         await db.SaveChangesAsync(ct);
@@ -130,10 +162,48 @@ public static class AutomationHookEndpoints
         return deleted > 0 ? Results.Ok(new { deleted = true }) : Results.NotFound();
     }
 
+    /// <summary>
+    /// Lista entregas/auditoria do hook (RF-D2 harness-seams) — dono only.
+    /// </summary>
+    private static async Task<IResult> ListDeliveriesAsync(
+        HttpContext http, AppDbContext db, string id, CancellationToken ct)
+    {
+        var user = await CurrentUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var owns = await db.AutomationHooks.AsNoTracking()
+            .AnyAsync(h => h.Id == id && h.UserId == user.Id, ct);
+        if (!owns)
+        {
+            return Results.NotFound(new { detail = "webhook não encontrado." });
+        }
+
+        var deliveries = await db.AutomationHookDeliveries.AsNoTracking()
+            .Where(d => d.HookId == id)
+            .OrderByDescending(d => d.ReceivedAt)
+            .Take(100)
+            .Select(d => new AutomationHookDeliveryResponse(
+                d.Id, d.DeliveryKey, d.EventType, d.ReceivedAt,
+                d.Status, d.RunId, d.Error, d.SecurityWarning))
+            .ToListAsync(ct);
+        return Results.Ok(deliveries);
+    }
+
+    /// <summary>
+    /// Disparo de webhook v2 (SPEC-20261021-harness-seams RF-D1/D2):
+    /// verificação HMAC-SHA256 quando <c>Secret</c> configurado, filtro de
+    /// eventos por provider (github/generic), dedup por delivery id,
+    /// template <c>{{path}}</c> no payload, binding/persona/modo aplicados
+    /// à run e auditoria em <c>AutomationHookDeliveries</c>. Hooks sem
+    /// secret seguem aceitos (legado) com warning na delivery.
+    /// </summary>
     private static async Task<IResult> FireAsync(
         HttpContext http, AppDbContext db, IChatRunDispatcher dispatcher,
-        ConfigService config, RateLimitService limits, string token,
-        CancellationToken ct)
+        ConfigService config, RateLimitService limits,
+        WorkspaceRepoService repos, string token, CancellationToken ct)
     {
         var rateConfig = await config.GetAsync("ratelimit", RateLimitConfig.Default, ct);
         if (rateConfig.Enabled)
@@ -157,10 +227,110 @@ public static class AutomationHookEndpoints
             return Results.NotFound(new { detail = "webhook não encontrado." });
         }
 
-        var (content, modelOverride) = await ReadPromptAsync(http.Request, ct);
+        // Corpo cru uma vez — a assinatura HMAC é sobre os bytes exatos.
+        string raw;
+        using (var reader = new StreamReader(http.Request.Body))
+        {
+            raw = await reader.ReadToEndAsync(ct);
+        }
+        if (raw.Length > MaxPayloadBytes)
+        {
+            return Results.Json(
+                new { detail = "payload excede 256KB." }, statusCode: 413);
+        }
+
+        var isGithub = string.Equals(
+            hook.Provider, "github", StringComparison.OrdinalIgnoreCase);
+        var eventType = OrNull(isGithub
+            ? http.Request.Headers["X-GitHub-Event"].ToString()
+            : http.Request.Headers["X-Event-Type"].ToString());
+        var deliveryKey = OrNull(isGithub
+            ? http.Request.Headers["X-GitHub-Delivery"].ToString()
+            : http.Request.Headers["X-Delivery-Id"].ToString())
+            ?? OrNull(http.Request.Headers["X-GitHub-Delivery"].ToString());
+
+        // Idempotência (RF-D2): delivery já aceita com a mesma chave →
+        // devolve a run original sem criar mensagem/run novas.
+        if (deliveryKey is not null)
+        {
+            var prevRunId = await db.AutomationHookDeliveries.AsNoTracking()
+                .Where(d => d.HookId == hook.Id && d.DeliveryKey == deliveryKey
+                    && d.Status == "accepted")
+                .Select(d => d.RunId)
+                .FirstOrDefaultAsync(ct);
+            if (prevRunId is not null)
+            {
+                return Results.Accepted(value: new AutomationHookFireResponse(
+                    prevRunId, hook.ChatId, "duplicate"));
+            }
+        }
+
+        // Assinatura: hook com secret exige X-Hub-Signature-256 válida;
+        // sem secret aceita (legado) com warning de auditoria.
+        string? securityWarning = null;
+        if (hook.Secret is { Length: > 0 } secret)
+        {
+            var sig = http.Request.Headers["X-Hub-Signature-256"].ToString();
+            if (!WebhookSignature.Verify(secret, raw, sig))
+            {
+                await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
+                    "rejected", null, "assinatura ausente/inválida", null, ct);
+                return Results.Json(
+                    new { detail = "assinatura inválida." }, statusCode: 401);
+            }
+        }
+        else
+        {
+            securityWarning = "unsigned — hook legado sem secret";
+        }
+
+        // Filtro de eventos (RF-D1): lista vazia/ausente aceita tudo;
+        // evento conhecido fora da lista é registrado e filtrado.
+        var filter = ParseFilter(hook.EventsJson);
+        if (filter.Count > 0 && eventType is not null
+            && !filter.Contains(eventType, StringComparer.OrdinalIgnoreCase))
+        {
+            await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
+                "filtered", null, null, securityWarning, ct);
+            return Results.Ok(new { status = "filtered", eventType });
+        }
+
+        // Prompt: template {{path}} sobre o payload, ou o parse legado.
+        string? content;
+        string? modelOverride = null;
+        if (!string.IsNullOrWhiteSpace(hook.PromptTemplate))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(
+                    string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+                content = WebhookPromptTemplate.Render(
+                    hook.PromptTemplate, doc.RootElement);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new
+                {
+                    detail = "corpo não é JSON válido — exigido pelo promptTemplate do hook.",
+                });
+            }
+            catch (WebhookTemplateException tex)
+            {
+                await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
+                    "rejected", null, tex.Message, securityWarning, ct);
+                return Results.UnprocessableEntity(
+                    new { detail = $"template: {tex.Message}" });
+            }
+        }
+        else
+        {
+            (content, modelOverride) = ReadPrompt(raw);
+        }
+
         if (string.IsNullOrWhiteSpace(content))
         {
-            return Results.BadRequest(new { detail = "corpo vazio — envie prompt ou payload JSON." });
+            return Results.BadRequest(
+                new { detail = "corpo vazio — envie prompt ou payload JSON." });
         }
 
         var model = modelOverride ?? FirstModel(hook.Chat.ModelsJson);
@@ -171,6 +341,27 @@ public static class AutomationHookEndpoints
                 detail = "sem modelo: configure um modelo no chat vinculado "
                          + "ou envie 'model' no corpo do webhook.",
             });
+        }
+
+        // Binding de repo (RF-D2): vincula na primeira entrega do hook —
+        // worktree exclusivo do chat; falha vira delivery "failed".
+        if (hook.RepoSlug is { Length: > 0 } slug
+            && await repos.GetChatBindingAsync(hook.ChatId, ct) is null)
+        {
+            var (binding, bindError) = await repos.OpenChatAsync(
+                hook.UserId, hook.ChatId, slug, "main",
+                $"https://github.com/{slug}.git", null, ct);
+            if (bindError is not null)
+            {
+                await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
+                    "failed", null, $"repo: {bindError}", securityWarning, ct);
+                return Results.UnprocessableEntity(
+                    new { detail = $"repo: {bindError}" });
+            }
+        }
+        if (hook.AgentMode is { Length: > 0 } mode)
+        {
+            hook.Chat.Mode = mode;
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -189,6 +380,18 @@ public static class AutomationHookEndpoints
             leafId = null;
         }
         leafId ??= leaf?.Id;
+
+        // Persona do hook (RF-D2): Skill ativa vira system message da run.
+        string? personaPrompt = null;
+        if (hook.PersonaId is { Length: > 0 } personaSlug)
+        {
+            personaPrompt = await db.Skills.AsNoTracking()
+                .Where(s => s.UserId == hook.UserId && s.IsActive
+                    && (s.Name == personaSlug || s.Id == personaSlug))
+                .Select(s => s.Content)
+                .FirstOrDefaultAsync(ct);
+        }
+
         var message = new ChatMessage
         {
             ChatId = hook.ChatId,
@@ -209,7 +412,12 @@ public static class AutomationHookEndpoints
             RequestJson = JsonSerializer.Serialize(
                 new ChatCompletionRequest(
                     model,
-                    [new ChatCompletionMessage("user", content)],
+                    [
+                        .. personaPrompt is null
+                            ? Array.Empty<ChatCompletionMessage>()
+                            : new[] { new ChatCompletionMessage("system", personaPrompt) },
+                        new ChatCompletionMessage("user", content),
+                    ],
                     Stream: true),
                 JsonOptions),
             CreatedAt = now,
@@ -218,21 +426,64 @@ public static class AutomationHookEndpoints
         hook.Chat.UpdatedAt = now;
         hook.LastFiredAt = now;
         await db.SaveChangesAsync(ct);
+        await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
+            "accepted", run.Id, null, securityWarning, ct);
 
         dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: new AutomationHookFireResponse(
             run.Id, hook.ChatId, ChatRunStatus.Queued));
     }
 
-    /// <summary>
-    /// Lê o corpo do webhook: JSON com <c>prompt</c>/<c>payload</c>/<c>model</c>
-    /// opcionais, JSON genérico (vira bloco de código) ou texto puro.
-    /// </summary>
-    private static async Task<(string? Content, string? Model)> ReadPromptAsync(
-        HttpRequest request, CancellationToken ct)
+    /// <summary>Persiste a linha de auditoria da entrega (RF-D2).</summary>
+    private static async Task RecordDeliveryAsync(
+        AppDbContext db, AutomationHook hook, string? deliveryKey,
+        string? eventType, string status, string? runId, string? error,
+        string? securityWarning, CancellationToken ct)
     {
-        using var reader = new StreamReader(request.Body);
-        var raw = await reader.ReadToEndAsync(ct);
+        db.AutomationHookDeliveries.Add(new AutomationHookDelivery
+        {
+            HookId = hook.Id,
+            DeliveryKey = deliveryKey,
+            EventType = eventType,
+            ReceivedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Status = status,
+            RunId = runId,
+            Error = error is { Length: > 500 } ? error[..500] : error,
+            SecurityWarning = securityWarning,
+        });
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static HashSet<string> ParseFilter(string? eventsJson)
+    {
+        if (string.IsNullOrWhiteSpace(eventsJson))
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+        try
+        {
+            var list = JsonSerializer.Deserialize<List<string>>(
+                eventsJson, JsonOptions);
+            return list is null
+                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(list, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static string? OrNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>
+    /// Interpreta o corpo do webhook (legado v1): JSON com
+    /// <c>prompt</c>/<c>payload</c>/<c>model</c> opcionais, JSON genérico
+    /// (vira bloco de código) ou texto puro.
+    /// </summary>
+    private static (string? Content, string? Model) ReadPrompt(string raw)
+    {
         if (raw.Length > MaxPromptChars * 4)
         {
             raw = raw[..(MaxPromptChars * 4)];
