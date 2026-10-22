@@ -408,6 +408,222 @@ public class HarnessSeamsTests
     private static BuiltinToolContext ToolCtx(string chatId) =>
         new("u1", chatId, "run1", "/tmp", "/tmp");
 
+    // ---------- TeamService: resolução por cadeia de parents ----------
+
+    [Test]
+    public async Task Interceptor_PreStep_Rewrite_Substitui_Messages()
+    {
+        var rewrite = new PreStepRewriteInterceptor(
+            [new ChatCompletionMessage("system", "reescrito")]);
+        var runner = Runner(rewrite);
+        var ctx = new PreStepContext("r1", "c1", "u1", 1,
+            [new ChatCompletionMessage("user", "original")]);
+
+        var outcome = await runner.RunPreStepAsync(ctx, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome.Rejected, Is.False);
+            Assert.That(outcome.Messages.Single().Content,
+                Is.EqualTo("reescrito"));
+        });
+    }
+
+    private sealed class PreStepRewriteInterceptor(
+        IReadOnlyList<ChatCompletionMessage> messages) : IRunInterceptor
+    {
+        public int Order => 0;
+        public Task<PreStepDecision> OnPreStepAsync(
+            PreStepContext ctx, CancellationToken ct) =>
+            Task.FromResult(PreStepDecision.Rewrite(messages));
+    }
+
+    [Test]
+    public async Task TeamResolve_SemColuna_Sobe_Cadeia_Parent_Ate_Raiz()
+    {
+        using var db = NewDb();
+        await SeedUserAsync(db, "u1");
+        var root = NewChat("u1");
+        db.Chats.Add(root);
+        await db.SaveChangesAsync();
+        // Raiz auto-referenciada como team (modelo legado sem TeamId nos filhos).
+        root.TeamId = root.Id;
+        root.TeamRole = "leader";
+        var mid = NewChat("u1", parent: root.Id);
+        var leaf = NewChat("u1", parent: mid.Id);
+        db.Chats.AddRange(mid, leaf);
+        await db.SaveChangesAsync();
+
+        var resolved = await TeamService.ResolveTeamIdAsync(
+            db, leaf.Id, CancellationToken.None);
+        Assert.That(resolved, Is.EqualTo(root.Id));
+
+        var rootId = await TeamService.RootChatIdAsync(
+            db, leaf, CancellationToken.None);
+        Assert.That(rootId, Is.EqualTo(root.Id));
+    }
+
+    [Test]
+    public async Task TeamResolve_Chat_Orfa_Null_E_Parent_Quebrado_Null()
+    {
+        using var db = NewDb();
+        await SeedUserAsync(db, "u1");
+        var solo = NewChat("u1");
+        db.Chats.Add(solo);
+        await db.SaveChangesAsync();
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await TeamService.ResolveTeamIdAsync(
+                db, "chat-inexistente", CancellationToken.None), Is.Null);
+            Assert.That(await TeamService.ResolveTeamIdAsync(
+                db, solo.Id, CancellationToken.None), Is.Null);
+        });
+
+        // Parent apontando pra chat deletado → null (não é team).
+        var orphan = NewChat("u1", parent: "pai-deletado");
+        db.Chats.Add(orphan);
+        await db.SaveChangesAsync();
+        Assert.That(await TeamService.ResolveTeamIdAsync(
+            db, orphan.Id, CancellationToken.None), Is.Null);
+    }
+
+    [Test]
+    public async Task TeamStatus_Roster_Runs_Tasks_Completos()
+    {
+        using var db = NewDb();
+        var (root, member) = await SeedTeamAsync(db);
+        db.TeamTasks.Add(new TeamTask
+        {
+            TeamId = root.TeamId!,
+            Title = "investigar bug",
+            Status = "pending",
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        db.ChatRuns.Add(new ChatRun
+        {
+            ChatId = member.Id,
+            UserId = "u1",
+            Model = "m",
+            Status = ChatRunStatus.Running,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        await db.SaveChangesAsync();
+
+        var status = await TeamService.BuildStatusAsync(
+            db, root.TeamId!, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.Not.Null);
+            Assert.That(status!.Members.Count, Is.EqualTo(2));
+            Assert.That(status.Tasks.Count, Is.EqualTo(1));
+            Assert.That(status.Members.Count(m => m.ActiveRunId is not null),
+                Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task TeamTask_PathsDeErro_ClaimDuplo_TaskInexistente_StatusInvalido()
+    {
+        using var db = NewDb();
+        var (root, _) = await SeedTeamAsync(db);
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamTaskBuiltinTool(Scopes());
+        var ctx = ToolCtx(root.Id);
+
+        // task_id inexistente.
+        var miss = await tool.ExecuteAsync(
+            Args("""{"op":"claim","task_id":"zzz"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(miss.Text, Does.Contain("não existe"));
+
+        // claim duplo: outra tarefa claimada por outro membro não re-claima.
+        var created = await tool.ExecuteAsync(
+            Args("""{"op":"create","title":"t1"}"""),
+            ctx, CancellationToken.None);
+        var task = await db.TeamTasks.SingleAsync();
+        await tool.ExecuteAsync(
+            Args($$"""{"op":"claim","task_id":"{{task.Id}}"}"""),
+            ctx, CancellationToken.None);
+        var again = await tool.ExecuteAsync(
+            Args($$"""{"op":"claim","task_id":"{{task.Id}}"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(again.Text, Does.Contain("já claimada"));
+
+        // update com status inválido.
+        var bad = await tool.ExecuteAsync(
+            Args($$"""{"op":"update","task_id":"{{task.Id}}","status":"x"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(bad.Text, Does.Contain("pending|in_progress|done"));
+
+        // op desconhecida.
+        var op = await tool.ExecuteAsync(
+            Args("""{"op":"explode"}"""), ctx, CancellationToken.None);
+        Assert.That(op.Text, Does.Contain("list|create|claim|update|complete"));
+    }
+
+    [Test]
+    public async Task TeamMessage_E_TeamTask_SemTeam_FailClosed()
+    {
+        using var db = NewDb();
+        await SeedUserAsync(db, "u1");
+        var solo = NewChat("u1");
+        db.Chats.Add(solo);
+        await db.SaveChangesAsync();
+
+        var taskTool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamTaskBuiltinTool(Scopes());
+        var msgTool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamMessageBuiltinTool(Scopes());
+        var statusTool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamStatusBuiltinTool(Scopes());
+        var ctx = ToolCtx(solo.Id);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That((await taskTool.ExecuteAsync(
+                Args("""{"op":"list"}"""), ctx, CancellationToken.None)).Text,
+                Does.Contain("não pertence"));
+            Assert.That((await msgTool.ExecuteAsync(
+                Args("""{"to_chat_id":"x","message":"y"}"""),
+                ctx, CancellationToken.None)).Text,
+                Does.Contain("não pertence"));
+            Assert.That((await statusTool.ExecuteAsync(
+                Args("{}"), ctx, CancellationToken.None)).Text,
+                Does.Contain("não pertence"));
+        });
+    }
+
+    [Test]
+    public async Task TeamMessage_AlvoInvalido_SelfOuForaDoTeam()
+    {
+        using var db = NewDb();
+        var (root, member) = await SeedTeamAsync(db);
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamMessageBuiltinTool(Scopes());
+        var ctx = ToolCtx(root.Id);
+
+        // Args obrigatórios.
+        var missing = await tool.ExecuteAsync(
+            Args("""{"to_chat_id":""}"""), ctx, CancellationToken.None);
+        Assert.That(missing.Text, Does.Contain("obrigatórios"));
+
+        // Self.
+        var self = await tool.ExecuteAsync(
+            Args($$"""{"to_chat_id":"{{root.Id}}","message":"oi"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(self.Text, Does.Contain("outro membro"));
+
+        // Fora do team.
+        var outsider = NewChat("u1");
+        db.Chats.Add(outsider);
+        await db.SaveChangesAsync();
+        var outr = await tool.ExecuteAsync(
+            Args($$"""{"to_chat_id":"{{outsider.Id}}","message":"oi"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(outr.Text, Does.Contain("não é membro"));
+    }
+
     [Test]
     public async Task TeamTask_Ciclo_Completo_Create_Claim_Complete()
     {
@@ -588,6 +804,66 @@ public class HarnessSeamsTests
             new AgentRunEvent("r1", "c1", "u1", "run.started", "{}"),
             CancellationToken.None);
         Assert.That(seen, Is.EqualTo(new[] { "run.started" }));
+    }
+
+    [Test]
+    public async Task Bus_Observer_Lento_Timeout_Nao_Bloqueia_Os_Demais()
+    {
+        var seen = new List<string>();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["interceptors.timeout_ms"] = "100",
+            }).Build();
+        var bus = new AgentRunEventBus(
+            [new SlowObserver(), new RecordingObserver(seen)],
+            config,
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<AgentRunEventBus>.Instance);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await bus.PublishAsync(
+            new AgentRunEvent("r1", "c1", "u1", "run.started", "{}"),
+            CancellationToken.None);
+        sw.Stop();
+        Assert.Multiple(() =>
+        {
+            Assert.That(seen, Is.EqualTo(new[] { "run.started" }));
+            Assert.That(sw.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
+        });
+    }
+
+    private sealed class SlowObserver : IAgentRunObserver
+    {
+        public Task OnRunEventAsync(AgentRunEvent e, CancellationToken ct) =>
+            Task.Delay(TimeSpan.FromSeconds(30), ct);
+    }
+
+    [Test]
+    public async Task Interceptor_ToolCall_Lento_Timeout_Veta()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["interceptors.timeout_ms"] = "100",
+            }).Build();
+        var runner = new RunInterceptorRunner(
+            [new HangingInterceptor()], config,
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<RunInterceptorRunner>.Instance);
+        var outcome = await runner.RunToolCallAsync(
+            Ctx(), CancellationToken.None);
+        Assert.That(outcome.Vetoed, Is.True);
+    }
+
+    private sealed class HangingInterceptor : IRunInterceptor
+    {
+        public int Order => 0;
+        public async Task<ToolCallDecision> OnToolCallAsync(
+            ToolCallContext ctx, CancellationToken ct)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            return ToolCallDecision.Pass;
+        }
     }
 
     // ---------- RF-C1: validação de args do headless ----------

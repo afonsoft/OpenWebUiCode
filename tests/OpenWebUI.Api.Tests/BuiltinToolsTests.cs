@@ -1216,6 +1216,156 @@ public class BuiltinToolsTests
         });
     }
 
+    // ---------------- delegate_task team/resume (SPEC-20261021-harness-seams RF-E1) ----------------
+
+    private void SeedParentChatRun()
+    {
+        using var seedDb = NewDb();
+        // u1/c1 já existem (seed do SetUp) — só a run pai falta.
+        seedDb.ChatRuns.Add(new ChatRun
+        {
+            Id = "r1", ChatId = "c1", UserId = "u1", Model = "m/x",
+            Status = ChatRunStatus.Running,
+            RequestJson = JsonSerializer.Serialize(
+                new ChatCompletionRequest("m/x",
+                    [new ChatCompletionMessage("user", "delegue")],
+                    Stream: true, ToolIds: ["builtin:delegate_task"])),
+            CreatedAt = 1,
+        });
+        seedDb.SaveChanges();
+    }
+
+    private DelegateTaskBuiltinTool NovaDelegateTool() =>
+        new(_provider.GetRequiredService<IServiceScopeFactory>(),
+            _fakeDispatcher);
+
+    [Test]
+    public async Task Delegate_TeamTrue_RaizViraLeader_E_FilhoMember()
+    {
+        SeedParentChatRun();
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"x","wait":false,"team":true}"""),
+            Ctx(), default);
+
+        Assert.That(res.Refused, Is.False, res.Text);
+        Assert.That(_fakeDispatcher.Enqueued, Has.Count.EqualTo(1));
+
+        using var db = NewDb();
+        var root = db.Chats.Find("c1")!;
+        var child = db.Chats.Single(c => c.ParentChatId == "c1");
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.TeamId, Is.EqualTo("c1"));
+            Assert.That(root.TeamRole, Is.EqualTo("leader"));
+            Assert.That(child.TeamId, Is.EqualTo("c1"));
+            Assert.That(child.TeamRole, Is.EqualTo("member"));
+        });
+    }
+
+    [Test]
+    public async Task Delegate_ResumeChatId_ReusaChatExistente()
+    {
+        SeedParentChatRun();
+        using (var seedDb = NewDb())
+        {
+            seedDb.Chats.Add(new Chat
+            {
+                Id = "alvo", UserId = "u1", Title = "membro",
+                CreatedAt = 1, UpdatedAt = 1,
+            });
+            seedDb.SaveChanges();
+        }
+
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"continue","wait":false,"resume_chat_id":"alvo"}"""),
+            Ctx(), default);
+
+        Assert.That(res.Refused, Is.False, res.Text);
+        Assert.That(_fakeDispatcher.Enqueued, Has.Count.EqualTo(1));
+
+        using var db = NewDb();
+        var target = db.Chats.Include(c => c.Messages)
+            .Single(c => c.Id == "alvo");
+        var run = db.ChatRuns.Single(r =>
+            _fakeDispatcher.Enqueued.Contains(r.Id));
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.ChatId, Is.EqualTo("alvo"));
+            Assert.That(target.Messages.Any(
+                m => m.Role == "user" && m.Content.Contains("continue")),
+                Is.True);
+        });
+    }
+
+    [Test]
+    public async Task Delegate_ResumeChatId_JoinsTeam_QuandoTeamTrue()
+    {
+        SeedParentChatRun();
+        using (var seedDb = NewDb())
+        {
+            seedDb.Chats.Add(new Chat
+            {
+                Id = "alvo2", UserId = "u1", Title = "membro",
+                CreatedAt = 1, UpdatedAt = 1,
+            });
+            seedDb.SaveChanges();
+        }
+
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"x","wait":false,"resume_chat_id":"alvo2","team":true}"""),
+            Ctx(), default);
+
+        Assert.That(res.Refused, Is.False, res.Text);
+        using var db = NewDb();
+        Assert.Multiple(() =>
+        {
+            Assert.That(db.Chats.Find("c1")!.TeamId, Is.EqualTo("c1"));
+            Assert.That(db.Chats.Find("alvo2")!.TeamId, Is.EqualTo("c1"));
+            Assert.That(db.Chats.Find("alvo2")!.TeamRole, Is.EqualTo("member"));
+        });
+    }
+
+    [Test]
+    public async Task Delegate_ResumeChatId_Invalidos_RetornamErro_SemEnfileirar()
+    {
+        SeedParentChatRun();
+        var tool = NovaDelegateTool();
+
+        // Próprio chat.
+        var self = await tool.ExecuteAsync(
+            Args("""{"prompt":"x","wait":false,"resume_chat_id":"c1"}"""),
+            Ctx(), default);
+        Assert.That(self.Text, Does.Contain("próprio chat"));
+
+        // Inexistente.
+        var missing = await tool.ExecuteAsync(
+            Args("""{"prompt":"x","wait":false,"resume_chat_id":"zzz"}"""),
+            Ctx(), default);
+        Assert.That(missing.Text, Does.Contain("não encontrado"));
+
+        // Com run ativa.
+        using (var seedDb = NewDb())
+        {
+            seedDb.Chats.Add(new Chat
+            {
+                Id = "ocupado", UserId = "u1", Title = "t",
+                CreatedAt = 1, UpdatedAt = 1,
+            });
+            seedDb.ChatRuns.Add(new ChatRun
+            {
+                Id = "r-ocupada", ChatId = "ocupado", UserId = "u1",
+                Model = "m", Status = ChatRunStatus.Running,
+                RequestJson = "{}", CreatedAt = 1,
+            });
+            seedDb.SaveChanges();
+        }
+        var busy = await tool.ExecuteAsync(
+            Args("""{"prompt":"x","wait":false,"resume_chat_id":"ocupado"}"""),
+            Ctx(), default);
+        Assert.That(busy.Text, Does.Contain("run ativa"));
+        Assert.That(_fakeDispatcher.Enqueued, Is.Empty);
+    }
+
     // ---------------- worktree review (SPEC-20261010-worktree-review) ----------------
 
     private WorktreeService NovaWorktreeService() =>

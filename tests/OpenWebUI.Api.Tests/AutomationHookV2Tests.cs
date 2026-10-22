@@ -244,12 +244,193 @@ public class AutomationHookV2Tests
         Assert.That(depois!.Mode, Is.EqualTo("plan"));
     }
 
+    [Test]
+    public async Task Webhook_Delete_Remove_Hook_E_Deliveries_Lista_Vazia()
+    {
+        var auth = await SignUpAsync("D", "d@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat d", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "del", chat.Id));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "ping" });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+
+        UseToken(auth.Token);
+        var deliveries = await _client.GetFromJsonAsync<
+            List<AutomationHookDeliveryResponse>>(
+            $"/api/v1/hooks/{hook.Id}/deliveries");
+        Assert.That(deliveries!.Count, Is.EqualTo(1));
+
+        var del = await _client.DeleteAsync($"/api/v1/hooks/{hook.Id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var list = await _client.GetFromJsonAsync<
+            List<AutomationHookResponse>>("/api/v1/hooks");
+        Assert.That(list!.Any(h => h.Id == hook.Id), Is.False);
+
+        // Fire após delete → 404.
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire2 = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "ping" });
+        Assert.That(fire2.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Webhook_ListAsync_Expoe_Hooks_Do_Usuario()
+    {
+        var auth = await SignUpAsync(
+            "L", $"list-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat l", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "list", chat.Id, Provider: "github", Secret: "s3"));
+
+        var list = await _client.GetFromJsonAsync<
+            List<AutomationHookResponse>>("/api/v1/hooks");
+        var found = list!.FirstOrDefault(h => h.Id == hook.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(found, Is.Not.Null);
+            Assert.That(found!.Name, Is.EqualTo("list"));
+            Assert.That(found.Url, Does.Contain(hook.Id));
+        });
+    }
+
+    [Test]
+    public async Task Webhook_PayloadAcima_De256KB_413()
+    {
+        var auth = await SignUpAsync("P", $"p-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat p", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "big", chat.Id));
+
+        var body = "{\"data\":\"" + new string('x', 260 * 1024) + "\"}";
+        var res = await FireRawAsync(hook.Url, body, []);
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.RequestEntityTooLarge));
+    }
+
+    [Test]
+    public async Task Webhook_Legado_SemSecret_Aceita_Com_Warning_Auditado()
+    {
+        var auth = await SignUpAsync("U", $"u-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat u", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "legacy", chat.Id)); // sem secret — caminho legado
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "legado" });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+
+        UseToken(auth.Token);
+        var deliveries = await _client.GetFromJsonAsync<
+            List<AutomationHookDeliveryResponse>>(
+            $"/api/v1/hooks/{hook.Id}/deliveries");
+        Assert.That(deliveries![0].Status, Is.EqualTo("accepted"));
+    }
+
+    [Test]
+    public async Task Webhook_PromptTemplate_Renderiza_Path_Do_Payload()
+    {
+        var auth = await SignUpAsync("T", $"t-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat t", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "tpl", chat.Id,
+            PromptTemplate: "PR {{pull_request.title}} merged por {{sender.login}}"));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url, new
+        {
+            pull_request = new { title = "feat x" },
+            sender = new { login = "devin" },
+        });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
+            await fire.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task Webhook_RateLimit_SegundaChamada_429()
+    {
+        var auth = await SignUpAsync("R", $"rl-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat rl", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "rl hook", chat.Id));
+
+        // Liga o rate limit global com janela mínima.
+        UseToken((await SignInAsync("admin@hooksv2.local")).Token);
+        var cfg = await _client.PostAsJsonAsync("/api/v1/configs/ratelimit",
+            new RateLimitConfig(true, 1, 60, 5, 300));
+        Assert.That(cfg.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        try
+        {
+            _client.DefaultRequestHeaders.Authorization = null;
+            var first = await _client.PostAsJsonAsync(hook.Url,
+                new { prompt = "p1" });
+            var second = await _client.PostAsJsonAsync(hook.Url,
+                new { prompt = "p2" });
+            Assert.Multiple(() =>
+            {
+                Assert.That(first.StatusCode,
+                    Is.EqualTo(HttpStatusCode.Accepted));
+                Assert.That(second.StatusCode,
+                    Is.EqualTo(HttpStatusCode.TooManyRequests));
+            });
+        }
+        finally
+        {
+            UseToken((await SignInAsync("admin@hooksv2.local")).Token);
+            await _client.PostAsJsonAsync("/api/v1/configs/ratelimit",
+                new RateLimitConfig(false, 60, 60, 5, 300));
+        }
+    }
+
+    [Test]
+    public async Task Webhook_RepoSlug_SemBinding_Tenta_Vincular()
+    {
+        var auth = await SignUpAsync("B", $"rb-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat repo", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "repo hook", chat.Id, RepoSlug: "owner/repo-que-nao-existe"));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "vai" });
+        // Repo inacessível → binding falha → 422 + delivery "failed";
+        // cobre o ramo RepoSlug do FireAsync.
+        Assert.That(fire.StatusCode,
+            Is.EqualTo(HttpStatusCode.UnprocessableEntity),
+            await fire.Content.ReadAsStringAsync());
+
+        UseToken(auth.Token);
+        var deliveries = await _client.GetFromJsonAsync<
+            List<AutomationHookDeliveryResponse>>(
+            $"/api/v1/hooks/{hook.Id}/deliveries");
+        Assert.That(deliveries!.Single().Status, Is.EqualTo("failed"));
+    }
+
     // ---------------- helpers ----------------
 
     private async Task<AuthResponse> SignUpAsync(string name, string email)
     {
         var resp = await _client.PostAsJsonAsync("/api/v1/auths/signup",
             new SignUpRequest(name, email, "senha123"));
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await resp.Content.ReadAsStringAsync());
+        return (await resp.Content.ReadFromJsonAsync<AuthResponse>())!;
+    }
+
+    private async Task<AuthResponse> SignInAsync(string email)
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/auths/signin",
+            new SignInRequest(email, "senha123"));
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await resp.Content.ReadAsStringAsync());
         return (await resp.Content.ReadFromJsonAsync<AuthResponse>())!;

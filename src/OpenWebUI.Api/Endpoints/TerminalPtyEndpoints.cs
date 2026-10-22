@@ -519,14 +519,22 @@ public static class TerminalPtyEndpoints
         {
             using var doc = JsonDocument.Parse(text);
             var root = doc.RootElement;
-            switch (root.TryGetProperty("type", out var type) ? type.GetString() : null)
+            switch (root.TryGetProperty("type", out var type)
+                    && type.ValueKind is JsonValueKind.String
+                        ? type.GetString() : null)
             {
                 case "input" when root.TryGetProperty("data", out var data):
-                    rawInput = data.GetString() ?? string.Empty;
+                    rawInput = data.ValueKind is JsonValueKind.String
+                        ? data.GetString() ?? string.Empty
+                        : string.Empty;
                     return false;
                 case "resize":
-                    var cols = root.TryGetProperty("cols", out var c) && c.TryGetInt32(out var cv) ? cv : 120;
-                    var rows = root.TryGetProperty("rows", out var r) && r.TryGetInt32(out var rv) ? rv : 30;
+                    var cols = root.TryGetProperty("cols", out var c)
+                        && c.ValueKind is JsonValueKind.Number
+                        && c.TryGetInt32(out var cv) ? cv : 120;
+                    var rows = root.TryGetProperty("rows", out var r)
+                        && r.ValueKind is JsonValueKind.Number
+                        && r.TryGetInt32(out var rv) ? rv : 30;
                     _ = handle.ResizeAsync(cols, rows);
                     return true;
                 default:
