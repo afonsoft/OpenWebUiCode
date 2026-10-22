@@ -151,16 +151,16 @@ public class ToolStreamingTests
                         + "\"done\":true,\"prompt_eval_count\":10,\"eval_count\":5}"
                     // SPEC-20261016-question-forms: prompt "multi-form" dispara
                     // a forma questions[] (3 itens: single, multiple, livre).
-                    : body.Contains("builtin_ask_user", StringComparison.Ordinal)
-                        && body.Contains("multi-form", StringComparison.Ordinal)
+                    : body.Contains("multi-form", StringComparison.Ordinal)
+                        && body.Contains("\"name\":\"builtin_ask_user\"", StringComparison.Ordinal)
                         ? "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-q\",\"function\":{\"name\":\"builtin:ask_user\",\"arguments\":{\"questions\":[{\"question\":\"Qual env?\",\"header\":\"Ambiente\",\"options\":[{\"label\":\"dev\",\"description\":\"desenvolvimento\"},\"prod\"],\"required\":true},{\"question\":\"Quais regioes?\",\"options\":[\"a\",\"b\",\"c\"],\"multiple\":true,\"required\":false},{\"question\":\"Detalhes?\",\"required\":true}]}}}]}}"
-                    : body.Contains("builtin_ask_user", StringComparison.Ordinal)
+                    : body.Contains("\"name\":\"builtin_ask_user\"", StringComparison.Ordinal)
                         ? "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-q\",\"function\":{\"name\":\"builtin:ask_user\",\"arguments\":{\"question\":\"Qual env?\",\"options\":[\"dev\",\"prod\"]}}}]}}"
-                        : body.Contains("builtin_file_write", StringComparison.Ordinal)
+                        : body.Contains("\"name\":\"builtin_file_write\"", StringComparison.Ordinal)
                         ? "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-fw\",\"function\":{\"name\":\"builtin:file_write\",\"arguments\":{\"path\":\"saida.txt\",\"content\":\"gerado\"}}}]}}"
-                        : body.Contains("builtin_delegate_task", StringComparison.Ordinal)
+                        : body.Contains("\"name\":\"builtin_delegate_task\"", StringComparison.Ordinal)
                             ? "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-dl\",\"function\":{\"name\":\"builtin:delegate_task\",\"arguments\":{\"prompt\":\"resuma o arquivo\"}}}]}}"
-                            : body.Contains("builtin_browser_screenshot", StringComparison.Ordinal)
+                            : body.Contains("\"name\":\"builtin_browser_screenshot\"", StringComparison.Ordinal)
                                 ? $"{{\"message\":{{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{{\"id\":\"call-bs\",\"function\":{{\"name\":\"builtin:browser_screenshot\",\"arguments\":{{\"url\":\"{_mockBase}/api/tags\",\"width\":640,\"height\":480}}}}}}]}}}}"
                                 : "{\"message\":{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call-1\",\"function\":{\"name\":\"eco\",\"arguments\":{\"texto\":\"oi\"}}}]}}";
             }
