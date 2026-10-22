@@ -548,6 +548,7 @@ static void MapPlatformEndpoints(WebApplication app)
     app.MapTerminalPtyEndpoints();
     app.MapBrowserToolEndpoints();
     app.MapTerminalWebSocket();
+    app.MapTerminalMultiplexWebSocket();
     app.MapScimEndpoints();
     app.MapSamlEndpoints();
     app.MapPluginEndpoints();

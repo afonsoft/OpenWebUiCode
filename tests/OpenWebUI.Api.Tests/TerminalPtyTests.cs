@@ -519,6 +519,94 @@ public class TerminalPtyTests
         await _client.DeleteAsync($"/api/v1/terminal/sessions/{id}");
     }
 
+    /// <summary>SPEC-20261022 RF-A2: uma conexão WS multiplexa N sessões —
+    /// <c>sessions</c> inicial, <c>create</c>+attach automático, input
+    /// roteado por <c>sid</c>.</summary>
+    [Test]
+    public async Task Terminal_Multiplex_Uma_Conexao_N_Sessoes()
+    {
+        if (!File.Exists("/usr/bin/script"))
+        {
+            Assert.Ignore("binário 'script' indisponível neste host");
+        }
+
+        UseToken(_user.Token);
+        var wsClient = _factory.Server.CreateWebSocketClient();
+        var uri = new Uri(
+            $"http://localhost/ws/terminal?access_token={_user.Token}");
+        using var ws = await wsClient.ConnectAsync(uri, CancellationToken.None);
+
+        var buffer = new byte[8192];
+        async Task<JsonDocument> NextAsync()
+        {
+            var result = await ws.ReceiveAsync(buffer, CancellationToken.None);
+            return JsonDocument.Parse(
+                Encoding.UTF8.GetString(buffer, 0, result.Count));
+        }
+
+        // 1) Frame inicial lista as sessões do usuário.
+        using var hello = await NextAsync();
+        Assert.That(hello.RootElement.GetProperty("type").GetString(),
+            Is.EqualTo("sessions"));
+
+        // 2) create + attach automático → {type:"created", sid}.
+        var marker = $"mux{Guid.NewGuid():N}"[..12];
+        await ws.SendAsync(
+            Encoding.UTF8.GetBytes(
+                """{"type":"create","cols":80,"rows":24}"""),
+            WebSocketMessageType.Text, true, CancellationToken.None);
+
+        string? sid = null;
+        var echoed = new StringBuilder();
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        var sentInput = false;
+        while (DateTime.UtcNow < deadline
+               && (sid is null || !echoed.ToString().Contains(marker)))
+        {
+            using var frame = await NextAsync();
+            var root = frame.RootElement;
+            var type = root.GetProperty("type").GetString();
+            if (type == "created")
+            {
+                sid = root.GetProperty("sid").GetString()!;
+            }
+            else if (type == "output" && sid is not null
+                     && root.GetProperty("sid").GetString() == sid)
+            {
+                echoed.Append(root.GetProperty("data").GetString());
+            }
+            if (sid is not null && !sentInput)
+            {
+                sentInput = true;
+                await ws.SendAsync(
+                    Encoding.UTF8.GetBytes(
+                        $$"""{"type":"input","sid":"{{sid}}","data":"echo {{marker}}\n"}"""),
+                    WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(sid, Is.Not.Null);
+            Assert.That(echoed.ToString(), Does.Contain(marker));
+        });
+
+        if (sid is not null)
+        {
+            await ws.SendAsync(
+                Encoding.UTF8.GetBytes(
+                    $$"""{"type":"kill","sid":"{{sid}}"}"""),
+                WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+        try
+        {
+            await ws.CloseAsync(
+                WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+        }
+        catch (IOException) { }
+        catch (WebSocketException) { }
+    }
+
     private static async Task SpinWaitAsync(Func<bool> condition, int timeoutMs)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);

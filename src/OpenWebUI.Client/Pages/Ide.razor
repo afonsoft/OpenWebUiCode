@@ -131,7 +131,7 @@ else
                          data-ide-axis="y" data-ide-grow="reverse" data-ide-min="120" data-ide-max="600"
                          role="separator" aria-orientation="horizontal" aria-hidden="true"></div>
                     <section id="ide-bottom" style="height:@(_bottomH)px" class="shrink-0">
-                        <IdeBottomPanel @ref="_bottomPanel" Jobs="_jobs" Problems="_problems"
+                        <IdeBottomPanel @ref="_bottomPanel" Jobs="_jobs" Problems="_problems" ChatId="@ChatId"
                                         OnClose="() => _bottomOpen = false"
                                         OnProblemClick="OnProblemClickAsync" OnChanged="RefreshSideAsync" />
                     </section>

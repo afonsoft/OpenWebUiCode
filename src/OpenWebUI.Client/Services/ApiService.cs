@@ -839,15 +839,24 @@ public class ApiService(HttpClient http, AuthService auth)
     }
 
     /// <summary>Lista as sessões de terminal PTY do usuário.</summary>
-    public async Task<List<TerminalSessionInfoResponse>> GetTerminalSessionsAsync() =>
+    public async Task<List<TerminalSessionInfoResponse>> GetTerminalSessionsAsync(
+        string? chatId = null) =>
         await SendAsync<List<TerminalSessionInfoResponse>>(
-            HttpMethod.Get, "/api/v1/terminal/sessions") ?? [];
+            HttpMethod.Get,
+            chatId is null
+                ? "/api/v1/terminal/sessions"
+                : $"/api/v1/terminal/sessions?chatId={Uri.EscapeDataString(chatId)}")
+        ?? [];
 
-    /// <summary>Cria uma sessão de terminal PTY; devolve o id ou null.</summary>
-    public async Task<string?> CreateTerminalSessionAsync(int cols = 120, int rows = 30)
+    /// <summary>Cria uma sessão de terminal PTY — bindada ao chat quando
+    /// <paramref name="chatId"/> é informado (SPEC-20261022); devolve o id
+    /// ou null.</summary>
+    public async Task<string?> CreateTerminalSessionAsync(
+        int cols = 120, int rows = 30, string? chatId = null)
     {
         var node = await SendAsync<JsonObject>(
-            HttpMethod.Post, "/api/v1/terminal/sessions", new { cols, rows });
+            HttpMethod.Post, "/api/v1/terminal/sessions",
+            new { cols, rows, chatId });
         return node?["id"]?.GetValue<string>();
     }
 
