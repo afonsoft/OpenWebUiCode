@@ -354,12 +354,83 @@ public class AutomationHookV2Tests
             await fire.Content.ReadAsStringAsync());
     }
 
+    [Test]
+    public async Task Webhook_RateLimit_SegundaChamada_429()
+    {
+        var auth = await SignUpAsync("R", $"rl-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat rl", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "rl hook", chat.Id));
+
+        // Liga o rate limit global com janela mínima.
+        UseToken((await SignInAsync("admin@hooksv2.local")).Token);
+        var cfg = await _client.PostAsJsonAsync("/api/v1/configs/ratelimit",
+            new RateLimitConfig(true, 1, 60, 5, 300));
+        Assert.That(cfg.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        try
+        {
+            _client.DefaultRequestHeaders.Authorization = null;
+            var first = await _client.PostAsJsonAsync(hook.Url,
+                new { prompt = "p1" });
+            var second = await _client.PostAsJsonAsync(hook.Url,
+                new { prompt = "p2" });
+            Assert.Multiple(() =>
+            {
+                Assert.That(first.StatusCode,
+                    Is.EqualTo(HttpStatusCode.Accepted));
+                Assert.That(second.StatusCode,
+                    Is.EqualTo(HttpStatusCode.TooManyRequests));
+            });
+        }
+        finally
+        {
+            UseToken((await SignInAsync("admin@hooksv2.local")).Token);
+            await _client.PostAsJsonAsync("/api/v1/configs/ratelimit",
+                new RateLimitConfig(false, 60, 60, 5, 300));
+        }
+    }
+
+    [Test]
+    public async Task Webhook_RepoSlug_SemBinding_Tenta_Vincular()
+    {
+        var auth = await SignUpAsync("B", $"rb-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat repo", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "repo hook", chat.Id, RepoSlug: "owner/repo-que-nao-existe"));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "vai" });
+        // Repo inacessível → binding falha → 422 + delivery "failed";
+        // cobre o ramo RepoSlug do FireAsync.
+        Assert.That(fire.StatusCode,
+            Is.EqualTo(HttpStatusCode.UnprocessableEntity),
+            await fire.Content.ReadAsStringAsync());
+
+        UseToken(auth.Token);
+        var deliveries = await _client.GetFromJsonAsync<
+            List<AutomationHookDeliveryResponse>>(
+            $"/api/v1/hooks/{hook.Id}/deliveries");
+        Assert.That(deliveries!.Single().Status, Is.EqualTo("failed"));
+    }
+
     // ---------------- helpers ----------------
 
     private async Task<AuthResponse> SignUpAsync(string name, string email)
     {
         var resp = await _client.PostAsJsonAsync("/api/v1/auths/signup",
             new SignUpRequest(name, email, "senha123"));
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await resp.Content.ReadAsStringAsync());
+        return (await resp.Content.ReadFromJsonAsync<AuthResponse>())!;
+    }
+
+    private async Task<AuthResponse> SignInAsync(string email)
+    {
+        var resp = await _client.PostAsJsonAsync("/api/v1/auths/signin",
+            new SignInRequest(email, "senha123"));
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await resp.Content.ReadAsStringAsync());
         return (await resp.Content.ReadFromJsonAsync<AuthResponse>())!;

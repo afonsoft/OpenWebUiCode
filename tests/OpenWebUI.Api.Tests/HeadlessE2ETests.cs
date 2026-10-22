@@ -109,6 +109,38 @@ public class HeadlessE2ETests
     }
 
     [Test]
+    public async Task Headless_ChatId_ModelsJson_Corrompido_Exit2()
+    {
+        var email = $"headless-{Guid.NewGuid():N}@local";
+        await _client.PostAsJsonAsync("/api/v1/auths/signup",
+            new { name = "H3", email, password = "senha123" });
+
+        // Chat com ModelsJson corrompido direto no banco — cobre o catch
+        // de FirstModel (JsonException → null → "sem modelo" → exit 2).
+        var userId = email; // placeholder — resolve abaixo
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider
+                .GetRequiredService<AppDbContext>();
+            var user = await db.Users.SingleAsync(u => u.Email == email);
+            db.Chats.Add(new OpenWebUI.Domain.Chat
+            {
+                Id = "chat-badmodels", UserId = user.Id,
+                Title = "bad", ModelsJson = "isto-não-é-json{{{",
+                CreatedAt = 1, UpdatedAt = 1,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var code = await OpenWebUI.Api.Headless.HeadlessRunner.RunAsync(
+            _factory.Services,
+            ["--headless", "--user-email", email,
+             "--prompt", "oi", "--chat-id", "chat-badmodels"],
+            CancellationToken.None);
+        Assert.That(code, Is.EqualTo(2));
+    }
+
+    [Test]
     public async Task Headless_ChatId_Inexistente_Exit2()
     {
         var email = $"headless-{Guid.NewGuid():N}@local";

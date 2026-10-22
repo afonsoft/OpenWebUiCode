@@ -411,6 +411,33 @@ public class HarnessSeamsTests
     // ---------- TeamService: resolução por cadeia de parents ----------
 
     [Test]
+    public async Task Interceptor_PreStep_Rewrite_Substitui_Messages()
+    {
+        var rewrite = new PreStepRewriteInterceptor(
+            [new ChatCompletionMessage("system", "reescrito")]);
+        var runner = Runner(rewrite);
+        var ctx = new PreStepContext("r1", "c1", "u1", 1,
+            [new ChatCompletionMessage("user", "original")]);
+
+        var outcome = await runner.RunPreStepAsync(ctx, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome.Rejected, Is.False);
+            Assert.That(outcome.Messages.Single().Content,
+                Is.EqualTo("reescrito"));
+        });
+    }
+
+    private sealed class PreStepRewriteInterceptor(
+        IReadOnlyList<ChatCompletionMessage> messages) : IRunInterceptor
+    {
+        public int Order => 0;
+        public Task<PreStepDecision> OnPreStepAsync(
+            PreStepContext ctx, CancellationToken ct) =>
+            Task.FromResult(PreStepDecision.Rewrite(messages));
+    }
+
+    [Test]
     public async Task TeamResolve_SemColuna_Sobe_Cadeia_Parent_Ate_Raiz()
     {
         using var db = NewDb();

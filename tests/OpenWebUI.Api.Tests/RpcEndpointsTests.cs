@@ -196,4 +196,17 @@ public class RpcEndpointsTests
             .GetProperty("status").GetString();
         Assert.That(status, Is.Not.Null.And.Not.Empty);
     }
+
+    [Test]
+    public async Task Rpc_RunsStart_ChatInexistente_Mapeia_ErroHttp()
+    {
+        var auth = await SignUpAsync("X", "x@rpc.local");
+        UseToken(auth.Token);
+        // ChatId que não existe → enqueue devolve HTTP 4xx → ramo
+        // IStatusCodeHttpResult >= 400 vira erro de domínio -32000.
+        var resp = await CallAsync(_client, "runs.start",
+            new { chatId = "nao-existe", prompt = "oi", model = "m" });
+        var err = resp.GetProperty("error");
+        Assert.That(err.GetProperty("code").GetInt32(), Is.EqualTo(-32000));
+    }
 }
