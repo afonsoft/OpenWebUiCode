@@ -9,8 +9,8 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-sdd-orchestrator-prompts` |
-| Ticket | — |
-| Status | `Draft` |
+| Ticket | [#491](https://github.com/afonsoft/open-webui/issues/491) |
+| Status | `Approved` |
 | Parent | `SPEC-20261022-ade-surfaces` (merged as PR #489) — benchmark [afonsoft/skills](https://github.com/afonsoft/skills) (`write-specs`, `execute-specs`, `orchestrator`, `gap-analysis`, `create-issues`); direção: **AI Orchestrator** + **AI-Driven Development (ADD)** com foco em **Spec-Driven Development (SDD)** |
 
 ## 1. User Story
