@@ -75,8 +75,34 @@ public sealed record AutomationHookResponse(
     long? LastFiredAt,
     string Url);
 
-/// <summary>Criação de webhook de automação; ChatId nulo cria um chat novo.</summary>
-public sealed record AutomationHookCreateRequest(string Name, string? ChatId);
+/// <summary>
+/// Criação de webhook de automação; ChatId nulo cria um chat novo.
+/// Campos v2 (SPEC-20261021-harness-seams RF-D1): <c>Secret</c> liga a
+/// verificação HMAC-SHA256; <c>Provider</c> = generic|github;
+/// <c>Events</c> = filtro de tipos de evento; <c>PromptTemplate</c> =
+/// texto com placeholders <c>{{campo.path}}</c> do payload.
+/// </summary>
+public sealed record AutomationHookCreateRequest(
+    string Name,
+    string? ChatId,
+    string? Secret = null,
+    string? Provider = null,
+    string[]? Events = null,
+    string? PromptTemplate = null,
+    string? RepoSlug = null,
+    string? PersonaId = null,
+    string? AgentMode = null);
+
+/// <summary>Entrega registrada de um disparo de webhook (RF-D2).</summary>
+public sealed record AutomationHookDeliveryResponse(
+    string Id,
+    string? DeliveryKey,
+    string? EventType,
+    long ReceivedAt,
+    string Status,
+    string? RunId,
+    string? Error,
+    string? SecurityWarning);
 
 /// <summary>Resposta do disparo de webhook (run enfileirada).</summary>
 public sealed record AutomationHookFireResponse(string RunId, string ChatId, string Status);

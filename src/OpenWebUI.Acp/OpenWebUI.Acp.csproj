@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>open-webui-acp</AssemblyName>
+    <RootNamespace>OpenWebUI.Acp</RootNamespace>
+    <Description>ACP (Agent Client Protocol) stdio host for Open WebUI runs — SPEC-20261021-harness-seams RF-C3.</Description>
+  </PropertyGroup>
+
+</Project>

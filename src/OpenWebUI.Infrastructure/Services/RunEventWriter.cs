@@ -13,7 +13,10 @@ namespace OpenWebUI.Infrastructure.Services;
 /// e nunca derruba a run — a reconstrução tolera buracos (evento ausente =
 /// fato não recuperado).
 /// </summary>
-public sealed class RunEventWriter(AppDbContext db, ILogger<RunEventWriter> logger)
+public sealed class RunEventWriter(
+    AppDbContext db,
+    ILogger<RunEventWriter> logger,
+    OpenWebUI.Infrastructure.Runs.AgentRunEventBus? runBus = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly Dictionary<string, long> _seq = new();
@@ -39,6 +42,8 @@ public sealed class RunEventWriter(AppDbContext db, ILogger<RunEventWriter> logg
         public const string Phase = "phase";
         /// <summary>Nota de sistema (resume, advisor, etc.).</summary>
         public const string Note = "note";
+        /// <summary>Veto de interceptor (SPEC-20261021-harness-seams RF-A2).</summary>
+        public const string InterceptorVeto = "interceptor_veto";
     }
 
     /// <summary>Append de um evento com payload já serializado.</summary>
@@ -57,15 +62,26 @@ public sealed class RunEventWriter(AppDbContext db, ILogger<RunEventWriter> logg
             seq++;
             _seq[runId] = seq;
 
+            var scrubbed = SecretScrubber.Scrub(payloadJson) ?? "";
             db.ChatRunEvents.Add(new ChatRunEvent
             {
                 RunId = runId,
                 Seq = seq,
                 Type = type,
-                PayloadJson = SecretScrubber.Scrub(payloadJson) ?? "",
+                PayloadJson = scrubbed,
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             });
             await db.SaveChangesAsync(ct);
+
+            // RF-A1 harness-seams: fan-out read-only aos observers com o
+            // mesmo payload persistido (já scrubbed). Falha de observer é
+            // isolada pelo bus — nunca derruba a run.
+            if (runBus is not null)
+            {
+                await runBus.PublishAsync(
+                    new Application.Interfaces.AgentRunEvent(
+                        runId, null, null, type, scrubbed), ct);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

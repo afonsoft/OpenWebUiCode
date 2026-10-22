@@ -268,6 +268,7 @@ public static class ApiEndpoints
         WebSearchService webSearch,
         WorkspaceRepoService repos,
         IWebHostEnvironment env,
+        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors,
         CancellationToken ct)
     {
         http.Response.ContentType = "text/event-stream";
@@ -323,13 +324,15 @@ public static class ApiEndpoints
             ? request.Model["arena:".Length..]
             : request.Model;
         if (await ChatPipeline.TryRunArenaAsync(
-            request, arenaModel, user, db, config, rag, providers, webSearch, repos, EmitAsync, ct))
+            request, arenaModel, user, db, config, rag, providers, webSearch,
+            repos, EmitAsync, ct, promptContributors))
         {
             return;
         }
 
         var effective = await ChatPipeline.EnrichRequestAsync(
-            request, user, db, config, rag, webSearch, repos, ct);
+            request, user, db, config, rag, webSearch, repos,
+            promptContributors, ct);
 
         // Filtros outlet do modelo custom: redação por regex nas linhas SSE.
         var outletRules = ModelFilterService.OutletRules(

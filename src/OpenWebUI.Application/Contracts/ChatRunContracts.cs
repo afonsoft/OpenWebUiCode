@@ -243,10 +243,13 @@ public sealed record RunApprovalDecisionRequest(
 /// negado com mensagem opcional de instrução para o modelo.
 /// <paramref name="Output"/> quando não nulo substitui a execução da tool
 /// — usado pelo <c>ask_user</c> para devolver a resposta do dono como
-/// resultado direto (RF-005).
+/// resultado direto (RF-005). <paramref name="RewriteArgsJson"/> quando
+/// não nulo substitui os argumentos da call na execução — emitido por
+/// interceptors <c>tool.call</c> de rewrite (SPEC-20261021-harness-seams).
 /// </summary>
 public sealed record ToolGateDecision(
-    bool Approved, string? DenyMessage = null, string? Output = null)
+    bool Approved, string? DenyMessage = null, string? Output = null,
+    string? RewriteArgsJson = null)
 {
     /// <summary>Aprovado.</summary>
     public static readonly ToolGateDecision Allow = new(true);

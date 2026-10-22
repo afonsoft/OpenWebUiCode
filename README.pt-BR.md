@@ -63,21 +63,32 @@ atrás de uma única superfície web multiusuário.
 
 | Eixo | deepseek-harness | Este fork |
 |---|---|---|
-| Modelo de extensão | everything-is-a-plugin — serviços `ctx`, eventos tipados com interceptors waterfall `agent/*`/`tools/*`, HMR | serviços compilados; extensibilidade via servidores MCP, `*.agent.md`, skills/personas |
-| Superfícies | `web` · `headless` · SDK TS/Python (JSON-RPC) · `acp` (editor) · desktop Electron | web (Blazor WASM) |
+| Modelo de extensão | everything-is-a-plugin — serviços `ctx`, eventos tipados com interceptors waterfall `agent/*`/`tools/*`, HMR | serviços compilados + bus interno de eventos de run com observers DI e interceptors waterfall ordenados (`pre-step`, `tool.call`) — sem carregamento dinâmico; extensibilidade via servidores MCP, `*.agent.md`, skills/personas |
+| Superfícies | `web` · `headless` · SDK TS/Python (JSON-RPC) · `acp` (editor) · desktop Electron | web (Blazor WASM) · `--headless` one-shot (JSON Lines) · `POST /api/v1/rpc` (JSON-RPC 2.0) · host stdio `open-webui-acp` |
 | Seam de execução | providers `ctx.fs`/`subprocess`/`sandbox` trocáveis — backend SSH move Bash/PTY/LSP inteiro | tools locais + tiers de aprovação |
 | Store de sessão | log de eventos append-only JSONL, migrações de formato versionadas (v0→v4), "model-visible means logged", projections incrementais | entidades EF Core/SQLite + run events persistidos, replay por checkpoint |
 | Multiusuário | usuário único (plugins de conta/credenciais DeepSeek) | usuários/RBAC/UI admin, JWT + chaves `sk-*` |
-| Distribuição | `npx @deepseek-ai/dsh` + plugin market | imagem Docker multi-arch única / `dotnet run` |
+| Distribuição | `npx @deepseek-ai/dsh` + plugin market | imagem Docker multi-arch única / `dotnet run`; host ACP em `src/OpenWebUI.Acp` (binário single-file ou `dotnet run`) |
 
-Ideias que valem portar (SPECs candidatas): seams internos de eventos
-`agent/*`/`tools/*` para interceptação (telemetria, guardrails, mutação de
-prompt) · contribuidores compostáveis de seções de prompt (análogo a
-`ctx.systemPrompt`) · seam de provider de execução para `shell_exec`/terminal/
-`lsp_*` rodarem num sandbox remoto · superfícies headless/SDK/ACP ·
-runs disparadas por webhook (`ctx.webhookRuntime`) · agent teams — roster
-durável + estado de tarefas + inbox sobre os filhos de `delegate_task`
-(`ctx.agentTeams`).
+Ideias portadas (SPEC-20261021-harness-seams, branch
+`feature/Devin-20261021-harness-seams`): seams internos de eventos no estilo
+`agent/*`/`tools/*` — `IAgentRunObserver` + `RunInterceptorRunner` (waterfall
+ordenada, timeout de 5s, fail-closed em `tool.call`), já com
+`TelemetryObserver` e `RepeatToolGuard` (veta tool call idêntica repetida 3×) ·
+seções de prompt compostáveis — `ISystemPromptContributor` ordenado por DI; os
+blocos do antigo `systemParts` viraram contributors com saída byte-idêntica ·
+superfícies de lançamento — `--headless` (JSON Lines em stdout, exit code =
+status da run), `POST /api/v1/rpc` (`ping`, `chats.list/create`,
+`runs.start/get`), ACP stdio (`initialize` exige `OPENWEBUI_ACP_TOKEN`,
+`session/new`→chat, `session/prompt`→run transmitida como `session/update`) ·
+runs por webhook — `AutomationHook` provider-aware (generic/github) com HMAC
+`X-Hub-Signature-256`, filtro de eventos, templates `{{path}}`, binding de
+repo/persona/modo e auditoria/idempotência via `AutomationHookDelivery` ·
+agent teams — roster `Chat.TeamId`/`TeamRole` sobre filhos de
+`delegate_task`, `TeamTask` durável, steer/queue como inbox inter-agente,
+tools `team_task`/`team_message`/`team_status` e `GET
+/api/v1/chats/{id}/team`. Ainda aberto: seam de provider de execução (sandbox
+remoto para `shell_exec`/terminal/`lsp_*`).
 
 ## Screenshots
 

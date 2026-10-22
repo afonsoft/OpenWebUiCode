@@ -41,6 +41,9 @@ public sealed class ChatRunExecutor(
     McpClientService mcp,
     ComboService combos,
     RunEventWriter runEvents,
+    OpenWebUI.Infrastructure.Runs.AgentRunEventBus runBus,
+    OpenWebUI.Infrastructure.Runs.RunInterceptorRunner interceptors,
+    IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors,
     PolicyService? policies,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
@@ -133,6 +136,16 @@ public sealed class ChatRunExecutor(
             broadcaster.Publish(run.Id, "data: [DONE]");
             return;
         }
+
+        // RF-A1 harness-seams: ciclo de vida no barramento interno —
+        // observers recebem run.started antes do primeiro round.
+        await runBus.PublishAsync(
+            new OpenWebUI.Application.Interfaces.AgentRunEvent(
+                run.Id, run.ChatId, run.UserId, "run.started",
+                JsonSerializer.Serialize(
+                    new { model = run.Model, resumed = resumePlan is not null },
+                    JsonOptions)),
+            ct);
 
         // Marcadores de command (SPEC-20261016-commands-v2 RF-004/RF-005):
         // Params["mode"|"agent"|"subagent"] no RequestJson aplicam overrides
@@ -287,8 +300,8 @@ public sealed class ChatRunExecutor(
             }
 
             var effective = await ChatPipeline.EnrichRequestAsync(
-                request, user, db, config, rag, webSearch, repos, ct, chatMode,
-                run.ChatId, logger);
+                request, user, db, config, rag, webSearch, repos,
+                promptContributors, ct, chatMode, run.ChatId, logger);
 
             // Notebook persistente do chat (SPEC-20261013-agent-context-
             // management RF-003): injetado como system na entrada de toda
@@ -497,8 +510,8 @@ public sealed class ChatRunExecutor(
                         runEvents.AppendAsync(run.Id,
                             RunEventWriter.Types.MessagesAdded,
                             new { messages = added, toolMessages = toolAdded }, t),
-                    GateAsync: (call, t) => GateToolCallAsync(
-                        run, tools, call, builtinContext, t),
+                    GateAsync: (call, t) => GateWithInterceptorsAsync(
+                        run, tools, call, builtinContext, currentStep, t),
                     // Modo relido por rodada — o plan_exit aprovado
                     // promove a build já na próxima chamada do modelo.
                     AnnounceToolsAsync: async t =>
@@ -512,8 +525,34 @@ public sealed class ChatRunExecutor(
                     },
                     // Steer/queue (SPEC-20261010): steer na fronteira de
                     // rodada; queued só quando a run ficaria ociosa.
-                    OnRoundBoundaryAsync: (queuedOnly, t) =>
-                        PollSteerAsync(run, queuedOnly, t),
+                    // RF-A2 harness-seams: interceptors pre-step decidem
+                    // sobre as mensagens claimed antes de entrarem no
+                    // histórico enviado ao provider.
+                    OnRoundBoundaryAsync: async (queuedOnly, t) =>
+                    {
+                        var claimed = await PollSteerAsync(run, queuedOnly, t);
+                        if (claimed.Count == 0 || !interceptors.HasInterceptors)
+                        {
+                            return claimed;
+                        }
+                        var outcome = await interceptors.RunPreStepAsync(
+                            new OpenWebUI.Application.Interfaces.PreStepContext(
+                                run.Id, run.ChatId, run.UserId,
+                                currentStep, claimed), t);
+                        if (!outcome.Rejected)
+                        {
+                            return outcome.Messages;
+                        }
+                        await runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.InterceptorVeto,
+                            new
+                            {
+                                hook = "pre-step",
+                                interceptor = outcome.VetoedBy,
+                                reason = outcome.Reason,
+                            }, t);
+                        return outcome.Messages;
+                    },
                     // Conselhos do advisor viram notas system no round
                     // seguinte — sem zerar o teto de iterações.
                     OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
@@ -826,6 +865,12 @@ public sealed class ChatRunExecutor(
             }
             broadcaster.Publish(run.Id,
                 $"event: steer\ndata: {JsonSerializer.Serialize(new { mode = steer.Mode, content = steer.Content }, JsonOptions)}");
+            // RF-A1: steer promovido vira evento interno para observers.
+            await runBus.PublishAsync(
+                new OpenWebUI.Application.Interfaces.AgentRunEvent(
+                    run.Id, run.ChatId, run.UserId, "run.steer",
+                    JsonSerializer.Serialize(new { mode = steer.Mode }, JsonOptions)),
+                ct);
         }
         if (chat is not null)
         {
@@ -1432,6 +1477,49 @@ public sealed class ChatRunExecutor(
     /// uma negação pode carregar a instrução do dono (RF-002 chat-agent-ux).
     /// O preset é relido a cada call — mudança mid-run vale já no próximo.
     /// </summary>
+    /// <summary>
+    /// RF-A2 harness-seams: waterfall <c>tool.call</c> dos interceptors
+    /// antes do gate de preset/usuário. Veto ⇒ resultado de erro para o
+    /// modelo (igual negação do gate) + evento durável
+    /// <c>interceptor_veto</c>; rewrite ⇒ args substituídos via
+    /// <see cref="ToolGateDecision.RewriteArgsJson"/> na execução.
+    /// </summary>
+    private async Task<ToolGateDecision> GateWithInterceptorsAsync(
+        ChatRun run, IReadOnlyList<Tool> tools, ProviderToolCall call,
+        BuiltinToolContext builtinContext, int step, CancellationToken ct)
+    {
+        if (interceptors.HasInterceptors)
+        {
+            var outcome = await interceptors.RunToolCallAsync(
+                new OpenWebUI.Application.Interfaces.ToolCallContext(
+                    run.Id, run.ChatId, run.UserId,
+                    call.Name, call.ArgumentsJson), ct);
+            if (outcome.Vetoed)
+            {
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.InterceptorVeto,
+                    new
+                    {
+                        hook = "tool.call",
+                        interceptor = outcome.VetoedBy,
+                        tool = call.Name,
+                        reason = outcome.Reason,
+                    }, ct);
+                return new ToolGateDecision(
+                    false, DenyMessage: outcome.Reason
+                        ?? "execução vetada por interceptor.");
+            }
+
+            var gate = await GateToolCallAsync(
+                run, tools, call, builtinContext, ct);
+            return outcome.ArgumentsJson is { } rewritten && gate.Approved
+                ? gate with { RewriteArgsJson = rewritten }
+                : gate;
+        }
+
+        return await GateToolCallAsync(run, tools, call, builtinContext, ct);
+    }
+
     private async Task<ToolGateDecision> GateToolCallAsync(
         ChatRun run, IReadOnlyList<Tool> tools, ProviderToolCall call,
         BuiltinToolContext builtinContext, CancellationToken ct)
@@ -2204,6 +2292,7 @@ public sealed class ChatRunExecutor(
         broadcaster.Publish(
             run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new { status = run.Status })}");
+        await PublishRunFinishedAsync(run);
     }
 
     /// <summary>Marca a run como failed antes de iniciar.</summary>
@@ -2216,7 +2305,26 @@ public sealed class ChatRunExecutor(
         await db.SaveChangesAsync(CancellationToken.None);
         broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error })}");
         broadcaster.Publish(run.Id, "data: [DONE]");
+        await runBus.PublishAsync(
+            new OpenWebUI.Application.Interfaces.AgentRunEvent(
+                run.Id, run.ChatId, run.UserId, "run.failed",
+                JsonSerializer.Serialize(new { error }, JsonOptions)),
+            CancellationToken.None);
     }
+
+    /// <summary>Publica o evento de término no barramento interno (RF-A1).</summary>
+    private Task PublishRunFinishedAsync(ChatRun run) =>
+        runBus.PublishAsync(
+            new OpenWebUI.Application.Interfaces.AgentRunEvent(
+                run.Id, run.ChatId, run.UserId,
+                run.Status == ChatRunStatus.Completed
+                    ? "run.completed"
+                    : run.Status == ChatRunStatus.Stopped
+                        ? "run.stopped"
+                        : "run.failed",
+                JsonSerializer.Serialize(
+                    new { status = run.Status, error = run.Error }, JsonOptions)),
+            CancellationToken.None);
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max] + "…";

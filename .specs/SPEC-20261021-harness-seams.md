@@ -318,18 +318,18 @@ tests/OpenWebUI.Api.Tests/*                                    # cobertura por c
 
 ## 7. Task Plan
 
-- [ ] **T1 — Discovery:** ler arquivos da seção 3 + spec ACP; baseline de
+- [x] **T1 — Discovery:** ler arquivos da seção 3 + spec ACP; baseline de
   testes atual.
-- [ ] **T2 — A+B:** contratos `IAgentRunObserver`/`IRunInterceptor`/
+- [x] **T2 — A+B:** contratos `IAgentRunObserver`/`IRunInterceptor`/
   `ISystemPromptContributor`, bus, interceptors iniciais e migração dos 12
   contributors com teste golden.
-- [ ] **T3 — E:** schema (`TeamId`/`TeamRole`/`TeamTask`), `delegate_task`
+- [x] **T3 — E:** schema (`TeamId`/`TeamRole`/`TeamTask`), `delegate_task`
   params, tools de team, endpoint roster.
-- [ ] **T4 — D:** campos do hook, HMAC, filtro/template, delivery log,
+- [x] **T4 — D:** campos do hook, HMAC, filtro/template, delivery log,
   migração EF.
-- [ ] **T5 — C:** headless runner, `RpcEndpoints`, projeto ACP + adapter de
+- [x] **T5 — C:** headless runner, `RpcEndpoints`, projeto ACP + adapter de
   eventos → `session/update`.
-- [ ] **T6 — Validação:** suíte completa + drift guards
+- [x] **T6 — Validação:** suíte completa + drift guards
   (`tools/check-*.py`) + cobertura por capability.
 - [ ] **T7 — Done + PR:** DoD → `Status = Done` → PR na branch
   `feature/Devin-20261021-harness-seams`.

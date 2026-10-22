@@ -33,6 +33,8 @@ public static class ChatRunEndpoints
         group.MapPost("/{id}/runs/{runId}/resume", ResumeRunAsync);
         group.MapPost("/{id}/runs/{runId}/approvals/{callId}", DecideApprovalAsync);
         group.MapPost("/{id}/runs/{runId}/steer", SteerRunAsync);
+        // Roster do agent team (SPEC-20261021-harness-seams RF-E1).
+        group.MapGet("/{id}/team", GetTeamAsync);
         group.MapGet("/{id}/runs/{runId}/diff", GetRunDiffAsync);
     }
 
@@ -40,7 +42,8 @@ public static class ChatRunEndpoints
     /// Persiste a mensagem do usuário, cria a run queued e enfileira no
     /// dispatcher. Responde 202 + snapshot da run (o cliente abre o attach).
     /// </summary>
-    private static async Task<IResult> EnqueueMessageAsync(
+    /// <summary>Enfileira mensagem + run — reusado pelo JSON-RPC runs.start.</summary>
+    internal static async Task<IResult> EnqueueMessageAsync(
         string id,
         EnqueueChatRunRequest request,
         HttpContext http,
@@ -535,6 +538,40 @@ public static class ChatRunEndpoints
         });
         await db.SaveChangesAsync(ct);
         return Results.Accepted();
+    }
+
+    /// <summary>
+    /// RF-E1 harness-seams: roster do team do chat — membros, roles, runs
+    /// vivas e a task list compartilhada. 404 quando o chat não pertence a
+    /// um team.
+    /// </summary>
+    private static async Task<IResult> GetTeamAsync(
+        string id, HttpContext http, AppDbContext db, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var owned = await db.Chats.AsNoTracking()
+            .AnyAsync(c => c.Id == id && c.UserId == user.Id, ct);
+        if (!owned)
+        {
+            return Results.NotFound(new { detail = "Chat não encontrado." });
+        }
+
+        var teamId = await TeamService.ResolveTeamIdAsync(db, id, ct);
+        if (teamId is null)
+        {
+            return Results.NotFound(
+                new { detail = "Chat não pertence a um agent team." });
+        }
+
+        var status = await TeamService.BuildStatusAsync(db, teamId, ct);
+        return status is null
+            ? Results.NotFound(new { detail = "Team não encontrado." })
+            : Results.Ok(status);
     }
 
     /// <summary>

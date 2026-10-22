@@ -348,6 +348,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AgentMode")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ChatId")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -358,11 +361,30 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<bool>("Enabled")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("EventsJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<long?>("LastFiredAt")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PersonaId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PromptTemplate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepoSlug")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Secret")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("UserId")
@@ -376,6 +398,46 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("AutomationHooks");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.AutomationHookDelivery", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DeliveryKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EventType")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HookId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ReceivedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SecurityWarning")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HookId", "DeliveryKey");
+
+                    b.HasIndex("HookId", "ReceivedAt");
+
+                    b.ToTable("AutomationHookDeliveries");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.AutomationRun", b =>
@@ -683,6 +745,12 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TeamId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TeamRole")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -704,6 +772,8 @@ namespace OpenWebUI.Infrastructure.Migrations
 
                     b.HasIndex("ShareId")
                         .IsUnique();
+
+                    b.HasIndex("TeamId");
 
                     b.HasIndex("UserId", "FolderId");
 
@@ -1795,6 +1865,47 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Skills");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.TeamTask", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssigneeChatId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CreatedByChatId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Result")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TeamId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssigneeChatId");
+
+                    b.HasIndex("TeamId", "Status");
+
+                    b.ToTable("TeamTasks");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.Tool", b =>

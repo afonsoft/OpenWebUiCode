@@ -102,6 +102,14 @@ public sealed class DelegateTaskBuiltinTool(
             "merge": {
               "type": "boolean",
               "description": "true: auto-merge the child's worktree into the workspace when it completes (wait=true only; with wait=false the parent reviews via builtin_worktree_diff and merges via builtin_worktree_merge)."
+            },
+            "team": {
+              "type": "boolean",
+              "description": "true: the child joins the caller's agent team (durable roster via builtin_team_status/team_task/team_message). Creates the team on first use."
+            },
+            "resume_chat_id": {
+              "type": "string",
+              "description": "Resume an existing child chat (continuable sub-agent) instead of creating a new one — the prompt is appended and a new run enqueued there."
             }
           },
           "required": ["prompt"]
@@ -226,6 +234,21 @@ public sealed class DelegateTaskBuiltinTool(
         {
             return new BuiltinToolResult(
                 "delegate_task só pode ser chamada dentro de uma run de chat.");
+        }
+
+        // SPEC-20261021-harness-seams RF-E1: `team` junta o filho ao team
+        // do chamador (roster durável); `resume_chat_id` reutiliza um chat
+        // filho existente — subagente continuável em vez de one-shot.
+        var joinTeam = args.TryGetProperty("team", out var teamEl)
+            && teamEl.ValueKind == JsonValueKind.True;
+        var resumeChatId = args.TryGetProperty("resume_chat_id", out var resumeEl)
+            && resumeEl.ValueKind == JsonValueKind.String
+                ? resumeEl.GetString() : null;
+        if (resumeChatId is not null)
+        {
+            return await ResumeInExistingChatAsync(
+                scope, db, context, parentRun, resumeChatId, fullPrompt,
+                waitExplicit ?? true, joinTeam, ct);
         }
 
         // Profundidade da cadeia pai (depth 0 = raiz). Runs de profundidade
@@ -364,6 +387,20 @@ public sealed class DelegateTaskBuiltinTool(
             Timestamp = now,
         });
         db.Chats.Add(childChat);
+
+        // RF-E1: team:true — a raiz do chamador ganha TeamId próprio +
+        // leader na primeira delegação; o filho entra como member.
+        if (joinTeam && context.ChatId is { } parentChatIdForTeam)
+        {
+            var parentChat = await db.Chats
+                .FirstOrDefaultAsync(c => c.Id == parentChatIdForTeam, ct);
+            if (parentChat is not null)
+            {
+                childChat.TeamId = await TeamService.EnsureRootTeamAsync(
+                    db, parentChat, ct);
+                childChat.TeamRole = "member";
+            }
+        }
 
         var childRequest = new ChatCompletionRequest(
             childModel,
@@ -525,6 +562,117 @@ public sealed class DelegateTaskBuiltinTool(
     /// timeout de <see cref="TimeoutSeconds"/> — o resultado inclui a
     /// nota de auto-merge quando habilitado.
     /// </summary>
+    /// <summary>
+    /// RF-E1 <c>resume_chat_id</c>: nova run num chat filho existente —
+    /// subagente continuável que vê o próprio histórico. Alvo tem que ser
+    /// do mesmo usuário e (quando <paramref name="joinTeam"/>) entra no
+    /// team do chamador.
+    /// </summary>
+    private async Task<BuiltinToolResult> ResumeInExistingChatAsync(
+        IServiceScope scope, AppDbContext db, BuiltinToolContext context,
+        ChatRun parentRun, string resumeChatId, string fullPrompt,
+        bool wait, bool joinTeam, CancellationToken ct)
+    {
+        if (resumeChatId == context.ChatId)
+        {
+            return new BuiltinToolResult(
+                "resume_chat_id não pode ser o próprio chat da run.");
+        }
+        var target = await db.Chats.Include(c => c.Messages)
+            .FirstOrDefaultAsync(
+                c => c.Id == resumeChatId && c.UserId == context.UserId, ct);
+        if (target is null)
+        {
+            return new BuiltinToolResult(
+                $"resume_chat_id '{resumeChatId}' não encontrado.");
+        }
+        var hasLiveRun = await db.ChatRuns.AnyAsync(
+            r => r.ChatId == target.Id
+                && (r.Status == ChatRunStatus.Queued
+                    || r.Status == ChatRunStatus.Running
+                    || r.Status == ChatRunStatus.Paused), ct);
+        if (hasLiveRun)
+        {
+            return new BuiltinToolResult(
+                $"O chat {resumeChatId} já tem uma run ativa — envie a "
+                    + "mensagem via builtin_team_message em vez de resumir.");
+        }
+
+        if (joinTeam || target.TeamId is not null)
+        {
+            var teamId = target.TeamId;
+            if (joinTeam && teamId is null && context.ChatId is { } pcid)
+            {
+                var parentChat = await db.Chats
+                    .FirstOrDefaultAsync(c => c.Id == pcid, ct);
+                if (parentChat is not null)
+                {
+                    teamId = await TeamService.EnsureRootTeamAsync(
+                        db, parentChat, ct);
+                }
+            }
+            if (teamId is not null && target.TeamId is null)
+            {
+                target.TeamId = teamId;
+                target.TeamRole = "member";
+            }
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var position = target.Messages.Count == 0
+            ? 0 : target.Messages.Max(m => m.Position) + 1;
+        var userMsg = new ChatMessage
+        {
+            ChatId = target.Id,
+            Role = "user",
+            Content = fullPrompt,
+            Position = position,
+            Timestamp = now,
+            ParentId = BranchService.ResolveLeaf(target)?.Id,
+        };
+        target.Messages.Add(userMsg);
+        target.LeafMessageId = userMsg.Id;
+        target.UpdatedAt = now;
+
+        var model = parentRun.Model;
+        var toolIds = JsonSerializer.Deserialize<List<string>>(
+            target.ToolIdsJson, JsonOptions);
+        var childRun = new ChatRun
+        {
+            ChatId = target.Id,
+            UserId = context.UserId,
+            Model = model,
+            RequestJson = JsonSerializer.Serialize(
+                new ChatCompletionRequest(
+                    model,
+                    [new ChatCompletionMessage("user", fullPrompt)],
+                    Stream: true, ToolIds: toolIds),
+                JsonOptions),
+            ParentRunId = parentRun.Id,
+            CreatedAt = now,
+        };
+        db.ChatRuns.Add(childRun);
+        await db.SaveChangesAsync(ct);
+        dispatcher.Enqueue(childRun.Id);
+
+        var link = $"/c/{target.Id}";
+        if (!wait)
+        {
+            return new BuiltinToolResult(
+                $"Subagente retomado em background — run {childRun.Id} no "
+                    + $"chat {link}. Chame builtin_run_result com "
+                    + $"run_id={childRun.Id} para colher o resultado.",
+                new
+                {
+                    childChatId = target.Id,
+                    childRunId = childRun.Id,
+                    status = "queued",
+                });
+        }
+        return await WaitForChildAsync(
+            db, scope, context, target, childRun, autoMerge: false, link, ct);
+    }
+
     private static async Task<BuiltinToolResult> WaitForChildAsync(
         AppDbContext db, IServiceScope scope, BuiltinToolContext context,
         Chat childChat, ChatRun childRun, bool autoMerge, string link,
