@@ -24,6 +24,11 @@ public sealed record TerminalServerResponse(
 /// <param name="CreatedAtUtc">Criação.</param>
 /// <param name="LastActivityUtc">Último input.</param>
 /// <param name="ExitCode">Código de saída quando encerrada.</param>
+/// <param name="ChatId">Chat dono da sessão, quando bindada
+/// (SPEC-20261022-ade-surfaces).</param>
+/// <param name="RunId">Run dona da sessão, quando bindada.</param>
+/// <param name="Workdir">cwd resolvido do PTY.</param>
 public sealed record TerminalSessionInfoResponse(
     string Id, bool IsRunning, DateTimeOffset CreatedAtUtc,
-    DateTimeOffset LastActivityUtc, int? ExitCode);
+    DateTimeOffset LastActivityUtc, int? ExitCode,
+    string? ChatId = null, string? RunId = null, string? Workdir = null);

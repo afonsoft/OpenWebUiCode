@@ -31,9 +31,14 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     /// <param name="CreatedAtUtc">Criação.</param>
     /// <param name="LastActivityUtc">Último input escrito.</param>
     /// <param name="ExitCode">Código de saída quando encerrada.</param>
+    /// <param name="ChatId">Chat dono da sessão (SPEC-20261022 — binding).</param>
+    /// <param name="RunId">Run dona da sessão (opcional).</param>
+    /// <param name="Workdir">Diretório inicial do PTY.</param>
     public sealed record SessionInfo(
         string Id, bool IsRunning, DateTimeOffset CreatedAtUtc,
-        DateTimeOffset LastActivityUtc, int? ExitCode);
+        DateTimeOffset LastActivityUtc, int? ExitCode,
+        string? ChatId = null, string? RunId = null,
+        string? Workdir = null);
 
     internal sealed class Entry
     {
@@ -41,6 +46,12 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         public required string UserId { get; init; }
         public DateTimeOffset CreatedAtUtc { get; init; }
         public int? ExitCode { get; set; }
+        /// <summary>Chat dono (SPEC-20261022) — delete do chat mata a sessão.</summary>
+        public string? ChatId { get; init; }
+        /// <summary>Run dona — sessão bindada ao worktree isolado dela.</summary>
+        public string? RunId { get; init; }
+        /// <summary>cwd resolvido no Create.</summary>
+        public string? Workdir { get; init; }
         public StringBuilder Scrollback { get; } = new();
         public List<Subscriber> Subscribers { get; } = [];
     }
@@ -130,13 +141,17 @@ public sealed class TerminalSessionManager : IAsyncDisposable
     }
 
     /// <summary>
-    /// Cria e inicia uma sessão PTY no workspace do usuário
-    /// (<c>data/workspaces/{userId}</c>); lança quando o limite por usuário é
-    /// atingido. <paramref name="env"/> injeta as variáveis resolvidas de
-    /// secrets do usuário (SPEC-20261017-agent-secrets-env).
+    /// Cria e inicia uma sessão PTY — por padrão no workspace do usuário
+    /// (<c>data/workspaces/{userId}</c>), ou em
+    /// <paramref name="workdir"/> quando a sessão é bindada a um chat/run
+    /// (SPEC-20261022: o endpoint resolve via workspace binding); lança
+    /// quando o limite por usuário é atingido. <paramref name="env"/>
+    /// injeta as variáveis resolvidas de secrets do usuário
+    /// (SPEC-20261017-agent-secrets-env).
     /// </summary>
     public string Create(string userId, int cols = 120, int rows = 30,
-        IReadOnlyDictionary<string, string>? env = null)
+        IReadOnlyDictionary<string, string>? env = null,
+        string? workdir = null, string? chatId = null, string? runId = null)
     {
         var count = _sessions.Values.Count(e => e.UserId == userId);
         if (count >= MaxSessionsPerUser)
@@ -145,7 +160,7 @@ public sealed class TerminalSessionManager : IAsyncDisposable
                 $"Limite de {MaxSessionsPerUser} sessões de terminal por usuário atingido.");
         }
 
-        var workspace = Path.Join(
+        var workspace = workdir ?? Path.Join(
             DataPaths.Root(_env.ContentRootPath), "workspaces", userId);
         Directory.CreateDirectory(workspace);
 
@@ -159,6 +174,9 @@ public sealed class TerminalSessionManager : IAsyncDisposable
             Session = session,
             UserId = userId,
             CreatedAtUtc = DateTimeOffset.UtcNow,
+            ChatId = chatId,
+            RunId = runId,
+            Workdir = workspace,
         };
         session.OutputReceived += chunk => OnOutput(entry, chunk);
         session.Exited += code => OnExit(entry, code);
@@ -178,15 +196,43 @@ public sealed class TerminalSessionManager : IAsyncDisposable
         return id;
     }
 
-    /// <summary>Lista as sessões do usuário.</summary>
-    public List<SessionInfo> List(string userId) =>
+    /// <summary>Lista as sessões do usuário — filtra por chat dono
+    /// quando <paramref name="chatId"/> é informado.</summary>
+    public List<SessionInfo> List(string userId, string? chatId = null) =>
         _sessions
-            .Where(kv => kv.Value.UserId == userId)
+            .Where(kv => kv.Value.UserId == userId
+                && (chatId is null || kv.Value.ChatId == chatId))
             .Select(kv => new SessionInfo(
                 kv.Key, kv.Value.Session.IsRunning, kv.Value.CreatedAtUtc,
-                kv.Value.Session.LastActivityUtc, kv.Value.ExitCode))
+                kv.Value.Session.LastActivityUtc, kv.Value.ExitCode,
+                kv.Value.ChatId, kv.Value.RunId, kv.Value.Workdir))
             .OrderBy(s => s.CreatedAtUtc)
             .ToList();
+
+    /// <summary>
+    /// Mata todas as sessões bindadas a um chat (SPEC-20261022): chamado no
+    /// delete de conversa antes da remoção do worktree — PTY órfão em cwd
+    /// deletado ficaria preso a inode morto.
+    /// </summary>
+    /// <returns>Quantas sessões foram encerradas.</returns>
+    public async Task<int> KillForChatAsync(string userId, string chatId)
+    {
+        var ids = _sessions
+            .Where(kv => kv.Value.UserId == userId
+                && kv.Value.ChatId == chatId)
+            .Select(kv => kv.Key)
+            .ToList();
+        var killed = 0;
+        foreach (var id in ids)
+        {
+            if (await KillAsync(userId, id).ConfigureAwait(false))
+            {
+                killed++;
+            }
+        }
+
+        return killed;
+    }
 
     /// <summary>
     /// Anexa assinantes de IO numa sessão do usuário — retorna null quando a

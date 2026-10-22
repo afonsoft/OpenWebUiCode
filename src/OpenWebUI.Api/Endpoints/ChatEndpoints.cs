@@ -750,7 +750,9 @@ public static class ChatEndpoints
     private static async Task<IResult> DeleteChatAsync(
         string id, HttpContext http, AppDbContext db,
         WorkspaceRepoService repos, WorktreeService worktrees,
-        CheckpointService checkpoints, CancellationToken ct)
+        CheckpointService checkpoints,
+        OpenWebUI.Infrastructure.Terminal.TerminalSessionManager terminals,
+        CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         var chat = await LoadChatAsync(id, user?.Id, db, ct, tracking: true);
@@ -759,11 +761,11 @@ public static class ChatEndpoints
             return Results.NotFound();
         }
 
-        // Libera TODOS os artefatos de disco do chat (worktree do binding,
-        // worktrees isolados por run e snapshots de checkpoint) — liberação
-        // de espaço imediata, sem esperar o sweeper de retenção.
+        // Libera TODOS os artefatos do chat (sessões PTY bindadas, worktree
+        // do binding, worktrees isolados por run e snapshots de checkpoint)
+        // — liberação de espaço imediata, sem esperar sweeper de retenção.
         await ReleaseChatDiskAsync(
-            db, repos, worktrees, checkpoints, user!.Id, id, ct);
+            db, repos, worktrees, checkpoints, terminals, user!.Id, id, ct);
 
         db.Chats.Remove(chat);
         await db.SaveChangesAsync(ct);
@@ -773,7 +775,9 @@ public static class ChatEndpoints
     private static async Task<IResult> DeleteAllChatsAsync(
         HttpContext http, AppDbContext db,
         WorkspaceRepoService repos, WorktreeService worktrees,
-        CheckpointService checkpoints, CancellationToken ct)
+        CheckpointService checkpoints,
+        OpenWebUI.Infrastructure.Terminal.TerminalSessionManager terminals,
+        CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -788,7 +792,8 @@ public static class ChatEndpoints
         foreach (var chatId in chatIds)
         {
             await ReleaseChatDiskAsync(
-                db, repos, worktrees, checkpoints, user.Id, chatId, ct);
+                db, repos, worktrees, checkpoints, terminals,
+                user.Id, chatId, ct);
         }
 
         await db.Chats.Where(c => c.UserId == user.Id).ExecuteDeleteAsync(ct);
@@ -807,8 +812,12 @@ public static class ChatEndpoints
     private static async Task ReleaseChatDiskAsync(
         AppDbContext db, WorkspaceRepoService repos,
         WorktreeService worktrees, CheckpointService checkpoints,
+        OpenWebUI.Infrastructure.Terminal.TerminalSessionManager terminals,
         string userId, string chatId, CancellationToken ct)
     {
+        // PTYs bindadas primeiro — shell órfão em cwd deletado ficaria
+        // preso a inode morto (SPEC-20261022).
+        await terminals.KillForChatAsync(userId, chatId);
         var mainWorkdir = await repos.ResolveWorkdirAsync(userId, chatId, ct);
         var runIds = await db.ChatRuns.AsNoTracking()
             .Where(r => r.ChatId == chatId)

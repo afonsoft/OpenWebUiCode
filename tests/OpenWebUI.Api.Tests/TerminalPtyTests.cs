@@ -278,6 +278,77 @@ public class TerminalPtyTests
         Assert.That(manager.List("u-outro"), Has.Count.EqualTo(1));
     }
 
+    // ---- SPEC-20261022: binding de sessão a chat/run ----
+
+    [Test]
+    public async Task Manager_Binding_ChatId_Filtra_E_KillForChat_Mata_So_O_Dono()
+    {
+        Func<string, int, int, IPtySession> fakeFactory = (dir, c, r) =>
+            new FakePtySession();
+        await using var manager = NewManager(fakeFactory);
+
+        var bound = manager.Create(
+            "u-bind", workdir: "/tmp/wt-chat1", chatId: "chat-1");
+        var bound2 = manager.Create(
+            "u-bind", workdir: "/tmp/wt-chat1b", chatId: "chat-1");
+        var free = manager.Create("u-bind");
+        var otherChat = manager.Create(
+            "u-bind", workdir: "/tmp/wt-chat2", chatId: "chat-2");
+
+        // Filtro por chat + metadados de binding na listagem.
+        var only = manager.List("u-bind", chatId: "chat-1");
+        Assert.Multiple(() =>
+        {
+            Assert.That(only.Select(s => s.Id),
+                Is.EquivalentTo(new[] { bound, bound2 }));
+            Assert.That(only[0].Workdir, Is.EqualTo("/tmp/wt-chat1"));
+            Assert.That(manager.List("u-bind"), Has.Count.EqualTo(4));
+        });
+
+        // KillForChat remove só as do chat — livres e de outros chats ficam.
+        var killed = await manager.KillForChatAsync("u-bind", "chat-1");
+        Assert.Multiple(() =>
+        {
+            Assert.That(killed, Is.EqualTo(2));
+            Assert.That(manager.List("u-bind").Select(s => s.Id),
+                Is.EquivalentTo(new[] { free, otherChat }));
+        });
+    }
+
+    [Test]
+    public async Task Terminal_Create_Com_Workdir_Fora_De_Data_400()
+    {
+        UseToken(_user.Token);
+        var res = await _client.PostAsJsonAsync("/api/v1/terminal/sessions",
+            new { workdir = "/etc" });
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    [Test]
+    public async Task Terminal_Create_Bindada_Expoe_ChatId_Na_Listagem()
+    {
+        UseToken(_user.Token);
+        var created = await _client.PostAsJsonAsync("/api/v1/terminal/sessions",
+            new { chatId = "chat-inexistente-ok" });
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.Created),
+            await created.Content.ReadAsStringAsync());
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("id").GetString();
+
+        var list = await _client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/terminal/sessions?chatId=chat-inexistente-ok");
+        var sessions = list.EnumerateArray().ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(sessions.Any(
+                s => s.GetProperty("id").GetString() == id), Is.True);
+            Assert.That(sessions[0].GetProperty("chatId").GetString(),
+                Is.EqualTo("chat-inexistente-ok"));
+        });
+
+        await _client.DeleteAsync($"/api/v1/terminal/sessions/{id}");
+    }
+
     private sealed class FakePtySession : IPtySession
     {
         public event Action<string>? OutputReceived;

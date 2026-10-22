@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
@@ -35,12 +36,15 @@ public static class TerminalPtyEndpoints
 
         group.MapPost("/sessions", (HttpContext http, TerminalSessionManager terminals,
             AppDbContext db, ConfigService config, IConfiguration configuration,
-            AgentSecretsEnvService agentEnv, CancellationToken ct) =>
-            CreateSessionAsync(http, terminals, db, config, configuration, agentEnv, ct));
+            AgentSecretsEnvService agentEnv, WorkspaceRepoService repos,
+            WorktreeService worktrees, IHostEnvironment env,
+            CancellationToken ct) =>
+            CreateSessionAsync(http, terminals, db, config, configuration,
+                agentEnv, repos, worktrees, env, ct));
         group.MapGet("/sessions", (HttpContext http, TerminalSessionManager terminals,
             AppDbContext db, ConfigService config, IConfiguration configuration,
-            CancellationToken ct) =>
-            ListSessionsAsync(http, terminals, db, config, configuration, ct));
+            string? chatId, CancellationToken ct) =>
+            ListSessionsAsync(http, terminals, db, config, configuration, chatId, ct));
         group.MapDelete("/sessions/{id}", (HttpContext http, string id,
             TerminalSessionManager terminals, AppDbContext db, ConfigService config,
             IConfiguration configuration, CancellationToken ct) =>
@@ -90,7 +94,9 @@ public static class TerminalPtyEndpoints
     private static async Task<IResult> CreateSessionAsync(
         HttpContext http, TerminalSessionManager terminals, AppDbContext db,
         ConfigService config, IConfiguration configuration,
-        AgentSecretsEnvService agentEnv, CancellationToken ct)
+        AgentSecretsEnvService agentEnv, WorkspaceRepoService repos,
+        WorktreeService worktrees, IHostEnvironment env,
+        CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
         if (error is not null)
@@ -103,13 +109,32 @@ public static class TerminalPtyEndpoints
                 http.Request.Body, JsonOptions, ct)
             : null;
 
+        // SPEC-20261022: sessão bindada — resolve o cwd pela ordem
+        // workdir explícito (contido em DataPaths.Root) → worktree isolado
+        // da run → workspace binding do chat → root do usuário (default).
+        var workdir = request?.Workdir;
+        if (workdir is not null && !IsInsideDataRoot(workdir, env))
+        {
+            return Results.Problem(
+                "workdir deve ficar dentro de data/.", statusCode: 400);
+        }
+        if (workdir is null && request?.RunId is { } runId)
+        {
+            workdir = worktrees.ResolveIsolated(user!.Id, runId);
+        }
+        if (workdir is null && request?.ChatId is { } chatId)
+        {
+            workdir = await repos.ResolveWorkdirAsync(user!.Id, chatId, ct);
+        }
+
         // Secrets do usuário ∪ global ∪ managed GitHub entram na env da PTY
         // (SPEC-20261017-agent-secrets-env RF-006) — sessão é por usuário.
-        var env = await agentEnv.BuildAsync(user!.Id, ct);
+        var secrets = await agentEnv.BuildAsync(user!.Id, ct);
         try
         {
             var id = terminals.Create(
-                user!.Id, request?.Cols ?? 120, request?.Rows ?? 30, env.Vars);
+                user!.Id, request?.Cols ?? 120, request?.Rows ?? 30,
+                secrets.Vars, workdir, request?.ChatId, request?.RunId);
             return Results.Created($"/api/v1/terminal/sessions/{id}", new { id });
         }
         catch (InvalidOperationException ex)
@@ -118,9 +143,21 @@ public static class TerminalPtyEndpoints
         }
     }
 
+    /// <summary>Path-traversal guard: workdir explícito só vale dentro de
+    /// <see cref="DataPaths.Root"/> — senão o PTY abriria fora do sandbox
+    /// de dados do app.</summary>
+    private static bool IsInsideDataRoot(string workdir, IHostEnvironment env)
+    {
+        var root = Path.GetFullPath(DataPaths.Root(env.ContentRootPath));
+        var full = Path.GetFullPath(workdir);
+        return full.StartsWith(
+            root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
     private static async Task<IResult> ListSessionsAsync(
         HttpContext http, TerminalSessionManager terminals, AppDbContext db,
-        ConfigService config, IConfiguration configuration, CancellationToken ct)
+        ConfigService config, IConfiguration configuration,
+        string? chatId, CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
         if (error is not null)
@@ -128,9 +165,10 @@ public static class TerminalPtyEndpoints
             return error;
         }
 
-        var sessions = terminals.List(user!.Id).Select(s =>
+        var sessions = terminals.List(user!.Id, chatId).Select(s =>
             new TerminalSessionInfoResponse(
-                s.Id, s.IsRunning, s.CreatedAtUtc, s.LastActivityUtc, s.ExitCode));
+                s.Id, s.IsRunning, s.CreatedAtUtc, s.LastActivityUtc,
+                s.ExitCode, s.ChatId, s.RunId, s.Workdir));
         return Results.Ok(sessions);
     }
 
@@ -327,6 +365,8 @@ public static class TerminalPtyEndpoints
         return AuthEndpoints.FindUserAsync(http, db, ct);
     }
 
-    private sealed record TerminalSessionRequest(int? Cols, int? Rows);
+    private sealed record TerminalSessionRequest(
+        int? Cols, int? Rows, string? ChatId, string? RunId,
+        string? Workdir);
     private sealed record TerminalConfigRequest(bool Enabled);
 }
