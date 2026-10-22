@@ -82,6 +82,7 @@ public static class PermissionRuleset
         "file_write", "file_edit", "apply_patch", "shell_exec",
         "code_interpreter", "job_list", "job_output", "job_kill",
         "worktree_diff", "worktree_merge", "plan_exit", "delegate_task",
+        "specs",
         "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
         "lsp_definition", "lsp_references", "lsp_hover",
     };

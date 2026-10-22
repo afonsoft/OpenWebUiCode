@@ -186,8 +186,12 @@ public class AutomationHookV2Tests
         UseToken(auth.Token);
         var depois = await _client.GetFromJsonAsync<ChatResponse>(
             $"/api/v1/chats/{chat.Id}");
+        // SPEC-20261023 cap. D: campos interpolados chegam envelopados em
+        // <untrusted_input source field> — proveniência explícita no prompt.
         Assert.That(depois!.Messages.Any(m =>
-            m.Content.Contains("Issue 7: bug no login")), Is.True);
+            m.Content.Contains("Issue")
+            && m.Content.Contains($"<untrusted_input source=\"hook:{hook.Id}\" field=\"issue.number\">7</untrusted_input>")
+            && m.Content.Contains($"<untrusted_input source=\"hook:{hook.Id}\" field=\"issue.title\">bug no login</untrusted_input>")), Is.True);
 
         _client.DefaultRequestHeaders.Authorization = null;
         var missing = await FireRawAsync(hook.Url,
@@ -332,6 +336,33 @@ public class AutomationHookV2Tests
             List<AutomationHookDeliveryResponse>>(
             $"/api/v1/hooks/{hook.Id}/deliveries");
         Assert.That(deliveries![0].Status, Is.EqualTo("accepted"));
+    }
+
+    [Test]
+    public async Task Webhook_Legado_Conteudo_Cru_Envelopado_Proveniencia()
+    {
+        // Ramo sem template (SPEC-20261023 cap. D): o conteúdo extraído do
+        // payload também ganha <untrusted_input source field> — conteúdo
+        // externo nunca entra cru no prompt.
+        var auth = await SignUpAsync("L", $"l-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat l", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "legacy-env", chat.Id));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "resuma o PR" });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+
+        UseToken(auth.Token);
+        var depois = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        Assert.That(depois!.Messages.Any(m =>
+            m.Content.Contains(
+                $"<untrusted_input source=\"hook:{hook.Id}\" field=\"payload\">")
+            && m.Content.Contains("resuma o PR")
+            && m.Content.Contains("</untrusted_input>")), Is.True);
     }
 
     [Test]
