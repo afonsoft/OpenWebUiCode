@@ -496,6 +496,108 @@ public class HarnessSeamsTests
     }
 
     [Test]
+    public async Task TeamTask_PathsDeErro_ClaimDuplo_TaskInexistente_StatusInvalido()
+    {
+        using var db = NewDb();
+        var (root, _) = await SeedTeamAsync(db);
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamTaskBuiltinTool(Scopes());
+        var ctx = ToolCtx(root.Id);
+
+        // task_id inexistente.
+        var miss = await tool.ExecuteAsync(
+            Args("""{"op":"claim","task_id":"zzz"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(miss.Text, Does.Contain("não existe"));
+
+        // claim duplo: outra tarefa claimada por outro membro não re-claima.
+        var created = await tool.ExecuteAsync(
+            Args("""{"op":"create","title":"t1"}"""),
+            ctx, CancellationToken.None);
+        var task = await db.TeamTasks.SingleAsync();
+        await tool.ExecuteAsync(
+            Args($$"""{"op":"claim","task_id":"{{task.Id}}"}"""),
+            ctx, CancellationToken.None);
+        var again = await tool.ExecuteAsync(
+            Args($$"""{"op":"claim","task_id":"{{task.Id}}"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(again.Text, Does.Contain("já claimada"));
+
+        // update com status inválido.
+        var bad = await tool.ExecuteAsync(
+            Args($$"""{"op":"update","task_id":"{{task.Id}}","status":"x"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(bad.Text, Does.Contain("pending|in_progress|done"));
+
+        // op desconhecida.
+        var op = await tool.ExecuteAsync(
+            Args("""{"op":"explode"}"""), ctx, CancellationToken.None);
+        Assert.That(op.Text, Does.Contain("list|create|claim|update|complete"));
+    }
+
+    [Test]
+    public async Task TeamMessage_E_TeamTask_SemTeam_FailClosed()
+    {
+        using var db = NewDb();
+        await SeedUserAsync(db, "u1");
+        var solo = NewChat("u1");
+        db.Chats.Add(solo);
+        await db.SaveChangesAsync();
+
+        var taskTool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamTaskBuiltinTool(Scopes());
+        var msgTool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamMessageBuiltinTool(Scopes());
+        var statusTool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamStatusBuiltinTool(Scopes());
+        var ctx = ToolCtx(solo.Id);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That((await taskTool.ExecuteAsync(
+                Args("""{"op":"list"}"""), ctx, CancellationToken.None)).Text,
+                Does.Contain("não pertence"));
+            Assert.That((await msgTool.ExecuteAsync(
+                Args("""{"to_chat_id":"x","message":"y"}"""),
+                ctx, CancellationToken.None)).Text,
+                Does.Contain("não pertence"));
+            Assert.That((await statusTool.ExecuteAsync(
+                Args("{}"), ctx, CancellationToken.None)).Text,
+                Does.Contain("não pertence"));
+        });
+    }
+
+    [Test]
+    public async Task TeamMessage_AlvoInvalido_SelfOuForaDoTeam()
+    {
+        using var db = NewDb();
+        var (root, member) = await SeedTeamAsync(db);
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamMessageBuiltinTool(Scopes());
+        var ctx = ToolCtx(root.Id);
+
+        // Args obrigatórios.
+        var missing = await tool.ExecuteAsync(
+            Args("""{"to_chat_id":""}"""), ctx, CancellationToken.None);
+        Assert.That(missing.Text, Does.Contain("obrigatórios"));
+
+        // Self.
+        var self = await tool.ExecuteAsync(
+            Args($$"""{"to_chat_id":"{{root.Id}}","message":"oi"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(self.Text, Does.Contain("outro membro"));
+
+        // Fora do team.
+        var outsider = NewChat("u1");
+        db.Chats.Add(outsider);
+        await db.SaveChangesAsync();
+        var outr = await tool.ExecuteAsync(
+            Args($$"""{"to_chat_id":"{{outsider.Id}}","message":"oi"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(outr.Text, Does.Contain("não é membro"));
+    }
+
+    [Test]
     public async Task TeamTask_Ciclo_Completo_Create_Claim_Complete()
     {
         using var db = NewDb();
