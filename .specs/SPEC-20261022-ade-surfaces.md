@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261022-ade-surfaces` |
 | Ticket | [#488](https://github.com/afonsoft/open-webui/issues/488) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Parent | `SPEC-20261021-harness-seams` (merged as PR #487) — benchmark [afonsoft/agent-harness](https://github.com/afonsoft/agent-harness); direção: ADE (Agentic Development Environment) / AI Orchestrator |
 
 ## 1. User Story
@@ -148,10 +148,10 @@ executor.
 
 ## 4. Acceptance Criteria
 
-- [ ] `POST /terminal/sessions {chatId}` abre PTY no workdir do workspace do chat; `?chatId=` filtra sessões.
-- [ ] Delete de chat mata sessões bindadas antes de remover o worktree (ordem verificada em teste).
-- [ ] Uma conexão WS multiplexa ≥2 sessões; input/output/resize roteados por `sid`; endpoint legado por-sessão continua funcionando.
-- [ ] Tab "Terminal" no chat abre/reabre sessão bindada e mostra scrollback.
+- [x] `POST /terminal/sessions {chatId}` abre PTY no workdir do workspace do chat; `?chatId=` filtra sessões.
+- [x] Delete de chat mata sessões bindadas antes de remover o worktree (ordem verificada em teste).
+- [x] Uma conexão WS multiplexa ≥2 sessões; input/output/resize roteados por `sid`; endpoint legado por-sessão continua funcionando.
+- [x] Tab "Terminal" no chat abre/reabre sessão bindada e mostra scrollback.
 - [ ] `initialize` + `tools/list` + `tools/call runs.start` no MCP stdio criam chat + enfileiram run (teste de protocolo com processo real).
 - [ ] MCP rejeita tool call sem token válido; nenhum segredo vai pro stdout/log.
 - [ ] Run completada com app em outra aba gera item de atenção; `POST /attention/{key}/seen` limpa; badge reflete contagem.
