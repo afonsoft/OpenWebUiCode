@@ -23,6 +23,7 @@ namespace OpenWebUI.Api.Tests;
 /// builtin <c>specs</c> (E).
 /// </summary>
 [TestFixture]
+[NonParallelizable] // muta AgentDefinitionService.HomeResolver (estático)
 public class SddOrchestratorPromptsTests
 {
     private string _root = null!;
@@ -46,6 +47,9 @@ public class SddOrchestratorPromptsTests
     [TearDown]
     public void TearDown()
     {
+        // Restaura para o home isolado da suíte — senão fixtures posteriores
+        // herdam o fake-home deste teste (estático global).
+        AgentDefinitionService.HomeResolver = () => TestInfra.IsolatedHome;
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 
@@ -350,6 +354,121 @@ public class SddOrchestratorPromptsTests
             Args(new { op = "show", name = "SPEC-99999999-nada" }),
             ToolCtx(ws), CancellationToken.None);
         Assert.That(res.Text, Does.Contain("não existe"));
+    }
+
+    [Test]
+    public async Task Specs_Transition_Completed_Em_Repo_Git_Usa_GitMv()
+    {
+        var ws = SeedSpec("In implementation");
+        var init = await ChatProcessRunner.RunAsync(
+            "git init -q && git add .specs && git -c user.name=t "
+                + "-c user.email=t@t.local commit -qm init",
+            ws, TimeSpan.FromSeconds(15));
+        Assume.That(init.ExitCode, Is.EqualTo(0), "git indisponível no runner");
+        var res = await Tool().ExecuteAsync(
+            Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Completed" }),
+            ToolCtx(ws), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("Completed"));
+            Assert.That(res.Text, Does.Not.Contain("fallback"),
+                "git mv deveria ter sucedido no repo real");
+            Assert.That(File.Exists(
+                Path.Join(ws, ".specs", "SPEC-20261023-demo.md")), Is.False);
+            Assert.That(File.Exists(
+                Path.Join(ws, "docs", "specs", "SPEC-20261023-demo.md")), Is.True);
+            var st = ChatProcessRunner.RunAsync(
+                "git status --porcelain", ws, TimeSpan.FromSeconds(10)).Result;
+            Assert.That(st.Output, Does.Contain("docs/specs/SPEC-20261023-demo.md"),
+                "rename deveria estar staged via git mv");
+        });
+    }
+
+    [Test]
+    public async Task Specs_Transition_GitMv_Falha_Cai_FileMove()
+    {
+        // .git como diretório vazio = "repo" inválido → git mv falha →
+        // fallback File.Move (SPEC: sem git válido não falha).
+        var ws = SeedSpec("In implementation");
+        Directory.CreateDirectory(Path.Join(ws, ".git"));
+        var res = await Tool().ExecuteAsync(
+            Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Completed" }),
+            ToolCtx(ws), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("fallback"));
+            Assert.That(File.Exists(
+                Path.Join(ws, "docs", "specs", "SPEC-20261023-demo.md")), Is.True);
+        });
+    }
+
+    [Test]
+    public async Task Specs_Transition_Ticket_Sem_Gh_Nao_Bloqueia()
+    {
+        // Ticket aponta para issues/0 (inexistente): mesmo com gh autenticado
+        // o edit falha → nota de sync ignorado, transição concluída.
+        var specDir = Path.Join(_root, "ws-gh", ".specs");
+        Directory.CreateDirectory(specDir);
+        File.WriteAllText(Path.Join(specDir, "SPEC-20261023-demo.md"),
+            SpecHeader("In implementation")
+                .Replace("| Ticket | — |",
+                    "| Ticket | [#0](https://github.com/x/y/issues/0) |"));
+        var ws = Path.Join(_root, "ws-gh");
+        var res = await Tool().ExecuteAsync(
+            Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Completed" }),
+            ToolCtx(ws), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("Completed"));
+            Assert.That(res.Text,
+                Does.Contain("sync de label ignorado"));
+            Assert.That(File.Exists(
+                Path.Join(ws, "docs", "specs", "SPEC-20261023-demo.md")), Is.True);
+        });
+    }
+
+    [Test]
+    public async Task Specs_Transition_Ticket_Com_Gh_Fake_Aplica_Label()
+    {
+        // Fake `gh` no PATH (fixture NonParallelizable — PATH é global):
+        // exit 0 → nota de label aplicada; restaurado no TearDown.
+        var fakeBin = Path.Join(_root, "fake-bin");
+        Directory.CreateDirectory(fakeBin);
+        File.WriteAllText(Path.Join(fakeBin, "gh"),
+            "#!/bin/sh\necho fake-gh-ok\nexit 0\n");
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("fake gh requer POSIX (chmod no PATH).");
+            return;
+        }
+        File.SetUnixFileMode(Path.Join(fakeBin, "gh"),
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var specDir = Path.Join(_root, "ws-gh2", ".specs");
+        Directory.CreateDirectory(specDir);
+        File.WriteAllText(Path.Join(specDir, "SPEC-20261023-demo.md"),
+            SpecHeader("In implementation")
+                .Replace("| Ticket | — |",
+                    "| Ticket | [#42](https://github.com/x/y/issues/42) |"));
+        var ws = Path.Join(_root, "ws-gh2");
+        var oldPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        Environment.SetEnvironmentVariable(
+            "PATH", fakeBin + Path.PathSeparator + oldPath);
+        try
+        {
+            var res = await Tool().ExecuteAsync(
+                Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Completed" }),
+                ToolCtx(ws), CancellationToken.None);
+            Assert.Multiple(() =>
+            {
+                Assert.That(res.Text, Does.Contain("Label 'done' aplicada na issue #42"));
+                Assert.That(File.Exists(
+                    Path.Join(ws, "docs", "specs", "SPEC-20261023-demo.md")), Is.True);
+            });
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", oldPath);
+        }
     }
 
     [Test]

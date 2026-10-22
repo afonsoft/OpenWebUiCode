@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-sdd-orchestrator-prompts` |
 | Ticket | [#491](https://github.com/afonsoft/open-webui/issues/491) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Parent | `SPEC-20261022-ade-surfaces` (merged as PR #489) — benchmark [afonsoft/skills](https://github.com/afonsoft/skills) (`write-specs`, `execute-specs`, `orchestrator`, `gap-analysis`, `create-issues`); direção: **AI Orchestrator** + **AI-Driven Development (ADD)** com foco em **Spec-Driven Development (SDD)** |
 
 ## 1. User Story
@@ -214,19 +214,19 @@ independente) → `T3` (B: contributor SDD — usa convivência com a tool) →
 
 ## 4. Acceptance Criteria
 
-- [ ] O system prompt de uma run contém o bloco de autonomia T1/T2/T3
+- [x] O system prompt de uma run contém o bloco de autonomia T1/T2/T3
       com "no silent execution" e o bloco de `<untrusted_input>` —
       `ChatPipeline`/`contributors` test.
-- [ ] Workdir com `.specs/` recebe o bloco SDD (transições + modos);
+- [x] Workdir com `.specs/` recebe o bloco SDD (transições + modos);
       workdir sem `.specs/` não recebe (auto) — teste de contributor com
       dir temporário.
-- [ ] `Agent:Sdd=off` nunca emite o bloco; `=on` emite mesmo sem `.specs/`.
-- [ ] `delegate_task` policy aparece quando `agent_catalog` não-vazio ou
+- [x] `Agent:Sdd=off` nunca emite o bloco; `=on` emite mesmo sem `.specs/`.
+- [x] `delegate_task` policy aparece quando `agent_catalog` não-vazio ou
       `Chat.TeamId` setado; ausente caso contrário.
-- [ ] Webhook `{{path}}` renderiza dentro de `<untrusted_input>` com
+- [x] Webhook `{{path}}` renderiza dentro de `<untrusted_input>` com
       `source`/`field`; payload contendo `</untrusted_input>` é escapado —
       `AutomationHookV2Tests`.
-- [ ] `builtin_specs`: `list`/`show`/`transition` funcionam sobre um
+- [x] `builtin_specs`: `list`/`show`/`transition` funcionam sobre um
       workdir com `.specs/` fake; transição inválida (`Draft→Completed`)
       recusada; `Completed` move para `docs/specs/`; path fora recusado.
 - [ ] Regressão: `HarnessSeamsTests` + `TerminalPtyTests` +
@@ -250,10 +250,10 @@ independente) → `T3` (B: contributor SDD — usa convivência com a tool) →
 
 | ID | Task |
 | --- | --- |
-| T1 | A+D — reestrutura do `DefaultSystemPrompt` em blocos (autonomia T1/T2/T3 + untrusted) + envelope no `FireAsync` + testes |
-| T2 | E — `SpecsBuiltinTool` (list/show/transition/archive) + registro + testes |
-| T3 | B — `SddWorkflowContributor` (detecção + config `Agent:Sdd`) + testes |
-| T4 | C — `DelegationPolicyContributor` + testes |
+| T1 ✅ | A+D — reestrutura do `DefaultSystemPrompt` em blocos (autonomia T1/T2/T3 + untrusted) + envelope no `FireAsync` + testes |
+| T2 ✅ | E — `SpecsBuiltinTool` (list/show/transition/archive) + registro + testes |
+| T3 ✅ | B — `SddWorkflowContributor` (detecção + config `Agent:Sdd`) + testes |
+| T4 ✅ | C — `DelegationPolicyContributor` + testes |
 | T5 | DoD — Release build 0 warnings, suíte completa, coverage ≥ baseline, drift guards, SPEC → Issue → PR |
 
 ## 8. Organization Guardrails
