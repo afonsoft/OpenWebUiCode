@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using OpenWebUI.Application.Contracts;
+using OpenWebUI.Application.Interfaces;
 using OpenWebUI.Infrastructure.Data;
 
 namespace OpenWebUI.Api.Tests;
@@ -68,6 +69,42 @@ public class HeadlessE2ETests
             Assert.That(
                 db.Chats.AsNoTracking().Count(c => c.Id == run.ChatId),
                 Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task JsonLinesObserver_Emite_UmaLinhaJson_PorEvento()
+    {
+        var observer = new OpenWebUI.Api.Headless.JsonLinesRunObserver();
+        var sw = new StringWriter();
+        var orig = Console.Out;
+        Console.SetOut(sw);
+        try
+        {
+            await observer.OnRunEventAsync(
+                new AgentRunEvent("r1", "c1", "u1",
+                    "run.started", """{"a":1}"""), default);
+            await observer.OnRunEventAsync(
+                new AgentRunEvent("r1", "c1", "u1",
+                    "run.completed", ""), default);
+        }
+        finally
+        {
+            Console.SetOut(orig);
+        }
+
+        var lines = sw.ToString()
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.That(lines, Has.Length.EqualTo(2));
+        var first = System.Text.Json.JsonDocument.Parse(lines[0]).RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.GetProperty("type").GetString(),
+                Is.EqualTo("event"));
+            Assert.That(first.GetProperty("runId").GetString(),
+                Is.EqualTo("r1"));
+            Assert.That(first.GetProperty("eventType").GetString(),
+                Is.EqualTo("run.started"));
         });
     }
 
