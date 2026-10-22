@@ -35,7 +35,8 @@ public static partial class WebhookPromptTemplate
     /// é envelopado em
     /// <c>&lt;untrusted_input source="…" field="…"&gt;</c>
     /// (SPEC-20261023-sdd-orchestrator-prompts cap. D) — proveniência
-    /// explícita de cada campo externo no prompt resultante.
+    /// explícita de cada campo externo no prompt resultante, com atributos
+    /// escapados para HTML e tag de fechamento neutralizada no valor.
     /// </summary>
     /// <param name="template">Template com placeholders <c>{{path}}</c>.</param>
     /// <param name="payload">Payload JSON do disparo.</param>
@@ -47,46 +48,11 @@ public static partial class WebhookPromptTemplate
         var rendered = PlaceholderRegex().Replace(template, m =>
         {
             var path = m.Groups[1].Value.Trim();
-            string value;
-            if (path == "$raw")
-            {
-                value = payload.GetRawText();
-            }
-            else
-            {
-                var current = payload;
-                foreach (var seg in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    if (current.ValueKind == JsonValueKind.Object
-                        && current.TryGetProperty(seg, out var next))
-                    {
-                        current = next;
-                    }
-                    else if (current.ValueKind == JsonValueKind.Array
-                        && int.TryParse(seg, out var idx)
-                        && idx >= 0 && idx < current.GetArrayLength())
-                    {
-                        current = current[idx];
-                    }
-                    else
-                    {
-                        throw new WebhookTemplateException(path);
-                    }
-                }
-
-                value = current.ValueKind switch
-                {
-                    JsonValueKind.String => current.GetString() ?? string.Empty,
-                    JsonValueKind.Null or JsonValueKind.Undefined => string.Empty,
-                    JsonValueKind.Object or JsonValueKind.Array =>
-                        current.GetRawText(),
-                    _ => current.ToString(),
-                };
-            }
-
+            var value = ResolveValue(path, payload);
             return source is null
                 ? value
-                : $"<untrusted_input source=\"{source}\" field=\"{path}\">"
+                : $"<untrusted_input source=\"{Attr(source)}\" "
+                    + $"field=\"{Attr(path)}\">"
                     + EscapeUntrusted(value) + "</untrusted_input>";
         });
 
@@ -94,6 +60,52 @@ public static partial class WebhookPromptTemplate
             ? rendered
             : rendered[..MaxRenderedChars];
     }
+
+    /// <summary>Resolve um placeholder <c>{{path}}</c> do payload (escalar
+    /// vira texto; objeto/array viram JSON compacto; <c>$raw</c> imprime o
+    /// payload inteiro).</summary>
+    private static string ResolveValue(string path, JsonElement payload)
+    {
+        if (path == "$raw")
+        {
+            return payload.GetRawText();
+        }
+
+        var current = payload;
+        foreach (var seg in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (current.ValueKind == JsonValueKind.Object
+                && current.TryGetProperty(seg, out var next))
+            {
+                current = next;
+            }
+            else if (current.ValueKind == JsonValueKind.Array
+                && int.TryParse(seg, out var idx)
+                && idx >= 0 && idx < current.GetArrayLength())
+            {
+                current = current[idx];
+            }
+            else
+            {
+                throw new WebhookTemplateException(path);
+            }
+        }
+
+        return current.ValueKind switch
+        {
+            JsonValueKind.String => current.GetString() ?? string.Empty,
+            JsonValueKind.Null or JsonValueKind.Undefined => string.Empty,
+            JsonValueKind.Object or JsonValueKind.Array => current.GetRawText(),
+            _ => current.ToString(),
+        };
+    }
+
+    /// <summary>Escapa o valor para uso em atributo HTML do envelope —
+    /// impede que aspas/&lt;&gt; do nome de campo ou da origem quebrem a
+    /// tag (injection defence).</summary>
+    private static string Attr(string value) =>
+        value.Replace("&", "&amp;").Replace("\"", "&quot;")
+            .Replace("<", "&lt;").Replace(">", "&gt;");
 
     /// <summary>Neutraliza a tag de fechamento dentro do valor para que
     /// conteúdo hostil não quebre o envelope (injection defence).</summary>

@@ -134,15 +134,24 @@ public sealed class SddWorkflowContributor(IConfiguration cfg)
         if (mode.Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
             var workdir = await ctx.GetWorkdirAsync();
-            if (workdir.Length == 0
-                || (!Directory.Exists(Path.Combine(workdir, ".specs"))
-                    && !Directory.Exists(Path.Combine(workdir, "docs", "specs"))))
+            if (!Path.IsPathRooted(workdir) || !HasSpecSurface(workdir))
             {
                 return [];
             }
         }
         return [Block];
     }
+
+    /// <summary>Superfície SDD: <c>.specs/</c> com ao menos uma
+    /// <c>SPEC-*.md</c>, ou <c>docs/specs/</c> com arquivos arquivados.</summary>
+    private static bool HasSpecSurface(string workdir) =>
+        ContainsSpecFile(Path.Combine(workdir, ".specs"))
+            || ContainsSpecFile(Path.Combine(workdir, "docs", "specs"));
+
+    private static bool ContainsSpecFile(string dir) =>
+        Directory.Exists(dir)
+            && Directory.EnumerateFiles(dir, "SPEC-*.md",
+                SearchOption.TopDirectoryOnly).Any();
 }
 
 /// <summary>

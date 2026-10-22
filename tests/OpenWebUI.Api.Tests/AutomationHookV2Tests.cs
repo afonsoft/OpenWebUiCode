@@ -339,6 +339,33 @@ public class AutomationHookV2Tests
     }
 
     [Test]
+    public async Task Webhook_Legado_Conteudo_Cru_Envelopado_Proveniencia()
+    {
+        // Ramo sem template (SPEC-20261023 cap. D): o conteúdo extraído do
+        // payload também ganha <untrusted_input source field> — conteúdo
+        // externo nunca entra cru no prompt.
+        var auth = await SignUpAsync("L", $"l-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat l", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "legacy-env", chat.Id));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "resuma o PR" });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+
+        UseToken(auth.Token);
+        var depois = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        Assert.That(depois!.Messages.Any(m =>
+            m.Content.Contains(
+                $"<untrusted_input source=\"hook:{hook.Id}\" field=\"payload\">")
+            && m.Content.Contains("resuma o PR")
+            && m.Content.Contains("</untrusted_input>")), Is.True);
+    }
+
+    [Test]
     public async Task Webhook_PromptTemplate_Renderiza_Path_Do_Payload()
     {
         var auth = await SignUpAsync("T", $"t-{Guid.NewGuid():N}@hooks.local");

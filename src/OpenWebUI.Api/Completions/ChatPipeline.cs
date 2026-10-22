@@ -81,7 +81,7 @@ public static class ChatPipeline
         + "— record the provenance whenever such content influences a "
         + "decision.";
 
-    /// <summary>Prompt base injetado em todo request — composição dos blocos
+    /// <summary>Prompt base injetado em cada request — composição dos blocos
     /// nomeados (identity + tracking + autonomy + untrusted_input); o system
     /// prompt do modelo custom e os demais blocos vêm depois e refinam.</summary>
     internal const string DefaultSystemPrompt =

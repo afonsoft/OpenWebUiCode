@@ -50,7 +50,8 @@ public class SddOrchestratorPromptsTests
         // Restaura para o home isolado da suíte — senão fixtures posteriores
         // herdam o fake-home deste teste (estático global).
         AgentDefinitionService.HomeResolver = () => TestInfra.IsolatedHome;
-        try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+        try { Directory.Delete(_root, recursive: true); }
+        catch (IOException) { /* cleanup best-effort — dir já removido */ }
     }
 
     private AppDbContext NewDb()
@@ -106,7 +107,10 @@ public class SddOrchestratorPromptsTests
     public async Task Sdd_Auto_Workdir_Com_Specs_Emite_Bloco()
     {
         var workdir = Path.Join(_root, "ws-specs");
-        Directory.CreateDirectory(Path.Join(workdir, ".specs"));
+        var specDir = Path.Join(workdir, ".specs");
+        Directory.CreateDirectory(specDir);
+        File.WriteAllText(
+            Path.Join(specDir, "SPEC-20261023-demo.md"), "x");
         var sections = await new SddWorkflowContributor(Cfg(null))
             .ContributeAsync(Ctx(workdir));
         Assert.Multiple(() =>
@@ -116,6 +120,17 @@ public class SddOrchestratorPromptsTests
             Assert.That(sections[0], Does.Contain("RF-###"));
             Assert.That(sections[0], Does.Contain("builtin_specs"));
         });
+    }
+
+    [Test]
+    public async Task Sdd_Auto_Workdir_Specs_Vazio_Nao_Emite()
+    {
+        // .specs/ sem nenhuma SPEC-*.md não é superfície SDD.
+        var workdir = Path.Join(_root, "ws-vazio");
+        Directory.CreateDirectory(Path.Join(workdir, ".specs"));
+        var sections = await new SddWorkflowContributor(Cfg(null))
+            .ContributeAsync(Ctx(workdir));
+        Assert.That(sections, Is.Empty);
     }
 
     [Test]
@@ -377,11 +392,11 @@ public class SddOrchestratorPromptsTests
                 Path.Join(ws, ".specs", "SPEC-20261023-demo.md")), Is.False);
             Assert.That(File.Exists(
                 Path.Join(ws, "docs", "specs", "SPEC-20261023-demo.md")), Is.True);
-            var st = ChatProcessRunner.RunAsync(
-                "git status --porcelain", ws, TimeSpan.FromSeconds(10)).Result;
-            Assert.That(st.Output, Does.Contain("docs/specs/SPEC-20261023-demo.md"),
-                "rename deveria estar staged via git mv");
         });
+        var st = await ChatProcessRunner.RunAsync(
+            "git status --porcelain", ws, TimeSpan.FromSeconds(10));
+        Assert.That(st.Output, Does.Contain("docs/specs/SPEC-20261023-demo.md"),
+            "rename deveria estar staged via git mv");
     }
 
     [Test]
@@ -478,6 +493,169 @@ public class SddOrchestratorPromptsTests
         var res = await Tool().ExecuteAsync(
             Args(new { op = "delete" }), ToolCtx(ws), CancellationToken.None);
         Assert.That(res.Text, Does.Contain("list|show|transition"));
+    }
+
+    [Test]
+    public async Task Specs_Transition_Colisao_No_Arquivo_Recusada()
+    {
+        // docs/specs já tem a SPEC arquivada: recusa — nunca sobrescreve
+        // o histórico arquivado (Devin Review #1).
+        var ws = SeedSpec("In implementation");
+        var archiveDir = Path.Join(ws, "docs", "specs");
+        Directory.CreateDirectory(archiveDir);
+        File.WriteAllText(
+            Path.Join(archiveDir, "SPEC-20261023-demo.md"),
+            "decisões entregues anteriormente");
+        var res = await Tool().ExecuteAsync(
+            Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Completed" }),
+            ToolCtx(ws), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("já existe"));
+            Assert.That(File.ReadAllText(
+                Path.Join(archiveDir, "SPEC-20261023-demo.md")),
+                Does.Contain("decisões entregues"), "arquivo arquivado alterado");
+            Assert.That(File.ReadAllText(
+                Path.Join(ws, ".specs", "SPEC-20261023-demo.md")),
+                Does.Contain("In implementation"),
+                "SPEC ativa não deveria mudar de status");
+        });
+    }
+
+    [Test]
+    public async Task Specs_Transition_Status_Linha_Preserva_Formato()
+    {
+        // Formato 'Status: X' (aceito pelo validador) — transição funciona
+        // e reescreve no mesmo estilo (Devin Review #3).
+        var specDir = Path.Join(_root, "ws-line", ".specs");
+        Directory.CreateDirectory(specDir);
+        File.WriteAllText(Path.Join(specDir, "SPEC-20261023-demo.md"),
+            "# demo\n\nStatus: Draft\n\n## Body\n");
+        var ws = Path.Join(_root, "ws-line");
+        var res = await Tool().ExecuteAsync(
+            Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Approved" }),
+            ToolCtx(ws), CancellationToken.None);
+        var text = File.ReadAllText(
+            Path.Join(ws, ".specs", "SPEC-20261023-demo.md"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("Approved"));
+            Assert.That(text, Does.Contain("Status: Approved"));
+            Assert.That(text, Does.Not.Contain("| Status |"));
+        });
+    }
+
+    [Test]
+    public async Task Specs_Transition_Status_Negrito_Preserva_Formato()
+    {
+        var specDir = Path.Join(_root, "ws-bold", ".specs");
+        Directory.CreateDirectory(specDir);
+        File.WriteAllText(Path.Join(specDir, "SPEC-20261023-demo.md"),
+            "# demo\n\n**Status**: Draft\n\n## Body\n");
+        var ws = Path.Join(_root, "ws-bold");
+        var res = await Tool().ExecuteAsync(
+            Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Approved" }),
+            ToolCtx(ws), CancellationToken.None);
+        Assert.That(File.ReadAllText(
+            Path.Join(ws, ".specs", "SPEC-20261023-demo.md")),
+            Does.Contain("**Status**: Approved"));
+    }
+
+    [Test]
+    public async Task Specs_Symlink_Recusado()
+    {
+        // Link simbólico apontando para fora do workspace — recusa
+        // leitura/escrita (Devin Review SEC #2).
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("symlink requer POSIX.");
+            return;
+        }
+        var outside = Path.Join(_root, "fora-do-workspace.md");
+        File.WriteAllText(outside, "segredo");
+        var ws = Path.Join(_root, "ws-symlink");
+        var specDir = Path.Join(ws, ".specs");
+        Directory.CreateDirectory(specDir);
+        File.CreateSymbolicLink(
+            Path.Join(specDir, "SPEC-20261023-demo.md"), outside);
+        var show = await Tool().ExecuteAsync(
+            Args(new { op = "show", name = "SPEC-20261023-demo" }),
+            ToolCtx(ws), CancellationToken.None);
+        var trans = await Tool().ExecuteAsync(
+            Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Approved" }),
+            ToolCtx(ws), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(show.Text, Does.Contain("link simbólico"));
+            Assert.That(trans.Text, Does.Contain("link simbólico"));
+            Assert.That(File.ReadAllText(outside), Is.EqualTo("segredo"),
+                "alvo do symlink não deveria ser alterado");
+        });
+    }
+
+    [Test]
+    public async Task Specs_Transition_Consecutivas_Removem_Labels_Anteriores()
+    {
+        // Contrato de exclusividade das labels de etapa (Devin Review #2):
+        // ao concluir, remove in_progress/todo antes de aplicar done.
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("fake gh requer POSIX (chmod no PATH).");
+            return;
+        }
+        var fakeBin = Path.Join(_root, "fake-bin2");
+        var calls = Path.Join(_root, "gh-calls.txt");
+        Directory.CreateDirectory(fakeBin);
+        File.WriteAllText(Path.Join(fakeBin, "gh"),
+            "#!/bin/sh\necho \"$@\" >> " + calls + "\nexit 0\n");
+        File.SetUnixFileMode(Path.Join(fakeBin, "gh"),
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        var specDir = Path.Join(_root, "ws-lbl", ".specs");
+        Directory.CreateDirectory(specDir);
+        File.WriteAllText(Path.Join(specDir, "SPEC-20261023-demo.md"),
+            SpecHeader("In implementation")
+                .Replace("| Ticket | — |",
+                    "| Ticket | [#7](https://github.com/x/y/issues/7) |"));
+        var ws = Path.Join(_root, "ws-lbl");
+        var oldPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        Environment.SetEnvironmentVariable("PATH", fakeBin + Path.PathSeparator + oldPath);
+        try
+        {
+            await Tool().ExecuteAsync(
+                Args(new { op = "transition", name = "SPEC-20261023-demo", to = "Completed" }),
+                ToolCtx(ws), CancellationToken.None);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", oldPath);
+        }
+        var ghArgs = File.ReadAllText(calls);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ghArgs, Does.Contain("--add-label done"));
+            Assert.That(ghArgs, Does.Contain("--remove-label in_progress"),
+                "in_progress anterior deveria ser removida");
+            Assert.That(ghArgs, Does.Contain("--remove-label todo"));
+            Assert.That(ghArgs, Does.Not.Contain("--remove-label done"),
+                "done não deve se auto-remover");
+        });
+    }
+
+    [Test]
+    public void Template_Atributo_Com_Aspas_Escapado()
+    {
+        // Nome de campo com aspas/'>' não quebra o atributo do envelope
+        // (Devin Review SEC #1).
+        var payload = JsonDocument.Parse(
+            """{"a\"b>c":"v"}""").RootElement;
+        var rendered = WebhookPromptTemplate.Render(
+            "{{a\"b>c}}", payload, source: "hook:h1");
+        Assert.Multiple(() =>
+        {
+            Assert.That(rendered, Does.Contain("field=\"a&quot;b&gt;c\""));
+            Assert.That(rendered, Does.Not.Contain("field=\"a\"b>c\""));
+        });
     }
 
     private sealed class StubEnv(string root) : IHostEnvironment

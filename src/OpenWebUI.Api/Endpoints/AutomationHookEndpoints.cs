@@ -326,6 +326,18 @@ public static class AutomationHookEndpoints
         else
         {
             (content, modelOverride) = ReadPrompt(raw);
+            // Ramo legado (sem template): o conteúdo cru do payload também
+            // ganha proveniência explícita — doutrina <untrusted_input> do
+            // SPEC-20261023 cap. D vale para QUALQUER conteúdo externo.
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                content = "<untrusted_input source=\"hook:" + hook.Id
+                    + "\" field=\"payload\">"
+                    + content.Replace("</untrusted_input>",
+                        "<\\/untrusted_input>",
+                        StringComparison.OrdinalIgnoreCase)
+                    + "</untrusted_input>";
+            }
         }
 
         if (string.IsNullOrWhiteSpace(content))
