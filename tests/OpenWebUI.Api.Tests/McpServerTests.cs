@@ -91,7 +91,7 @@ public class McpServerTests
         Assert.That(names, Is.EquivalentTo(new[]
         {
             "chats.list", "chats.create", "runs.start",
-            "runs.status", "runs.stop", "teams.status",
+            "runs.status", "runs.stop", "teams.status", "attention.list",
         }));
 
         // Notification sem id → sem resposta.
