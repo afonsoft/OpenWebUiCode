@@ -325,6 +325,19 @@ public sealed class CheckpointService(
     private string GitDirFor(string workdir) =>
         Path.Join(DataRoot, "repo", HashPath(workdir));
 
+    /// <summary>
+    /// Remove TODO o estado de checkpoint do workdir — gitdir de snapshots
+    /// em <c>checkpoints/repo/{hash}</c> e manifests em
+    /// <c>checkpoints/files/{hash}</c>. Chamado quando o workspace dono
+    /// some (delete de chat / release de worktree) — libera o disco que
+    /// sobreviveria ao workdir removido. No-op quando nada existe.
+    /// </summary>
+    public void DeleteForWorkdir(string workdir)
+    {
+        TryDeleteDir(GitDirFor(workdir));
+        TryDeleteDir(FallbackRootFor(workdir));
+    }
+
     private static string HashPath(string path) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path))))[..16].ToLowerInvariant();
 

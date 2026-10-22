@@ -749,7 +749,8 @@ public static class ChatEndpoints
 
     private static async Task<IResult> DeleteChatAsync(
         string id, HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, CancellationToken ct)
+        WorkspaceRepoService repos, WorktreeService worktrees,
+        CheckpointService checkpoints, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         var chat = await LoadChatAsync(id, user?.Id, db, ct, tracking: true);
@@ -758,9 +759,11 @@ public static class ChatEndpoints
             return Results.NotFound();
         }
 
-        // SPEC-15: libera o worktree da conversa; o checkout base sai de
-        // disco quando nenhuma outra conversa (nem o global) o referencia.
-        await repos.ReleaseChatWorkspaceAsync(user!.Id, id, keepBinding: false, ct);
+        // Libera TODOS os artefatos de disco do chat (worktree do binding,
+        // worktrees isolados por run e snapshots de checkpoint) — liberação
+        // de espaço imediata, sem esperar o sweeper de retenção.
+        await ReleaseChatDiskAsync(
+            db, repos, worktrees, checkpoints, user!.Id, id, ct);
 
         db.Chats.Remove(chat);
         await db.SaveChangesAsync(ct);
@@ -769,7 +772,8 @@ public static class ChatEndpoints
 
     private static async Task<IResult> DeleteAllChatsAsync(
         HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, CancellationToken ct)
+        WorkspaceRepoService repos, WorktreeService worktrees,
+        CheckpointService checkpoints, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -783,11 +787,44 @@ public static class ChatEndpoints
             .ToListAsync(ct);
         foreach (var chatId in chatIds)
         {
-            await repos.ReleaseChatWorkspaceAsync(user.Id, chatId, keepBinding: false, ct);
+            await ReleaseChatDiskAsync(
+                db, repos, worktrees, checkpoints, user.Id, chatId, ct);
         }
 
         await db.Chats.Where(c => c.UserId == user.Id).ExecuteDeleteAsync(ct);
         return Results.Ok(new StatusResponse(true));
+    }
+
+    /// <summary>
+    /// Libera o disco do chat antes de apagar a entidade (SPEC-15 +
+    /// liberação de espaço): worktrees isolados de cada run
+    /// (<c>data/worktrees/{u}/{run}</c>), snapshots de checkpoint de cada
+    /// workdir (<c>data/checkpoints/{repo|files}/{hash}</c>) e o worktree
+    /// do binding via <see cref="WorkspaceRepoService.ReleaseChatWorkspaceAsync"/>.
+    /// A ordem importa: worktrees de run primeiro — o
+    /// <c>git worktree remove</c> precisa do repo base ainda vivo.
+    /// </summary>
+    private static async Task ReleaseChatDiskAsync(
+        AppDbContext db, WorkspaceRepoService repos,
+        WorktreeService worktrees, CheckpointService checkpoints,
+        string userId, string chatId, CancellationToken ct)
+    {
+        var mainWorkdir = await repos.ResolveWorkdirAsync(userId, chatId, ct);
+        var runIds = await db.ChatRuns.AsNoTracking()
+            .Where(r => r.ChatId == chatId)
+            .Select(r => r.Id)
+            .ToListAsync(ct);
+        foreach (var runId in runIds)
+        {
+            var dir = await worktrees.DeleteForRunAsync(
+                userId, runId, mainWorkdir, ct);
+            if (dir is not null)
+            {
+                checkpoints.DeleteForWorkdir(dir);
+            }
+        }
+        checkpoints.DeleteForWorkdir(mainWorkdir);
+        await repos.ReleaseChatWorkspaceAsync(userId, chatId, keepBinding: false, ct);
     }
 
     private static async Task<IResult> TogglePinAsync(

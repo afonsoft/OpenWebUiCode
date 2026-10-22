@@ -2,9 +2,12 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Application.Interfaces;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Runs;
 using OpenWebUI.Infrastructure.Services;
@@ -369,5 +372,341 @@ public class HarnessSeamsTests
         Assert.That(merged, Does.Contain("Open WebUI agent"));
         Assert.That(merged.TrimStart(),
             Does.StartWith(sections[0].TrimStart()));
+    }
+
+    // ---------- RF-E2: team tools (task/message/status) ----------
+
+    private IServiceScopeFactory Scopes()
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o =>
+            o.UseSqlite($"Data Source={_dbPath}"));
+        return services.BuildServiceProvider()
+            .GetRequiredService<IServiceScopeFactory>();
+    }
+
+    private static JsonElement Args(string json) =>
+        JsonDocument.Parse(json).RootElement;
+
+    private async Task<(Chat Root, Chat Member)> SeedTeamAsync(
+        AppDbContext db)
+    {
+        await SeedUserAsync(db, "u1");
+        var root = NewChat("u1");
+        db.Chats.Add(root);
+        await db.SaveChangesAsync();
+        var teamId = await TeamService.EnsureRootTeamAsync(
+            db, root, CancellationToken.None);
+        var member = NewChat("u1", parent: root.Id);
+        member.TeamId = teamId;
+        member.TeamRole = "member";
+        db.Chats.Add(member);
+        await db.SaveChangesAsync();
+        return (root, member);
+    }
+
+    private static BuiltinToolContext ToolCtx(string chatId) =>
+        new("u1", chatId, "run1", "/tmp", "/tmp");
+
+    [Test]
+    public async Task TeamTask_Ciclo_Completo_Create_Claim_Complete()
+    {
+        using var db = NewDb();
+        var (root, _) = await SeedTeamAsync(db);
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamTaskBuiltinTool(Scopes());
+        var ctx = ToolCtx(root.Id);
+
+        var created = await tool.ExecuteAsync(
+            Args("""{"op":"create","title":"pesquisar API"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(created.Text, Does.Contain("Tarefa criada"));
+
+        var list = await tool.ExecuteAsync(
+            Args("""{"op":"list"}"""), ctx, CancellationToken.None);
+        Assert.That(list.Text, Does.Contain("pesquisar API"));
+
+        var task = await db.TeamTasks.SingleAsync();
+        var claim = await tool.ExecuteAsync(
+            Args($$"""{"op":"claim","task_id":"{{task.Id}}"}"""),
+            ctx, CancellationToken.None);
+        Assert.That(claim.Text, Does.Contain("in_progress"));
+
+        var done = await tool.ExecuteAsync(
+            Args($$"""{"op":"complete","task_id":"{{task.Id}}","result":"ok"}"""),
+            ctx, CancellationToken.None);
+        db.ChangeTracker.Clear();
+        Assert.Multiple(() =>
+        {
+            Assert.That(done.Text, Does.Contain("done"));
+            Assert.That(db.TeamTasks.Single().Result, Is.EqualTo("ok"));
+        });
+    }
+
+    [Test]
+    public async Task TeamTask_Fora_De_Team_Falha_Fechado()
+    {
+        using var db = NewDb();
+        await SeedUserAsync(db, "u1");
+        var solo = NewChat("u1");
+        db.Chats.Add(solo);
+        await db.SaveChangesAsync();
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamTaskBuiltinTool(Scopes());
+        var res = await tool.ExecuteAsync(
+            Args("""{"op":"list"}"""), ToolCtx(solo.Id),
+            CancellationToken.None);
+        Assert.That(res.Text, Does.Contain("não pertence a um agent team"));
+    }
+
+    [Test]
+    public async Task TeamMessage_Membro_Ocioso_Gera_ChatMessage_E_Notificacao()
+    {
+        using var db = NewDb();
+        var (root, member) = await SeedTeamAsync(db);
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamMessageBuiltinTool(Scopes());
+        var res = await tool.ExecuteAsync(
+            Args($$"""{"to_chat_id":"{{member.Id}}","message":"oi time"}"""),
+            ToolCtx(root.Id), CancellationToken.None);
+        Assert.That(res.Text, Does.Contain("Membro ocioso"));
+
+        var msgs = await db.ChatMessages
+            .Where(m => m.ChatId == member.Id).ToListAsync();
+        Assert.Multiple(() =>
+        {
+            Assert.That(msgs, Has.Count.EqualTo(1));
+            Assert.That(msgs[0].Content, Does.Contain("[team:"));
+            Assert.That(db.Notifications.Count(n =>
+                n.UserId == "u1"), Is.GreaterThan(0));
+        });
+    }
+
+    [Test]
+    public async Task TeamMessage_Membro_Com_RunAtiva_Vira_Steer()
+    {
+        using var db = NewDb();
+        var (root, member) = await SeedTeamAsync(db);
+        db.ChatRuns.Add(new ChatRun
+        {
+            ChatId = member.Id,
+            UserId = "u1",
+            Model = "m",
+            Status = ChatRunStatus.Running,
+            CreatedAt = 1,
+        });
+        await db.SaveChangesAsync();
+        var run = await db.ChatRuns.SingleAsync();
+
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamMessageBuiltinTool(Scopes());
+        var res = await tool.ExecuteAsync(
+            Args($$"""{"to_chat_id":"{{member.Id}}","message":"steer aqui"}"""),
+            ToolCtx(root.Id), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("steer"));
+            Assert.That(db.ChatRunSteers.Single(s => s.RunId == run.Id)
+                .Content, Does.Contain("steer aqui"));
+        });
+    }
+
+    [Test]
+    public async Task TeamMessage_Alvo_De_Outro_Time_Rejeita()
+    {
+        using var db = NewDb();
+        var (root, _) = await SeedTeamAsync(db);
+        var estrangeiro = NewChat("u1");
+        estrangeiro.TeamId = "outro-team";
+        estrangeiro.TeamRole = "member";
+        db.Chats.Add(estrangeiro);
+        await db.SaveChangesAsync();
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamMessageBuiltinTool(Scopes());
+        var res = await tool.ExecuteAsync(
+            Args($$"""{"to_chat_id":"{{estrangeiro.Id}}","message":"vaza"}"""),
+            ToolCtx(root.Id), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("não é membro"));
+            Assert.That(db.ChatMessages.Count(
+                m => m.ChatId == estrangeiro.Id), Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public async Task TeamStatus_Retorna_Roster_E_Tasks()
+    {
+        using var db = NewDb();
+        var (root, member) = await SeedTeamAsync(db);
+        db.TeamTasks.Add(new TeamTask
+        {
+            TeamId = root.Id, Title = "t1", Status = "pending",
+            CreatedAt = 1, UpdatedAt = 1,
+        });
+        await db.SaveChangesAsync();
+        var tool = new OpenWebUI.Infrastructure.ChatTools.Tools
+            .TeamStatusBuiltinTool(Scopes());
+        var res = await tool.ExecuteAsync(
+            Args("{}"), ToolCtx(member.Id), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("leader"));
+            Assert.That(res.Text, Does.Contain("member"));
+            Assert.That(res.Text, Does.Contain("t1"));
+        });
+    }
+
+    // ---------- RF-A1: isolamento de observers ----------
+
+    private sealed class ThrowingObserver : IAgentRunObserver
+    {
+        public Task OnRunEventAsync(AgentRunEvent e, CancellationToken ct) =>
+            throw new InvalidOperationException("observer explodiu");
+    }
+
+    private sealed class RecordingObserver(List<string> seen)
+        : IAgentRunObserver
+    {
+        public Task OnRunEventAsync(AgentRunEvent e, CancellationToken ct)
+        {
+            seen.Add(e.Type);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Test]
+    public async Task Bus_Observer_Que_Falha_Nao_Derruba_Os_Demais()
+    {
+        var seen = new List<string>();
+        var bus = new AgentRunEventBus(
+            [new ThrowingObserver(), new RecordingObserver(seen)],
+            new ConfigurationBuilder().Build(),
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<AgentRunEventBus>.Instance);
+        await bus.PublishAsync(
+            new AgentRunEvent("r1", "c1", "u1", "run.started", "{}"),
+            CancellationToken.None);
+        Assert.That(seen, Is.EqualTo(new[] { "run.started" }));
+    }
+
+    // ---------- RF-C1: validação de args do headless ----------
+
+    [Test]
+    public void Headless_IsHeadless_Detecta_Flag()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(OpenWebUI.Api.Headless.HeadlessRunner.IsHeadless(
+                ["--headless", "--prompt", "x"]), Is.True);
+            Assert.That(OpenWebUI.Api.Headless.HeadlessRunner.IsHeadless(
+                ["--serve"]), Is.False);
+        });
+    }
+
+    [Test]
+    public async Task Headless_SemPrompt_Exit2()
+    {
+        using var db = NewDb();
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o =>
+            o.UseSqlite($"Data Source={_dbPath}"));
+        var provider = services.BuildServiceProvider();
+        var code = await OpenWebUI.Api.Headless.HeadlessRunner.RunAsync(
+            provider, ["--headless"], CancellationToken.None);
+        Assert.That(code, Is.EqualTo(2));
+    }
+
+    [Test]
+    public async Task Headless_Usuario_Inexistente_Exit2()
+    {
+        using var db = NewDb();
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(o =>
+            o.UseSqlite($"Data Source={_dbPath}"));
+        var provider = services.BuildServiceProvider();
+        var code = await OpenWebUI.Api.Headless.HeadlessRunner.RunAsync(
+            provider,
+            ["--headless", "--prompt", "oi", "--user-email", "nao@existe",
+             "--model", "m"],
+            CancellationToken.None);
+        Assert.That(code, Is.EqualTo(2));
+    }
+
+    // ── Limpeza de disco no delete de chat ─────────────────────────
+
+    private sealed class StubEnv(string root) : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Test";
+        public string ApplicationName { get; set; } = "t";
+        public string ContentRootPath { get; set; } = root;
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = null!;
+    }
+
+    private static string HashPath(string path) => Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(path))))
+        [..16].ToLowerInvariant();
+
+    [Test]
+    public void DeleteChat_Limpa_Checkpoints_Do_Workdir()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"owui-ck-{Guid.NewGuid():N}");
+        var workdir = Path.Combine(root, "workspaces", "u1", "wt", "repo", "chat1");
+        Directory.CreateDirectory(workdir);
+        var dataRoot = Path.Combine(DataPaths.Root(root), "checkpoints");
+        var hash = HashPath(workdir);
+        var repoDir = Path.Combine(dataRoot, "repo", hash);
+        var filesDir = Path.Combine(dataRoot, "files", hash);
+        Directory.CreateDirectory(Path.Combine(repoDir, "objects"));
+        Directory.CreateDirectory(filesDir);
+        File.WriteAllText(Path.Combine(filesDir, "manifest.json"), "{}");
+
+        var svc = new OpenWebUI.Infrastructure.Services.CheckpointService(
+            new StubEnv(root), new ConfigurationBuilder().Build(),
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<OpenWebUI.Infrastructure.Services.CheckpointService>
+                .Instance);
+        svc.DeleteForWorkdir(workdir);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Directory.Exists(repoDir), Is.False);
+            Assert.That(Directory.Exists(filesDir), Is.False);
+        });
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Test]
+    public async Task DeleteChat_Remove_Worktree_Isolado_Da_Run()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"owui-wt-{Guid.NewGuid():N}");
+        var runDir = Path.Combine(
+            DataPaths.Root(root), "worktrees", "u1", "run1");
+        Directory.CreateDirectory(runDir);
+        File.WriteAllText(Path.Combine(runDir, "f.txt"), "x");
+
+        var services = new ServiceCollection().BuildServiceProvider();
+        var svc = new OpenWebUI.Infrastructure.Services.WorktreeService(
+            new StubEnv(root), new ConfigurationBuilder().Build(),
+            services.GetRequiredService<IServiceScopeFactory>(),
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<OpenWebUI.Infrastructure.Services.WorktreeService>
+                .Instance);
+
+        var removed = await svc.DeleteForRunAsync(
+            "u1", "run1", Path.Combine(root, "inexistente"),
+            CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(removed, Is.EqualTo(runDir));
+            Assert.That(Directory.Exists(runDir), Is.False);
+        });
+
+        // Idempotente: run inexistente retorna null sem erro.
+        var again = await svc.DeleteForRunAsync(
+            "u1", "run1", root, CancellationToken.None);
+        Assert.That(again, Is.Null);
+        Directory.Delete(root, recursive: true);
     }
 }
