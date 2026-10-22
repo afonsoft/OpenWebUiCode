@@ -408,6 +408,93 @@ public class HarnessSeamsTests
     private static BuiltinToolContext ToolCtx(string chatId) =>
         new("u1", chatId, "run1", "/tmp", "/tmp");
 
+    // ---------- TeamService: resolução por cadeia de parents ----------
+
+    [Test]
+    public async Task TeamResolve_SemColuna_Sobe_Cadeia_Parent_Ate_Raiz()
+    {
+        using var db = NewDb();
+        await SeedUserAsync(db, "u1");
+        var root = NewChat("u1");
+        db.Chats.Add(root);
+        await db.SaveChangesAsync();
+        // Raiz auto-referenciada como team (modelo legado sem TeamId nos filhos).
+        root.TeamId = root.Id;
+        root.TeamRole = "leader";
+        var mid = NewChat("u1", parent: root.Id);
+        var leaf = NewChat("u1", parent: mid.Id);
+        db.Chats.AddRange(mid, leaf);
+        await db.SaveChangesAsync();
+
+        var resolved = await TeamService.ResolveTeamIdAsync(
+            db, leaf.Id, CancellationToken.None);
+        Assert.That(resolved, Is.EqualTo(root.Id));
+
+        var rootId = await TeamService.RootChatIdAsync(
+            db, leaf, CancellationToken.None);
+        Assert.That(rootId, Is.EqualTo(root.Id));
+    }
+
+    [Test]
+    public async Task TeamResolve_Chat_Orfa_Null_E_Parent_Quebrado_Null()
+    {
+        using var db = NewDb();
+        await SeedUserAsync(db, "u1");
+        var solo = NewChat("u1");
+        db.Chats.Add(solo);
+        await db.SaveChangesAsync();
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await TeamService.ResolveTeamIdAsync(
+                db, "chat-inexistente", CancellationToken.None), Is.Null);
+            Assert.That(await TeamService.ResolveTeamIdAsync(
+                db, solo.Id, CancellationToken.None), Is.Null);
+        });
+
+        // Parent apontando pra chat deletado → null (não é team).
+        var orphan = NewChat("u1", parent: "pai-deletado");
+        db.Chats.Add(orphan);
+        await db.SaveChangesAsync();
+        Assert.That(await TeamService.ResolveTeamIdAsync(
+            db, orphan.Id, CancellationToken.None), Is.Null);
+    }
+
+    [Test]
+    public async Task TeamStatus_Roster_Runs_Tasks_Completos()
+    {
+        using var db = NewDb();
+        var (root, member) = await SeedTeamAsync(db);
+        db.TeamTasks.Add(new TeamTask
+        {
+            TeamId = root.TeamId!,
+            Title = "investigar bug",
+            Status = "pending",
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        db.ChatRuns.Add(new ChatRun
+        {
+            ChatId = member.Id,
+            UserId = "u1",
+            Model = "m",
+            Status = ChatRunStatus.Running,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        await db.SaveChangesAsync();
+
+        var status = await TeamService.BuildStatusAsync(
+            db, root.TeamId!, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.Not.Null);
+            Assert.That(status!.Members.Count, Is.EqualTo(2));
+            Assert.That(status.Tasks.Count, Is.EqualTo(1));
+            Assert.That(status.Members.Count(m => m.ActiveRunId is not null),
+                Is.EqualTo(1));
+        });
+    }
+
     [Test]
     public async Task TeamTask_Ciclo_Completo_Create_Claim_Complete()
     {

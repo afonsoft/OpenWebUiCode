@@ -299,6 +299,61 @@ public class AutomationHookV2Tests
         });
     }
 
+    [Test]
+    public async Task Webhook_PayloadAcima_De256KB_413()
+    {
+        var auth = await SignUpAsync("P", $"p-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat p", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "big", chat.Id));
+
+        var body = "{\"data\":\"" + new string('x', 260 * 1024) + "\"}";
+        var res = await FireRawAsync(hook.Url, body, []);
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.RequestEntityTooLarge));
+    }
+
+    [Test]
+    public async Task Webhook_Legado_SemSecret_Aceita_Com_Warning_Auditado()
+    {
+        var auth = await SignUpAsync("U", $"u-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat u", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "legacy", chat.Id)); // sem secret — caminho legado
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url,
+            new { prompt = "legado" });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+
+        UseToken(auth.Token);
+        var deliveries = await _client.GetFromJsonAsync<
+            List<AutomationHookDeliveryResponse>>(
+            $"/api/v1/hooks/{hook.Id}/deliveries");
+        Assert.That(deliveries![0].Status, Is.EqualTo("accepted"));
+    }
+
+    [Test]
+    public async Task Webhook_PromptTemplate_Renderiza_Path_Do_Payload()
+    {
+        var auth = await SignUpAsync("T", $"t-{Guid.NewGuid():N}@hooks.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("Chat t", ["llama3"]);
+        var hook = await CreateHookAsync(new AutomationHookCreateRequest(
+            "tpl", chat.Id,
+            PromptTemplate: "PR {{pull_request.title}} merged por {{sender.login}}"));
+
+        _client.DefaultRequestHeaders.Authorization = null;
+        var fire = await _client.PostAsJsonAsync(hook.Url, new
+        {
+            pull_request = new { title = "feat x" },
+            sender = new { login = "devin" },
+        });
+        Assert.That(fire.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
+            await fire.Content.ReadAsStringAsync());
+    }
+
     // ---------------- helpers ----------------
 
     private async Task<AuthResponse> SignUpAsync(string name, string email)
