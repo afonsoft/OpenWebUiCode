@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-sdd-orchestrator-prompts` |
 | Ticket | [#491](https://github.com/afonsoft/open-webui/issues/491) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Parent | `SPEC-20261022-ade-surfaces` (merged as PR #489) — benchmark [afonsoft/skills](https://github.com/afonsoft/skills) (`write-specs`, `execute-specs`, `orchestrator`, `gap-analysis`, `create-issues`); direção: **AI Orchestrator** + **AI-Driven Development (ADD)** com foco em **Spec-Driven Development (SDD)** |
 
 ## 1. User Story
@@ -229,7 +229,7 @@ independente) → `T3` (B: contributor SDD — usa convivência com a tool) →
 - [x] `builtin_specs`: `list`/`show`/`transition` funcionam sobre um
       workdir com `.specs/` fake; transição inválida (`Draft→Completed`)
       recusada; `Completed` move para `docs/specs/`; path fora recusado.
-- [ ] Regressão: `HarnessSeamsTests` + `TerminalPtyTests` +
+- [x] Regressão: `HarnessSeamsTests` + `TerminalPtyTests` +
       `AutomationHookV2Tests` verdes; suíte completa verde; coverage ≥ baseline.
 
 ## 5. Risks & Open Questions
@@ -254,7 +254,7 @@ independente) → `T3` (B: contributor SDD — usa convivência com a tool) →
 | T2 ✅ | E — `SpecsBuiltinTool` (list/show/transition/archive) + registro + testes |
 | T3 ✅ | B — `SddWorkflowContributor` (detecção + config `Agent:Sdd`) + testes |
 | T4 ✅ | C — `DelegationPolicyContributor` + testes |
-| T5 | DoD — Release build 0 warnings, suíte completa, coverage ≥ baseline, drift guards, SPEC → Issue → PR |
+| T5 ✅ | DoD — Release build 0 warnings, suíte completa, coverage ≥ baseline, drift guards, SPEC → Issue → PR |
 
 ## 8. Organization Guardrails
 
