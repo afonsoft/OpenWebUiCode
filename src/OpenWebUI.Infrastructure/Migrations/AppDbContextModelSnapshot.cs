@@ -759,6 +759,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("FolderId")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("IsEphemeral")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("LeafMessageId")
                         .HasColumnType("TEXT");
 
@@ -1193,6 +1196,212 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasIndex("UserId", "FileId");
 
                     b.ToTable("EmbeddingChunks");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.EvalBaseline", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EvalRunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("EvalBaselines");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.EvalCase", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DatasetId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EvalDatasetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExpectToolsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Expected")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ForbidToolsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Grader")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("MaxSteps")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Prompt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Rubric")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DatasetId");
+
+                    b.HasIndex("EvalDatasetId");
+
+                    b.ToTable("EvalCases");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.EvalDataset", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TagsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("EvalDatasets");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.EvalResult", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CaseId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatRunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EvalRunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FinalAnswer")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GraderDetailJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Pass")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Rep")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("Score")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EvalRunId", "CaseId");
+
+                    b.ToTable("EvalResults");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.EvalRun", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AgentName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Concurrency")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DatasetId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DoneJobs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("FinishedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("K")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ToolsetJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TotalJobs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("UserId", "StartedAt");
+
+                    b.ToTable("EvalRuns");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.Feedback", b =>
@@ -2274,6 +2483,13 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Navigation("Chat");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.EvalCase", b =>
+                {
+                    b.HasOne("OpenWebUI.Domain.EvalDataset", null)
+                        .WithMany("Cases")
+                        .HasForeignKey("EvalDatasetId");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.GroupMember", b =>
                 {
                     b.HasOne("OpenWebUI.Domain.Group", "Group")
@@ -2365,6 +2581,11 @@ namespace OpenWebUI.Infrastructure.Migrations
             modelBuilder.Entity("OpenWebUI.Domain.Chat", b =>
                 {
                     b.Navigation("Messages");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.EvalDataset", b =>
+                {
+                    b.Navigation("Cases");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.Group", b =>

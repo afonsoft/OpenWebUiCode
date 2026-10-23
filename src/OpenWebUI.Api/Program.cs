@@ -40,6 +40,7 @@ builder.Services.AddScoped<ExternalAgentService>();
 builder.Services.AddHostedService<AutomationScheduler>();
 builder.Services.AddScoped<MemorySyncService>();
 builder.Services.AddHostedService<MemorySyncScheduler>();
+builder.Services.AddHostedService<EvalRunnerService>();
 builder.Services.AddScoped<RetentionService>();
 builder.Services.AddScoped<ToolOutputService>();
 builder.Services.AddHostedService<RetentionScheduler>();
@@ -50,6 +51,8 @@ builder.Services.AddScoped<PolicyService>();
 // por run + resolução de políticas por sujeito (user/grupo/global).
 builder.Services.AddScoped<RunUsageLedgerService>();
 builder.Services.AddScoped<BudgetPolicyService>();
+builder.Services.AddScoped<EvalGraderFactory>();
+builder.Services.AddScoped<EvalGraderService>();
 builder.Services.AddScoped<EmbeddingService>();
 builder.Services.AddScoped<RagService>();
 builder.Services.AddScoped<ToolExecutor>();
@@ -584,6 +587,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapGroupEndpoints();
     app.MapAdminPolicyEndpoints();
     app.MapUsageEndpoints();
+    app.MapEvalEndpoints();
     app.MapOAuthEndpoints();
     app.MapKnowledgeEndpoints();
     app.MapToolEndpoints();

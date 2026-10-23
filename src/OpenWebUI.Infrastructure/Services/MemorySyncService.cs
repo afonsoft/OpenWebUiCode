@@ -107,6 +107,7 @@ public class MemorySyncService(
         var chats = await db.Chats
             .Include(c => c.Messages)
             .Where(c => c.UserId == userId
+                && !c.IsEphemeral
                 && c.UpdatedAt > last
                 && c.UpdatedAt >= cutoff)
             .OrderByDescending(c => c.UpdatedAt)

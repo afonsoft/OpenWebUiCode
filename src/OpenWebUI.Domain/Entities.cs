@@ -124,6 +124,12 @@ public class Chat
     /// <summary>Indica se o chat está fixado no topo da lista.</summary>
     public bool Pinned { get; set; }
 
+    /// <summary>
+    /// Chat técnico/efêmero (evals, jobs internos): oculto da sidebar e
+    /// excluído do MemorySyncService.
+    /// </summary>
+    public bool IsEphemeral { get; set; }
+
     /// <summary>Id da pasta que contém o chat, quando organizado em pastas.</summary>
     public string? FolderId { get; set; }
 
@@ -1965,4 +1971,173 @@ public class BudgetPolicy
 
     /// <summary>Última atualização (epoch seconds).</summary>
     public long UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Dataset de avaliação de agente (SPEC-20261023-agent-evals RF-001):
+/// conjunto nomeado de casos de teste do dono.
+/// </summary>
+public class EvalDataset
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono do dataset — evals consomem provider do dono.</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Nome do dataset.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Descrição opcional.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Tags, serializadas como JSON array.</summary>
+    public string TagsJson { get; set; } = "[]";
+
+    /// <summary>Casos do dataset.</summary>
+    public List<EvalCase> Cases { get; set; } = [];
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>Caso de avaliação: prompt + expectativa + grader.</summary>
+public class EvalCase
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dataset ao qual o caso pertence.</summary>
+    public string DatasetId { get; set; } = string.Empty;
+
+    /// <summary>Prompt enviado ao agente.</summary>
+    public string Prompt { get; set; } = string.Empty;
+
+    /// <summary>Valor esperado (exact/contains/regex).</summary>
+    public string? Expected { get; set; }
+
+    /// <summary>
+    /// Grader: <c>exact|contains|regex|rubric|trajectory</c>.
+    /// </summary>
+    public string Grader { get; set; } = "exact";
+
+    /// <summary>Rubrica (texto) para o grader <c>rubric</c> (LLM-as-judge).</summary>
+    public string? Rubric { get; set; }
+
+    /// <summary>Tools esperadas na trajetória (JSON array), grader <c>trajectory</c>.</summary>
+    public string? ExpectToolsJson { get; set; }
+
+    /// <summary>Tools proibidas na trajetória (JSON array), grader <c>trajectory</c>.</summary>
+    public string? ForbidToolsJson { get; set; }
+
+    /// <summary>Máximo de steps permitido, grader <c>trajectory</c>.</summary>
+    public int? MaxSteps { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Execução de um dataset contra um alvo (modelo + opcional agent +
+/// toolset), com k repetições por caso (pass@k).
+/// </summary>
+public class EvalRun
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dataset executado.</summary>
+    public string DatasetId { get; set; } = string.Empty;
+
+    /// <summary>Dono (paga o custo das runs filhas).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Modelo alvo.</summary>
+    public string ModelId { get; set; } = string.Empty;
+
+    /// <summary>Agent/persona opcional (Params["agent"] da run).</summary>
+    public string? AgentName { get; set; }
+
+    /// <summary>Toolset permitida (JSON array → ToolIds do request).</summary>
+    public string? ToolsetJson { get; set; }
+
+    /// <summary>Repetições por caso (pass@k).</summary>
+    public int K { get; set; } = 1;
+
+    /// <summary>Concorrência máxima de runs filhas.</summary>
+    public int Concurrency { get; set; } = 2;
+
+    /// <summary>Status: <c>pending|running|done|failed</c>.</summary>
+    public string Status { get; set; } = "pending";
+
+    /// <summary>Total de unidades (casos × k).</summary>
+    public int TotalJobs { get; set; }
+
+    /// <summary>Unidades concluídas (progresso).</summary>
+    public int DoneJobs { get; set; }
+
+    /// <summary>Erro final, quando <c>failed</c>.</summary>
+    public string? Error { get; set; }
+
+    /// <summary>Início (epoch seconds).</summary>
+    public long? StartedAt { get; set; }
+
+    /// <summary>Fim (epoch seconds).</summary>
+    public long? FinishedAt { get; set; }
+}
+
+/// <summary>Resultado de um caso×repetição dentro de um EvalRun.</summary>
+public class EvalResult
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>EvalRun pai.</summary>
+    public string EvalRunId { get; set; } = string.Empty;
+
+    /// <summary>Caso avaliado.</summary>
+    public string CaseId { get; set; } = string.Empty;
+
+    /// <summary>Índice da repetição (0..k-1).</summary>
+    public int Rep { get; set; }
+
+    /// <summary>ChatRun filha (transcript).</summary>
+    public string? ChatRunId { get; set; }
+
+    /// <summary>Chat efêmero da execução (link do transcript).</summary>
+    public string? ChatId { get; set; }
+
+    /// <summary>Passou no grader.</summary>
+    public bool Pass { get; set; }
+
+    /// <summary>Score 0-1 (rubric); null para graders binários.</summary>
+    public double? Score { get; set; }
+
+    /// <summary>Detalhe do grader (JSON — asserts, rationale, erros).</summary>
+    public string? GraderDetailJson { get; set; }
+
+    /// <summary>Resposta final do assistente avaliada.</summary>
+    public string? FinalAnswer { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>Ponteiro nomeado para um EvalRun usado como baseline.</summary>
+public class EvalBaseline
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono.</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Nome da baseline (único por usuário).</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>EvalRun apontado.</summary>
+    public string EvalRunId { get; set; } = string.Empty;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
 }

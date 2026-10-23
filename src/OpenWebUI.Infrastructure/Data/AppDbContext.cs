@@ -168,6 +168,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Políticas de budget por sujeito (SPEC-20261023-run-cost-budgets RF-002).</summary>
     public DbSet<BudgetPolicy> BudgetPolicies => Set<BudgetPolicy>();
 
+    /// <summary>Datasets de avaliação de agente (SPEC-20261023-agent-evals).</summary>
+    public DbSet<EvalDataset> EvalDatasets => Set<EvalDataset>();
+
+    /// <summary>Casos de avaliação por dataset.</summary>
+    public DbSet<EvalCase> EvalCases => Set<EvalCase>();
+
+    /// <summary>Execuções de avaliação (dataset × alvo × k).</summary>
+    public DbSet<EvalRun> EvalRuns => Set<EvalRun>();
+
+    /// <summary>Resultados por caso×repetição.</summary>
+    public DbSet<EvalResult> EvalResults => Set<EvalResult>();
+
+    /// <summary>Baselines nomeadas apontando para EvalRuns.</summary>
+    public DbSet<EvalBaseline> EvalBaselines => Set<EvalBaseline>();
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -530,6 +545,35 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             entity.HasKey(p => p.Id);
             entity.HasIndex(p => p.Subject).IsUnique();
+        });
+
+        // Evals (SPEC-20261023-agent-evals): casos por dataset, resultados
+        // por evalrun+caso, baseline única por (user, nome).
+        modelBuilder.Entity<EvalDataset>(entity =>
+        {
+            entity.HasKey(d => d.Id);
+            entity.HasIndex(d => new { d.UserId, d.CreatedAt });
+        });
+        modelBuilder.Entity<EvalCase>(entity =>
+        {
+            entity.HasKey(c => c.Id);
+            entity.HasIndex(c => c.DatasetId);
+        });
+        modelBuilder.Entity<EvalRun>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => r.Status);
+            entity.HasIndex(r => new { r.UserId, r.StartedAt });
+        });
+        modelBuilder.Entity<EvalResult>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => new { r.EvalRunId, r.CaseId });
+        });
+        modelBuilder.Entity<EvalBaseline>(entity =>
+        {
+            entity.HasKey(b => b.Id);
+            entity.HasIndex(b => new { b.UserId, b.Name }).IsUnique();
         });
     }
 }
