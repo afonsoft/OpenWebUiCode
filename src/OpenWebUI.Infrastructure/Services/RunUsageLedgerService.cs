@@ -147,30 +147,43 @@ public sealed class RunUsageLedgerService(
             .ToListAsync(ct);
 
     /// <summary>Top chats por custo na janela (superfície admin, RF-005).</summary>
-    public Task<List<ChatCostRow>> TopChatsAsync(
-        long from, long to, int take, CancellationToken ct) =>
-        db.RunUsageRecords.AsNoTracking()
+    public async Task<List<ChatCostRow>> TopChatsAsync(
+        long from, long to, int take, CancellationToken ct)
+    {
+        var rows = await db.RunUsageRecords.AsNoTracking()
             .Where(r => r.CreatedAt >= from && r.CreatedAt < to)
             .GroupBy(r => new { r.ChatId, r.UserId })
-            .Select(g => new ChatCostRow(
-                g.Key.ChatId, g.Key.UserId, g.Sum(r => r.CostUsd ?? 0)))
-            .OrderByDescending(g => g.CostUsd)
+            .Select(g => new
+            {
+                g.Key.ChatId, g.Key.UserId,
+                Cost = g.Sum(r => r.CostUsd ?? 0),
+            })
+            .OrderByDescending(g => g.Cost)
             .Take(take)
             .ToListAsync(ct);
+        return rows.Select(r => new ChatCostRow(
+            r.ChatId, r.UserId, r.Cost)).ToList();
+    }
 
     /// <summary>Agregado por usuário na janela (superfície admin, RF-005).</summary>
-    public Task<List<UserCostRow>> ByUserAsync(
-        long from, long to, CancellationToken ct) =>
-        db.RunUsageRecords.AsNoTracking()
+    public async Task<List<UserCostRow>> ByUserAsync(
+        long from, long to, CancellationToken ct)
+    {
+        var rows = await db.RunUsageRecords.AsNoTracking()
             .Where(r => r.CreatedAt >= from && r.CreatedAt < to)
             .GroupBy(r => r.UserId)
-            .Select(g => new UserCostRow(
-                g.Key,
-                g.Sum(r => r.PromptTokens + r.CompletionTokens),
-                g.Sum(r => r.CostUsd ?? 0),
-                g.Count()))
-            .OrderByDescending(g => g.CostUsd)
+            .Select(g => new
+            {
+                UserId = g.Key,
+                Tokens = g.Sum(r => r.PromptTokens + r.CompletionTokens),
+                Cost = g.Sum(r => r.CostUsd ?? 0),
+                Runs = g.Count(),
+            })
+            .OrderByDescending(g => g.Cost)
             .ToListAsync(ct);
+        return rows.Select(r => new UserCostRow(
+            r.UserId, r.Tokens, r.Cost, r.Runs)).ToList();
+    }
 }
 
 /// <summary>Linha do agregado por chat.</summary>

@@ -276,4 +276,112 @@ public class RunBudgetTests
 
         Assert.That(gate.Allowed, Is.True);
     }
+
+    private static ModelRoleResolver Resolver(AppDbContext db,
+        BudgetPolicyService budgets, params string[] catalogIds) =>
+        new(db, new ConfigService(db, TestCache.Create()),
+            _ => Task.FromResult(catalogIds
+                .Select(id => new Application.Contracts.ModelInfo(
+                    id, id, "ollama", "x")).ToList()),
+            NullLogger<ModelRoleResolver>.Instance, budgets);
+
+    private void SeedPriced(string id, double input, double output)
+    {
+        using var db = CreateContext();
+        db.ModelEntries.Add(new ModelEntry
+        {
+            Id = id, UserId = "public",
+            MetaJson = $"{{\"cost\":{{\"input\":{input},\"output\":{output}}}}}",
+        });
+        db.SaveChanges();
+    }
+
+    // Covers RF-004/AC: maxTier=1 na resolução escolhe o melhor ≤1 da
+    // cadeia do papel — o caro é pulado, não o primeiro.
+    [Test]
+    public async Task ResolveForTier_PicksBestWithinTier()
+    {
+        await using var db = CreateContext();
+        db.Users.Add(new User
+        {
+            Id = "u1", Email = "u1@t.dev",
+            SettingsJson = """{"modelRoles":{"tasks":["pricey","cheap"]}}""",
+        });
+        await db.SaveChangesAsync();
+        SeedPriced("pricey", 30, 60);   // blended 45 → tier 3
+        SeedPriced("cheap", 0.1, 0.2);  // blended 0.15 → tier 0
+
+        var budgets = Budgets(db);
+        var resolver = Resolver(db, budgets, "pricey", "cheap");
+
+        var resolved = await resolver.ResolveForTierAsync(
+            "tasks", "u1", "fallback", 1, CancellationToken.None);
+
+        Assert.That(resolved, Is.EqualTo("cheap"));
+    }
+
+    // Covers RF-004/AC: nenhum candidato no tier → null (o caller emite
+    // no_model_in_tier, nunca upgrade silencioso).
+    [Test]
+    public async Task ResolveForTier_NoneEligible_ReturnsNull()
+    {
+        await using var db = CreateContext();
+        db.Users.Add(new User
+        {
+            Id = "u1", Email = "u1@t.dev",
+            SettingsJson = """{"modelRoles":{"tasks":["pricey"]}}""",
+        });
+        await db.SaveChangesAsync();
+        SeedPriced("pricey", 30, 60);
+        SeedPriced("fallback", 50, 50);
+
+        var budgets = Budgets(db);
+        var resolver = Resolver(db, budgets, "pricey", "fallback");
+
+        var resolved = await resolver.ResolveForTierAsync(
+            "tasks", "u1", "fallback", 0, CancellationToken.None);
+
+        Assert.That(resolved, Is.Null);
+    }
+
+    // Covers RF-004: maxTier null preserva o comportamento original da
+    // resolução (primeiro da cadeia conhecido).
+    [Test]
+    public async Task ResolveForTier_NoTier_BehavesLikeResolve()
+    {
+        await using var db = CreateContext();
+        db.Users.Add(new User
+        {
+            Id = "u1", Email = "u1@t.dev",
+            SettingsJson = """{"modelRoles":{"tasks":["pricey"]}}""",
+        });
+        await db.SaveChangesAsync();
+
+        var budgets = Budgets(db);
+        var resolver = Resolver(db, budgets, "pricey");
+
+        var resolved = await resolver.ResolveForTierAsync(
+            "tasks", "u1", "fallback", null, CancellationToken.None);
+
+        Assert.That(resolved, Is.EqualTo("pricey"));
+    }
+
+    // Covers RF-002: warnAt default 80 e clamped; mês vazio soma zero.
+    [Test]
+    public async Task WarnAndMonthSafe_Defaults()
+    {
+        await using var db = CreateContext();
+        var budgets = Budgets(db);
+
+        var warn = await budgets.WarnAtPercentAsync(CancellationToken.None);
+        var month = await budgets.MonthTotalsSafeAsync(
+            "nobody", CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(warn, Is.EqualTo(80));
+            Assert.That(month.CostUsd, Is.EqualTo(0));
+            Assert.That(month.Runs, Is.EqualTo(0));
+        });
+    }
 }
