@@ -321,17 +321,35 @@ public sealed class DelegateTaskBuiltinTool(
         }
 
         // RF-003: modelo do filho — `model:` explícito > `role:` (cadeia do
-        // papel) > modelo do pai.
+        // papel) > modelo do pai. Com teto de tier herdado (SPEC-20261023
+        // run-cost-budgets RF-004) a resolução de `role:` escolhe o melhor
+        // candidato ≤ teto; nenhum elegível → erro no_model_in_tier, nunca
+        // upgrade silencioso.
+        var parentMaxTier = await config.GetAsync<int?>(
+            $"r:{parentRun.Id}:agent.maxtier", null, ct);
         var childModel = parentRun.Model;
         if (agent?.Model is { Length: > 0 } agentModel)
         {
-            childModel = agentModel.StartsWith("role:", StringComparison.OrdinalIgnoreCase)
-                ? await scope.ServiceProvider
+            if (agentModel.StartsWith("role:", StringComparison.OrdinalIgnoreCase))
+            {
+                var resolved = await scope.ServiceProvider
                     .GetRequiredService<ModelRoleResolver>()
-                    .ResolveAsync(
+                    .ResolveForTierAsync(
                         agentModel["role:".Length..], context.UserId,
-                        parentRun.Model, ct)
-                : agentModel;
+                        parentRun.Model, parentMaxTier, ct);
+                if (resolved is null)
+                {
+                    return new BuiltinToolResult(
+                        $"no_model_in_tier: nenhum modelo do papel "
+                        + $"'{agentModel["role:".Length..]}' cabe no tier "
+                        + $"máximo {parentMaxTier} herdado da run pai.");
+                }
+                childModel = resolved;
+            }
+            else
+            {
+                childModel = agentModel;
+            }
         }
 
         // `blocking` do agente é o default de wait (o arg explícito vence).
@@ -447,6 +465,15 @@ public sealed class DelegateTaskBuiltinTool(
         if (agent?.Steps is { } agentSteps)
         {
             await config.SetAsync($"r:{childRun.Id}:agent.steps", agentSteps, ct);
+        }
+
+        // Tier de custo herdado (SPEC-20261023-run-cost-budgets RF-004):
+        // o gate do executor do filho aplica min(inherited, policy) — a
+        // cadeia só afunila, nunca alarga.
+        if (parentMaxTier is { } inheritedTier)
+        {
+            await config.SetAsync(
+                $"r:{childRun.Id}:agent.maxtier", inheritedTier, ct);
         }
 
         // SPEC-20261010-chat-repo-binding: o filho herda o binding POR CHAT

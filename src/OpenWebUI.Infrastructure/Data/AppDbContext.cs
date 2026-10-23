@@ -162,6 +162,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Snapshots versionados do contexto de trabalho por chat.</summary>
     public DbSet<ContextSnapshot> ContextSnapshots => Set<ContextSnapshot>();
 
+    /// <summary>Ledger de uso por run (SPEC-20261023-run-cost-budgets RF-001).</summary>
+    public DbSet<RunUsageRecord> RunUsageRecords => Set<RunUsageRecord>();
+
+    /// <summary>Políticas de budget por sujeito (SPEC-20261023-run-cost-budgets RF-002).</summary>
+    public DbSet<BudgetPolicy> BudgetPolicies => Set<BudgetPolicy>();
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -507,6 +513,23 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // Versão monotônica por chat (SPEC-20261020-context-snapshots RF-003).
             entity.HasIndex(s => new { s.ChatId, s.Version }).IsUnique();
             entity.HasIndex(s => new { s.ChatId, s.CreatedAt });
+        });
+
+        // Ledger de uso (SPEC-20261023-run-cost-budgets RF-001): 1 linha por
+        // run; agregações mensais por usuário e cadeia por ParentRunId.
+        modelBuilder.Entity<RunUsageRecord>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => r.RunId).IsUnique();
+            entity.HasIndex(r => new { r.UserId, r.CreatedAt });
+            entity.HasIndex(r => r.ParentRunId);
+        });
+
+        // Uma política por sujeito (user:{id}|group:{id}|global).
+        modelBuilder.Entity<BudgetPolicy>(entity =>
+        {
+            entity.HasKey(p => p.Id);
+            entity.HasIndex(p => p.Subject).IsUnique();
         });
     }
 }

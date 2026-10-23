@@ -44,29 +44,37 @@ cost-aware; o OpenHarness expõe cost tracking por evento no stream.
   subagents ao usuário que disparou a raiz). Escrita em
   `ApplyUsageMetaAsync` (mesmo evento, mesma regra: tokens só quando o
   provider reporta usage — nunca estimado).
-- **B. Política de budget** — reuso de `AdminPolicyStatement`/
-  `PolicyService` (SPEC-20261018-policies-admin) com `kind = "budget"`:
-  sujeito = usuário/grupo/global; limites = `usdPerRun`, `usdPerMonth`,
-  `tokensPerMonth`, `maxModelTier` (ver D). Sem política = sem teto
-  (comportamento atual preservado).
-- **C. Enforcement fail-closed** — novo `IRunInterceptor`
-  (`BudgetInterceptor`, `Order` baixo):
-  - `pre-step`: soma o ledger do usuário no mês + custo acumulado da run
-    corrente (de `StepUsages`); estourou cap → `Rejected` com motivo
-    `budget_exceeded` (a run encerra com erro explicável ao usuário, não
-    silencia).
-  - `tool.call`: delegação (`delegate_task`) herda o budget da cadeia —
-    custo de filhos conta no usuário raiz via `ParentRunId`.
-  - `pre-run` no `ChatRunDispatcher`: usuário já acima do cap mensal →
-    run nem enfileira (retorna `429`-like com `error_code`).
-- **D. Roteamento por tier de custo** — tabela de tiers de preço por
-  modelo (config `Agent:CostTiers`, seed em `model-capabilities.json`);
-  `ModelRoleResolver` aceita `maxTier` do contexto da run — filhos de
-  `delegate_task` e runs de automação recebem o tier da política (barato
-  por default quando configurado), nunca upgrade silencioso.
+- **B. Política de budget** — entidade dedicada `BudgetPolicy`
+  (migration EF; desvio do rascunho: `AdminPolicyStatement` é deny-list
+  por glob e não comporta limites numéricos — mantida a **precedência**
+  do PolicyService: usuário → menor entre grupos → global). Campos
+  `usdPerRun`, `usdPerMonth`, `tokensPerMonth`, `maxModelTier` (ver D),
+  todos nullable; sem política = sem teto (comportamento atual).
+- **C. Enforcement fail-closed** — três pontos (desvio do rascunho: o
+  interceptor `pre-step` do harness só decide sobre mensagens claimed e
+  **não consegue parar a run** — o veto real mora no tool loop):
+  - `OnBudgetCheckAsync` (callback novo do `ToolLoopCallbacks`, topo de
+    cada rodada antes do provider): soma o ledger do usuário no mês +
+    custo acumulado da run + filhos finalizados na cadeia; estourou cap →
+    `ToolLoopOutcome.BudgetExceededReason` → run falha com
+    `budget_exceeded` explicável (evento `budget_warning` a 80%).
+  - `pre-run` no `ChatRunExecutor` (single seam — cobre chat, webhook,
+    headless, delegate, persona e automações) + `ChatRunEndpoints`/
+    `runs.start` respondem `429` com `error_code`.
+  - `delegate_task`: propaga `agent.maxtier` via kv `r:{runId}:` —
+    filhos herdam o teto do pai (`min(inherited, policy)` no gate).
+- **D. Roteamento por tier de custo** — tiers derivados do
+  `ModelEntry.MetaJson.cost` já existente (blended `(input+output)/2`
+  USD/1M, limites `agent.costTiers.bounds` = `"1,5,20"` → tiers 0-3;
+  modelo sem preço é elegível em qualquer tier — desvio do rascunho:
+  sem tabela/seed novo, o preço já vive no modelo).
+  `ModelRoleResolver.ResolveForTierAsync` aceita `maxTier` — filhos de
+  `delegate_task` herdam o tier do pai, nunca upgrade silencioso
+  (`no_model_in_tier`).
 - **E. Superfície admin** — `GET /api/v1/admin/usage` (agregado por
-  usuário/período, top chats por custo) + CRUD de policies `budget` na
-  surface de policies existente (AdminPolicyEndpoints). UI: só a aba de
+  usuário/período, top chats por custo) + CRUD de policies em
+  `/api/v1/admin/budget-policies` (desvio do rascunho: tabela dedicada,
+  não a surface de statements) + `GET /api/v1/usage/me`. UI: só a aba de
   policies/analytics já existente — sem página nova.
 
 **Out of scope:**
@@ -210,14 +218,14 @@ Config nova (`.env.exemplo` + `ConfigService`): `Agent:Budgets:Enabled`
 
 ## 7. Task Plan
 
-| ID | Task |
-| --- | --- |
-| T1 | Discovery: `ApplyUsageMetaAsync`, `PolicyService`, `RunInterceptorRunner`, `ModelRoleResolver`, `ChatRunDispatcher` |
-| T2 | Migration + entidade `RunUsageRecord` + `RunUsageLedgerService` (escrita + queries de mês/cadeia) + testes |
-| T3 | `BudgetInterceptor` (pre-step + tool.call) + pre-run check no dispatcher + testes de veto |
-| T4 | Tiers de custo + `maxTier` no `ModelRoleResolver` + propagação em `delegate_task` + testes |
-| T5 | Endpoints `/usage/me` + `/admin/usage` + policy `budget` + testes de contrato |
-| T6 | DoD: Release build 0 warnings, suíte verde, coverage ≥ baseline, drift guards, SPEC→Issue→PR |
+| ID | Task | Status |
+| --- | --- | --- |
+| T1 | Discovery: `ApplyUsageMetaAsync`, `PolicyService`, `RunInterceptorRunner`, `ModelRoleResolver`, `ChatRunDispatcher` | ✅ |
+| T2 | Migration `RunUsageLedger` + `RunUsageRecord`/`BudgetPolicy` + `RunUsageLedgerService` (escrita + queries de mês/cadeia) + testes | ✅ |
+| T3 | `OnBudgetCheckAsync` no tool loop + gate pré-run no executor + `429` no endpoint + `budget_warning` + testes | ✅ |
+| T4 | Tiers via `ModelEntry.MetaJson.cost` + `agent.costTiers.bounds` + `ResolveForTierAsync` + propagação em `delegate_task` + testes | ✅ |
+| T5 | Endpoints `/usage/me` + `/admin/usage` + CRUD `/admin/budget-policies` | ✅ |
+| T6 | DoD: Release build 0 warnings, suíte verde, coverage ≥ baseline, drift guards, SPEC→Issue→PR | em andamento |
 
 ## 8. Organization Guardrails
 
@@ -237,5 +245,7 @@ Config nova (`.env.exemplo` + `ConfigService`): `Agent:Budgets:Enabled`
 
 | OQ | Status | Resolução |
 | --- | --- | --- |
-| Preço por modelo quando provider não informa | Proposta | tabela `Agent:CostTiers` com defaults conhecidos (OpenAI); `null` quando desconhecido |
-| `warnAt` vira notificação push? | Adiado | v1 emite evento na run; WebPush é iteração futura |
+| Preço por modelo quando provider não informa | Resolvido | tiers derivados de `ModelEntry.MetaJson.cost` + bounds `agent.costTiers.bounds`; `null` quando desconhecido (elegível em qualquer tier) |
+| `warnAt` vira notificação push? | Adiado | v1 emite evento `budget_warning` na run; WebPush é iteração futura |
+| `AdminPolicyStatement` como policy de budget | Resolvido (desvio) | não comporta limites numéricos — entidade `BudgetPolicy` dedicada mantendo a precedência user→grupo→global |
+| `IRunInterceptor.pre-step` para veto | Resolvido (desvio) | pre-step só filtra mensagens claimed e não para a run — veto no callback `OnBudgetCheckAsync` do tool loop + gate no executor |
