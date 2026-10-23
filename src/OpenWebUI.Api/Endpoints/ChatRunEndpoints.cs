@@ -55,6 +55,7 @@ public static class ChatRunEndpoints
         RepoCommandService commands,
         AgentDefinitionService agentDefs,
         ConfigService config,
+        BudgetPolicyService budgets,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -219,6 +220,18 @@ public static class ChatRunEndpoints
             ToolIds: request.ToolIds ?? commandAgentDef?.Tools,
             WebSearch: request.WebSearch,
             MentionPaths: request.MentionPaths);
+
+        // Gate pré-run (SPEC-20261023-run-cost-budgets RF-002/004): mês
+        // estourado ou modelo fora do tier → 429 com error_code, antes de
+        // criar a run (o executor repete o check — defesa em profundidade
+        // para os demais caminhos de enqueue).
+        var gate = await budgets.CheckStartAsync(user.Id, request.Model, ct);
+        if (!gate.Allowed)
+        {
+            return Results.Json(
+                new { detail = gate.Detail, error_code = gate.Code },
+                statusCode: 429);
+        }
 
         var run = new ChatRun
         {

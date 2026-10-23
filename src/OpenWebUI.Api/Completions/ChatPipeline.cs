@@ -316,7 +316,12 @@ public static class ChatPipeline
         /// <summary>Última contagem de itens pending/in_progress reportada
         /// pela tool de tarefas; -1 quando a lista nunca foi escrita na
         /// run (fallback autônomo da chain).</summary>
-        int PendingTodos = -1);
+        int PendingTodos = -1,
+        /// <summary>Motivo do veto de budget (SPEC-20261023-run-cost-
+        /// budgets RF-003): preenchido quando o loop encerrou por
+        /// <c>budget_exceeded</c> — a run termina falha com a razão
+        /// explicável, não silencia.</summary>
+        string? BudgetExceededReason = null);
 
     /// <summary>Uso de tokens de um step do loop (índice 1-based).</summary>
     public sealed record RoundUsage(
@@ -409,7 +414,17 @@ public static class ChatPipeline
         /// entra na janela e <paramref name="addedToToolMessages"/> também
         /// no tail de tools persistido — o replay repõe ambos.
         /// </summary>
-        Func<IReadOnlyList<ChatCompletionMessage>, IReadOnlyList<ChatCompletionMessage>, CancellationToken, Task>? OnMessagesAddedAsync = null);
+        Func<IReadOnlyList<ChatCompletionMessage>, IReadOnlyList<ChatCompletionMessage>, CancellationToken, Task>? OnMessagesAddedAsync = null,
+        /// <summary>
+        /// Checagem de budget por rodada (SPEC-20261023-run-cost-budgets
+        /// RF-002/003): chamada no topo de cada round, depois do
+        /// checkpoint e antes da chamada ao provider — retorno não-nulo é
+        /// o motivo do veto e encerra o loop com
+        /// <see cref="ToolLoopOutcome.BudgetExceededReason"/> (o
+        /// interceptor pre-step do harness não consegue parar a run — o
+        /// veto real acontece aqui, onde o próximo step é decidido).
+        /// </summary>
+        Func<CancellationToken, Task<string?>>? OnBudgetCheckAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -597,6 +612,18 @@ public static class ChatPipeline
                         u.ReasoningTokens)).ToList(),
                     emptyRounds, lengthContinuations,
                     continuedAnswer.ToString(), pendingTodos), ct);
+            }
+            // Veto de budget por rodada (SPEC-20261023-run-cost-budgets
+            // RF-002/003): depois do snapshot (a retomada não repete a
+            // checagem) e antes da chamada ao provider — a run encerra
+            // com a razão em vez de gastar o próximo step.
+            if (callbacks?.OnBudgetCheckAsync is { } budgetCheck
+                && await budgetCheck(ct) is { } budgetReason)
+            {
+                return new ToolLoopOutcome(
+                    continuedAnswer.ToString(), toolMessages, stepUsages,
+                    stepCount, PendingTodos: pendingTodos,
+                    BudgetExceededReason: budgetReason);
             }
             if (callbacks?.OnStepAsync is not null)
             {

@@ -1882,3 +1882,87 @@ public class UserAttention
     /// <summary>Quando o item foi (re)armado (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 }
+
+/// <summary>
+/// Linha do ledger de uso por run finalizada
+/// (SPEC-20261023-run-cost-budgets RF-001): uma por <see cref="RunId"/>,
+/// com os tokens reportados pelo provider e o custo calculado pela tabela
+/// de preços do modelo — <see cref="CostUsd"/> fica nulo quando o
+/// provider não reporta usage ou o modelo não tem preço (nunca estimado).
+/// </summary>
+public class RunUsageRecord
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Run que gerou o uso (única — escrita idempotente).</summary>
+    public string RunId { get; set; } = string.Empty;
+
+    /// <summary>Chat da run.</summary>
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Dono da run (mesmo da raiz — filhos de delegate_task herdam).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Run pai quando spawnada por <c>delegate_task</c>; null = raiz.</summary>
+    public string? ParentRunId { get; set; }
+
+    /// <summary>Modelo efetivo da run.</summary>
+    public string? ModelId { get; set; }
+
+    /// <summary>Steps executados no tool loop.</summary>
+    public int Steps { get; set; }
+
+    /// <summary>Prompt tokens reportados pelo provider.</summary>
+    public long PromptTokens { get; set; }
+
+    /// <summary>Completion tokens reportados pelo provider.</summary>
+    public long CompletionTokens { get; set; }
+
+    /// <summary>Reasoning tokens reportados pelo provider.</summary>
+    public long ReasoningTokens { get; set; }
+
+    /// <summary>Custo em USD (preços do <c>ModelEntry.MetaJson.cost</c>); null = desconhecido.</summary>
+    public double? CostUsd { get; set; }
+
+    /// <summary>Gravação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Política de budget por sujeito (SPEC-20261023-run-cost-budgets
+/// RF-002/003/004): <see cref="Subject"/> é <c>user:{id}</c>,
+/// <c>group:{id}</c> ou <c>global</c>. Precedência por campo: usuário →
+/// menor valor entre os grupos do usuário → global. Campos nulos = sem
+/// teto naquela dimensão; sem nenhuma policy = comportamento atual
+/// (ilimitado).
+/// </summary>
+public class BudgetPolicy
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Sujeito da política: <c>user:{id}</c>, <c>group:{id}</c> ou <c>global</c>.</summary>
+    public string Subject { get; set; } = string.Empty;
+
+    /// <summary>Teto de custo USD por run (inclui custo dos filhos na cadeia).</summary>
+    public double? UsdPerRun { get; set; }
+
+    /// <summary>Teto de custo USD por mês UTC por usuário.</summary>
+    public double? UsdPerMonth { get; set; }
+
+    /// <summary>Teto de tokens (prompt+completion) por mês UTC por usuário.</summary>
+    public long? TokensPerMonth { get; set; }
+
+    /// <summary>Tier máximo de preço de modelo elegível (0-3); null = qualquer.</summary>
+    public int? MaxModelTier { get; set; }
+
+    /// <summary>Nota administrativa.</summary>
+    public string? Note { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}

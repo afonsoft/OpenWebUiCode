@@ -44,6 +44,9 @@ public sealed class RunEventWriter(
         public const string Note = "note";
         /// <summary>Veto de interceptor (SPEC-20261021-harness-seams RF-A2).</summary>
         public const string InterceptorVeto = "interceptor_veto";
+        /// <summary>Aviso de aproximação do teto de budget
+        /// (SPEC-20261023-run-cost-budgets).</summary>
+        public const string BudgetWarning = "budget_warning";
     }
 
     /// <summary>Append de um evento com payload já serializado.</summary>

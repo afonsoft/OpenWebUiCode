@@ -46,6 +46,10 @@ builder.Services.AddHostedService<RetentionScheduler>();
 builder.Services.AddScoped<OAuthService>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<PolicyService>();
+// Budgets de custo (SPEC-20261023-run-cost-budgets): ledger consultável
+// por run + resolução de políticas por sujeito (user/grupo/global).
+builder.Services.AddScoped<RunUsageLedgerService>();
+builder.Services.AddScoped<BudgetPolicyService>();
 builder.Services.AddScoped<EmbeddingService>();
 builder.Services.AddScoped<RagService>();
 builder.Services.AddScoped<ToolExecutor>();
@@ -134,7 +138,8 @@ builder.Services.AddScoped(sp => new ModelRoleResolver(
     sp.GetRequiredService<AppDbContext>(),
     sp.GetRequiredService<ConfigService>(),
     ct => sp.GetRequiredService<ProviderService>().ListModelsAsync(ct),
-    sp.GetRequiredService<ILogger<ModelRoleResolver>>()));
+    sp.GetRequiredService<ILogger<ModelRoleResolver>>(),
+    sp.GetRequiredService<BudgetPolicyService>()));
 // Revisor de run (SPEC-20261013-run-advisor): delegates encapsulam as
 // chamadas externas para a sessão isolada read-only do advisor.
 builder.Services.AddScoped(sp => new RunAdvisorService(
@@ -578,6 +583,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapApiEndpoints();
     app.MapGroupEndpoints();
     app.MapAdminPolicyEndpoints();
+    app.MapUsageEndpoints();
     app.MapOAuthEndpoints();
     app.MapKnowledgeEndpoints();
     app.MapToolEndpoints();

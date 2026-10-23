@@ -45,6 +45,8 @@ public sealed class ChatRunExecutor(
     OpenWebUI.Infrastructure.Runs.RunInterceptorRunner interceptors,
     IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors,
     PolicyService? policies,
+    RunUsageLedgerService usageLedger,
+    BudgetPolicyService budgets,
     IServiceScopeFactory scopes,
     IWebHostEnvironment env,
     ILogger<ChatRunExecutor> logger)
@@ -57,6 +59,13 @@ public sealed class ChatRunExecutor(
 
     /// <summary>Tamanho máximo do preview de args/resultado publicado no SSE.</summary>
     private const int PreviewChars = 2048;
+
+    // Acumuladores de tokens da run para o veto de budget por rodada
+    // (SPEC-20261023-run-cost-budgets): alimentados por OnStepFinished e
+    // semeados com o usage da retomada — executor é scoped por run.
+    private long _runPromptTokens;
+    private long _runCompletionTokens;
+    private bool _budgetWarned;
 
     /// <summary>Tamanho máximo de um diff publicado no evento <c>changes</c>.</summary>
     private const int ChangeDiffChars = 8192;
@@ -109,6 +118,36 @@ public sealed class ChatRunExecutor(
         {
             await FailAsync(run, "Usuário da run não encontrado.", ct);
             return;
+        }
+
+        // SPEC-20261023-run-cost-budgets RF-002/004: gate pré-run —
+        // usuário já acima do cap mensal ou modelo fora do tier falham a
+        // run antes de qualquer chamada ao provider. Ponto único de
+        // enforcement para todos os caminhos de enqueue (chat, webhook,
+        // headless, delegate_task, persona, automação) — inclusive
+        // retomadas.
+        var budgetLimits = await budgets.EffectiveAsync(run.UserId, ct);
+        var inheritedTier = await config.GetAsync<int?>(
+            $"r:{run.Id}:agent.maxtier", null, ct);
+        var gate = await budgets.CheckStartAsync(
+            run.UserId, run.Model, ct, inheritedTier);
+        if (!gate.Allowed)
+        {
+            await FailAsync(run, $"{gate.Code}: {gate.Detail}", ct);
+            return;
+        }
+        // Normaliza o tier efetivo no kv da run — delegate_task copia
+        // para os filhos e a cadeia só afunila (min(inherited, policy)).
+        if (await budgets.EnabledAsync(ct))
+        {
+            var effectiveTier = budgetLimits.MaxModelTier is { } pt
+                && inheritedTier is { } it ? Math.Min(pt, it)
+                : budgetLimits.MaxModelTier ?? inheritedTier;
+            if (effectiveTier != inheritedTier)
+            {
+                await config.SetAsync(
+                    $"r:{run.Id}:agent.maxtier", effectiveTier, ct);
+            }
         }
 
         // SPEC-20261016-run-recovery RF-003/004: run reivindicada pelo sweep
@@ -347,6 +386,12 @@ public sealed class ChatRunExecutor(
                 await PublishPhaseAsync(run, "resumed",
                     $"round {resumePlan.Round} — {resumePlan.RecoveredTools} "
                     + "tool results recuperados");
+                // Semeia o acumulado de tokens dos steps anteriores ao
+                // restart — o veto de budget considera o custo já gasto.
+                _runPromptTokens = resumePlan.StepUsages.Sum(
+                    u => (long)u.PromptTokens);
+                _runCompletionTokens = resumePlan.StepUsages.Sum(
+                    u => (long)u.CompletionTokens);
             }
             else
             {
@@ -499,17 +544,31 @@ public sealed class ChatRunExecutor(
                     // RF-001/004: ids das calls do round — base do settle
                     // de órfãs na retomada.
                     OnStepFinishedAsync: (round, step, t) =>
-                        runEvents.AppendAsync(run.Id,
+                    {
+                        // Acumula tokens do step para o veto de budget —
+                        // o record só vai ao ledger no fim da run.
+                        if (step.Usage is { } stepUsage)
+                        {
+                            _runPromptTokens += stepUsage.PromptTokens;
+                            _runCompletionTokens += stepUsage.CompletionTokens;
+                        }
+                        return runEvents.AppendAsync(run.Id,
                             RunEventWriter.Types.StepFinished,
                             new
                             {
                                 round,
                                 calls = step.ToolCalls.Select(c => c.Id),
-                            }, t),
+                            }, t);
+                    },
                     OnMessagesAddedAsync: (added, toolAdded, t) =>
                         runEvents.AppendAsync(run.Id,
                             RunEventWriter.Types.MessagesAdded,
                             new { messages = added, toolMessages = toolAdded }, t),
+                    // Veto de budget por rodada (SPEC-20261023-run-cost-
+                    // budgets RF-002/003): o próximo provider step só sai
+                    // se os caps da política ainda tiverem folga.
+                    OnBudgetCheckAsync: t =>
+                        RunBudgetCheckAsync(run, budgetLimits, t),
                     GateAsync: (call, t) => GateWithInterceptorsAsync(
                         run, tools, call, builtinContext, currentStep, t),
                     // Modo relido por rodada — o plan_exit aprovado
@@ -660,6 +719,14 @@ public sealed class ChatRunExecutor(
                 {
                     await ApplyUsageMetaAsync(run, outcome, ct);
                 }
+                // Veto de budget (SPEC-20261023-run-cost-budgets RF-003):
+                // o uso já foi persistido acima — a run termina falha
+                // com a razão explicável, não silencia.
+                if (outcome?.BudgetExceededReason is { } budgetReason)
+                {
+                    await FailAsync(run, budgetReason, ct);
+                    return;
+                }
             }
             else
             {
@@ -732,6 +799,15 @@ public sealed class ChatRunExecutor(
                 }
             }
 
+            // Ledger (SPEC-20261023-run-cost-budgets RF-001): run sem
+            // tool loop não teve record — grava com zeros (o provider não
+            // reporta usage nesse caminho; CostUsd null — nunca estimado).
+            if (loopOutcome is null)
+            {
+                await usageLedger.RecordAsync(
+                    run.Id, run.ChatId, run.UserId, run.ParentRunId,
+                    run.Model, 0, 0, 0, 0, null, ct);
+            }
             // [DONE] depois do FinishAsync: o cliente recarrega o chat ao ver o
             // marcador — a mensagem precisa já estar persistida.
             await FinishAsync(run, content.ToString(), ct, toolMessages: toolMessages);
@@ -2099,12 +2175,28 @@ public sealed class ChatRunExecutor(
     private async Task ApplyUsageMetaAsync(
         ChatRun run, ChatPipeline.ToolLoopOutcome outcome, CancellationToken ct)
     {
+        var usages = outcome.StepUsages ?? [];
+        // Ledger consultável (SPEC-20261023-run-cost-budgets RF-001):
+        // 1 record por run, idempotente por RunId — tokens só quando o
+        // provider reporta; CostUsd null = preço/usage desconhecido.
+        var promptSum = usages.Sum(u => (long)u.PromptTokens);
+        var completionSum = usages.Sum(u => (long)u.CompletionTokens);
+        var reasoningSum = usages.Sum(u => (long)(u.ReasoningTokens ?? 0));
+        var costUsd = usages.Count > 0
+            ? await ModelCostAsync(run.Model, run.UserId,
+                (int)Math.Min(int.MaxValue, promptSum),
+                (int)Math.Min(int.MaxValue, completionSum), ct)
+            : null;
+        await usageLedger.RecordAsync(
+            run.Id, run.ChatId, run.UserId, run.ParentRunId, run.Model,
+            outcome.TotalSteps, promptSum, completionSum, reasoningSum,
+            costUsd, ct);
+
         if (outcome.TotalSteps <= 0)
         {
             return;
         }
 
-        var usages = outcome.StepUsages ?? [];
         var meta = new Dictionary<string, object?>
         {
             ["steps"] = outcome.TotalSteps,
@@ -2126,9 +2218,7 @@ public sealed class ChatRunExecutor(
                 ["reasoningTokens"] = u.ReasoningTokens,
             }).ToList();
 
-            if (await ModelCostAsync(run.Model, run.UserId,
-                    usages.Sum(u => u.PromptTokens),
-                    usages.Sum(u => u.CompletionTokens), ct) is { } cost)
+            if (costUsd is { } cost)
             {
                 meta["costUsd"] = Math.Round(cost, 6);
             }
@@ -2137,6 +2227,68 @@ public sealed class ChatRunExecutor(
         var full = ReadMetaDict(run.MetaJson);
         full["usage"] = meta;
         run.MetaJson = JsonSerializer.Serialize(full, JsonOptions);
+    }
+
+    /// <summary>
+    /// Veto de budget por rodada (SPEC-20261023-run-cost-budgets
+    /// RF-002/003): compara o custo acumulado da run (steps executados,
+    /// calculado com a tabela de preços do modelo) mais os filhos já
+    /// finalizados na cadeia contra <c>usdPerRun</c>, e o mês do usuário
+    /// incluindo o acumulado corrente contra <c>usdPerMonth</c>/
+    /// <c>tokensPerMonth</c>. Ao passar de <c>warnAtPercent</c>% do teto
+    /// mensal emite o evento <c>budget_warning</c> uma vez por run.
+    /// </summary>
+    private async Task<string?> RunBudgetCheckAsync(
+        ChatRun run, BudgetLimits limits, CancellationToken ct)
+    {
+        if (limits.IsEmpty || !await budgets.EnabledAsync(ct))
+        {
+            return null;
+        }
+        var ownUsd = await ModelCostAsync(run.Model, run.UserId,
+            (int)Math.Min(int.MaxValue, _runPromptTokens),
+            (int)Math.Min(int.MaxValue, _runCompletionTokens), ct);
+        // Cadeia: filhos finalizados já estão no ledger; o record desta
+        // run ainda não — soma o acumulado dela por cima (RF-003).
+        var chainUsd = (ownUsd ?? 0)
+            + await usageLedger.ChainCostUsdAsync(run.Id, ct);
+        var month = await budgets.MonthTotalsSafeAsync(run.UserId, ct);
+        var monthUsd = month.CostUsd + (ownUsd ?? 0);
+        var monthTokens = month.PromptTokens + month.CompletionTokens
+            + _runPromptTokens + _runCompletionTokens;
+
+        if (limits.UsdPerRun is { } ur && chainUsd > ur)
+        {
+            return $"budget_exceeded: custo da cadeia da run "
+                + $"(${chainUsd:F4}) passou do teto usdPerRun (${ur:F2}).";
+        }
+        if (limits.UsdPerMonth is { } um && monthUsd >= um)
+        {
+            return $"budget_exceeded: custo do mês (${monthUsd:F4}) atingiu "
+                + $"o teto usdPerMonth (${um:F2}).";
+        }
+        if (limits.TokensPerMonth is { } tm && monthTokens >= tm)
+        {
+            return $"budget_exceeded: tokens do mês ({monthTokens}) "
+                + $"atingiram o teto tokensPerMonth ({tm}).";
+        }
+        if (!_budgetWarned && limits.UsdPerMonth is { } umw)
+        {
+            var warnPct = await budgets.WarnAtPercentAsync(ct);
+            if (monthUsd >= umw * warnPct / 100d)
+            {
+                _budgetWarned = true;
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.BudgetWarning,
+                    new
+                    {
+                        usedUsd = Math.Round(monthUsd, 6),
+                        usdPerMonth = umw,
+                        pct = warnPct,
+                    }, ct);
+            }
+        }
+        return null;
     }
 
     /// <summary>

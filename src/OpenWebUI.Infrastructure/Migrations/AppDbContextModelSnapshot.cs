@@ -507,6 +507,44 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("Banners");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.BudgetPolicy", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MaxModelTier")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Note")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("TokensPerMonth")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("UsdPerMonth")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("UsdPerRun")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Subject")
+                        .IsUnique();
+
+                    b.ToTable("BudgetPolicies");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.Calendar", b =>
                 {
                     b.Property<string>("Id")
@@ -1831,6 +1869,59 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("Prompts");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.RunUsageRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CompletionTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("CostUsd")
+                        .HasColumnType("REAL");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ModelId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ParentRunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("PromptTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("ReasoningTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Steps")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParentRunId");
+
+                    b.HasIndex("RunId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("RunUsageRecords");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.Skill", b =>

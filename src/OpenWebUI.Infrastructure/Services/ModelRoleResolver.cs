@@ -18,7 +18,8 @@ public sealed class ModelRoleResolver(
     AppDbContext db,
     ConfigService config,
     Func<CancellationToken, Task<List<Application.Contracts.ModelInfo>>> listModels,
-    ILogger<ModelRoleResolver> logger)
+    ILogger<ModelRoleResolver> logger,
+    BudgetPolicyService? budgets = null)
 {
     /// <summary>Chave kv das cadeias globais (admin) por papel.</summary>
     public const string GlobalRolesKey = "model.roles";
@@ -68,6 +69,59 @@ public sealed class ModelRoleResolver(
         var known = catalog.Select(m => m.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return chain.FirstOrDefault(known.Contains) ?? fallbackModel;
+    }
+
+    /// <summary>
+    /// Resolve o papel respeitando um teto de tier de preço
+    /// (SPEC-20261023-run-cost-budgets RF-004): percorre a cadeia (e por
+    /// último o fallback) e devolve o primeiro modelo cujo tier conhecido
+    /// é ≤ <paramref name="maxTier"/> — modelos sem preço (locais) são
+    /// elegíveis em qualquer tier. Retorna <see langword="null"/> quando
+    /// nenhum candidato cabe no tier — o caller emite
+    /// <c>no_model_in_tier</c>, nunca upgrade silencioso.
+    /// </summary>
+    public async Task<string?> ResolveForTierAsync(
+        string role, string userId, string fallbackModel,
+        int? maxTier, CancellationToken ct)
+    {
+        if (maxTier is null || budgets is null)
+        {
+            return await ResolveAsync(role, userId, fallbackModel, ct);
+        }
+
+        var roles = await GetRolesAsync(userId, ct);
+        roles.TryGetValue(role, out var userChain);
+        var globalRoles = await GetGlobalRolesAsync(ct);
+        globalRoles.TryGetValue(role, out var globalChain);
+        var chain = (userChain ?? [])
+            .Concat(globalChain ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        List<Application.Contracts.ModelInfo> catalog;
+        try
+        {
+            catalog = await listModels(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Falha ao listar modelos para resolver papel {Role}.", role);
+            catalog = [];
+        }
+        var known = catalog.Select(m => m.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = chain.Where(known.Contains)
+            .Concat([fallbackModel])
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates)
+        {
+            if (await budgets.ModelTierAsync(candidate, userId, ct) is not { } tier
+                || tier <= maxTier.Value)
+            {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     /// <summary>Lê <c>modelRoles</c> do <c>SettingsJson</c> do usuário.</summary>
