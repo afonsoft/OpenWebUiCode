@@ -258,4 +258,50 @@ public class UsageEndpointsTests
         Assert.That(doc.RootElement.GetProperty("error_code").GetString(),
             Is.EqualTo("budget_exceeded"));
     }
+    // Cobre os ramos de 404 do CRUD e o cap nulo de /usage/me.
+    [Test]
+    public async Task BudgetPolicies_UpdateDelete_NotFound()
+    {
+        UseToken(_admin.Token);
+        var put = await _client.PutAsJsonAsync(
+            "/api/v1/admin/budget-policies/missing",
+            new { subject = "global", usdPerMonth = 1.0 });
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var del = await _client.DeleteAsync(
+            "/api/v1/admin/budget-policies/missing");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task UsageMe_WithoutPolicy_CapNull()
+    {
+        await using (var db = CreateDb())
+        {
+            db.BudgetPolicies.RemoveRange(db.BudgetPolicies.Where(
+                p => p.Subject == $"user:{_user.User.Id}"
+                    || p.Subject == "global"));
+            await db.SaveChangesAsync();
+        }
+        UseToken(_user.Token);
+        var res = await _client.GetAsync("/api/v1/usage/me");
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var doc = JsonDocument.Parse(
+            await res.Content.ReadAsStringAsync());
+        Assert.That(doc.RootElement.GetProperty("cap").ValueKind,
+            Is.EqualTo(JsonValueKind.Null));
+    }
+
+    [Test]
+    public async Task AdminUsage_AcceptsWindowParams()
+    {
+        UseToken(_admin.Token);
+        var res = await _client.GetAsync(
+            "/api/v1/admin/usage?from=2020-01-01&to=2030-01-01&top=5");
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await res.Content.ReadAsStringAsync());
+        var doc = JsonDocument.Parse(
+            await res.Content.ReadAsStringAsync());
+        Assert.That(doc.RootElement.GetProperty("from").GetString(),
+            Is.EqualTo("2020-01-01"));
+    }
 }

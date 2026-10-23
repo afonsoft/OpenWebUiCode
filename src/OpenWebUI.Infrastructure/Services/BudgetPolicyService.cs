@@ -211,8 +211,11 @@ public sealed class BudgetPolicyService(
             }
             return bounds.Count;
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException
+            or InvalidOperationException or FormatException)
         {
+            // MetaJson malformado ou cost sem tipo Number → sem preço
+            // conhecido (elegível em qualquer tier).
             return null;
         }
     }

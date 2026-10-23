@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-run-cost-budgets` |
 | Ticket | [#494](https://github.com/afonsoft/open-webui/issues/494) |
-| Status | `In implementation` |
+| Status | `Done` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #3. Inspirado no `cost-aware-llm-pipeline` do ECC (model routing + budget tracking) e na telemetria por run já existente (SPEC-20261016-agent-steps-usage). |
 
 ## 1. User Story

@@ -384,4 +384,67 @@ public class RunBudgetTests
             Assert.That(month.Runs, Is.EqualTo(0));
         });
     }
+    // ModelTierAsync: lookup por Name/BaseModelId, MetaJson malformado e
+    // entradas inválidas nos bounds — ramos de robustez do parser.
+    [Test]
+    public async Task ModelTier_MatchesNameAndBaseModelId()
+    {
+        await using var db = CreateContext();
+        db.ModelEntries.AddRange(
+            new ModelEntry
+            {
+                Id = "x", Name = "friendly", UserId = "public",
+                MetaJson = """{"cost":{"input":2,"output":4}}""",
+            },
+            new ModelEntry
+            {
+                Id = "y", BaseModelId = "base-x", UserId = "public",
+                MetaJson = """{"cost":{"input":0.5,"output":0.5}}""",
+            });
+        await db.SaveChangesAsync();
+
+        var budgets = Budgets(db);
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await budgets.ModelTierAsync(
+                "friendly", null, CancellationToken.None), Is.EqualTo(1));
+            Assert.That(await budgets.ModelTierAsync(
+                "base-x", null, CancellationToken.None), Is.EqualTo(0));
+            Assert.That(await budgets.ModelTierAsync(
+                "missing", null, CancellationToken.None), Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task ModelTier_MalformedMeta_ReturnsNull()
+    {
+        await using var db = CreateContext();
+        db.ModelEntries.AddRange(
+            new ModelEntry
+            {
+                Id = "bad1", UserId = "public", MetaJson = "not-json",
+            },
+            new ModelEntry
+            {
+                Id = "bad2", UserId = "public",
+                MetaJson = """{"cost":{"input":"x","output":1}}""",
+            },
+            new ModelEntry
+            {
+                Id = "bad3", UserId = "public",
+                MetaJson = """{"other":1}""",
+            });
+        await db.SaveChangesAsync();
+
+        var budgets = Budgets(db);
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await budgets.ModelTierAsync(
+                "bad1", null, CancellationToken.None), Is.Null);
+            Assert.That(await budgets.ModelTierAsync(
+                "bad2", null, CancellationToken.None), Is.Null);
+            Assert.That(await budgets.ModelTierAsync(
+                "bad3", null, CancellationToken.None), Is.Null);
+        });
+    }
 }
