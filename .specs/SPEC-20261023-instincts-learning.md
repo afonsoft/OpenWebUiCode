@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-instincts-learning` |
 | Ticket | [#496](https://github.com/afonsoft/open-webui/issues/496) |
-| Status | `Draft` |
+| Status | `Approved` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #5. Inspirado no `continuous-learning-v2` do ECC (instincts com confidence scoring, injeção no session-start, `/evolve` clustering) e no Memory Vault (scopes + trust boundary). |
 
 ## 1. User Story

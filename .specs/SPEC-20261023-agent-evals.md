@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-agent-evals` |
 | Ticket | [#495](https://github.com/afonsoft/open-webui/issues/495) |
-| Status | `Draft` |
+| Status | `Approved` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #6. Inspirado em `evals/` + batch runner do hermes-agent e nos verification loops (graders, pass@k) do ECC. |
 
 ## 1. User Story
