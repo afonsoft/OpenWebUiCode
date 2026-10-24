@@ -183,6 +183,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Baselines nomeadas apontando para EvalRuns.</summary>
     public DbSet<EvalBaseline> EvalBaselines => Set<EvalBaseline>();
 
+    /// <summary>Instincts aprendidos por usuário (SPEC-20261023-instincts-learning).</summary>
+    public DbSet<Instinct> Instincts => Set<Instinct>();
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -574,6 +577,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             entity.HasKey(b => b.Id);
             entity.HasIndex(b => new { b.UserId, b.Name }).IsUnique();
+        });
+
+        // Instincts (SPEC-20261023-instincts-learning): listagem por
+        // user+status+scope; dedup por (user, domain, trigger) no service.
+        modelBuilder.Entity<Instinct>(entity =>
+        {
+            entity.HasKey(i => i.Id);
+            entity.HasIndex(i => new { i.UserId, i.Status });
+            entity.HasIndex(i => new { i.UserId, i.Scope, i.WorkspaceId });
         });
     }
 }

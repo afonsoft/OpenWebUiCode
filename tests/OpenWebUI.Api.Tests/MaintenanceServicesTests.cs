@@ -63,6 +63,7 @@ public class MaintenanceServicesTests
             sp.GetRequiredService<ConfigService>(),
             ct => sp.GetRequiredService<ProviderService>().ListModelsAsync(ct),
             sp.GetRequiredService<ILogger<ModelRoleResolver>>()));
+        services.AddScoped<InstinctService>();
         services.AddScoped<MemorySyncService>();
         services.AddScoped<RetentionService>();
         _provider = services.BuildServiceProvider();

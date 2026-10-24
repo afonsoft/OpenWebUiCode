@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-instincts-learning` |
 | Ticket | [#496](https://github.com/afonsoft/open-webui/issues/496) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #5. Inspirado no `continuous-learning-v2` do ECC (instincts com confidence scoring, injeção no session-start, `/evolve` clustering) e no Memory Vault (scopes + trust boundary). |
 
 ## 1. User Story
@@ -207,11 +207,11 @@ se houver instincts `active`), `Agent:Instincts:MaxInjected` (6),
 
 | ID | Task |
 | --- | --- |
-| T1 | Discovery: `MemorySyncService`, `IAgentRunObserver`/`AgentRunEventBus`, `SystemPromptContributors`, `SkillDiscoveryService` |
-| T2 | Migration + `Instinct` + `InstinctService` (CRUD, dedup, lifecycle) + testes |
-| T3 | `InstinctExtractor` (observer, prompt de destilação, filtros) + testes |
-| T4 | `InstinctContributor` (rank, stack boost, caps) + testes |
-| T5 | Endpoints list/patch/evolve + draft SKILL.md + testes de contrato |
+| ~~T1~~ | ~~Discovery~~ — `IAgentRunObserver` (`AttentionObserver` como modelo), `ISystemPromptContributor` (Order), `MemorySyncService.RunOnce`, `WorkspaceRepoService` (binding por chat) |
+| ~~T2~~ | ~~Migration `Instincts` + `InstinctService` (CRUD, dedup, lifecycle) + testes~~ |
+| ~~T3~~ | ~~`InstinctExtractor` (observer, prompt de destilação, filtros) + testes~~ |
+| ~~T4~~ | ~~`InstinctContributor` (rank, stack boost, caps) + testes~~ |
+| ~~T5~~ | ~~Endpoints list/patch/evolve + draft SKILL.md + testes de contrato~~ |
 | T6 | DoD: Release build 0 warnings, suíte verde, coverage ≥ baseline, drift guards, SPEC→Issue→PR |
 
 ## 8. Organization Guardrails
@@ -231,6 +231,9 @@ se houver instincts `active`), `Agent:Instincts:MaxInjected` (6),
 
 | OQ | Status | Resolução |
 | --- | --- | --- |
-| Sinal de "hit" (instinct realmente ajudou)? | Proposta | v1: injetado + run completou sem erro; feedback 👎 no chat reduz confiança |
-| Escopo workspace = workspace vinculado (repo)? | Resolvido | sim — `Chat.WorkspaceId` da run de origem |
-| Expurgo de `rejected`/`expired` | Proposta | `RetentionService` existente faz a poda diária |
+| Sinal de "hit" (instinct realmente ajudou)? | Implementado | v1: run completou → `RecordInjectionHitsAsync` reforça os instincts elegíveis naquele contexto (mesmo recorte do contributor); `run.failed` → `RecordFailureAsync` (-0.15) |
+| Escopo workspace = workspace vinculado (repo)? | **Desviado** | `Chat` não tem `WorkspaceId` — binding vive em config (`chat:{id}:workspace.repo`). `Instinct.WorkspaceId` = repo slug (`WorkspaceRepoBinding.Repo`) resolvido por `WorkspaceRepoService` (chat binding → user binding) |
+| Expurgo de `rejected`/`expired` | Implementado | cap 50 pending+active por usuário+escopo no `UpsertCandidateAsync` (mais antigos por `LastSeenAt` primeiro); `expired` vira alvo de retenção futura |
+| Order do contributor | Implementado | `Order=82` (após `AgentMemoryContributor`=80, antes de `DelegationPolicyContributor`=85) |
+| Config keys | Implementado | `instincts.mode` (`auto|on|off`, overlay `u:{uid}:instincts.mode`), `instincts.threshold` (0.7), `instincts.maxInjected` (6), `instincts.extract` (true) |
+| Linha do bloco injetado | Implementado | `- [domain] {trigger} → {body} (conf .NN)` — sem "when" no template (triggers já carregam o advérbio; evita "when when …") |

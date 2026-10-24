@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-run-cost-budgets` |
 | Ticket | [#494](https://github.com/afonsoft/open-webui/issues/494) |
-| Status | `Done` |
+| Status | `Completed` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #3. Inspirado no `cost-aware-llm-pipeline` do ECC (model routing + budget tracking) e na telemetria por run já existente (SPEC-20261016-agent-steps-usage). |
 
 ## 1. User Story
@@ -249,3 +249,8 @@ Config nova (`.env.exemplo` + `ConfigService`): `Agent:Budgets:Enabled`
 | `warnAt` vira notificação push? | Adiado | v1 emite evento `budget_warning` na run; WebPush é iteração futura |
 | `AdminPolicyStatement` como policy de budget | Resolvido (desvio) | não comporta limites numéricos — entidade `BudgetPolicy` dedicada mantendo a precedência user→grupo→global |
 | `IRunInterceptor.pre-step` para veto | Resolvido (desvio) | pre-step só filtra mensagens claimed e não para a run — veto no callback `OnBudgetCheckAsync` do tool loop + gate no executor |
+
+## Delivered
+
+- PR: https://github.com/afonsoft/open-webui/pull/500 (merged)
+- Issue: https://github.com/afonsoft/open-webui/issues/494
