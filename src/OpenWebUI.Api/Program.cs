@@ -40,6 +40,7 @@ builder.Services.AddScoped<ExternalAgentService>();
 builder.Services.AddHostedService<AutomationScheduler>();
 builder.Services.AddScoped<MemorySyncService>();
 builder.Services.AddHostedService<MemorySyncScheduler>();
+builder.Services.AddHostedService<EvalRunnerService>();
 builder.Services.AddScoped<RetentionService>();
 builder.Services.AddScoped<ToolOutputService>();
 builder.Services.AddHostedService<RetentionScheduler>();
@@ -50,6 +51,8 @@ builder.Services.AddScoped<PolicyService>();
 // por run + resolução de políticas por sujeito (user/grupo/global).
 builder.Services.AddScoped<RunUsageLedgerService>();
 builder.Services.AddScoped<BudgetPolicyService>();
+builder.Services.AddScoped<EvalGraderFactory>();
+builder.Services.AddScoped<EvalGraderService>();
 builder.Services.AddScoped<EmbeddingService>();
 builder.Services.AddScoped<RagService>();
 builder.Services.AddScoped<ToolExecutor>();
@@ -92,6 +95,11 @@ builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IAgentRunObserver,
 // Inbox de atenção: run.completed/failed → item persistido (SPEC-20261022 RF-C2).
 builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IAgentRunObserver,
     OpenWebUI.Infrastructure.Runs.AttentionObserver>();
+// Instincts (SPEC-20261023-instincts-learning): extração pós-run via
+// observer; injeção session-start via contributor; núcleo no service.
+builder.Services.AddScoped<OpenWebUI.Infrastructure.Services.InstinctService>();
+builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IAgentRunObserver,
+    OpenWebUI.Infrastructure.Runs.InstinctExtractor>();
 builder.Services.AddScoped<OpenWebUI.Application.Interfaces.IRunInterceptor,
     OpenWebUI.Infrastructure.Runs.RepeatToolGuard>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
@@ -116,6 +124,8 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
     OpenWebUI.Api.Completions.Contributors.RepoBindingContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AgentMemoryContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.InstinctContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.MentionsContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
@@ -584,6 +594,8 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapGroupEndpoints();
     app.MapAdminPolicyEndpoints();
     app.MapUsageEndpoints();
+    app.MapEvalEndpoints();
+    app.MapInstinctEndpoints();
     app.MapOAuthEndpoints();
     app.MapKnowledgeEndpoints();
     app.MapToolEndpoints();

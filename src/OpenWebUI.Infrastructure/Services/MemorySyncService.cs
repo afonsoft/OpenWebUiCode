@@ -19,6 +19,7 @@ namespace OpenWebUI.Infrastructure.Services;
 public class MemorySyncService(
     AppDbContext db, ConfigService config, ProviderService providers,
     UserConfigOverlayService overlay, ModelRoleResolver roles,
+    InstinctService instincts,
     ILogger<MemorySyncService> logger)
 {
     /// <summary>Chats processados por usuário a cada sync.</summary>
@@ -62,6 +63,19 @@ public class MemorySyncService(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "memsync falhou para o usuário {UserId}", userId);
+            }
+
+            // Lifecycle de instincts (SPEC-20261023-instincts-learning):
+            // promove pending ≥ threshold e expira sem-hit — independente
+            // do memsync.enabled (não chama provider).
+            try
+            {
+                await instincts.ApplyLifecycleAsync(userId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    ex, "lifecycle de instincts falhou para {UserId}", userId);
             }
         }
     }
@@ -107,6 +121,7 @@ public class MemorySyncService(
         var chats = await db.Chats
             .Include(c => c.Messages)
             .Where(c => c.UserId == userId
+                && !c.IsEphemeral
                 && c.UpdatedAt > last
                 && c.UpdatedAt >= cutoff)
             .OrderByDescending(c => c.UpdatedAt)

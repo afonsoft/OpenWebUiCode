@@ -96,7 +96,7 @@ public static class ChatEndpoints
         // banco: um snapshot do HashSet vira filtro/flag sem N+1.
         var awaiting = approvals.PendingChatIds();
 
-        var chats = db.Chats.AsNoTracking().Where(c => c.UserId == user.Id && !c.Archived);
+        var chats = db.Chats.AsNoTracking().Where(c => c.UserId == user.Id && !c.Archived && !c.IsEphemeral);
 
         if (!string.IsNullOrEmpty(folderId))
         {
@@ -177,7 +177,7 @@ public static class ChatEndpoints
 
         var awaiting = approvals.PendingChatIds();
         var list = await db.Chats.AsNoTracking()
-            .Where(c => c.UserId == user.Id && c.Pinned && !c.Archived)
+            .Where(c => c.UserId == user.Id && c.Pinned && !c.Archived && !c.IsEphemeral)
             .OrderByDescending(c => c.UpdatedAt)
             .ToListAsync(ct);
 
