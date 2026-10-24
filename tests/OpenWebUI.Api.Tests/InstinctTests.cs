@@ -460,6 +460,42 @@ public class InstinctTests
     }
 
     [Test]
+    public async Task Observer_Elegivel_Alcanca_Extract_Sem_Falhar()
+    {
+        using var db = NewDb();
+        var chat = new Chat
+        {
+            Id = "c-elig", UserId = "u1", Title = "t",
+            CreatedAt = 1, UpdatedAt = 1,
+        };
+        chat.Messages.Add(new ChatMessage
+        {
+            ChatId = "c-elig", Role = "user", Content = "como faço X?",
+            Position = 0, Timestamp = 1,
+        });
+        chat.Messages.Add(new ChatMessage
+        {
+            ChatId = "c-elig", Role = "assistant", Content = "use Y.",
+            Position = 1, Timestamp = 2,
+        });
+        db.Chats.Add(chat);
+        db.ChatRuns.Add(new ChatRun
+        {
+            Id = "r-elig", ChatId = "c-elig", UserId = "u1", Model = "m",
+            MetaJson = """{"usage":{"steps":5}}""", CreatedAt = 1,
+        });
+        db.SaveChanges();
+
+        // Run elegível (steps≥3) → o extractor atravessa transcript,
+        // resolve modelo e chama o provider (stub → falha ou retorna
+        // sem candidatos) — nunca quebra o observer.
+        var extractor = NewExtractor(_dbPath);
+        await extractor.OnRunEventAsync(new AgentRunEvent(
+            "r-elig", "c-elig", "u1", "run.completed", "{}"), default);
+        Assert.Pass();
+    }
+
+    [Test]
     public async Task Observer_RunFailed_Penaliza_Elegiveis()
     {
         using var db = NewDb();

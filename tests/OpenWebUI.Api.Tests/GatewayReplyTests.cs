@@ -160,6 +160,106 @@ public class GatewayReplyTests
     }
 
     [Test]
+    public async Task Peer_Inexistente_NoOp()
+    {
+        var (svc, spy, db) = await BuildAsync();
+        // Sessão apontando para peer que não existe.
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "peer-ghost", ChatId = "chat-ghost", CreatedAt = 1,
+        });
+        await db.SaveChangesAsync();
+
+        await svc.RunCompletedAsync(Run(chatId: "chat-ghost"), default);
+        Assert.That(spy.Sent, Is.Empty);
+    }
+
+    [Test]
+    public async Task Canal_Inexistente_NoOp()
+    {
+        var (svc, spy, db) = await BuildAsync();
+        db.GatewayPeers.Add(new GatewayPeer
+        {
+            Id = "p-orphan", ChannelId = "ch-nao-existe",
+            ExternalChatId = "1", ExternalUserId = "2",
+            PairedUserId = "u1", CreatedAt = 1,
+        });
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "p-orphan", ChatId = "chat-orphan", CreatedAt = 1,
+        });
+        await db.SaveChangesAsync();
+
+        await svc.RunCompletedAsync(Run(chatId: "chat-orphan"), default);
+        Assert.That(spy.Sent, Is.Empty);
+    }
+
+    [Test]
+    public async Task Plataforma_Sem_Adapter_NoOp()
+    {
+        var (svc, spy, db) = await BuildAsync();
+        db.GatewayChannels.Add(new GatewayChannel
+        {
+            Id = "ch-slack", OwnerUserId = "u1", Platform = "slack",
+        });
+        db.GatewayPeers.Add(new GatewayPeer
+        {
+            Id = "p-slack", ChannelId = "ch-slack",
+            ExternalChatId = "1", ExternalUserId = "2",
+            PairedUserId = "u1", CreatedAt = 1,
+        });
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "p-slack", ChatId = "chat-slack", CreatedAt = 1,
+        });
+        await db.SaveChangesAsync();
+
+        await svc.RunCompletedAsync(Run(chatId: "chat-slack"), default);
+        Assert.That(spy.Sent, Is.Empty);
+    }
+
+    [Test]
+    public async Task Sem_PartialContent_Usa_Ultimo_Assistente()
+    {
+        var (svc, spy, db) = await BuildAsync();
+        db.GatewayPeers.Add(new GatewayPeer
+        {
+            Id = "p2", ChannelId = "ch1", ExternalChatId = "556",
+            ExternalUserId = "778", PairedUserId = "u1",
+            PairedAt = 1, CreatedAt = 1,
+        });
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "p2", ChatId = "chat-pc", CreatedAt = 1,
+        });
+        db.Chats.Add(new Chat
+        {
+            Id = "chat-pc", UserId = "u1", Title = "gw",
+            CreatedAt = 1, UpdatedAt = 1,
+        });
+        db.ChatMessages.Add(new ChatMessage
+        {
+            ChatId = "chat-pc", Role = "assistant",
+            Content = "resposta do histórico", Position = 1, Timestamp = 1,
+        });
+        await db.SaveChangesAsync();
+
+        // PartialContent null → fallback para a última msg assistant.
+        await svc.RunCompletedAsync(Run(chatId: "chat-pc", content: null),
+            default);
+        Assert.That(spy.Sent, Has.Count.EqualTo(1));
+        Assert.That(spy.Sent[0].Text, Is.EqualTo("resposta do histórico"));
+    }
+
+    [Test]
+    public async Task Texto_Vazio_Nao_Envia()
+    {
+        var (svc, spy, _) = await BuildAsync();
+        await svc.RunCompletedAsync(Run(content: null), default);
+        Assert.That(spy.Sent, Is.Empty);
+    }
+
+    [Test]
     public async Task Sem_Secret_Marca_Delivery_Failed()
     {
         var (svc, spy, db) = await BuildAsync(withSecret: false);

@@ -9,6 +9,7 @@ using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
+using OpenWebUI.Infrastructure.Services.Gateway;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -391,6 +392,146 @@ public class GatewayInboundTests
             Does.Contain("\"status\":\"pairing\""));
     }
 
+    // ---------- channels CRUD coverage ----------
+
+    [Test]
+    public async Task Channels_List_Somente_Do_Dono()
+    {
+        var mine = await CreateChannelAsync();
+        await using (var db = NewDb())
+        {
+            // Canal de outro dono não aparece na lista.
+            db.GatewayChannels.Add(new GatewayChannel
+            {
+                OwnerUserId = "outro", Platform = GatewayPlatforms.Telegram,
+            });
+            await db.SaveChangesAsync();
+        }
+        UseToken(_user.Token);
+        var res = await _client.GetAsync("/api/v1/gateway/channels");
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await res.Content.ReadAsStringAsync();
+        Assert.That(body, Does.Contain(mine.Id));
+        Assert.That(body, Does.Not.Contain("\"ownerUserId\":\"outro\""));
+    }
+
+    [Test]
+    public async Task UpdateChannel_Todos_Campos_E_Validacoes()
+    {
+        var channel = await CreateChannelAsync();
+        var oldSecret = channel.WebhookSecret;
+
+        UseToken(_user.Token);
+        var patch = await _client.PatchAsJsonAsync(
+            $"/api/v1/gateway/channels/{channel.Id}", new
+            {
+                enabled = false, toolsPolicy = "standard",
+                defaultModelId = "m2", personaId = "p1",
+                botToken = "999:zzz", rotateWebhookSecret = true,
+            });
+        Assert.That(patch.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await patch.Content.ReadAsStringAsync();
+        Assert.That(body, Does.Contain("\"enabled\":false"));
+        Assert.That(body, Does.Contain("\"toolsPolicy\":\"standard\""));
+        Assert.That(body, Does.Contain("\"defaultModelId\":\"m2\""));
+        // Segredo do endpoint rotacionado.
+        Assert.That(body, Does.Not.Contain(oldSecret));
+
+        var bad = await _client.PatchAsJsonAsync(
+            $"/api/v1/gateway/channels/{channel.Id}",
+            new { toolsPolicy = "root" });
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        var missing = await _client.PatchAsJsonAsync(
+            "/api/v1/gateway/channels/nao-existe", new { enabled = true });
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task UpdateChannel_De_Outro_Dono_404()
+    {
+        await using (var db = NewDb())
+        {
+            db.GatewayChannels.Add(new GatewayChannel
+            {
+                OwnerUserId = "outro", Platform = GatewayPlatforms.Telegram,
+            });
+            await db.SaveChangesAsync();
+        }
+        string id;
+        await using (var db = NewDb())
+        {
+            id = (await db.GatewayChannels.FirstAsync(
+                c => c.OwnerUserId == "outro")).Id;
+        }
+        UseToken(_user.Token);
+        var res = await _client.PatchAsJsonAsync(
+            $"/api/v1/gateway/channels/{id}", new { enabled = false });
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task ListDeliveries_De_Outro_Dono_404()
+    {
+        await using (var db = NewDb())
+        {
+            db.GatewayChannels.Add(new GatewayChannel
+            {
+                OwnerUserId = "outro2", Platform = GatewayPlatforms.Telegram,
+            });
+            await db.SaveChangesAsync();
+        }
+        string id;
+        await using (var db = NewDb())
+        {
+            id = (await db.GatewayChannels.FirstAsync(
+                c => c.OwnerUserId == "outro2")).Id;
+        }
+        UseToken(_user.Token);
+        var res = await _client.GetAsync(
+            $"/api/v1/gateway/channels/{id}/deliveries");
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Pair_Codigo_Expirado_E_Esgotado_400()
+    {
+        var channel = await CreateChannelAsync();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await using (var db = NewDb())
+        {
+            db.GatewayPeers.Add(new GatewayPeer
+            {
+                ChannelId = channel.Id, ExternalChatId = "1",
+                ExternalUserId = "2", PairingCode = "111111",
+                PairingExpiresAt = now - 10, CreatedAt = 1,
+            });
+            db.GatewayPeers.Add(new GatewayPeer
+            {
+                ChannelId = channel.Id, ExternalChatId = "3",
+                ExternalUserId = "4", PairingCode = "222222",
+                PairingExpiresAt = now + 600,
+                PairingAttempts = GatewayPairingService.MaxPairAttempts,
+                CreatedAt = 1,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        UseToken(_user.Token);
+        var expired = await _client.PostAsJsonAsync("/api/v1/gateway/pair",
+            new { code = "111111" });
+        Assert.That(expired.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(await expired.Content.ReadAsStringAsync(),
+            Does.Contain("expirado"));
+
+        var exhausted = await _client.PostAsJsonAsync("/api/v1/gateway/pair",
+            new { code = "222222" });
+        Assert.That(exhausted.StatusCode,
+            Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(await exhausted.Content.ReadAsStringAsync(),
+            Does.Contain("esgotadas"));
+    }
+
     // ---------- higiene de sessão/canal ----------
 
     [Test]
@@ -502,7 +643,7 @@ public class GatewayInboundTests
         await using (var db = NewDb())
         {
             id = (await db.GatewayChannels.FirstAsync(
-                c => c.SecretRef == "")).Id;
+                c => c.SecretRef == "" && c.OwnerUserId == _user.User.Id)).Id;
         }
         UseToken(_user.Token);
         var del = await _client.DeleteAsync($"/api/v1/gateway/channels/{id}");
