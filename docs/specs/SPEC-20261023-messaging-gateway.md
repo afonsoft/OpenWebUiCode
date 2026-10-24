@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-messaging-gateway` |
 | Ticket | [#497](https://github.com/afonsoft/open-webui/issues/497) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #4. Inspirado no messaging gateway do hermes-agent (25+ adapters, session routing, pairing, slash commands) e nos channels do ohmo/OpenHarness (Telegram/Slack/Discord/Feishu). |
 
 ## 1. User Story
@@ -298,3 +298,8 @@ Achados da auditoria (`GAP-security-gateway-*`, memória
 - Reply envia status genérico (sem `run.Error` interno) e respeita
   `peer.Blocked`/`channel.Enabled` na entrega (delivery `skipped`).
 - `DELETE /channels/{id}` limpa peers/sessions/deliveries + `SecretRef`.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/open-webui/pull/505 (merged)
+- Issue: https://github.com/afonsoft/open-webui/issues/497
