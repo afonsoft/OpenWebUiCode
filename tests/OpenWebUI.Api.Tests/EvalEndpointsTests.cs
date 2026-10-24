@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Application.Contracts;
@@ -294,4 +295,135 @@ public class EvalEndpointsTests
         EvalRunId = runId, CaseId = caseId, Rep = rep, Pass = pass,
         Score = pass ? 1 : 0, CreatedAt = rep,
     };
+    [Test]
+    public async Task CaseCrud_AndGetDataset_Work()
+    {
+        var dsId = await SeedDatasetAsync(0);
+        UseToken(_user.Token);
+
+        var bad = await _client.PostAsJsonAsync(
+            $"/api/v1/evals/datasets/{dsId}/cases",
+            new { prompt = "", grader = "exact" });
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var badGrader = await _client.PostAsJsonAsync(
+            $"/api/v1/evals/datasets/{dsId}/cases",
+            new { prompt = "q", grader = "nope" });
+        Assert.That(badGrader.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        var ok = await _client.PostAsJsonAsync(
+            $"/api/v1/evals/datasets/{dsId}/cases",
+            new { prompt = "q", expected = "a", grader = "exact",
+                  expectTools = new[] { "fs_read" }, maxSteps = 3 });
+        Assert.That(ok.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        using var doc = JsonDocument.Parse(
+            await ok.Content.ReadAsStringAsync());
+        var caseId = doc.RootElement.GetProperty("id").GetString()!;
+
+        var get = await _client.GetAsync($"/api/v1/evals/datasets/{dsId}");
+        Assert.That(get.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await get.Content.ReadAsStringAsync();
+        Assert.That(body, Does.Contain("fs_read"));
+
+        var del = await _client.DeleteAsync(
+            $"/api/v1/evals/datasets/{dsId}/cases/{caseId}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+        var delAgain = await _client.DeleteAsync(
+            $"/api/v1/evals/datasets/{dsId}/cases/{caseId}");
+        Assert.That(delAgain.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var missingDs = await _client.GetAsync("/api/v1/evals/datasets/nope");
+        Assert.That(missingDs.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Baseline_Upsert_List_Delete()
+    {
+        var dsId = await SeedDatasetAsync(1);
+        string runId;
+        await using (var db = CreateDb())
+        {
+            var run = new EvalRun
+            {
+                DatasetId = dsId, UserId = _user.User.Id, ModelId = "m",
+                Status = "done",
+            };
+            db.EvalRuns.Add(run);
+            await db.SaveChangesAsync();
+            runId = run.Id;
+        }
+        UseToken(_user.Token);
+        var b1 = await _client.PostAsJsonAsync("/api/v1/evals/baselines",
+            new { name = "upsert-me", evalRunId = runId });
+        Assert.That(b1.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        // Mesmo nome → aponta para o novo run (upsert).
+        var b2 = await _client.PostAsJsonAsync("/api/v1/evals/baselines",
+            new { name = "upsert-me", evalRunId = runId });
+        Assert.That(b2.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var list = await _client.GetAsync("/api/v1/evals/baselines");
+        Assert.That(list.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await list.Content.ReadAsStringAsync();
+        Assert.That(body, Does.Contain("upsert-me"));
+
+        await using (var db = CreateDb())
+        {
+            var row = await db.EvalBaselines.FirstAsync(
+                b => b.Name == "upsert-me" && b.UserId == _user.User.Id);
+            var del = await _client.DeleteAsync(
+                $"/api/v1/evals/baselines/{row.Id}");
+            Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+            var delAgain = await _client.DeleteAsync(
+                $"/api/v1/evals/baselines/{row.Id}");
+            Assert.That(delAgain.StatusCode,
+                Is.EqualTo(HttpStatusCode.NotFound));
+        }
+    }
+
+    [Test]
+    public async Task ListRuns_AndResults_Work()
+    {
+        var dsId = await SeedDatasetAsync(1);
+        string runId;
+        await using (var db = CreateDb())
+        {
+            var cases = await db.EvalCases
+                .Where(c => c.DatasetId == dsId).ToListAsync();
+            var run = new EvalRun
+            {
+                DatasetId = dsId, UserId = _user.User.Id, ModelId = "m",
+                Status = "done", K = 1, TotalJobs = 1, DoneJobs = 1,
+            };
+            db.EvalRuns.Add(run);
+            db.EvalResults.Add(Result(run.Id, cases[0].Id, 0, true));
+            await db.SaveChangesAsync();
+            runId = run.Id;
+        }
+        UseToken(_user.Token);
+        var runs = await _client.GetAsync("/api/v1/evals/runs");
+        Assert.That(runs.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await runs.Content.ReadAsStringAsync(),
+            Does.Contain(runId));
+
+        var results = await _client.GetAsync(
+            $"/api/v1/evals/runs/{runId}/results");
+        Assert.That(results.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await results.Content.ReadAsStringAsync(),
+            Does.Contain("\"pass\":true"));
+
+        var missing = await _client.GetAsync("/api/v1/evals/runs/nope");
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        var missingRes = await _client.GetAsync(
+            "/api/v1/evals/runs/nope/results");
+        Assert.That(missingRes.StatusCode,
+            Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task CreateRun_EmptyDataset_400()
+    {
+        var dsId = await SeedDatasetAsync(0);
+        UseToken(_user.Token);
+        var res = await _client.PostAsJsonAsync("/api/v1/evals/runs",
+            new { datasetId = dsId, modelId = "m" });
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
 }
