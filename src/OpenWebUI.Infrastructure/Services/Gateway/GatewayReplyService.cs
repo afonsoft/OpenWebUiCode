@@ -43,12 +43,20 @@ public sealed class GatewayReplyService(
         {
             return;
         }
+        // Peer bloqueado/canal desligado após o enqueue → não entrega.
+        if (peer.Blocked || !channel.Enabled)
+        {
+            await inbound.AuditAsync(channel.Id, peer.Id, "out", "skipped",
+                null, run.RunId, null, null, cancellationToken);
+            return;
+        }
 
+        // Erro genérico ao peer externo — run.Error detalha internals
+        // (provider, paths, modelo) e não sai da superfície interna.
         var text = run.Status == ChatRunStatus.Completed
             ? run.PartialContent
               ?? await LastAssistantTextAsync(run.ChatId, cancellationToken)
-            : $"A execução terminou com status '{run.Status}'"
-              + (run.Error is { Length: > 0 } e ? $": {e}" : ".");
+            : $"A execução terminou com status '{run.Status}'.";
         if (string.IsNullOrWhiteSpace(text))
         {
             return;

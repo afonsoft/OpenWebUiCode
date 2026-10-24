@@ -99,26 +99,4 @@ public sealed class GatewayPairingService(AppDbContext db, ConfigService config)
         await db.SaveChangesAsync(ct);
         return (GatewayPairResult.Ok, peer);
     }
-
-    /// <summary>
-    /// Registra uma tentativa falha contra um código (conta no peer) —
-    /// usado quando o código bate mas a sessão do usuário falha.
-    /// </summary>
-    public async Task RegisterFailedAttemptAsync(
-        string code, CancellationToken ct)
-    {
-        var peer = await db.GatewayPeers
-            .FirstOrDefaultAsync(p => p.PairingCode == code && !p.Blocked, ct);
-        if (peer is null)
-        {
-            return;
-        }
-        peer.PairingAttempts++;
-        if (peer.PairingAttempts >= MaxPairAttempts)
-        {
-            peer.PairingCode = null;
-            peer.PairingExpiresAt = null;
-        }
-        await db.SaveChangesAsync(ct);
-    }
 }

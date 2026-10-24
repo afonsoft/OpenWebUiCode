@@ -120,15 +120,43 @@ public class GatewayReplyTests
     }
 
     [Test]
-    public async Task RunFailed_Envia_Aviso_Com_Status()
+    public async Task RunFailed_Envia_Aviso_Generico_Sem_Internais()
     {
         var (svc, spy, _) = await BuildAsync();
         await svc.RunCompletedAsync(Run(
             status: ChatRunStatus.Failed, content: null,
-            error: "provider down"), default);
+            error: "provider down em /srv/prod"), default);
         Assert.That(spy.Sent, Has.Count.EqualTo(1));
         Assert.That(spy.Sent[0].Text, Does.Contain("failed"));
-        Assert.That(spy.Sent[0].Text, Does.Contain("provider down"));
+        Assert.That(spy.Sent[0].Text, Does.Not.Contain("provider down"));
+    }
+
+    [Test]
+    public async Task Peer_Bloqueado_Nao_Recebe_Reply()
+    {
+        var (svc, spy, db) = await BuildAsync();
+        var peer = await db.GatewayPeers.FirstAsync(p => p.Id == "p1");
+        peer.Blocked = true;
+        await db.SaveChangesAsync();
+
+        await svc.RunCompletedAsync(Run(), default);
+        Assert.That(spy.Sent, Is.Empty);
+        Assert.That(await db.GatewayDeliveries.AnyAsync(
+            d => d.Direction == "out" && d.Status == "skipped"), Is.True);
+    }
+
+    [Test]
+    public async Task Canal_Desabilitado_Nao_Entrega()
+    {
+        var (svc, spy, db) = await BuildAsync();
+        var channel = await db.GatewayChannels.FirstAsync(c => c.Id == "ch1");
+        channel.Enabled = false;
+        await db.SaveChangesAsync();
+
+        await svc.RunCompletedAsync(Run(), default);
+        Assert.That(spy.Sent, Is.Empty);
+        Assert.That(await db.GatewayDeliveries.AnyAsync(
+            d => d.Direction == "out" && d.Status == "skipped"), Is.True);
     }
 
     [Test]

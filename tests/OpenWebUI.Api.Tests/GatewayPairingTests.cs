@@ -143,18 +143,18 @@ public class GatewayPairingTests
     }
 
     [Test]
-    public async Task RegisterFailedAttempt_Conta_E_Esgota()
+    public async Task Pair_Tentativas_Esgotadas_Consome_Codigo()
     {
         using var db = NewDb();
         var peer = Peer(code: "555555",
             expires: DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 600,
-            attempts: GatewayPairingService.MaxPairAttempts - 1);
+            attempts: GatewayPairingService.MaxPairAttempts);
         db.GatewayPeers.Add(peer);
         await db.SaveChangesAsync();
 
-        var svc = Svc(db);
-        await svc.RegisterFailedAttemptAsync("555555", default);
-        Assert.That(peer.PairingCode, Is.Null); // esgotou no limite
-        await svc.RegisterFailedAttemptAsync("inexistente", default); // no-op
+        var (result, _) = await Svc(db).PairAsync("u1", "555555", default);
+        Assert.That(result, Is.EqualTo(GatewayPairResult.Exhausted));
+        Assert.That(peer.PairingCode, Is.Null);
+        Assert.That(peer.PairedUserId, Is.Null);
     }
 }

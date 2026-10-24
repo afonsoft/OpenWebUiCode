@@ -2222,13 +2222,19 @@ public static class GatewayToolsPolicies
     public const string Standard = "standard";
 
     /// <summary>ToolIds da política <see cref="Restricted"/> (SPEC-20261023-messaging-gateway RF-005).</summary>
+    /// <remarks>
+    /// Somente leitura: sem escrita na memória do dono
+    /// (<c>memory_save</c>/<c>memory_learn</c>) nem <c>ask_user</c> —
+    /// input de terceiros não entra na memória sem opt-in e o peer
+    /// externo não consegue responder approvals (web-only).
+    /// </remarks>
     public static readonly IReadOnlyList<string> RestrictedToolIds =
     [
         "builtin:web_search", "builtin:fetch_url",
-        "builtin:memory_search", "builtin:memory_save", "builtin:memory_learn",
+        "builtin:memory_search",
         "builtin:context_compact", "builtin:context_notes",
         "builtin:context_recovery", "builtin:context_save",
-        "builtin:todo_write", "builtin:ask_user", "builtin:skill", "builtin:specs",
+        "builtin:todo_write", "builtin:skill", "builtin:specs",
     ];
 }
 

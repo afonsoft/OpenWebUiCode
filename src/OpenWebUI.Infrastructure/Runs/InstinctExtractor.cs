@@ -62,6 +62,15 @@ public sealed class InstinctExtractor(
                 return;
             }
 
+            // Chats de gateway carregam input de terceiros — não alimentam
+            // instincts sem opt-in explícito (SPEC messaging-gateway).
+            if (await db.GatewaySessions.AsNoTracking()
+                    .AnyAsync(s => s.ChatId == e.ChatId, ct)
+                && !await config.GetAsync("instincts.includeGateway", false, ct))
+            {
+                return;
+            }
+
             var repos = scope.ServiceProvider
                 .GetRequiredService<WorkspaceRepoService>();
             var binding = await repos.GetChatBindingAsync(e.ChatId, ct)

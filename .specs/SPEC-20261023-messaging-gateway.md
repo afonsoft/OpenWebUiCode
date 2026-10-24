@@ -279,3 +279,22 @@ código expirado/errado. Formato genérico existente.
 | `Chat.MetaJson.gateway` para o link sessão↔chat? | Resolvido (desvio) | `Chat` não tem `MetaJson` — o link vive na entidade `GatewaySession` (PeerId→ChatId); o chat é marcado por `Title` `gateway:{platform}:{peer}` e `TagsJson` `["gateway", platform]` |
 | Filtro `restricted` no registry do chat ou no request? | Resolvido | no `ToolIds` do request da run (server-side) — `GatewayToolsPolicies.RestrictedToolIds`; `standard` deixa `ToolIds` null (toolset normal do executor) |
 | Header de assinatura no adapter ou no endpoint? | Resolvido | `IGatewayAdapter.SignatureHeader` — o endpoint lê o header pelo nome que o adapter declara (prepara multi-plataforma sem hardcode) |
+
+## Gap-analysis 20261024 — correções pré-merge aplicadas
+
+Achados da auditoria (`GAP-security-gateway-*`, memória
+`.claude/memory/gap-analysis-20261024.md`) corrigidos nesta branch:
+
+- `Unpair` remove a `GatewaySession` — re-pair não reusa chat do dono anterior.
+- `/pair` com limite sempre-ativo (10/10min por usuário); contador por
+  código não observava guesses errados — throttle ficou no endpoint.
+- Webhook anônimo com rate-limit dedicado (30/min por IP) independente
+  do toggle global `ratelimit` (default off).
+- Cap de payload antes da leitura (`Content-Length` + leitura limitada).
+- `RestrictedToolIds` sem `memory_save`/`memory_learn`/`ask_user`
+  (input de terceiros não escreve memória do dono; peer não aprova).
+- `InstinctExtractor` ignora chats com `GatewaySession` (opt-in via
+  kv `instincts.includeGateway`).
+- Reply envia status genérico (sem `run.Error` interno) e respeita
+  `peer.Blocked`/`channel.Enabled` na entrega (delivery `skipped`).
+- `DELETE /channels/{id}` limpa peers/sessions/deliveries + `SecretRef`.

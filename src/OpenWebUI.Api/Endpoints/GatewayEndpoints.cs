@@ -20,6 +20,12 @@ public static class GatewayEndpoints
 {
     private const int MaxPayloadBytes = 256 * 1024;
 
+    /// <summary>Limite sempre ativo do webhook anônimo (30 req/min por IP).</summary>
+    private static readonly RateLimitConfig WebhookRateLimit = new(true, 30, 60, 5, 300);
+
+    /// <summary>Limite de tentativas de pair por usuário (10 a cada 10 min).</summary>
+    private static readonly RateLimitConfig PairAttemptLimit = new(true, 10, 600, 5, 300);
+
     /// <summary>Mapeia o CRUD autenticado e o webhook público.</summary>
     public static IEndpointRouteBuilder MapGatewayEndpoints(this IEndpointRouteBuilder app)
     {
@@ -166,18 +172,37 @@ public static class GatewayEndpoints
     }
 
     private static async Task<IResult> DeleteChannelAsync(
-        HttpContext http, AppDbContext db, string id, CancellationToken ct)
+        HttpContext http, AppDbContext db, UserSecretsService secrets,
+        string id, CancellationToken ct)
     {
         var user = await CurrentUserAsync(http, db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
         }
-        var deleted = await db.GatewayChannels
-            .Where(c => c.Id == id && c.OwnerUserId == user.Id)
+        var channel = await db.GatewayChannels.FirstOrDefaultAsync(
+            c => c.Id == id && c.OwnerUserId == user.Id, ct);
+        if (channel is null)
+        {
+            return Results.NotFound(new { detail = "canal não encontrado." });
+        }
+        // Sem FKs na tabela — limpa dependents antes do canal e o segredo
+        // do bot no vault do dono, para não deixar órfãos.
+        var peerIds = db.GatewayPeers
+            .Where(p => p.ChannelId == channel.Id).Select(p => p.Id);
+        await db.GatewayDeliveries.Where(d => d.ChannelId == channel.Id)
             .ExecuteDeleteAsync(ct);
-        return deleted > 0
-            ? Results.Ok(new { deleted = true }) : Results.NotFound();
+        await db.GatewaySessions.Where(s => peerIds.Contains(s.PeerId))
+            .ExecuteDeleteAsync(ct);
+        await db.GatewayPeers.Where(p => p.ChannelId == channel.Id)
+            .ExecuteDeleteAsync(ct);
+        await db.GatewayChannels.Where(c => c.Id == channel.Id)
+            .ExecuteDeleteAsync(ct);
+        if (channel.SecretRef is { Length: > 0 } secretRef)
+        {
+            await secrets.DeleteUserAsync(user.Id, secretRef, ct);
+        }
+        return Results.Ok(new { deleted = true });
     }
 
     /// <summary>Auditoria in/out do canal — dono only.</summary>
@@ -263,6 +288,10 @@ public static class GatewayEndpoints
         {
             peer.PairedUserId = null;
             peer.PairedAt = null;
+            // A sessão é do dono anterior — remover para não reusar o chat
+            // (contexto e sidebar) com outro usuário após re-pair.
+            await db.GatewaySessions.Where(s => s.PeerId == peer.Id)
+                .ExecuteDeleteAsync(ct);
         }
         await db.SaveChangesAsync(ct);
         return Results.Ok(new
@@ -274,12 +303,23 @@ public static class GatewayEndpoints
     /// <summary>Vincula um código de pareamento ao usuário logado (RF-002).</summary>
     private static async Task<IResult> PairAsync(
         HttpContext http, AppDbContext db, GatewayPairingService pairing,
+        RateLimitService limits,
         GatewayPairRequest? request, CancellationToken ct)
     {
         var user = await CurrentUserAsync(http, db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
+        }
+        var retry = limits.TryAcquire(
+            $"gwpair:{user.Id}", PairAttemptLimit,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (retry is { } retryAfter)
+        {
+            http.Response.Headers.RetryAfter = retryAfter.ToString();
+            return Results.Json(
+                new { detail = "Tentativas esgotadas — aguarde." },
+                statusCode: 429);
         }
         var code = (request?.Code ?? string.Empty).Trim();
         if (code.Length == 0)
@@ -312,27 +352,31 @@ public static class GatewayEndpoints
         GatewayInboundService inbound, IEnumerable<IGatewayAdapter> adapters,
         string platform, string token, CancellationToken ct)
     {
+        // Rate limit sempre ativo no webhook anônimo — não depende do
+        // toggle global (default off): sem ele, requests rejeitados ainda
+        // gravam auditoria e acionam envios de pareamento.
         var rateConfig = await config.GetAsync("ratelimit", RateLimitConfig.Default, ct);
-        if (rateConfig.Enabled)
+        var effective = rateConfig.Enabled ? rateConfig : WebhookRateLimit;
+        var key = $"gw:{http.Connection.RemoteIpAddress?.ToString() ?? "anon"}";
+        var retryAfter = limits.TryAcquire(
+            key, effective, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (retryAfter is { } retry)
         {
-            var key = $"gw:{http.Connection.RemoteIpAddress?.ToString() ?? "anon"}";
-            var retryAfter = limits.TryAcquire(
-                key, rateConfig, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-            if (retryAfter is { } retry)
-            {
-                http.Response.Headers.RetryAfter = retry.ToString();
-                return Results.Json(
-                    new { detail = "Limite de chamadas excedido." },
-                    statusCode: 429);
-            }
+            http.Response.Headers.RetryAfter = retry.ToString();
+            return Results.Json(
+                new { detail = "Limite de chamadas excedido." },
+                statusCode: 429);
         }
 
-        string raw;
-        using (var reader = new StreamReader(http.Request.Body))
+        // Cap antes da leitura: Content-Length honesto já rejeita sem
+        // alocar; a leitura em si também é limitada (chunked/omitido).
+        if (http.Request.ContentLength > MaxPayloadBytes)
         {
-            raw = await reader.ReadToEndAsync(ct);
+            return Results.Json(
+                new { detail = "payload excede 256KB." }, statusCode: 413);
         }
-        if (raw.Length > MaxPayloadBytes)
+        var raw = await ReadBoundedAsync(http.Request.Body, MaxPayloadBytes, ct);
+        if (raw is null)
         {
             return Results.Json(
                 new { detail = "payload excede 256KB." }, statusCode: 413);
@@ -352,6 +396,23 @@ public static class GatewayEndpoints
             401 => Results.Json(new { detail = result.Detail }, statusCode: 401),
             _ => Results.NotFound(new { detail = result.Detail ?? "não encontrado." }),
         };
+    }
+
+    /// <summary>Lê o corpo até <paramref name="maxChars"/>; null = excedeu.</summary>
+    private static async Task<string?> ReadBoundedAsync(
+        Stream body, int maxChars, CancellationToken ct)
+    {
+        using var reader = new StreamReader(body);
+        var buffer = new char[maxChars + 1];
+        var total = 0;
+        int n;
+        while (total <= maxChars
+            && (n = await reader.ReadAsync(
+                buffer.AsMemory(total, maxChars + 1 - total), ct)) > 0)
+        {
+            total += n;
+        }
+        return total > maxChars ? null : new string(buffer, 0, total);
     }
 
     private static object ToResponse(GatewayChannel c) => new

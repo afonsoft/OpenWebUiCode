@@ -401,6 +401,39 @@ public class InstinctTests
     }
 
     [Test]
+    public async Task Observer_Chat_Gateway_Ignora_Sem_OptIn()
+    {
+        using var db = NewDb();
+        db.Chats.Add(new Chat
+        {
+            Id = "c-gw", UserId = "u1", Title = "gateway:telegram:x",
+            CreatedAt = 1, UpdatedAt = 1,
+        });
+        db.GatewayChannels.Add(new GatewayChannel
+        {
+            Id = "gwch", OwnerUserId = "u1",
+            Platform = GatewayPlatforms.Telegram,
+        });
+        db.GatewayPeers.Add(new GatewayPeer
+        {
+            Id = "gwp", ChannelId = "gwch", ExternalChatId = "1",
+            ExternalUserId = "2", PairedUserId = "u1", CreatedAt = 1,
+        });
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "gwp", ChatId = "c-gw", CreatedAt = 1,
+        });
+        db.SaveChanges();
+
+        var extractor = NewExtractor(_dbPath);
+        await extractor.OnRunEventAsync(new AgentRunEvent(
+            "r1", "c-gw", "u1", "run.completed", "{}"), default);
+        using var check = NewDb();
+        Assert.That(await check.Instincts.CountAsync(), Is.EqualTo(0),
+            "conversa de terceiros não alimenta instincts sem opt-in");
+    }
+
+    [Test]
     public async Task Observer_RunFailed_Penaliza_Elegiveis()
     {
         using var db = NewDb();

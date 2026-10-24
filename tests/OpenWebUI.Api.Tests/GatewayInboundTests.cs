@@ -281,6 +281,10 @@ public class GatewayInboundTests
         Assert.That(toolIds, Does.Not.Contain("builtin:shell_exec"));
         Assert.That(toolIds, Does.Not.Contain("builtin:file_write"));
         Assert.That(toolIds, Does.Not.Contain("builtin:delegate_task"));
+        // Escrita na memória do dono e approvals web-only fora do restricted.
+        Assert.That(toolIds, Does.Not.Contain("builtin:memory_save"));
+        Assert.That(toolIds, Does.Not.Contain("builtin:memory_learn"));
+        Assert.That(toolIds, Does.Not.Contain("builtin:ask_user"));
 
         Assert.That(await db2.GatewayDeliveries.AnyAsync(
             d => d.ChannelId == channel.Id && d.Status == "accepted"
@@ -385,6 +389,115 @@ public class GatewayInboundTests
         Assert.That(deliveries.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(await deliveries.Content.ReadAsStringAsync(),
             Does.Contain("\"status\":\"pairing\""));
+    }
+
+    // ---------- higiene de sessão/canal ----------
+
+    [Test]
+    public async Task Unpair_Remove_Sessao_E_Requer_Novo_Codigo()
+    {
+        var channel = await CreateChannelAsync();
+        string peerId;
+        string oldChatId;
+        await using (var db = NewDb())
+        {
+            var peer = new GatewayPeer
+            {
+                ChannelId = channel.Id, ExternalChatId = "555",
+                ExternalUserId = "777", PairedUserId = _user.User.Id,
+                PairedAt = 1, CreatedAt = 1,
+            };
+            db.GatewayPeers.Add(peer);
+            await db.SaveChangesAsync();
+            peerId = peer.Id;
+        }
+        await _client.SendAsync(
+            Inbound(channel, Update, channel.WebhookSecret));
+        await using (var db = NewDb())
+        {
+            oldChatId = (await db.GatewaySessions
+                .SingleAsync(s => s.PeerId == peerId)).ChatId;
+        }
+
+        UseToken(_user.Token);
+        var unpair = await _client.PatchAsJsonAsync(
+            $"/api/v1/gateway/peers/{peerId}", new { unpair = true });
+        Assert.That(unpair.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        await using (var db = NewDb())
+        {
+            Assert.That(await db.GatewaySessions.CountAsync(
+                s => s.PeerId == peerId), Is.EqualTo(0),
+                "unpair remove a sessão do dono anterior");
+        }
+
+        // Nova mensagem → peer não-pareado: recebe código, sem run e sem
+        // reabrir o chat antigo.
+        _client.DefaultRequestHeaders.Authorization = null;
+        var res = await _client.SendAsync(
+            Inbound(channel, Update, channel.WebhookSecret));
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        await using var db2 = NewDb();
+        Assert.That(await db2.ChatRuns.CountAsync(
+            r => r.ChatId == oldChatId), Is.EqualTo(1));
+        Assert.That(await db2.GatewayDeliveries.AnyAsync(
+            d => d.ChannelId == channel.Id && d.Status == "pairing"), Is.True);
+    }
+
+    [Test]
+    public async Task DeleteChannel_Limpa_Dependentes_E_Segredo()
+    {
+        var channel = await CreateChannelAsync();
+        await using (var db = NewDb())
+        {
+            var peer = new GatewayPeer
+            {
+                ChannelId = channel.Id, ExternalChatId = "555",
+                ExternalUserId = "777", PairedUserId = _user.User.Id,
+                PairedAt = 1, CreatedAt = 1,
+            };
+            db.GatewayPeers.Add(peer);
+            await db.SaveChangesAsync();
+            db.GatewaySessions.Add(new GatewaySession
+            {
+                PeerId = peer.Id, ChatId = "chat-orphan", CreatedAt = 1,
+            });
+            db.GatewayDeliveries.Add(new GatewayDelivery
+            {
+                ChannelId = channel.Id, PeerId = peer.Id,
+                Direction = "in", Status = "accepted", CreatedAt = 1,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        UseToken(_user.Token);
+        var del = await _client.DeleteAsync(
+            $"/api/v1/gateway/channels/{channel.Id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        await using var db2 = NewDb();
+        Assert.That(await db2.GatewayChannels.CountAsync(
+            c => c.Id == channel.Id), Is.EqualTo(0));
+        Assert.That(await db2.GatewayPeers.CountAsync(
+            p => p.ChannelId == channel.Id), Is.EqualTo(0));
+        Assert.That(await db2.GatewaySessions.CountAsync(), Is.EqualTo(0));
+        Assert.That(await db2.GatewayDeliveries.CountAsync(
+            d => d.ChannelId == channel.Id), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Inbound_Payload_Grande_413_Sem_Ler_Tudo()
+    {
+        var channel = await CreateChannelAsync();
+        var req = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/gateway/telegram/{channel.Id}")
+        {
+            Content = new StringContent(
+                new string('x', 300 * 1024), Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("X-Telegram-Bot-Api-Secret-Token", channel.WebhookSecret);
+        var res = await _client.SendAsync(req);
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.RequestEntityTooLarge));
     }
 
     /// <summary>Handler de teste: captura o corpo e responde ok=true do Telegram.</summary>
