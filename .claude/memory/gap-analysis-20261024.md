@@ -38,6 +38,23 @@ Prior run: `gap-analysis-20261017.md` — itens entregues desde então (#400-#40
 - Instinct extractor usa provider real (`CompleteAsync`) ✅
 - Gateway desabilitado → 404 ✅
 
-## Proposta (aguardando gate)
+## Proposta (aprovada pelo usuário)
 
-Itens 1–8 estão em PR **aberto** (#505) — são achados de revisão pré-merge: recomendado corrigir na própria branch `feature/Devin-20261023-messaging-gateway` antes do merge (fixes pequenos e focados), em vez de spec+issue pós-merge. Item 9 = ação de bookkeeping direta (mover dup p/ fora de `.specs/`, opcional: ensinar o drift guard a detectar dup cross-dir). Item 10 = pergunta ao usuário.
+Itens 1–8 corrigidos na própria branch `feature/Devin-20261023-messaging-gateway` antes do merge. Item 9 = bookkeeping direto. Item 10 = fila do orchestrator → criar issues.
+
+## Resultado pós-aprovação
+
+| Item | Resolução | Evidência |
+| --- | --- | --- |
+| 1 session-reuse | `Unpair` remove `GatewaySession` via `ExecuteDeleteAsync` | `GatewayEndpoints.cs` + teste `Unpair_Remove_Sessao_E_Requer_Novo_Codigo` |
+| 2 pair-bruteforce | `RateLimitService` dedicado `PairAttemptLimit(10/600s,5→300s)`; `RegisterFailedAttemptAsync` morto removido | `GatewayEndpoints.cs`, `GatewayPairingTests.cs` |
+| 3 ratelimit-off | `WebhookRateLimit(30/60s,5→300s)` dedicado sempre ativo, independente de `ratelimit.enabled` | `GatewayEndpoints.cs` + `GatewayRateLimitTests.cs` |
+| 4 restricted-memory | `memory_save`/`memory_learn`/`ask_user` removidos da allowlist | `Entities.cs` |
+| 5 payload-cap | `Content-Length`>256KB→413 imediato; `ReadBoundedAsync` bound em chunked | `GatewayEndpoints.cs` + teste bounded |
+| 6 instincts-extraction | gateway chats excluídos salvo `instincts.includeGateway=true` | `InstinctExtractor.cs` + teste opt-in |
+| 7 reply-infoleak | `run.Error` não vaza (msg genérica); skip `Blocked`/`!Enabled` | `GatewayReplyService.cs` + testes |
+| 8 delete-orphans | delete cascata deliveries→sessions→peers→channel + `secrets.DeleteUserAsync` | `GatewayEndpoints.cs` + teste `SecretRef=""` |
+| 9 dup SPEC | `.specs/SPEC-…-sdd-orchestrator-prompts.md` removido; `check-spec-status.py` detecta dup cross-dir | commit `98c26ff` |
+| 10 SPECs órfãs | issues #506 (epic) + #507–#513 (slices) criadas | gh issues |
+
+Commits: `98c26ff` (fixes), `2a05a7f`/`db53581` (cobertura). CI do #505 em `db53581`.
