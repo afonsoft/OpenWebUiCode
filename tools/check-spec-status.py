@@ -49,7 +49,14 @@ def is_terminal(status: str) -> bool:
 def main() -> int:
     problems: list[str] = []
 
+    archived = {f.name for f in ARCHIVE.glob("SPEC-*.md")}
+
     for f in sorted(ACTIVE.glob("SPEC-*.md")):
+        if f.name in archived:
+            problems.append(
+                f"{f.relative_to(ROOT)}: duplicado — existe arquivado em "
+                "docs/specs/; remover a cópia em voo"
+            )
         status = read_status(f)
         if status is None:
             problems.append(f"{f.relative_to(ROOT)}: sem header `Status`")

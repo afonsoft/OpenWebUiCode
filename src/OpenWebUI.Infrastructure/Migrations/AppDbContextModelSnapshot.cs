@@ -1553,6 +1553,172 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("Functions");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.GatewayChannel", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DefaultModelId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PersonaId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SecretRef")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ToolsPolicy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WebhookSecret")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId", "Platform");
+
+                    b.ToTable("GatewayChannels");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.GatewayDelivery", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChannelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Excerpt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MessageId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PeerId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChannelId", "CreatedAt");
+
+                    b.ToTable("GatewayDeliveries");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.GatewayPeer", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Blocked")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ChannelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ExternalChatId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalUserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("PairedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PairedUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("PairingAttempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PairingCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("PairingExpiresAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PairedUserId");
+
+                    b.HasIndex("ChannelId", "ExternalChatId", "ExternalUserId")
+                        .IsUnique();
+
+                    b.ToTable("GatewayPeers");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.GatewaySession", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("LastInboundAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PeerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChatId");
+
+                    b.HasIndex("PeerId")
+                        .IsUnique();
+
+                    b.ToTable("GatewaySessions");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.Group", b =>
                 {
                     b.Property<string>("Id")

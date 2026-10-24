@@ -442,6 +442,83 @@
                         }
                     </SettingsSection>
 
+                    <SettingsSection Title="Gateway" Description="@L["settings.gateway_hint"]">
+                        @if (_gwChannels is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var ch in _gwChannels)
+                            {
+                                <div class="min-w-0">
+                                    <div class="flex items-center justify-between gap-2 min-h-11">
+                                        <div class="min-w-0">
+                                            <div class="text-sm truncate">@ch.Platform · @(ch.Enabled ? L["settings.gateway_enabled"] : L["settings.gateway_disabled"]) · @ch.ToolsPolicy</div>
+                                            <div class="text-xs text-gray-400 truncate font-mono">@ch.WebhookUrl</div>
+                                        </div>
+                                        <button type="button" class="msg-action danger" disabled="@_gwBusy"
+                                                aria-label="@($"{ch.Platform} remove")"
+                                                @onclick="() => DeleteGatewayChannelAsync(ch.Id)">✕</button>
+                                    </div>
+                                    @if (ch.SetWebhookHint is not null)
+                                    {
+                                        <div class="text-[0.625rem] text-gray-500 truncate font-mono">@ch.SetWebhookHint</div>
+                                    }
+                                </div>
+                            }
+                            @if (_gwChannels.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.gateway_none"]</div>
+                            }
+                            @if (_gwMessage is not null)
+                            {
+                                <div class="field-note">@_gwMessage</div>
+                            }
+                            <div class="field mt-2">
+                                <div class="field-label">@L["settings.gateway_add"]</div>
+                                <div class="flex gap-2">
+                                    <input class="input flex-1" type="password" autocomplete="off" spellcheck="false"
+                                           @bind="_gwBotToken" aria-label="@L["settings.gateway_token_ph"]"
+                                           placeholder="@L["settings.gateway_token_ph"]" />
+                                    <input class="input flex-1" @bind="_gwModel" aria-label="@L["settings.gateway_model_ph"]"
+                                           placeholder="@L["settings.gateway_model_ph"]" />
+                                    <button class="primary-btn flex-none" disabled="@(_gwBusy || string.IsNullOrWhiteSpace(_gwBotToken))"
+                                            @onclick="CreateGatewayChannelAsync">@L["common.add"]</button>
+                                </div>
+                                <div class="field-note">@L["settings.gateway_policy_note"]</div>
+                            </div>
+                            <div class="field mt-2">
+                                <div class="field-label">@L["settings.gateway_pair"]</div>
+                                <div class="flex gap-2">
+                                    <input class="input flex-1" @bind="_gwPairCode" aria-label="@L["settings.gateway_pair_ph"]"
+                                           placeholder="@L["settings.gateway_pair_ph"]" />
+                                    <button class="primary-btn flex-none" disabled="@(_gwBusy || string.IsNullOrWhiteSpace(_gwPairCode))"
+                                            @onclick="PairGatewayAsync">@L["settings.gateway_pair_btn"]</button>
+                                </div>
+                            </div>
+                            @if (_gwPeers is { Count: > 0 })
+                            {
+                                <div class="field-label mt-2">@L["settings.gateway_peers"]</div>
+                                @foreach (var peer in _gwPeers)
+                                {
+                                    <div class="flex items-center justify-between gap-2 min-h-11">
+                                        <div class="min-w-0">
+                                            <div class="text-sm truncate">@(peer.ExternalName ?? peer.ExternalUserId)</div>
+                                            <div class="text-xs text-gray-400">
+                                                @(peer.Paired ? L["settings.gateway_paired"] : L["settings.gateway_unpaired"])
+                                                @(peer.Blocked ? $"· {L["settings.gateway_blocked"]}" : "")
+                                            </div>
+                                        </div>
+                                        <button type="button" class="msg-action" disabled="@_gwBusy"
+                                                @onclick="() => ToggleGatewayPeerBlockAsync(peer)">
+                                            @(peer.Blocked ? "🔓" : "🚫")</button>
+                                    </div>
+                                }
+                            }
+                        }
+                    </SettingsSection>
+
                     <SettingsSaveBar Busy="@_ghSaving" Dirty="@(!string.IsNullOrWhiteSpace(_ghToken))"
                                      SaveDisabled="@string.IsNullOrWhiteSpace(_ghToken)"
                                      Message="@(_ghMessage ?? _intMessage)"
@@ -1434,6 +1511,7 @@
         await LoadUserMcpAsync();
         await LoadSecretsAsync();
         await LoadHooksAsync();
+        await LoadGatewayAsync();
     }
 
     private async Task LoadCombosTabAsync()
@@ -3018,6 +3096,88 @@
         }
         await LoadHooksAsync();
         _hooksBusy = false;
+    }
+
+    // ── Messaging gateway (tab Integrations) ──
+    private List<GatewayChannelResponse>? _gwChannels;
+    private List<GatewayPeerResponse>? _gwPeers;
+    private string _gwBotToken = string.Empty;
+    private string _gwModel = string.Empty;
+    private string _gwPairCode = string.Empty;
+    private bool _gwBusy;
+    private string? _gwMessage;
+
+    private async Task LoadGatewayAsync()
+    {
+        _gwMessage = null;
+        try
+        {
+            _gwChannels = await Api.GetGatewayChannelsAsync() ?? [];
+            _gwPeers = await Api.GetGatewayPeersAsync() ?? [];
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _gwChannels = [];
+            _gwPeers = [];
+        }
+    }
+
+    private async Task CreateGatewayChannelAsync()
+    {
+        _gwBusy = true;
+        var created = await Api.CreateGatewayChannelAsync(
+            new GatewayChannelCreatePayload("telegram", _gwBotToken.Trim(),
+                null,
+                string.IsNullOrWhiteSpace(_gwModel) ? null : _gwModel.Trim(),
+                null));
+        _gwBusy = false;
+        if (created is null)
+        {
+            _gwMessage = L["settings.save_failed"];
+            return;
+        }
+        _gwBotToken = string.Empty;
+        _gwModel = string.Empty;
+        _gwMessage = L["settings.gateway_created"];
+        await LoadGatewayAsync();
+    }
+
+    private async Task DeleteGatewayChannelAsync(string id)
+    {
+        _gwBusy = true;
+        if (!await Api.DeleteGatewayChannelAsync(id))
+        {
+            _gwMessage = L["settings.save_failed"];
+        }
+        await LoadGatewayAsync();
+        _gwBusy = false;
+    }
+
+    private async Task ToggleGatewayPeerBlockAsync(GatewayPeerResponse peer)
+    {
+        _gwBusy = true;
+        if (!await Api.UpdateGatewayPeerAsync(
+            peer.Id, new GatewayPeerUpdatePayload(!peer.Blocked, null)))
+        {
+            _gwMessage = L["settings.save_failed"];
+        }
+        await LoadGatewayAsync();
+        _gwBusy = false;
+    }
+
+    private async Task PairGatewayAsync()
+    {
+        _gwBusy = true;
+        var res = await Api.PairGatewayAsync(_gwPairCode.Trim());
+        _gwBusy = false;
+        _gwMessage = res is not null
+            ? L["settings.gateway_pair_ok"]
+            : L["settings.gateway_pair_fail"];
+        if (res is not null)
+        {
+            _gwPairCode = string.Empty;
+            await LoadGatewayAsync();
+        }
     }
 
     // ── Agentes declarativos + externos (tab Agents) ──

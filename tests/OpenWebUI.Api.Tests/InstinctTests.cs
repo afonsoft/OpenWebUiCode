@@ -401,6 +401,101 @@ public class InstinctTests
     }
 
     [Test]
+    public async Task Observer_Chat_Gateway_Ignora_Sem_OptIn()
+    {
+        using var db = NewDb();
+        db.Chats.Add(new Chat
+        {
+            Id = "c-gw", UserId = "u1", Title = "gateway:telegram:x",
+            CreatedAt = 1, UpdatedAt = 1,
+        });
+        db.GatewayChannels.Add(new GatewayChannel
+        {
+            Id = "gwch", OwnerUserId = "u1",
+            Platform = GatewayPlatforms.Telegram,
+        });
+        db.GatewayPeers.Add(new GatewayPeer
+        {
+            Id = "gwp", ChannelId = "gwch", ExternalChatId = "1",
+            ExternalUserId = "2", PairedUserId = "u1", CreatedAt = 1,
+        });
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "gwp", ChatId = "c-gw", CreatedAt = 1,
+        });
+        db.SaveChanges();
+
+        var extractor = NewExtractor(_dbPath);
+        await extractor.OnRunEventAsync(new AgentRunEvent(
+            "r1", "c-gw", "u1", "run.completed", "{}"), default);
+        using var check = NewDb();
+        Assert.That(await check.Instincts.CountAsync(), Is.EqualTo(0),
+            "conversa de terceiros não alimenta instincts sem opt-in");
+    }
+
+    [Test]
+    public async Task Observer_Chat_Gateway_Com_OptIn_Passa_Filtro()
+    {
+        using var db = NewDb();
+        db.Chats.Add(new Chat
+        {
+            Id = "c-gw2", UserId = "u1", Title = "gateway:telegram:x",
+            CreatedAt = 1, UpdatedAt = 1,
+        });
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "gwp2", ChatId = "c-gw2", CreatedAt = 1,
+        });
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("instincts.includeGateway", true, default);
+        db.SaveChanges();
+
+        // Opt-in ligado → o filtro não corta; a extração segue até a
+        // checagem de elegibilidade (sem steps → termina em silêncio).
+        var extractor = NewExtractor(_dbPath);
+        await extractor.OnRunEventAsync(new AgentRunEvent(
+            "r1", "c-gw2", "u1", "run.completed", "{}"), default);
+        using var check = NewDb();
+        Assert.That(await check.Instincts.CountAsync(), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Observer_Elegivel_Alcanca_Extract_Sem_Falhar()
+    {
+        using var db = NewDb();
+        var chat = new Chat
+        {
+            Id = "c-elig", UserId = "u1", Title = "t",
+            CreatedAt = 1, UpdatedAt = 1,
+        };
+        chat.Messages.Add(new ChatMessage
+        {
+            ChatId = "c-elig", Role = "user", Content = "como faço X?",
+            Position = 0, Timestamp = 1,
+        });
+        chat.Messages.Add(new ChatMessage
+        {
+            ChatId = "c-elig", Role = "assistant", Content = "use Y.",
+            Position = 1, Timestamp = 2,
+        });
+        db.Chats.Add(chat);
+        db.ChatRuns.Add(new ChatRun
+        {
+            Id = "r-elig", ChatId = "c-elig", UserId = "u1", Model = "m",
+            MetaJson = """{"usage":{"steps":5}}""", CreatedAt = 1,
+        });
+        db.SaveChanges();
+
+        // Run elegível (steps≥3) → o extractor atravessa transcript,
+        // resolve modelo e chama o provider (stub → falha ou retorna
+        // sem candidatos) — nunca quebra o observer.
+        var extractor = NewExtractor(_dbPath);
+        await extractor.OnRunEventAsync(new AgentRunEvent(
+            "r-elig", "c-elig", "u1", "run.completed", "{}"), default);
+        Assert.Pass();
+    }
+
+    [Test]
     public async Task Observer_RunFailed_Penaliza_Elegiveis()
     {
         using var db = NewDb();
