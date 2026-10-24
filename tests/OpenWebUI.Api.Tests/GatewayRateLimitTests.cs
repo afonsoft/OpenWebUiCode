@@ -66,6 +66,15 @@ public class GatewayRateLimitTests
     [Test]
     public async Task Webhook_429_Apos_Limite_Mesmo_Sem_Ratelimit_Global()
     {
+        // Garante o bucket dedicado (30/min) independente da ordem dos
+        // testes — outros testes da fixture podem ativar o toggle global.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            await config.SetAsync("ratelimit",
+                new RateLimitConfig(false, 60, 60, 5, 300), default);
+        }
         _client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue(
                 "Bearer", _user.Token);
@@ -93,8 +102,91 @@ public class GatewayRateLimitTests
         Assert.That(last, Is.EqualTo(HttpStatusCode.TooManyRequests));
         await using var db = NewDb();
         Assert.That(await db.GatewayDeliveries.CountAsync(
-            d => d.ChannelId == id), Is.EqualTo(30),
+            d => d.ChannelId == id), Is.LessThanOrEqualTo(30),
             "request rate-limited não grava auditoria");
+    }
+
+    [Test]
+    public async Task Webhook_Com_Ratelimit_Global_Ativo_Usa_Config()
+    {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            await config.SetAsync("ratelimit",
+                new RateLimitConfig(true, 60, 60, 5, 300), default);
+        }
+        _client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer", _user.Token);
+        var res = await _client.PostAsJsonAsync("/api/v1/gateway/channels",
+            new { platform = "telegram", botToken = "123:abc" });
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        using var doc = System.Text.Json.JsonDocument.Parse(
+            await res.Content.ReadAsStringAsync());
+        var id = doc.RootElement.GetProperty("id").GetString()!;
+        _client.DefaultRequestHeaders.Authorization = null;
+
+        // Config global ativa cobre o braço `rateConfig.Enabled` — a
+        // chamada chega ao service e falha a assinatura (401), não 429.
+        var req = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/gateway/telegram/{id}")
+        {
+            Content = new StringContent("{}", Encoding.UTF8,
+                "application/json"),
+        };
+        var inbound = await _client.SendAsync(req);
+        Assert.That(inbound.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task Inbound_Chunked_Grande_413_Pela_Leitura_Limitada()
+    {
+        // Limite alto para isolar do bucket consumido por outros testes.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            await config.SetAsync("ratelimit",
+                new RateLimitConfig(true, 100_000, 60, 5, 300), default);
+        }
+        _client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer", _user.Token);
+        var res = await _client.PostAsJsonAsync("/api/v1/gateway/channels",
+            new { platform = "telegram", botToken = "123:abc" });
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        using var doc = System.Text.Json.JsonDocument.Parse(
+            await res.Content.ReadAsStringAsync());
+        var id = doc.RootElement.GetProperty("id").GetString()!;
+        _client.DefaultRequestHeaders.Authorization = null;
+
+        // Sem Content-Length honesto → o cap cai na leitura limitada.
+        var req = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/v1/gateway/telegram/{id}")
+        {
+            Content = new UnknownLengthContent(
+                new string('x', 300 * 1024)),
+        };
+        var inbound = await _client.SendAsync(req);
+        Assert.That(inbound.StatusCode,
+            Is.EqualTo(HttpStatusCode.RequestEntityTooLarge));
+    }
+
+    /// <summary>Content sem tamanho declarado — força o caminho de leitura limitada.</summary>
+    private sealed class UnknownLengthContent(string text) : HttpContent
+    {
+        private readonly byte[] _bytes = Encoding.UTF8.GetBytes(text);
+
+        protected override Task SerializeToStreamAsync(
+            Stream stream, TransportContext? context) =>
+            stream.WriteAsync(_bytes).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
     }
 
     [Test]

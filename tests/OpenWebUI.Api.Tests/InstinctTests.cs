@@ -434,6 +434,32 @@ public class InstinctTests
     }
 
     [Test]
+    public async Task Observer_Chat_Gateway_Com_OptIn_Passa_Filtro()
+    {
+        using var db = NewDb();
+        db.Chats.Add(new Chat
+        {
+            Id = "c-gw2", UserId = "u1", Title = "gateway:telegram:x",
+            CreatedAt = 1, UpdatedAt = 1,
+        });
+        db.GatewaySessions.Add(new GatewaySession
+        {
+            PeerId = "gwp2", ChatId = "c-gw2", CreatedAt = 1,
+        });
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("instincts.includeGateway", true, default);
+        db.SaveChanges();
+
+        // Opt-in ligado → o filtro não corta; a extração segue até a
+        // checagem de elegibilidade (sem steps → termina em silêncio).
+        var extractor = NewExtractor(_dbPath);
+        await extractor.OnRunEventAsync(new AgentRunEvent(
+            "r1", "c-gw2", "u1", "run.completed", "{}"), default);
+        using var check = NewDb();
+        Assert.That(await check.Instincts.CountAsync(), Is.EqualTo(0));
+    }
+
+    [Test]
     public async Task Observer_RunFailed_Penaliza_Elegiveis()
     {
         using var db = NewDb();

@@ -486,6 +486,30 @@ public class GatewayInboundTests
     }
 
     [Test]
+    public async Task DeleteChannel_Sem_SecretRef_Tambem_Remove()
+    {
+        await using (var db = NewDb())
+        {
+            db.GatewayChannels.Add(new GatewayChannel
+            {
+                OwnerUserId = _user.User.Id,
+                Platform = GatewayPlatforms.Telegram,
+                SecretRef = string.Empty,
+            });
+            await db.SaveChangesAsync();
+        }
+        string id;
+        await using (var db = NewDb())
+        {
+            id = (await db.GatewayChannels.FirstAsync(
+                c => c.SecretRef == "")).Id;
+        }
+        UseToken(_user.Token);
+        var del = await _client.DeleteAsync($"/api/v1/gateway/channels/{id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    [Test]
     public async Task Inbound_Payload_Grande_413_Sem_Ler_Tudo()
     {
         var channel = await CreateChannelAsync();
