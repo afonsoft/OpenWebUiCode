@@ -29,7 +29,8 @@ public static class SystemPromptContributors
         WebSearchService webSearch,
         WorkspaceRepoService repos,
         AgentDefinitionService agents,
-        IConfiguration configuration) =>
+        IConfiguration configuration,
+        InstinctService? instincts = null) =>
     [
         new BaseAgentContributor(),
         new AlwaysAllowContributor(db),
@@ -41,6 +42,9 @@ public static class SystemPromptContributors
         new MemoriesContributor(db, config),
         new RepoBindingContributor(),
         new AgentMemoryContributor(db, config),
+        .. (IEnumerable<ISystemPromptContributor>)(instincts is null
+            ? []
+            : [new InstinctContributor(instincts, config)]),
         new DelegationPolicyContributor(agents, db),
         new MentionsContributor(),
         new AgentModeContributor(),

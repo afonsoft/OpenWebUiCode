@@ -1545,6 +1545,65 @@ public class AgentMemory
     public long UpdatedAt { get; set; }
 }
 
+/// <summary>
+/// Padrão aprendido de runs observadas (SPEC-20261023-instincts-learning):
+/// "quando <see cref="Trigger"/> → <see cref="Body"/>" com score de
+/// confiança. Extraído pós-run pelo <c>InstinctExtractor</c>, injetado no
+/// session-start como <c>&lt;learned_instincts&gt;</c> quando
+/// <see cref="Status"/> <c>active</c> e
+/// <see cref="Confidence"/> ≥ threshold — contexto não-revisado, nunca
+/// política executável nem tool call.
+/// </summary>
+public class Instinct
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono do instinct (isolamento de dados).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Escopo: <c>user</c> (toda sessão do usuário) ou
+    /// <c>workspace</c> (só sessões bound ao repo).</summary>
+    public string Scope { get; set; } = "user";
+
+    /// <summary>Slug do repo (owner/repo) quando Scope=workspace.</summary>
+    public string? WorkspaceId { get; set; }
+
+    /// <summary>Domínio do padrão (ex.: <c>dotnet</c>, <c>git</c>,
+    /// <c>review</c>) — usado no rank/boost e no agrupamento do evolve.</summary>
+    public string Domain { get; set; } = string.Empty;
+
+    /// <summary>Quando o padrão se aplica (frase de gatilho).</summary>
+    public string Trigger { get; set; } = string.Empty;
+
+    /// <summary>O padrão em si (≤500 chars).</summary>
+    public string Body { get; set; } = string.Empty;
+
+    /// <summary>Confiança 0-1: nasce 0.5, +0.05 por hit, -0.15 por erro
+    /// atribuível; cap 0.95.</summary>
+    public double Confidence { get; set; } = 0.5;
+
+    /// <summary>Ciclo de vida: <c>pending</c> (aguarda threshold/aprovação),
+    /// <c>active</c>, <c>rejected</c>, <c>expired</c> (30d sem hit).</summary>
+    public string Status { get; set; } = "pending";
+
+    /// <summary>Quantas vezes o padrão foi observado/reforçado.</summary>
+    public int HitCount { get; set; } = 1;
+
+    /// <summary>Refs de origem (chat/run ids), JSON, cap 10.</summary>
+    public string SourceRefs { get; set; } = "[]";
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+
+    /// <summary>Último reforço/injeção (epoch seconds) — base do expurgo
+    /// de 30 dias.</summary>
+    public long LastSeenAt { get; set; }
+}
+
 /// <summary>Function do ecossistema de plugins — registro com manifest; a
 /// execução é delegada a pipelines externos (nenhum código arbitrário roda
 /// no servidor .NET).</summary>
