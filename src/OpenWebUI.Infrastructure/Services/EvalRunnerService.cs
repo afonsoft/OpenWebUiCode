@@ -151,8 +151,11 @@ public class EvalRunnerService(IServiceScopeFactory scopeFactory,
                 }
                 finally
                 {
-                    gate.Release();
+                    // Bump dentro do semáforo: o AppDbContext do escopo é
+                    // compartilhado pelas tasks — acesso fora do gate
+                    // corrida com o caso seguinte (EF: second operation).
                     await BumpProgressAsync(db, evalRun.Id, ct);
+                    gate.Release();
                 }
             });
         await Task.WhenAll(tasks);
