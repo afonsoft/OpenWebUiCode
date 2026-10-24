@@ -545,6 +545,109 @@ public class InstinctTests
         Assert.That(sections[0], Does.EndWith("</learned_instincts>"));
     }
 
+    [Test]
+    public async Task Contributor_StackDetection_Cobre_Markers_E_Extensoes()
+    {
+        using var db = NewDb();
+        var workdir = Path.Join(_root, "wd-all");
+        Directory.CreateDirectory(workdir);
+        // Todos os marker files e extensões do switch de DetectStackAsync.
+        string[] files =
+        [
+            "package.json", "tsconfig.json", "pyproject.toml",
+            "requirements.txt", "pipfile", "go.mod", "cargo.toml",
+            "pom.xml", "build.gradle", "build.gradle.kts", "gemfile",
+            "composer.json", "dockerfile", "docker-compose.yaml",
+            "docker-compose.yml",
+            "a.cs", "a.razor", "a.csproj", "a.sln", "a.slnx",
+            "a.py", "a.ts", "a.tsx", "a.js", "a.jsx", "a.vue",
+            "a.svelte", "a.go", "a.rs", "a.java", "a.kt", "a.scala",
+            "a.rb", "a.php", "a.sql", "a.tf", "a.unknown",
+        ];
+        foreach (var f in files)
+        {
+            await File.WriteAllTextAsync(Path.Join(workdir, f), "x");
+        }
+        // Um instinct por domínio, conf igual — todos entram (maxInjected
+        // ampliado); o switch inteiro é exercitado pelo scan.
+        var domains = new[]
+        {
+            "web", "python", "go", "rust", "jvm", "ruby", "php",
+            "docker", "dotnet", "sql", "terraform",
+        };
+        foreach (var d in domains)
+        {
+            db.Instincts.Add(Seed(domain: d, trigger: $"t-{d}", conf: 0.8));
+        }
+        db.SaveChanges();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("instincts.maxInjected", 20, default);
+
+        var sections = await new InstinctContributor(NewService(db), config)
+            .ContributeAsync(Ctx(workdir));
+        Assert.That(sections, Has.Count.EqualTo(1));
+        foreach (var d in domains)
+        {
+            Assert.That(sections[0], Does.Contain($"t-{d}"));
+        }
+    }
+
+    [Test]
+    public async Task Contributor_Workdir_Ausente_Injeta_Por_Confianca()
+    {
+        using var db = NewDb();
+        db.Instincts.Add(Seed(trigger: "t-solo", conf: 0.9));
+        db.SaveChanges();
+        var config = new ConfigService(db, TestCache.Create());
+
+        // Workdir inexistente → DetectStack retorna vazio, sem boost.
+        var sections = await new InstinctContributor(NewService(db), config)
+            .ContributeAsync(Ctx(Path.Join(_root, "nao-existe")));
+        Assert.That(sections, Has.Count.EqualTo(1));
+        Assert.That(sections[0], Does.Contain("t-solo"));
+    }
+
+    [Test]
+    public async Task Contributor_ScanCap_Respeitado_E_Injeta()
+    {
+        using var db = NewDb();
+        var workdir = Path.Join(_root, "wd-many");
+        Directory.CreateDirectory(workdir);
+        for (var n = 0; n < 210; n++)
+        {
+            await File.WriteAllTextAsync(
+                Path.Join(workdir, $"f{n}.cs"), "//");
+        }
+        db.Instincts.Add(Seed(trigger: "t-cap", conf: 0.9));
+        db.SaveChanges();
+        var config = new ConfigService(db, TestCache.Create());
+
+        var sections = await new InstinctContributor(NewService(db), config)
+            .ContributeAsync(Ctx(workdir));
+        Assert.That(sections, Has.Count.EqualTo(1));
+        Assert.That(sections[0], Does.Contain("t-cap"));
+    }
+
+    [Test]
+    public async Task Contributor_MaxInjected_Clampado()
+    {
+        using var db = NewDb();
+        for (var n = 0; n < 4; n++)
+        {
+            db.Instincts.Add(Seed(trigger: $"t-{n}", conf: 0.8));
+        }
+        db.SaveChanges();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("instincts.maxInjected", 2, default);
+
+        var sections = await new InstinctContributor(NewService(db), config)
+            .ContributeAsync(Ctx());
+        // Só 2 linhas de instinct sob o clamp.
+        var count = sections[0].Split('\n')
+            .Count(l => l.StartsWith("- [", StringComparison.Ordinal));
+        Assert.That(count, Is.EqualTo(2));
+    }
+
     private static PromptContext Ctx(string? workdir = null) => new()
     {
         Request = new ChatCompletionRequest(
