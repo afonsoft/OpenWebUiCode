@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-agent-evals` |
 | Ticket | [#495](https://github.com/afonsoft/open-webui/issues/495) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #6. Inspirado em `evals/` + batch runner do hermes-agent e nos verification loops (graders, pass@k) do ECC. |
 
 ## 1. User Story
@@ -222,3 +222,7 @@ MaxK; formato de erro genérico existente.
 | Ephemeral chats: `IsEphemeral` novo ou folder técnico? | Proposta | flag `Chat.IsEphemeral` (migration pequena, semântica limpa — reutilizável por instincts/tests) |
 | Grader `trajectory` sobre eventos ou transcript? | Resolvido | `RunEventWriter` events (estruturado, já persistido) |
 | Timeout por caso | Proposta | `Agent:Evals:CaseTimeoutMinutes` default 10 |
+## Delivered
+
+- PR: https://github.com/afonsoft/open-webui/pull/503 (merged)
+- Issue: https://github.com/afonsoft/open-webui/issues/495
