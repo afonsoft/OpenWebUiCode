@@ -426,4 +426,114 @@ public class EvalEndpointsTests
             new { datasetId = dsId, modelId = "m" });
         Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
+
+    [Test]
+    public async Task Dataset_EmptyName_400()
+    {
+        UseToken(_user.Token);
+        var res = await _client.PostAsJsonAsync("/api/v1/evals/datasets",
+            new { name = "  " });
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    [Test]
+    public async Task CreateRun_EmptyModelId_400_AndToolsetSerializes()
+    {
+        var dsId = await SeedDatasetAsync(1);
+        UseToken(_user.Token);
+
+        var emptyModel = await _client.PostAsJsonAsync("/api/v1/evals/runs",
+            new { datasetId = dsId, modelId = " " });
+        Assert.That(emptyModel.StatusCode,
+            Is.EqualTo(HttpStatusCode.BadRequest));
+
+        var ok = await _client.PostAsJsonAsync("/api/v1/evals/runs",
+            new
+            {
+                datasetId = dsId, modelId = "m", k = 1, concurrency = 1,
+                toolset = new[] { "fs_read", "shell_exec" },
+            });
+        Assert.That(ok.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        using var doc = JsonDocument.Parse(
+            await ok.Content.ReadAsStringAsync());
+        var runId = doc.RootElement.GetProperty("id").GetString()!;
+        await using var db = CreateDb();
+        var run = await db.EvalRuns.FindAsync(runId);
+        Assert.That(run!.ToolsetJson, Does.Contain("fs_read"));
+    }
+
+    [Test]
+    public async Task Baseline_EmptyName_400_RunMissing_404()
+    {
+        UseToken(_user.Token);
+        var empty = await _client.PostAsJsonAsync("/api/v1/evals/baselines",
+            new { name = "", evalRunId = "x" });
+        Assert.That(empty.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        var missing = await _client.PostAsJsonAsync("/api/v1/evals/baselines",
+            new { name = "b", evalRunId = "nope" });
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Compare_BaselineByRunId_NewAndUnchanged()
+    {
+        var dsId = await SeedDatasetAsync(2);
+        string baseRunId, curRunId;
+        await using (var db = CreateDb())
+        {
+            var cases = await db.EvalCases
+                .Where(c => c.DatasetId == dsId).OrderBy(c => c.Id)
+                .ToListAsync();
+            var baseRun = new EvalRun
+            {
+                DatasetId = dsId, UserId = _user.User.Id, ModelId = "m",
+                Status = "done",
+            };
+            var curRun = new EvalRun
+            {
+                DatasetId = dsId, UserId = _user.User.Id, ModelId = "m",
+                Status = "done",
+            };
+            db.EvalRuns.AddRange(baseRun, curRun);
+            var extra = new EvalCase
+            {
+                DatasetId = dsId, Prompt = "new", CreatedAt = 9,
+            };
+            db.EvalCases.Add(extra);
+            // caso[0]: pass→pass (unchanged); caso[1]: fail→fail (unchanged);
+            // extra: só existe no cur → "new".
+            db.EvalResults.AddRange(
+                Result(baseRun.Id, cases[0].Id, 0, true),
+                Result(baseRun.Id, cases[1].Id, 0, false),
+                Result(curRun.Id, cases[0].Id, 0, true),
+                Result(curRun.Id, cases[1].Id, 0, false),
+                Result(curRun.Id, extra.Id, 0, true));
+            await db.SaveChangesAsync();
+            baseRunId = baseRun.Id;
+            curRunId = curRun.Id;
+        }
+        UseToken(_user.Token);
+        // baseline pode ser o próprio runId (fallback sem pointer).
+        var res = await _client.GetAsync(
+            $"/api/v1/evals/runs/{curRunId}/compare?baseline={baseRunId}");
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await res.Content.ReadAsStringAsync();
+        Assert.That(body, Does.Contain("\"unchanged\""));
+        Assert.That(body, Does.Contain("\"new\""));
+    }
+
+    [Test]
+    public async Task Import_JsonNull_LinhaReportaErro()
+    {
+        var dsId = await SeedDatasetAsync(0);
+        UseToken(_user.Token);
+        var res = await _client.PostAsync(
+            $"/api/v1/evals/datasets/{dsId}/cases:import",
+            new StringContent("null\n{\"prompt\":\"ok\"}",
+                Encoding.UTF8, "application/jsonl"));
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var body = await res.Content.ReadAsStringAsync();
+        Assert.That(body, Does.Contain("\"imported\":1"));
+        Assert.That(body, Does.Contain("json inv"));
+    }
 }

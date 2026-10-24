@@ -244,6 +244,114 @@ public class EvalGraderTests
         Assert.That(grade.Pass, Is.False);
     }
 
+    [Test]
+    public async Task Contains_NullAnswerOrExpected_Fails()
+    {
+        await using var db = CreateContext();
+        var nullAnswer = await Grader(db).GradeAsync(
+            Case("contains", expected: "x"), Run(), null,
+            "u1", CancellationToken.None);
+        var nullExpected = await Grader(db).GradeAsync(
+            Case("contains", expected: null), Run(), "abc",
+            "u1", CancellationToken.None);
+        var missing = await Grader(db).GradeAsync(
+            Case("contains", expected: "zzz"), Run(), "abc",
+            "u1", CancellationToken.None);
+        Assert.That(nullAnswer.Pass, Is.False);
+        Assert.That(nullExpected.Pass, Is.False);
+        Assert.That(missing.Pass, Is.False);
+    }
+
+    [Test]
+    public async Task Regex_SemExpected_E_AnswerNulo()
+    {
+        await using var db = CreateContext();
+        var noExpected = await Grader(db).GradeAsync(
+            Case("regex", expected: null), Run(), "abc",
+            "u1", CancellationToken.None);
+        var nullAnswer = await Grader(db).GradeAsync(
+            Case("regex", expected: "a+"), Run(), null,
+            "u1", CancellationToken.None);
+        Assert.That(noExpected.Pass, Is.False);
+        Assert.That(noExpected.Score, Is.Null);
+        Assert.That(nullAnswer.Pass, Is.False);
+    }
+
+    [Test]
+    public async Task Rubric_SemJudgeModel_Falha()
+    {
+        await using var db = CreateContext();
+        var grader = new EvalGraderService(db,
+            (_, _, _) => Task.FromResult("""{"score":1}"""), null);
+        var grade = await grader.GradeAsync(
+            Case("rubric", rubric: "r"), Run(), "a",
+            "u1", CancellationToken.None);
+        Assert.That(grade.Pass, Is.False);
+        Assert.That(grade.Score, Is.Null);
+    }
+
+    [Test]
+    public async Task Rubric_SemRationale_E_ScoreNoLimite()
+    {
+        await using var db = CreateContext();
+        var noRationale = await Grader(db, """{"score":0.5}""")
+            .GradeAsync(Case("rubric", rubric: "r"), Run(), "a",
+                "u1", CancellationToken.None);
+        var edge = await Grader(db, """{"score":0.49,"rationale":"x"}""")
+            .GradeAsync(Case("rubric", rubric: "r"), Run(), "a",
+                "u1", CancellationToken.None);
+        Assert.That(noRationale.Pass, Is.True);
+        Assert.That(noRationale.Score, Is.EqualTo(0.5));
+        Assert.That(edge.Pass, Is.False);
+    }
+
+    [Test]
+    public async Task Trajectory_ToolMalformada_E_ExpectAusente()
+    {
+        await using var db = CreateContext();
+        var run = await SeedRunAsync(db);
+        db.ChatRunEvents.AddRange(
+            Event(run.Id, 1, RunEventWriter.Types.ToolCall, "nao-json"),
+            Event(run.Id, 2, RunEventWriter.Types.ToolCall,
+                """{"id":"c1"}"""),
+            Event(run.Id, 3, RunEventWriter.Types.ToolCall,
+                """{"name":"fs_read"}"""));
+        await db.SaveChangesAsync();
+
+        var grade = await Grader(db).GradeAsync(
+            Case("trajectory", expect: """["fs_write","fs_read"]""",
+                forbid: "nao-json"),
+            run, null, "u1", CancellationToken.None);
+        Assert.That(grade.Pass, Is.False,
+            "expect fs_write ausente falha mesmo com fs_read chamada");
+    }
+
+    [Test]
+    public async Task Exact_AmbosNulos_Passa()
+    {
+        await using var db = CreateContext();
+        var grade = await Grader(db).GradeAsync(
+            Case("exact", expected: null), Run(), null,
+            "u1", CancellationToken.None);
+        Assert.That(grade.Pass, Is.True);
+    }
+
+    [Test]
+    public async Task Trajectory_ExpectEForbid_Passam()
+    {
+        await using var db = CreateContext();
+        var run = await SeedRunAsync(db);
+        db.ChatRunEvents.Add(Event(run.Id, 1,
+            RunEventWriter.Types.ToolCall, """{"name":"fs_read"}"""));
+        await db.SaveChangesAsync();
+
+        var grade = await Grader(db).GradeAsync(
+            Case("trajectory", expect: """["fs_read"]""",
+                forbid: """["shell_exec"]""", maxSteps: 10),
+            run, null, "u1", CancellationToken.None);
+        Assert.That(grade.Pass, Is.True);
+    }
+
     private static ChatRunEvent Event(string runId, long seq, string type,
         string payload) => new()
     {
