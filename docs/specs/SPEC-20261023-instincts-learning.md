@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-instincts-learning` |
 | Ticket | [#496](https://github.com/afonsoft/open-webui/issues/496) |
-| Status | `In implementation` |
+| Status | `Completed` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #5. Inspirado no `continuous-learning-v2` do ECC (instincts com confidence scoring, injeção no session-start, `/evolve` clustering) e no Memory Vault (scopes + trust boundary). |
 
 ## 1. User Story
@@ -237,3 +237,7 @@ se houver instincts `active`), `Agent:Instincts:MaxInjected` (6),
 | Order do contributor | Implementado | `Order=82` (após `AgentMemoryContributor`=80, antes de `DelegationPolicyContributor`=85) |
 | Config keys | Implementado | `instincts.mode` (`auto|on|off`, overlay `u:{uid}:instincts.mode`), `instincts.threshold` (0.7), `instincts.maxInjected` (6), `instincts.extract` (true) |
 | Linha do bloco injetado | Implementado | `- [domain] {trigger} → {body} (conf .NN)` — sem "when" no template (triggers já carregam o advérbio; evita "when when …") |
+## Delivered
+
+- PR: https://github.com/afonsoft/open-webui/pull/502 (merged into agent-evals) + https://github.com/afonsoft/open-webui/pull/503 (merged to main)
+- Issue: https://github.com/afonsoft/open-webui/issues/496
