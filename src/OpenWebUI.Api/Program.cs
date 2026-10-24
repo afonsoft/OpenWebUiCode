@@ -171,6 +171,16 @@ builder.Services.AddScoped<IChatRunNotifier, PersonaTurnNotifier>();
 builder.Services.AddScoped<PersonaDispatchService>();
 builder.Services.AddHttpClient("webpush");
 
+// Messaging gateway (SPEC-20261023-messaging-gateway): adapters por
+// plataforma (v1: telegram), pipeline inbound e reply via notifier.
+builder.Services.AddScoped<OpenWebUI.Infrastructure.Services.Gateway.IGatewayAdapter,
+    OpenWebUI.Infrastructure.Services.Gateway.TelegramAdapter>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.Services.Gateway.GatewayPairingService>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.Services.Gateway.GatewayInboundService>();
+builder.Services.AddScoped<IChatRunNotifier,
+    OpenWebUI.Infrastructure.Services.Gateway.GatewayReplyService>();
+builder.Services.AddHttpClient("gateway");
+
 // Tools built-in do chat (SPEC-20261007-chat-agent-tools): registro
 // resolve ids "builtin:*"; desligar via config BuiltinTools:Disabled (csv).
 builder.Services.AddScoped<IBuiltinChatTool, GenerateImageBuiltinTool>();
@@ -596,6 +606,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapUsageEndpoints();
     app.MapEvalEndpoints();
     app.MapInstinctEndpoints();
+    app.MapGatewayEndpoints();
     app.MapOAuthEndpoints();
     app.MapKnowledgeEndpoints();
     app.MapToolEndpoints();

@@ -2200,3 +2200,187 @@ public class EvalBaseline
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 }
+
+/// <summary>Plataformas de mensageria suportadas pelo gateway (v1: telegram).</summary>
+public static class GatewayPlatforms
+{
+    /// <summary>Telegram Bot API.</summary>
+    public const string Telegram = "telegram";
+
+    /// <summary>True quando a plataforma é suportada.</summary>
+    public static bool IsSupported(string? platform) =>
+        string.Equals(platform, Telegram, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>Políticas de tools para runs originadas no gateway.</summary>
+public static class GatewayToolsPolicies
+{
+    /// <summary>Somente leitura + memória + web (default) — allowlist fixa.</summary>
+    public const string Restricted = "restricted";
+
+    /// <summary>Toolset normal do chat com os approval tiers existentes.</summary>
+    public const string Standard = "standard";
+
+    /// <summary>ToolIds da política <see cref="Restricted"/> (SPEC-20261023-messaging-gateway RF-005).</summary>
+    public static readonly IReadOnlyList<string> RestrictedToolIds =
+    [
+        "builtin:web_search", "builtin:fetch_url",
+        "builtin:memory_search", "builtin:memory_save", "builtin:memory_learn",
+        "builtin:context_compact", "builtin:context_notes",
+        "builtin:context_recovery", "builtin:context_save",
+        "builtin:todo_write", "builtin:ask_user", "builtin:skill", "builtin:specs",
+    ];
+}
+
+/// <summary>
+/// Canal de gateway de mensageria do usuário-dono
+/// (SPEC-20261023-messaging-gateway): cada usuário pluga seu próprio bot.
+/// O <see cref="Id"/> é o token público do endpoint de webhook;
+/// <see cref="SecretRef"/> aponta para o segredo real no
+/// <c>UserSecretsService</c> (nunca em texto plano aqui).
+/// </summary>
+public class GatewayChannel
+{
+    /// <summary>Identificador único (Guid) — também token do webhook.</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Usuário dono do canal.</summary>
+    public string OwnerUserId { get; set; } = string.Empty;
+
+    /// <summary>Plataforma (<see cref="GatewayPlatforms"/>).</summary>
+    public string Platform { get; set; } = GatewayPlatforms.Telegram;
+
+    /// <summary>
+    /// Nome do segredo no <c>UserSecretsService</c> do dono que guarda o
+    /// token do bot (ex.: <c>GATEWAY_BOT_ABC123</c>).
+    /// </summary>
+    public string SecretRef { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Segredo de verificação inbound exigido no header da plataforma
+    /// (Telegram <c>X-Telegram-Bot-Api-Secret-Token</c>) — gerado na
+    /// criação; não é segredo de terceiros, é o nosso verificador.
+    /// </summary>
+    public string WebhookSecret { get; set; } = string.Empty;
+
+    /// <summary>Política de tools (<see cref="GatewayToolsPolicies"/>).</summary>
+    public string ToolsPolicy { get; set; } = GatewayToolsPolicies.Restricted;
+
+    /// <summary>Modelo default das runs do canal; null = modelo default do dono.</summary>
+    public string? DefaultModelId { get; set; }
+
+    /// <summary>Persona (Skill ativa) aplicada como system das runs.</summary>
+    public string? PersonaId { get; set; }
+
+    /// <summary>Canal habilitado para receber updates.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Identidade externa vista num canal (par chat+usuário da plataforma):
+/// começa despareada (recebe <see cref="PairingCode"/>) e passa a
+/// <see cref="PairedUserId"/> quando o dono vincula na UI.
+/// </summary>
+public class GatewayPeer
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Canal onde o peer apareceu.</summary>
+    public string ChannelId { get; set; } = string.Empty;
+
+    /// <summary>Id do chat/conversa na plataforma (ex.: chat.id Telegram).</summary>
+    public string ExternalChatId { get; set; } = string.Empty;
+
+    /// <summary>Id do usuário na plataforma (ex.: from.id Telegram).</summary>
+    public string ExternalUserId { get; set; } = string.Empty;
+
+    /// <summary>Username/nome de exibição na plataforma, quando presente.</summary>
+    public string? ExternalName { get; set; }
+
+    /// <summary>Código de pareamento ativo (6 dígitos, TTL, one-shot).</summary>
+    public string? PairingCode { get; set; }
+
+    /// <summary>Expiração do código (epoch seconds).</summary>
+    public long? PairingExpiresAt { get; set; }
+
+    /// <summary>Tentativas falhas de pair com o código atual (cap 5).</summary>
+    public int PairingAttempts { get; set; }
+
+    /// <summary>Usuário interno vinculado; null = aguardando pareamento.</summary>
+    public string? PairedUserId { get; set; }
+
+    /// <summary>Momento do pareamento (epoch seconds).</summary>
+    public long? PairedAt { get; set; }
+
+    /// <summary>Peer bloqueado: nunca executa run nem recebe novo código.</summary>
+    public bool Blocked { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Sessão persistente de um peer pareado: um <see cref="Chat"/> por
+/// (channel, peer) — a conversa do Telegram aparece na sidebar do dono.
+/// </summary>
+public class GatewaySession
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Peer pareado dono da sessão (único).</summary>
+    public string PeerId { get; set; } = string.Empty;
+
+    /// <summary>Chat persistente da conversa.</summary>
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última mensagem inbound processada (epoch seconds).</summary>
+    public long LastInboundAt { get; set; }
+}
+
+/// <summary>
+/// Auditoria de entregas do gateway (mesmo espírito de
+/// <c>AutomationHookDelivery</c>): direção in/out, status e trecho.
+/// </summary>
+public class GatewayDelivery
+{
+    /// <summary>Identificador único (Guid).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Canal envolvido.</summary>
+    public string ChannelId { get; set; } = string.Empty;
+
+    /// <summary>Peer envolvido, quando resolvido.</summary>
+    public string? PeerId { get; set; }
+
+    /// <summary>Direção: <c>in</c> (mensagem recebida) ou <c>out</c> (resposta enviada).</summary>
+    public string Direction { get; set; } = "in";
+
+    /// <summary>
+    /// Status: <c>accepted</c>/<c>pairing</c>/<c>blocked</c>/<c>filtered</c>/
+    /// <c>rejected</c> (in) ou <c>ok</c>/<c>failed</c> (out).
+    /// </summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>Id da mensagem/update na plataforma, quando presente.</summary>
+    public string? MessageId { get; set; }
+
+    /// <summary>Run criada pela mensagem inbound, quando aplicável.</summary>
+    public string? RunId { get; set; }
+
+    /// <summary>Trecho do conteúdo (≤200 chars, sanitizado de segredos).</summary>
+    public string? Excerpt { get; set; }
+
+    /// <summary>Erro registrado, quando falho.</summary>
+    public string? Error { get; set; }
+
+    /// <summary>Recebimento/envio (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}

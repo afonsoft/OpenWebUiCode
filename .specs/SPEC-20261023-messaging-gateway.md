@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-messaging-gateway` |
 | Ticket | [#497](https://github.com/afonsoft/open-webui/issues/497) |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #4. Inspirado no messaging gateway do hermes-agent (25+ adapters, session routing, pairing, slash commands) e nos channels do ohmo/OpenHarness (Telegram/Slack/Discord/Feishu). |
 
 ## 1. User Story
@@ -245,14 +245,14 @@ código expirado/errado. Formato genérico existente.
 
 | ID | Task |
 | --- | --- |
-| T1 | Discovery: `AutomationHookEndpoints.FireAsync`, `ChatRunDispatcher`, `AgentRunEventBus`/`IAgentRunObserver`, `ChatRunApprovals`, `UserSecretsService`, `SsrfGuard` |
-| T2 | Migration + entidades + `GatewayPairingService` + testes |
-| T3 | `IGatewayAdapter` + `TelegramAdapter` (verify/parse/send/chunk) + testes |
-| T4 | `GatewayInboundService` + endpoint anônimo + routing/pairing gate + testes |
-| T5 | `GatewayReplyService` (observer→send) + delivery audit + testes |
-| T6 | Tools policy `restricted` no toolset da run + `/approve` notice + testes |
-| T7 | CRUD channels/peers + aba Settings (colar token, pairing code) + testes |
-| T8 | DoD: Release build 0 warnings, suíte verde, coverage ≥ baseline, drift guards, SPEC→Issue→PR |
+| T1 | Discovery: `AutomationHookEndpoints.FireAsync`, `ChatRunDispatcher`, `AgentRunEventBus`/`IAgentRunObserver`, `ChatRunApprovals`, `UserSecretsService`, `SsrfGuard` | ✅ |
+| T2 | Migration + entidades + `GatewayPairingService` + testes | ✅ |
+| T3 | `IGatewayAdapter` + `TelegramAdapter` (verify/parse/send/chunk) + testes | ✅ |
+| T4 | `GatewayInboundService` + endpoint anônimo + routing/pairing gate + testes | ✅ |
+| T5 | `GatewayReplyService` (observer→send) + delivery audit + testes | ✅ |
+| T6 | Tools policy `restricted` no toolset da run + `/approve` notice + testes | ✅ parcial — policy no ToolIds; aprovação segue só na web v1 |
+| T7 | CRUD channels/peers + seção Gateway na tab Integrations de Settings + testes | ✅ |
+| T8 | DoD: Release build 0 warnings, suíte verde, coverage ≥ baseline, drift guards, SPEC→Issue→PR | em andamento |
 
 ## 8. Organization Guardrails
 
@@ -275,3 +275,7 @@ código expirado/errado. Formato genérico existente.
 | Aprovação interativa na plataforma (botões)? | Adiado | v1 avisa "aprovação pendente na web"; `/approve` por texto fica para o adapter v2 |
 | Canal por usuário ou por instância? | Resolvido | por usuário-dono (cada um pluga seu bot) — igual ao modelo de channels/hooks existente |
 | Streaming parcial via editMessage? | Adiado | custo de API calls × UX; resposta inteira primeiro |
+| Seam de reply: `IAgentRunObserver` ou `IChatRunNotifier`? | Resolvido (desvio) | `IChatRunNotifier` — o dispatcher entrega `ChatRunFinished` (RunId/ChatId/Status/PartialContent) uma vez por run terminal, com falhas isoladas — mais direto que filtrar eventos do bus |
+| `Chat.MetaJson.gateway` para o link sessão↔chat? | Resolvido (desvio) | `Chat` não tem `MetaJson` — o link vive na entidade `GatewaySession` (PeerId→ChatId); o chat é marcado por `Title` `gateway:{platform}:{peer}` e `TagsJson` `["gateway", platform]` |
+| Filtro `restricted` no registry do chat ou no request? | Resolvido | no `ToolIds` do request da run (server-side) — `GatewayToolsPolicies.RestrictedToolIds`; `standard` deixa `ToolIds` null (toolset normal do executor) |
+| Header de assinatura no adapter ou no endpoint? | Resolvido | `IGatewayAdapter.SignatureHeader` — o endpoint lê o header pelo nome que o adapter declara (prepara multi-plataforma sem hardcode) |

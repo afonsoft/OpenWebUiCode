@@ -399,6 +399,44 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<bool> DeleteSecretAsync(string name) =>
         SendStatusAsync(HttpMethod.Delete, $"/api/v1/secrets/{Uri.EscapeDataString(name)}");
 
+    // --------- Messaging gateway (SPEC-20261023-messaging-gateway) ---------
+
+    /// <summary>Canais de gateway do usuário (botToken nunca volta).</summary>
+    public Task<List<GatewayChannelResponse>?> GetGatewayChannelsAsync() =>
+        SendAsync<List<GatewayChannelResponse>>(HttpMethod.Get,
+            "/api/v1/gateway/channels");
+
+    /// <summary>Cria um canal — o botToken vai para o UserSecretsService.</summary>
+    public Task<GatewayChannelResponse?> CreateGatewayChannelAsync(
+        GatewayChannelCreatePayload payload) =>
+        SendAsync<GatewayChannelResponse>(HttpMethod.Post,
+            "/api/v1/gateway/channels", payload);
+
+    /// <summary>Atualiza um canal do dono.</summary>
+    public Task<GatewayChannelResponse?> UpdateGatewayChannelAsync(
+        string id, GatewayChannelUpdatePayload payload) =>
+        SendAsync<GatewayChannelResponse>(HttpMethod.Patch,
+            $"/api/v1/gateway/channels/{id}", payload);
+
+    /// <summary>Remove um canal do dono.</summary>
+    public Task<bool> DeleteGatewayChannelAsync(string id) =>
+        SendStatusAsync(HttpMethod.Delete, $"/api/v1/gateway/channels/{id}");
+
+    /// <summary>Peers externos dos canais do dono.</summary>
+    public Task<List<GatewayPeerResponse>?> GetGatewayPeersAsync() =>
+        SendAsync<List<GatewayPeerResponse>>(HttpMethod.Get,
+            "/api/v1/gateway/peers");
+
+    /// <summary>Atualiza um peer (bloquear/desparear).</summary>
+    public Task<bool> UpdateGatewayPeerAsync(
+        string id, GatewayPeerUpdatePayload payload) =>
+        SendStatusAsync(HttpMethod.Patch, $"/api/v1/gateway/peers/{id}", payload);
+
+    /// <summary>Pareia um código recebido na plataforma ao usuário logado.</summary>
+    public Task<GatewayPairResponse?> PairGatewayAsync(string code) =>
+        SendAsync<GatewayPairResponse>(HttpMethod.Post,
+            "/api/v1/gateway/pair", new GatewayPairPayload(code));
+
     /// <summary>Secrets globais (admin; nomes + timestamps, sem valores).</summary>
     public Task<List<SecretEntryResponse>?> GetGlobalSecretsAsync() =>
         SendAsync<List<SecretEntryResponse>>(HttpMethod.Get, "/api/v1/configs/secrets");

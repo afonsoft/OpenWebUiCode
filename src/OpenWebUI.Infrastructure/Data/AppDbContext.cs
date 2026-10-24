@@ -186,6 +186,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Instincts aprendidos por usuário (SPEC-20261023-instincts-learning).</summary>
     public DbSet<Instinct> Instincts => Set<Instinct>();
 
+    /// <summary>Canais de gateway de mensageria (SPEC-20261023-messaging-gateway).</summary>
+    public DbSet<GatewayChannel> GatewayChannels => Set<GatewayChannel>();
+
+    /// <summary>Identidades externas (peers) vistas nos canais.</summary>
+    public DbSet<GatewayPeer> GatewayPeers => Set<GatewayPeer>();
+
+    /// <summary>Sessões persistentes peer→chat.</summary>
+    public DbSet<GatewaySession> GatewaySessions => Set<GatewaySession>();
+
+    /// <summary>Auditoria de entregas in/out do gateway.</summary>
+    public DbSet<GatewayDelivery> GatewayDeliveries => Set<GatewayDelivery>();
+
     /// <inheritdoc />
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -586,6 +598,33 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasKey(i => i.Id);
             entity.HasIndex(i => new { i.UserId, i.Status });
             entity.HasIndex(i => new { i.UserId, i.Scope, i.WorkspaceId });
+        });
+
+        // Gateway de mensageria (SPEC-20261023-messaging-gateway): canal
+        // por dono; peer único por (canal, chat externo, usuário externo);
+        // sessão única por peer; deliveries por canal.
+        modelBuilder.Entity<GatewayChannel>(entity =>
+        {
+            entity.HasKey(c => c.Id);
+            entity.HasIndex(c => new { c.OwnerUserId, c.Platform });
+        });
+        modelBuilder.Entity<GatewayPeer>(entity =>
+        {
+            entity.HasKey(p => p.Id);
+            entity.HasIndex(p => new { p.ChannelId, p.ExternalChatId, p.ExternalUserId })
+                .IsUnique();
+            entity.HasIndex(p => p.PairedUserId);
+        });
+        modelBuilder.Entity<GatewaySession>(entity =>
+        {
+            entity.HasKey(s => s.Id);
+            entity.HasIndex(s => s.PeerId).IsUnique();
+            entity.HasIndex(s => s.ChatId);
+        });
+        modelBuilder.Entity<GatewayDelivery>(entity =>
+        {
+            entity.HasKey(d => d.Id);
+            entity.HasIndex(d => new { d.ChannelId, d.CreatedAt });
         });
     }
 }
