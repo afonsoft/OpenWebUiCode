@@ -710,7 +710,7 @@ public class AgentPolishTests
                 "m", [new ChatCompletionMessage("user", "oi")], Stream: true),
             User = new User { Id = "u1", Name = "U", Email = "u@t.local" },
             LastUserText = "oi", Model = "m", Ct = CancellationToken.None,
-            WorkdirFactory = _ => Task.FromResult<string?>(_root),
+            WorkdirFactory = _ => Task.FromResult(_root!),
         };
 
         var sections = await contributor.ContributeAsync(ctx);

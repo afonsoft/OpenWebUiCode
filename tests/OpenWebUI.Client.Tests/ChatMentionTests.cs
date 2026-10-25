@@ -81,6 +81,7 @@ public sealed class ChatMentionTests
         ctx.Services.AddSingleton(new MarkdownService());
         ctx.Services.AddSingleton(new RealtimeService());
         ctx.Services.AddSingleton(new DialogService());
+        ctx.Services.AddSingleton(new ToastService());
         ctx.Services.AddSingleton(new IdeTestRunService(api));
         ctx.Services.AddSingleton(new AttentionInboxState(api));
         return ctx;
