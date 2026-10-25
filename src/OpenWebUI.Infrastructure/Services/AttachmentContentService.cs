@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
@@ -34,8 +35,8 @@ public static class AttachmentContentService
     /// mesmas regras de <see cref="Endpoints.FileEndpoints"/> mais as de
     /// código comuns do v2).
     /// </summary>
-    public static readonly HashSet<string> TextExtensions = new(
-        StringComparer.OrdinalIgnoreCase)
+    private static readonly FrozenSet<string> TextExtensions =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl",
         ".xml", ".html", ".htm", ".log", ".yaml", ".yml", ".toml", ".ini",
@@ -46,7 +47,7 @@ public static class AttachmentContentService
         ".lua", ".r", ".scala", ".fs", ".fsx", ".vb", ".pl", ".pm",
         ".dockerfile", ".gitignore", ".editorconfig", ".sln", ".slnx",
         ".csproj", ".props", ".targets", ".diff", ".patch",
-    };
+    }.ToFrozenSet();
 
     /// <summary>MIME types de aplicação que carregam como texto.</summary>
     private static readonly HashSet<string> TextAppMimes = new(
@@ -70,13 +71,11 @@ public static class AttachmentContentService
             return true;
         }
         var mime = file.ContentType;
-        if (!string.IsNullOrWhiteSpace(mime))
+        if (!string.IsNullOrWhiteSpace(mime)
+            && (mime.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+                || TextAppMimes.Contains(mime)))
         {
-            if (mime.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
-                || TextAppMimes.Contains(mime))
-            {
-                return true;
-            }
+            return true;
         }
         return TextExtensions.Contains(Path.GetExtension(file.Filename));
     }
@@ -191,60 +190,76 @@ public static class AttachmentContentService
             {
                 continue;
             }
-            var budget = MaxMessageChars;
-            var sb = new StringBuilder();
-            foreach (var fid in ids.Distinct())
-            {
-                if (!entries.TryGetValue(fid, out var file))
-                {
-                    continue;
-                }
-                if (file.ContentType?.StartsWith("image/") == true)
-                {
-                    continue; // imagens já viajam no payload multimodal.
-                }
-                if (!IsTextCandidate(file))
-                {
-                    sb.Append('\n').Append(WrapBinary(file.Filename));
-                    continue;
-                }
-                string? text;
-                try
-                {
-                    text = await reader(file, ct);
-                }
-                catch (Exception ex) when (ex is IOException
-                    or UnauthorizedAccessException or OperationCanceledException)
-                {
-                    continue; // ilegível — omitido, não derruba a run.
-                }
-                if (text is null)
-                {
-                    sb.Append('\n').Append(WrapBinary(file.Filename));
-                    continue;
-                }
-                var block = WrapFile(file.Filename, text);
-                if (block.Length > budget)
-                {
-                    block = block[..budget] + TruncatedMarker;
-                    budget = 0;
-                }
-                else
-                {
-                    budget -= block.Length;
-                }
-                sb.Append('\n').Append(block);
-                if (budget <= 0)
-                {
-                    break;
-                }
-            }
-            if (sb.Length > 0)
+            var injected = await BuildBlocksAsync(ids, entries, reader, ct);
+            if (injected.Length > 0)
             {
                 var m = messages[i];
-                messages[i] = m with { Content = (m.Content ?? "") + sb };
+                messages[i] = m with { Content = (m.Content ?? "") + injected };
             }
         }
         return messages;
+    }
+
+    /// <summary>Monta os blocos &lt;file&gt; de uma mensagem dentro do cap de 1 MB.</summary>
+    private static async Task<StringBuilder> BuildBlocksAsync(
+        List<string> ids,
+        IReadOnlyDictionary<string, FileEntry> entries,
+        Func<FileEntry, CancellationToken, Task<string?>> reader,
+        CancellationToken ct)
+    {
+        var budget = MaxMessageChars;
+        var sb = new StringBuilder();
+        foreach (var fid in ids.Distinct())
+        {
+            var block = await BlockForAsync(fid, entries, reader, ct);
+            if (block is null)
+            {
+                continue;
+            }
+            if (block.Length > budget)
+            {
+                block = block[..budget] + TruncatedMarker;
+                budget = 0;
+            }
+            else
+            {
+                budget -= block.Length;
+            }
+            sb.Append('\n').Append(block);
+            if (budget <= 0)
+            {
+                break;
+            }
+        }
+        return sb;
+    }
+
+    /// <summary>Bloco de um anexo: texto → &lt;file&gt;, binário → marcador, ilegível → null.</summary>
+    private static async Task<string?> BlockForAsync(
+        string fid,
+        IReadOnlyDictionary<string, FileEntry> entries,
+        Func<FileEntry, CancellationToken, Task<string?>> reader,
+        CancellationToken ct)
+    {
+        if (!entries.TryGetValue(fid, out var file)
+            || file.ContentType?.StartsWith("image/") == true)
+        {
+            return null; // imagens já viajam no payload multimodal.
+        }
+        if (!IsTextCandidate(file))
+        {
+            return WrapBinary(file.Filename);
+        }
+        string? text;
+        try
+        {
+            text = await reader(file, ct);
+        }
+        catch (Exception ex) when (ex is IOException
+            or UnauthorizedAccessException or OperationCanceledException)
+        {
+            return null; // ilegível — omitido, não derruba a run.
+        }
+        return text is null ? WrapBinary(file.Filename) : WrapFile(file.Filename, text);
     }
 }

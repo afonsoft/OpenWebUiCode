@@ -2023,8 +2023,7 @@
             var hasImage = false;
             foreach (var file in e.GetMultipleFiles(10))
             {
-                await using var stream = file.OpenReadStream(MaxUploadBytes);
-                var uploaded = await Api.UploadFileAsync(stream, file.Name, file.ContentType);
+                var uploaded = await UploadBrowserFileAsync(file, file.Name);
                 if (uploaded is not null)
                 {
                     _attachedFiles.Add(uploaded);
@@ -2048,6 +2047,13 @@
 
     /// <summary>attachments-v2 RF-002: máximo de arquivos de uma pasta (SPEC: 2000 paths).</summary>
     private const int MaxDirFiles = 2000;
+
+    /// <summary>Upload de um arquivo do browser com o cap por anexo (Sonar S5693).</summary>
+    private async Task<FileResponse?> UploadBrowserFileAsync(IBrowserFile file, string fileName)
+    {
+        await using var stream = file.OpenReadStream(maxAllowedSize: MaxUploadBytes);
+        return await Api.UploadFileAsync(stream, fileName, file.ContentType);
+    }
 
     /// <summary>attachments-v2 RF-002: abre o seletor de pasta (webkitdirectory).</summary>
     private async Task TriggerDirPicker()
@@ -2082,8 +2088,7 @@
                 var file = files[i];
                 var rel = i < relPaths.Length && relPaths[i].Length > 0
                     ? relPaths[i] : file.Name;
-                await using var stream = file.OpenReadStream(MaxUploadBytes);
-                var uploaded = await Api.UploadFileAsync(stream, rel, file.ContentType);
+                var uploaded = await UploadBrowserFileAsync(file, rel);
                 if (uploaded is null)
                 {
                     _error = L.T("chat.upload_failed", ("file", file.Name));

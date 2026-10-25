@@ -126,10 +126,10 @@ window.openwebui = {
 	// attachments-v2 RF-002: paths relativos (webkitRelativePath) dos arquivos
 	// selecionados num input type=file com webkitdirectory.
 	dirUploadPaths: function (element) {
-		if (!element || !element.files) return [];
+		if (!element?.files) return [];
 		const paths = [];
-		for (let i = 0; i < element.files.length; i++) {
-			paths.push(element.files[i].webkitRelativePath || element.files[i].name);
+		for (const file of element.files) {
+			paths.push(file.webkitRelativePath || file.name);
 		}
 		return paths;
 	},
@@ -139,7 +139,7 @@ window.openwebui = {
 		if (!element || element._openwebuiPaste) return;
 		element._openwebuiPaste = true;
 		element.addEventListener('paste', function (e) {
-			const text = e.clipboardData && e.clipboardData.getData('text/plain');
+			const text = e.clipboardData?.getData('text/plain');
 			if (!text) return; // paste de imagem/arquivo segue o fluxo normal.
 			e.preventDefault();
 			dotNetRef.invokeMethodAsync('HandlePastedTextAsync', text);
