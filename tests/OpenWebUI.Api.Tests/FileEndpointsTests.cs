@@ -270,18 +270,19 @@ public class FileEndpointsTests
         var response = await _client.PostAsJsonAsync("/api/chat/completions", request);
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
 
-        // BuildFileContextAsync injeta o texto integral do arquivo como mensagem de sistema.
+        // attachments-v2 RF-001: o texto do arquivo vai inline na mensagem
+        // do usuário como <file name="…"> — não mais via system prompt.
         Assert.That(_lastChatBody, Is.Not.Null);
         var payload = JsonNode.Parse(_lastChatBody!)!;
-        var system = payload["messages"]!.AsArray()
-            .FirstOrDefault(m => m?["role"]?.GetValue<string>() == "system");
-        Assert.That(system, Is.Not.Null);
-        var systemContent = system!["content"]!.GetValue<string>();
+        var userMsg = payload["messages"]!.AsArray()
+            .FirstOrDefault(m => m?["role"]?.GetValue<string>() == "user");
+        Assert.That(userMsg, Is.Not.Null);
+        var userContent = userMsg!["content"]!.GetValue<string>();
         Assert.Multiple(() =>
         {
-            Assert.That(systemContent, Does.Contain("Contexto de arquivos"));
-            Assert.That(systemContent, Does.Contain("contexto.md"));
-            Assert.That(systemContent, Does.Contain("TEXTO_INJETADO_VIA_CONTEXTO"));
+            Assert.That(userContent, Does.Contain("<file name=\"contexto.md\">"));
+            Assert.That(userContent, Does.Contain("TEXTO_INJETADO_VIA_CONTEXTO"));
+            Assert.That(userContent, Does.Contain("resuma o anexo"));
         });
     }
 

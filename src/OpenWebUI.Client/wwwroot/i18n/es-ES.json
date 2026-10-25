@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "Nada que compactar (o falló)",
   "chat.cmd_compact_native": "Contexto compactado de forma nativa",
   "chat.cmd_compact_done": "Contexto compactado",
-  "chat.tps_title": "Tokens por segundo (estimación, ventana móvil)"
+  "chat.tps_title": "Tokens por segundo (estimación, ventana móvil)",
+  "chat.attach_dir": "Adjuntar carpeta",
+  "chat.dir_listing_attached": "Carpeta adjuntada como listado ({count} archivos)",
+  "chat.pasted_as_file": "Texto pegado guardado como adjunto ({chars} caracteres)",
+  "settings.sec_composer": "Editor",
+  "settings.composer_paste_file": "Convertir textos pegados largos en archivos adjuntos"
 }

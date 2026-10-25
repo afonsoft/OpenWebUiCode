@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "Nada para compactar (ou falhou)",
   "chat.cmd_compact_native": "Contexto compactado nativamente",
   "chat.cmd_compact_done": "Contexto compactado",
-  "chat.tps_title": "Tokens por segundo (estimativa, janela rolante)"
+  "chat.tps_title": "Tokens por segundo (estimativa, janela rolante)",
+  "chat.attach_dir": "Anexar pasta",
+  "chat.dir_listing_attached": "Pasta anexada como listagem ({count} arquivos)",
+  "chat.pasted_as_file": "Texto colado salvo como anexo ({chars} caracteres)",
+  "settings.sec_composer": "Composer",
+  "settings.composer_paste_file": "Converter pastes longos em anexos de arquivo"
 }

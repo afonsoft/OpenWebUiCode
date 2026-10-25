@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "圧縮できるものがありません（または失敗）",
   "chat.cmd_compact_native": "コンテキストをネイティブに圧縮しました",
   "chat.cmd_compact_done": "コンテキストを圧縮しました",
-  "chat.tps_title": "トークン/秒（推定、ローリングウィンドウ）"
+  "chat.tps_title": "トークン/秒（推定、ローリングウィンドウ）",
+  "chat.attach_dir": "フォルダーを添付",
+  "chat.dir_listing_attached": "フォルダーをリストとして添付しました（{count} ファイル）",
+  "chat.pasted_as_file": "貼り付けたテキストを添付として保存しました（{chars} 文字）",
+  "settings.sec_composer": "入力エリア",
+  "settings.composer_paste_file": "長い貼り付けをファイル添付に変換する"
 }

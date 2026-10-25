@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "Nulla da compattare (o fallito)",
   "chat.cmd_compact_native": "Contesto compattato in modo nativo",
   "chat.cmd_compact_done": "Contesto compattato",
-  "chat.tps_title": "Token al secondo (stima, finestra mobile)"
+  "chat.tps_title": "Token al secondo (stima, finestra mobile)",
+  "chat.attach_dir": "Allega cartella",
+  "chat.dir_listing_attached": "Cartella allegata come elenco ({count} file)",
+  "chat.pasted_as_file": "Testo incollato salvato come allegato ({chars} caratteri)",
+  "settings.sec_composer": "Editor",
+  "settings.composer_paste_file": "Converti gli incolla lunghi in allegati"
 }

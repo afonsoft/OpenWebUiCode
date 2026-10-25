@@ -170,10 +170,15 @@ public static class ChatPipeline
         }
 
         // 4.6. Mídia anexada → conteúdo multimodal (SPEC-20261013-chat-media-
-        // attachments RF-006): imagens dos anexos entram na mensagem dona —
-        // FileIds por mensagem (do FilesJson persistido) + FileIds do
-        // request (última msg do usuário). Só image/* e só arquivos do dono;
-        // arquivo apagado/não legível é omitido (não derruba a run).
+        // attachments RF-006 + SPEC-20261018-attachments-v2): FileIds por
+        // mensagem (do FilesJson persistido) + FileIds do request (última
+        // msg do usuário). Só arquivos do dono; arquivo apagado/não legível
+        // é omitido (não derruba a run).
+        //  - image/* → bytes no payload multimodal; arquivos > 20 MiB ou
+        //    > 8192 px são redimensionados para ≤ 2048 px JPEG q85 antes
+        //    (RF-003) — o original fica intacto no storage.
+        //  - texto/código → blocos <file name="…"> no fim do Content da
+        //    mensagem dona (RF-001), 256 KB/arquivo e 1 MB/mensagem.
         var imageIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var m in messages)
         {
@@ -189,8 +194,7 @@ public static class ChatPipeline
         if (imageIds.Count > 0)
         {
             var entries = await db.Files.AsNoTracking()
-                .Where(f => imageIds.Contains(f.Id) && f.UserId == user.Id
-                    && f.ContentType != null && f.ContentType.StartsWith("image/"))
+                .Where(f => imageIds.Contains(f.Id) && f.UserId == user.Id)
                 .ToListAsync(ct);
             if (entries.Count > 0)
             {
@@ -212,6 +216,8 @@ public static class ChatPipeline
                     foreach (var fid in ids.Distinct())
                     {
                         if (!byId.TryGetValue(fid, out var entry)
+                            || entry.ContentType is not { } mime
+                            || !mime.StartsWith("image/")
                             || !File.Exists(entry.StoragePath))
                         {
                             continue;
@@ -219,8 +225,10 @@ public static class ChatPipeline
                         try
                         {
                             var bytes = await File.ReadAllBytesAsync(entry.StoragePath, ct);
+                            var (data, derivedMime) =
+                                await MediaImageProcessor.PrepareForLlmAsync(bytes, mime, ct);
                             images.Add(new ChatImageData(
-                                entry.ContentType!, Convert.ToBase64String(bytes)));
+                                derivedMime, Convert.ToBase64String(data)));
                         }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                         {
@@ -233,6 +241,10 @@ public static class ChatPipeline
                         messages[i] = messages[i] with { Images = images };
                     }
                 }
+
+                messages = await AttachmentContentService.InjectTextFilesAsync(
+                    messages, byId, request.FileIds,
+                    (f, c) => AttachmentContentService.TryReadTextAsync(f, c), ct);
             }
         }
 

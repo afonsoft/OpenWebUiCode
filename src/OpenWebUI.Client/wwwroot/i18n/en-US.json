@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "Nothing to compact (or it failed)",
   "chat.cmd_compact_native": "Context compacted natively",
   "chat.cmd_compact_done": "Context compacted",
-  "chat.tps_title": "Tokens per second (estimate, rolling window)"
+  "chat.tps_title": "Tokens per second (estimate, rolling window)",
+  "chat.attach_dir": "Attach folder",
+  "chat.dir_listing_attached": "Folder attached as listing ({count} files)",
+  "chat.pasted_as_file": "Pasted text saved as attachment ({chars} chars)",
+  "settings.sec_composer": "Composer",
+  "settings.composer_paste_file": "Convert long pastes into file attachments"
 }

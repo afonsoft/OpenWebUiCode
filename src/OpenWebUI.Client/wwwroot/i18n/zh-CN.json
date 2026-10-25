@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "没有可压缩的内容（或失败）",
   "chat.cmd_compact_native": "上下文已原生压缩",
   "chat.cmd_compact_done": "上下文已压缩",
-  "chat.tps_title": "每秒 token 数（估算，滚动窗口）"
+  "chat.tps_title": "每秒 token 数（估算，滚动窗口）",
+  "chat.attach_dir": "附加文件夹",
+  "chat.dir_listing_attached": "已以列表形式附加文件夹（{count} 个文件）",
+  "chat.pasted_as_file": "粘贴的文本已保存为附件（{chars} 个字符）",
+  "settings.sec_composer": "输入框",
+  "settings.composer_paste_file": "将长文本粘贴转换为文件附件"
 }
