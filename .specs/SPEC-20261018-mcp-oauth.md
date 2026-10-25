@@ -73,3 +73,13 @@ tests/OpenWebUI.Api.Tests/McpOAuthServiceTests.cs              # NOVO (PKCE, DCR
 - Token expirado → refresh transparente antes do call.
 - 401 mid-session → server marcado `required`, UI mostra CTA.
 - Tokens nunca em log/serialização; testes cobrem PKCE, DCR fallback, refresh mutex.
+
+## 6. Implementation notes (2026-10-25)
+
+**Entregue:**
+- `McpOAuthService`: discovery (`oauth-protected-resource` → `oauth-authorization-server`, fallback origem), Authorization Code + PKCE S256, state/verifier no HybridCache 10min, DCR (`registration_endpoint`) com registration persistida por (user, server), tokens como secrets do usuário (`MCP_OAUTH_*` — mesma proteção das API keys), refresh exp-30s com `SemaphoreSlim` por server, `authState` none|required|authorized, disconnect apaga token+marker+client.
+- `McpClientService`: `ResolveHeadersAsync` injeta `Bearer` quando há token; 401 no connect marca `required`.
+- `McpOAuthEndpoints`: `GET .../oauth/authorize` → url, `GET .../oauth/status`, `POST .../oauth/disconnect`, `GET /api/mcp/oauth/callback` (anônimo — state prova posse).
+- Testes `McpOAuthServiceTests` (7): URL+PKCE+DCR, complete→token, state inválido, refresh, refresh-fail→required, disconnect, sem metadata.
+
+**Desvios:** sem `McpOAuthToken` entity/migration — tokens via `UserSecretsService` (cripto config-layer existente); UI popup/botão fora de escopo (endpoint `/authorize` devolve URL para o client abrir); CIMD não implementado (metadata `client_id_metadata_document` ausente no handler — registrado).
