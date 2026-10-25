@@ -394,6 +394,46 @@ public class McpTests
             new McpPromptResolveRequest("ghost", "revisao"));
         Assert.That(noServer.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
+
+    // ---- SPEC-20261018-mcp-oauth: endpoints de auth do server do usuário ----
+
+    [Test]
+    public async Task OAuth_Status_Authorize_Disconnect()
+    {
+        UseToken(_adminToken);
+        var id = await CreateUserServerAsync($"oauth-{Guid.NewGuid():N}");
+
+        // Status inicial: none.
+        var status = await _client.GetFromJsonAsync<JsonObject>(
+            $"/api/v1/users/user/mcp-servers/{id}/oauth/status");
+        Assert.That(status!["authState"]!.GetValue<string>(), Is.EqualTo("none"));
+
+        // Authorize: endpoint sem OAuth → 400 claro.
+        var authorize = await _client.GetAsync(
+            $"/api/v1/users/user/mcp-servers/{id}/oauth/authorize");
+        Assert.That(authorize.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // Disconnect: idempotente → none.
+        var disconnect = await _client.PostAsync(
+            $"/api/v1/users/user/mcp-servers/{id}/oauth/disconnect", null);
+        Assert.That(disconnect.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        // 404 em server alheio/inexistente.
+        var missing = await _client.GetAsync(
+            "/api/v1/users/user/mcp-servers/ghost/oauth/status");
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task OAuth_CallbackAnonimo_StateInvalido()
+    {
+        var anon = _factory.CreateClient();
+        var resp = await anon.GetAsync("/api/mcp/oauth/callback?code=x&state=y");
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var html = await resp.Content.ReadAsStringAsync();
+        Assert.That(html, Does.Contain("Falha"));
+        anon.Dispose();
+    }
 }
 
 /// <summary>

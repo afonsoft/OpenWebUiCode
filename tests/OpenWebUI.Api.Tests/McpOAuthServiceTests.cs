@@ -155,12 +155,49 @@ public class McpOAuthServiceTests
             "u1", server, "http://app/cb", default), Is.Null);
     }
 
+    [Test]
+    public async Task Authorize_ReusaClientRegistrado()
+    {
+        await _oauth.BeginAuthorizeAsync("u1", Server(), "http://app/cb", default);
+        await _oauth.BeginAuthorizeAsync("u1", Server(), "http://app/cb", default);
+        Assert.That(_as.RegisterCalls, Is.EqualTo(1));
+    }
+
+    [Test]
+    public async Task Complete_TokenEndpointFalha_RetornaNull()
+    {
+        _as.TokenShouldFail = true;
+        var url = await _oauth.BeginAuthorizeAsync(
+            "u1", Server(), "http://app/cb", default);
+        var state = url!.Split("state=")[1].Split('&')[0];
+        Assert.That(await _oauth.CompleteAsync(state, "code-1", default), Is.Null);
+    }
+
+    [Test]
+    public async Task Authorize_SemDcr_RetornaNull()
+    {
+        _as.WithoutDcr = true;
+        Assert.That(await _oauth.BeginAuthorizeAsync(
+            "u1", Server(), "http://app/cb", default), Is.Null);
+    }
+
+    [Test]
+    public async Task Authorize_ServerStdioOuSemUrl_RetornaNull()
+    {
+        var server = Server();
+        server.Transport = "stdio";
+        server.Url = null;
+        Assert.That(await _oauth.BeginAuthorizeAsync(
+            "u1", server, "http://app/cb", default), Is.Null);
+    }
+
     /// <summary>Authorization server fake: metadata + DCR + token.</summary>
     private sealed class AsHandler : HttpMessageHandler
     {
         public int RegisterCalls, RefreshCalls;
         public string? LastVerifier;
         public string NextAccessToken = "access-1";
+        public bool TokenShouldFail, WithoutDcr;
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage req, CancellationToken ct)
@@ -177,7 +214,12 @@ public class McpOAuthServiceTests
                     resource = "http://as.local/mcp",
                     authorization_servers = new[] { "http://as.local" },
                 },
-                "/.well-known/oauth-authorization-server" => new
+                "/.well-known/oauth-authorization-server" => WithoutDcr ? new
+                {
+                    issuer = "http://as.local",
+                    authorization_endpoint = "http://as.local/authorize",
+                    token_endpoint = "http://as.local/token",
+                } : (object)new
                 {
                     issuer = "http://as.local",
                     authorization_endpoint = "http://as.local/authorize",
@@ -206,6 +248,10 @@ public class McpOAuthServiceTests
 
             async Task<object> Token(HttpRequestMessage r)
             {
+                if (TokenShouldFail)
+                {
+                    return null!;
+                }
                 var form = await r.Content!.ReadAsStringAsync(ct);
                 var fields = form.Split('&').Select(p => p.Split('='))
                     .ToDictionary(p => Uri.UnescapeDataString(p[0]),
