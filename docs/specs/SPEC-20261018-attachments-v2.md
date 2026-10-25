@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-attachments-v2` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | `docs/analise-opencode-v2.md` (P1.5 + P3.5) |
 
 ## 1. User Story
@@ -83,3 +83,9 @@ tests/OpenWebUI.Api.Tests/MediaImageProcessorTests.cs           # NOVO
 - **RF-003:** `MediaImageProcessor` (SkiaSharp 4.153.1 + `SkiaSharp.NativeAssets.Linux.NoDependencies`) — ImageSharp 4.x exige licença paga e 3.1.x tem advisories de segurança, por isso Skia. >20 MiB ou dimensão >8192 → reencode JPEG q85; se o lado excede 2048, redimensiona mantendo AR. Original intacto no storage; derivado só em memória para a chamada do LLM.
 - **RF-004:** `openwebui.hookPaste` intercepta paste de texto no composer (imagem/arquivo segue fluxo normal) → `HandlePastedTextAsync`: >16 KB vira `pasted-*.txt` + toast; abaixo, insere no cursor (`insertTextAtCursor`). Toggle em Settings → General → Composer (`webui.composer.paste_file`, default on).
 - **Regressões atualizadas:** `FileEndpointsTests`, `ApiSurfaceTests`, `InfraServicesTests` — asserções migradas de system-context para `<file>` inline.
+
+## Delivered
+
+- **PR:** [#518](https://github.com/afonsoft/open-webui/pull/518) (merged `e3b868e`, 2026-10-25).
+- **Issue:** [#508](https://github.com/afonsoft/open-webui/issues/508).
+- **Arquivos:** `AttachmentContentService`, `MediaImageProcessor` (Infrastructure); `ChatPipeline` §4.6, `FileContextContributor` (Api); `ChatView`, `SettingsModal`, `app.js`, 8 locales (Client); `AttachmentContentTests`, `MediaImageProcessorTests` + regressões (Tests).
