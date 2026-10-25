@@ -1335,6 +1335,23 @@ public class ApiService(HttpClient http, AuthService auth)
             + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
             new RepoCommandExpandRequest(args));
 
+    /// <summary>Força a compactação do chat (RF-004); null em falha/404.</summary>
+    public Task<ChatCompactResponse?> CompactChatAsync(string chatId) =>
+        SendAsync<ChatCompactResponse>(HttpMethod.Post,
+            $"/api/v1/chats/{Uri.EscapeDataString(chatId)}/compact");
+
+    /// <summary>Catálogo de prompts MCP do usuário (RF-003) — falha devolve vazio.</summary>
+    public async Task<List<McpPromptItemResponse>> GetMcpPromptsAsync() =>
+        await SendAsync<List<McpPromptItemResponse>>(HttpMethod.Get,
+            "/api/v1/users/user/mcp-servers/prompts") ?? [];
+
+    /// <summary>Resolve `{server}:{prompt}` via prompts/get (RF-003); null em falha.</summary>
+    public Task<McpPromptResolveResponse?> ResolveMcpPromptAsync(
+        string server, string prompt, string? args) =>
+        SendAsync<McpPromptResolveResponse>(HttpMethod.Post,
+            "/api/v1/users/user/mcp-servers/prompts/resolve",
+            new McpPromptResolveRequest(server, prompt, args));
+
     /// <summary>Lê um arquivo do workdir (fatia de linhas); null em 404/binário/grande.</summary>
     public Task<WorkspaceFileReadResponse?> GetWorkspaceFileAsync(
         string path, int? startLine = null, int? maxLines = null, string? chatId = null)

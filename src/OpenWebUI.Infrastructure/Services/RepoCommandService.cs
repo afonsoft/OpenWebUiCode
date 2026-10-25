@@ -1,5 +1,7 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using OpenWebUI.Infrastructure.ChatTools;
+using OpenWebUI.Infrastructure.Data;
 
 namespace OpenWebUI.Infrastructure.Services;
 
@@ -28,7 +30,9 @@ public sealed class RepoCommandService(
     SkillDiscoveryService skills,
     AgentDefinitionService agents,
     ProviderService providers,
-    IConfiguration cfg)
+    IConfiguration cfg,
+    McpClientService? mcp = null,
+    AppDbContext? db = null)
 {
     /// <summary>Flag opt-in que habilita <c>!`shell`</c> (RF-006).</summary>
     public bool ShellExpansionEnabled =>
@@ -47,7 +51,9 @@ public sealed class RepoCommandService(
             .FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         if (entry is null)
         {
-            return (null, null);
+            // RF-003 (SPEC-20261018-agent-polish): `{server}:{prompt}`
+            // resolve um prompt MCP — não exige repo bound.
+            return await ExpandMcpPromptAsync(userId, name, args, ct);
         }
 
         var prompt = await CommandExpansion.ExpandAsync(
@@ -87,6 +93,64 @@ public sealed class RepoCommandService(
 
         return (new CommandExpansionResult(
             prompt, agent, model, mode, entry.Subtask, entry), null);
+    }
+
+    /// <summary>
+    /// Expande `<c>{server}:{prompt}</c>` via <c>prompts/get</c> (RF-003):
+    /// tokens posicionais de <paramref name="args"/> caem sobre os nomes
+    /// de argumento declarados pelo prompt. Server/prompt ausente →
+    /// (null, null) para o chamador mapear 404; falha no get → erro 400.
+    /// </summary>
+    private async Task<(CommandExpansionResult? Result, string? Error)> ExpandMcpPromptAsync(
+        string userId, string name, string? args, CancellationToken ct)
+    {
+        if (mcp is null || db is null)
+        {
+            return (null, null);
+        }
+        var colon = name.IndexOf(':');
+        if (colon <= 0 || colon == name.Length - 1)
+        {
+            return (null, null);
+        }
+        var serverName = name[..colon];
+        var promptName = name[(colon + 1)..];
+
+        var server = await db.McpServers.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Name == serverName && s.Enabled
+                && (s.UserId == null || s.UserId == userId), ct);
+        if (server is null)
+        {
+            return (null, null);
+        }
+
+        var prompts = await mcp.ListPromptsAsync(server, ct);
+        var prompt = prompts.FirstOrDefault(p =>
+            p.Name.Equals(promptName, StringComparison.OrdinalIgnoreCase));
+        if (prompt is null)
+        {
+            return (null, null);
+        }
+
+        var tokens = (args ?? "").Split(' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var argMap = new Dictionary<string, object?>();
+        for (var i = 0; i < prompt.Arguments.Count && i < tokens.Length; i++)
+        {
+            argMap[prompt.Arguments[i]] = tokens[i];
+        }
+
+        var text = await mcp.GetPromptAsync(server, prompt.Name, argMap, ct);
+        if (text is null)
+        {
+            return (null,
+                $"Command '{name}': falha ao resolver o prompt MCP no servidor.");
+        }
+        var synthetic = new RepoEntry(
+            name, prompt.Description ?? "", $"mcp://{server.Id}/{prompt.Name}",
+            text, Scope: "mcp");
+        return (new CommandExpansionResult(
+            text, null, null, null, false, synthetic), null);
     }
 
     /// <summary><paramref name="value"/> é um modo literal plan|build|chat?</summary>

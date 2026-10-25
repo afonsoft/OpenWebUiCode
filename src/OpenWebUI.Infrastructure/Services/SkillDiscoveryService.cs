@@ -5,11 +5,14 @@ using System.Text.Json;
 namespace OpenWebUI.Infrastructure.Services;
 
 /// <summary>Entrada descoberta no repositório (skill ou command markdown).</summary>
-/// <param name="Scope"><c>project</c> (workdir vinculado) ou <c>global</c> (<c>~/.agents</c> etc.).</param>
+/// <param name="Scope"><c>project</c> (workdir vinculado), <c>global</c>
+/// (<c>~/.agents</c> etc.) ou <c>remote</c> (catálogo HTTP — RF-002).</param>
+/// <param name="Autoinvoke">Frontmatter <c>autoinvoke:true</c> — injeta o
+/// corpo da skill no system prompt sem ser chamada (RF-002).</param>
 public sealed record RepoEntry(
     string Name, string Description, string Path, string Body,
     string? Agent = null, string? Model = null, bool Subtask = false,
-    string Scope = "project", string? Mode = null);
+    string Scope = "project", string? Mode = null, bool Autoinvoke = false);
 
 /// <summary>Servidor MCP declarado em <c>.agents/mcp.json</c> (global ou do projeto).</summary>
 public sealed record AgentsMcpServer(
@@ -42,7 +45,7 @@ public sealed record RepoScanResult(
 /// rebind/troca de branch via <see cref="Invalidate"/>.
 /// Somente leitura: o conteúdo é markdown injetado como contexto — nunca executado.
 /// </summary>
-public sealed class SkillDiscoveryService
+public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
 {
     /// <summary>Máximo de skills e de commands retornados por scan.</summary>
     public const int MaxItems = 50;
@@ -114,10 +117,29 @@ public sealed class SkillDiscoveryService
         }
 
         var result = new RepoScanResult(
-            ScanSkills(workdir, includeGlobal, home),
+            MergeRemote(ScanSkills(workdir, includeGlobal, home)),
             ScanCommands(workdir, includeGlobal, home));
         Cache[key] = (DateTimeOffset.UtcNow, result);
         return result;
+    }
+
+    /// <summary>
+    /// Mescla as skills do catálogo remoto cacheado (RF-002 — a refresh
+    /// fica em <see cref="RemoteSkillCatalog.RefreshIfStaleAsync"/>,
+    /// chamada pelos pontos de entrada async). Nomes locais/globais vencem
+    /// remotos com o mesmo nome.
+    /// </summary>
+    private List<RepoEntry> MergeRemote(IReadOnlyList<RepoEntry> local)
+    {
+        var remoteEntries = remote?.Entries;
+        if (remoteEntries is not { Count: > 0 })
+        {
+            return [.. local];
+        }
+
+        var known = local.Select(s => s.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return [.. local, .. remoteEntries.Where(e => known.Add(e.Name))];
     }
 
     /// <summary>Busca uma entrada por nome (skill primeiro, depois command).</summary>
@@ -473,8 +495,47 @@ public sealed class SkillDiscoveryService
                 || fm.GetValueOrDefault("subagent") is { } sa
                 && sa.Equals("true", StringComparison.OrdinalIgnoreCase),
             Scope: scope,
-            Mode: fm.GetValueOrDefault("mode"));
+            Mode: fm.GetValueOrDefault("mode"),
+            Autoinvoke: IsTruthy(fm.GetValueOrDefault("autoinvoke")));
     }
+
+    /// <summary>
+    /// Monta uma <see cref="RepoEntry"/> a partir do conteúdo bruto de um
+    /// SKILL.md — usada pelo catálogo remoto (RF-002), que não tem
+    /// arquivo em disco.
+    /// </summary>
+    internal static RepoEntry? ParseEntryContent(
+        string raw, string fallbackName, string path, string scope)
+    {
+        var fm = ParseFrontmatter(raw, out var body);
+        var name = fm.GetValueOrDefault("name") ?? fallbackName;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        return new RepoEntry(
+            name.Trim(),
+            (fm.GetValueOrDefault("description") ?? FirstLine(body) ?? string.Empty).Trim(),
+            path, body.Trim(),
+            Agent: fm.GetValueOrDefault("agent"),
+            Model: fm.GetValueOrDefault("model"),
+            Subtask: fm.GetValueOrDefault("subtask") is { } s
+                && (s.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    || s.Equals("agent", StringComparison.OrdinalIgnoreCase))
+                || fm.GetValueOrDefault("subagent") is { } sa
+                && sa.Equals("true", StringComparison.OrdinalIgnoreCase),
+            Scope: scope,
+            Mode: fm.GetValueOrDefault("mode"),
+            Autoinvoke: IsTruthy(fm.GetValueOrDefault("autoinvoke")));
+    }
+
+    /// <summary>Valor de frontmatter interpretado como booleano true.</summary>
+    private static bool IsTruthy(string? value) =>
+        value is not null
+            && (value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || value == "1");
 
     /// <summary>Frontmatter mínimo: bloco <c>---\nkey: value\n---</c> no topo.</summary>
     private static Dictionary<string, string> ParseFrontmatter(string raw, out string body)

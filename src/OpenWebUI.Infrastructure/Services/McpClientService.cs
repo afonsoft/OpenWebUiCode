@@ -78,6 +78,49 @@ public partial class McpClientService(
             await using var client = await ConnectAsync(server, timeout.Token);
             var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
 
+            // RF-003 (SPEC-20261018-agent-polish): servers com resources
+            // ganham a tool virtual read-only `read_resource`
+            // (mcp_{server}_read_resource) — o modelo lê qualquer URI do
+            // resources/list sem tool específica por recurso.
+            List<McpResourceDescriptor>? resources = null;
+            try
+            {
+                var listed = await client.ListResourcesAsync(
+                    cancellationToken: timeout.Token);
+                if (listed.Count > 0)
+                {
+                    resources = listed
+                        .Select(r => new McpResourceDescriptor(
+                            r.Name, r.Uri, r.MimeType, r.Description))
+                        .ToList();
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogDebug(ex,
+                    "Server {Server}: resources/list falhou — sem read_resource.", server.Name);
+            }
+
+            // Prompts expostos via slash `{server}:{prompt}` (RF-003) —
+            // cache paralelo ao de tools.
+            try
+            {
+                var prompts = await client.ListPromptsAsync(
+                    cancellationToken: timeout.Token);
+                await cache.SetAsync(PromptsCacheKey(server.Id),
+                    prompts.Select(p => new McpPromptDescriptor(
+                        p.Name, p.Description,
+                        p.ProtocolPrompt.Arguments?
+                            .Select(a => a.Name ?? "").ToList() ?? []))
+                        .ToList(),
+                    CacheOptions, tags: ["mcp"], cancellationToken: timeout.Token);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogDebug(ex,
+                    "Server {Server}: prompts/list falhou — sem slash prompts.", server.Name);
+            }
+
             var stale = await db.Tools
                 .Where(t => t.Url.StartsWith($"{VirtualUrlPrefix}{server.Id}/"))
                 .ToListAsync(timeout.Token);
@@ -98,6 +141,10 @@ public partial class McpClientService(
                 CreatedAt = now,
                 UpdatedAt = now,
             }).ToList();
+            if (resources is not null)
+            {
+                virtualTools.Add(BuildReadResourceTool(server, now));
+            }
             db.Tools.AddRange(virtualTools);
 
             server.LastError = null;
@@ -156,6 +203,16 @@ public partial class McpClientService(
 
             await using var client = await ConnectAsync(server, timeout.Token);
             var args = ParseArguments(argumentsJson);
+
+            // Tool virtual read-only (RF-003): lê um resource do server.
+            if (toolName.Equals(ReadResourceToolName, StringComparison.OrdinalIgnoreCase))
+            {
+                var uri = args.TryGetValue("uri", out var u) ? u?.ToString() : null;
+                return string.IsNullOrWhiteSpace(uri)
+                    ? "Erro: argumento 'uri' é obrigatório."
+                    : await ReadResourceCoreAsync(client, uri, timeout.Token);
+            }
+
             var result = await client.CallToolAsync(
                 toolName, args, progress: null, cancellationToken: timeout.Token);
 
@@ -171,6 +228,204 @@ public partial class McpClientService(
         catch (JsonException ex) { return $"Erro ao executar a tool MCP '{toolName}': {ex.Message}"; }
         catch (InvalidOperationException ex) { return $"Erro ao executar a tool MCP '{toolName}': {ex.Message}"; }
         catch (ModelContextProtocol.McpException ex) { return $"Erro ao executar a tool MCP '{toolName}': {ex.Message}"; }
+    }
+
+    /// <summary>Nome da tool virtual de leitura de resources (RF-003).</summary>
+    public const string ReadResourceToolName = "read_resource";
+
+    /// <summary>
+    /// Lista os resources do server (<c>resources/list</c>) — RF-003.
+    /// Falha → lista vazia (resources não derrubam a run).
+    /// </summary>
+    public async Task<List<McpResourceDescriptor>> ListResourcesAsync(
+        McpServer server, CancellationToken ct = default)
+    {
+        if (!server.Enabled)
+        {
+            return [];
+        }
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(Timeout);
+            await using var client = await ConnectAsync(server, timeout.Token);
+            var resources = await client.ListResourcesAsync(
+                cancellationToken: timeout.Token);
+            return resources
+                .Select(r => new McpResourceDescriptor(
+                    r.Name, r.Uri, r.MimeType, r.Description))
+                .ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger?.LogDebug(ex, "Server {Server}: resources/list falhou.", server.Name);
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Lê um resource do server (<c>resources/read</c>) — RF-003. Texto
+    /// retorna direto; blob vira nota de tamanho+mime. Erros viram
+    /// mensagem para o modelo, nunca exceção.
+    /// </summary>
+    public async Task<string> ReadResourceAsync(
+        McpServer server, string uri, CancellationToken ct = default)
+    {
+        if (!server.Enabled)
+        {
+            return $"Erro: servidor MCP '{server.Name}' está desabilitado.";
+        }
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(Timeout);
+            await using var client = await ConnectAsync(server, timeout.Token);
+            return await ReadResourceCoreAsync(client, uri, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return $"Erro: timeout de {Timeout.TotalSeconds}s ao ler o resource no servidor MCP.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException
+            or InvalidOperationException or ModelContextProtocol.McpException)
+        {
+            return $"Erro ao ler o resource '{uri}' no servidor MCP: {ex.Message}";
+        }
+    }
+
+    private static async Task<string> ReadResourceCoreAsync(
+        McpClient client, string uri, CancellationToken ct)
+    {
+        var result = await client.ReadResourceAsync(uri, cancellationToken: ct);
+        var parts = new List<string>();
+        foreach (var content in result.Contents)
+        {
+            switch (content)
+            {
+                case ModelContextProtocol.Protocol.TextResourceContents textRes:
+                    parts.Add(textRes.Text);
+                    break;
+                case ModelContextProtocol.Protocol.BlobResourceContents blob:
+                    parts.Add($"[blob {blob.MimeType ?? "application/octet-stream"} — {blob.Blob.Length} bytes]");
+                    break;
+            }
+        }
+        var text = string.Join("\n", parts);
+        var truncated = text.Length > MaxOutputChars ? text[..MaxOutputChars] : text;
+        return string.IsNullOrWhiteSpace(truncated) ? "(resource vazio)" : truncated;
+    }
+
+    /// <summary>
+    /// Lista os prompts do server (<c>prompts/list</c>) — RF-003. Cache
+    /// de 60s junto às tools; falha → cache vazio (prompts são opcionais).
+    /// </summary>
+    public async Task<List<McpPromptDescriptor>> ListPromptsAsync(
+        McpServer server, CancellationToken ct = default)
+    {
+        if (!server.Enabled)
+        {
+            return [];
+        }
+        var cached = await cache.GetOrCreateAsync(
+            PromptsCacheKey(server.Id),
+            async cancel =>
+            {
+                try
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+                    timeout.CancelAfter(Timeout);
+                    await using var client = await ConnectAsync(server, timeout.Token);
+                    var prompts = await client.ListPromptsAsync(
+                        cancellationToken: timeout.Token);
+                    return prompts.Select(p => new McpPromptDescriptor(
+                        p.Name, p.Description,
+                        p.ProtocolPrompt.Arguments?
+                            .Select(a => a.Name ?? "").ToList() ?? []))
+                        .ToList();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger?.LogDebug(ex, "Server {Server}: prompts/list falhou.", server.Name);
+                    return new List<McpPromptDescriptor>();
+                }
+            },
+            CacheOptions, tags: ["mcp"], cancellationToken: ct);
+        return [.. cached];
+    }
+
+    /// <summary>
+    /// Resolve um prompt do server (<c>prompts/get</c>) — RF-003:
+    /// devolve o texto dos blocos unidos; erro vira null para o chamador
+    /// mapear 404/400.
+    /// </summary>
+    public async Task<string?> GetPromptAsync(
+        McpServer server, string promptName,
+        IReadOnlyDictionary<string, object?> args, CancellationToken ct = default)
+    {
+        if (!server.Enabled)
+        {
+            return null;
+        }
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(Timeout);
+            await using var client = await ConnectAsync(server, timeout.Token);
+            var result = await client.GetPromptAsync(
+                promptName, args, cancellationToken: timeout.Token);
+            var parts = new List<string>();
+            foreach (var message in result.Messages)
+            {
+                if (message.Content is TextContentBlock text)
+                {
+                    parts.Add(text.Text);
+                }
+                else
+                {
+                    parts.Add(JsonSerializer.Serialize(
+                        message.Content, message.Content.GetType(), JsonOptions));
+                }
+            }
+            return string.Join("\n\n", parts);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException
+            or InvalidOperationException or ModelContextProtocol.McpException)
+        {
+            logger?.LogDebug(ex, "Server {Server}: prompts/get falhou.", server.Name);
+            return null;
+        }
+    }
+
+    /// <summary>Spec JSON da tool virtual read_resource (RF-003).</summary>
+    private static Tool BuildReadResourceTool(McpServer server, long now)
+    {
+        var spec = new Dictionary<string, object?>
+        {
+            ["type"] = "function",
+            ["function"] = new Dictionary<string, object?>
+            {
+                ["name"] = VirtualFunctionName(server, ReadResourceToolName),
+                ["description"] = $"Lê um resource exposto pelo servidor MCP {server.Name} por URI.",
+                ["parameters"] = JsonDocument.Parse("""
+                    {"type":"object","properties":{"uri":{"type":"string","description":"URI do resource (veja resources/list)"}},"required":["uri"]}
+                    """).RootElement,
+            },
+        };
+        return new Tool
+        {
+            UserId = server.UserId,
+            Name = ReadResourceToolName,
+            Description = $"Lê resources do servidor MCP {server.Name}.",
+            SpecJson = JsonSerializer.Serialize(spec, JsonOptions),
+            Url = $"{VirtualUrlPrefix}{server.Id}/{ReadResourceToolName}",
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
     }
 
     /// <summary>Nome da função virtual de uma tool MCP (OpenAI-safe: [a-zA-Z0-9_-], máx 64).</summary>
@@ -470,6 +725,8 @@ public partial class McpClientService(
 
     private static string ToolsCacheKey(string serverId) => $"mcp-tools:{serverId}";
 
+    private static string PromptsCacheKey(string serverId) => $"mcp-prompts:{serverId}";
+
     private static string Slug(string value)
     {
         var slug = SlugRegex().Replace(value, "_");
@@ -482,3 +739,11 @@ public partial class McpClientService(
 
 /// <summary>Descrição serializável de uma tool MCP para o HybridCache (tuplas não serializam).</summary>
 public sealed record McpToolDescriptor(string Name, string Description);
+
+/// <summary>Descrição serializável de um prompt MCP (RF-003) — slash `{server}:{prompt}`.</summary>
+public sealed record McpPromptDescriptor(
+    string Name, string? Description, IReadOnlyList<string> Arguments);
+
+/// <summary>Descrição serializável de um resource MCP (RF-003).</summary>
+public sealed record McpResourceDescriptor(
+    string Name, string Uri, string? MimeType, string? Description);

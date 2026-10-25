@@ -1179,5 +1179,11 @@
   "settings.gateway_blocked": "bloccato",
   "settings.gateway_created": "Canale creato — configura l'URL del webhook sul bot.",
   "settings.gateway_pair_ok": "Associato — il peer può ora parlare con il tuo agente.",
-  "settings.gateway_pair_fail": "Codice non valido o scaduto — invia un nuovo messaggio al bot."
+  "settings.gateway_pair_fail": "Codice non valido o scaduto — invia un nuovo messaggio al bot.",
+  "chat.cmd_compact": "Compatta il contesto ora — la cronologia viene riassunta",
+  "chat.cmd_compact_empty": "Nessuna chat caricata da compattare",
+  "chat.cmd_compact_failed": "Nulla da compattare (o fallito)",
+  "chat.cmd_compact_native": "Contesto compattato in modo nativo",
+  "chat.cmd_compact_done": "Contesto compattato",
+  "chat.tps_title": "Token al secondo (stima, finestra mobile)"
 }

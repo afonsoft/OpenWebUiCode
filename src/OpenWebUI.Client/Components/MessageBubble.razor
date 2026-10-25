@@ -49,7 +49,7 @@
                         <img src="img/thinking-brain.svg" class="size-4 inline-block" alt="" aria-hidden="true" />@L["chat.thinking"]<span class="thinking-dots" aria-hidden="true"></span>
                     </span>
                 }
-                else if (_viewSource)
+                else if (ViewSource)
                 {
                     <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-all">@DisplayContent</pre>
                 }
@@ -90,11 +90,11 @@
                 @if (Message.Role == "assistant")
                 {
                     <button class="size-6 flex items-center justify-center rounded-md hover:bg-gray-100 dark:hover:bg-gray-850 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
-                            title="@(_viewSource ? L["chat.view_rendered"] : L["chat.view_source"])"
-                            aria-label="@(_viewSource ? L["chat.view_rendered"] : L["chat.view_source"])"
-                            aria-pressed="@(_viewSource ? "true" : "false")"
-                            @onclick="() => _viewSource = !_viewSource">
-                        @if (_viewSource)
+                            title="@(ViewSource ? L["chat.view_rendered"] : L["chat.view_source"])"
+                            aria-label="@(ViewSource ? L["chat.view_rendered"] : L["chat.view_source"])"
+                            aria-pressed="@(ViewSource ? "true" : "false")"
+                            @onclick="ToggleViewSourceAsync">
+                        @if (ViewSource)
                         {
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
                         }
@@ -212,10 +212,32 @@
     /// <summary>O navegador suporta TTS.</summary>
     [Parameter] public bool TtsSupported { get; set; }
 
+    /// <summary>
+    /// Mostra a fonte markdown em vez do HTML renderizado
+    /// (SPEC-20261018-agent-polish RF-005): a escolha é do chat — o pai
+    /// persiste e injeta; sem binding mantém o comportamento anterior.
+    /// </summary>
+    [Parameter] public bool ViewSource { get; set; }
+
+    /// <summary>Disparado ao alternar <see cref="ViewSource"/>.</summary>
+    [Parameter] public EventCallback<bool> ViewSourceChanged { get; set; }
+
+    /// <summary>Alterna a exibição fonte/renderizado e notifica o pai.</summary>
+    private async Task ToggleViewSourceAsync()
+    {
+        if (ViewSourceChanged.HasDelegate)
+        {
+            await ViewSourceChanged.InvokeAsync(!ViewSource);
+        }
+        else
+        {
+            ViewSource = !ViewSource;
+        }
+    }
+
     private ElementReference _contentRef;
     private bool _codeExecEnabled;
     private bool _imageGenEnabled;
-    private bool _viewSource;
     private bool _copied;
     private int _versionOffset;
     private string? _htmlFor;

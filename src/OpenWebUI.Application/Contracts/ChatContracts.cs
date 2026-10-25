@@ -235,3 +235,12 @@ public sealed record AttentionItemResponse(
     string Title,
     string? ChatId,
     long CreatedAt);
+
+/// <summary>
+/// Resultado de <c>POST /api/v1/chats/{id}/compact</c>
+/// (SPEC-20261018-agent-polish RF-004): <c>Native</c> = compactou via
+/// endpoint nativo do provider; <c>Warning</c> informa fallback ao
+/// summarizer interno ou ausência de conteúdo.
+/// </summary>
+public sealed record ChatCompactResponse(
+    bool Compacted, bool Native, string? Warning);

@@ -40,6 +40,8 @@ builder.Services.AddScoped<ExternalAgentService>();
 builder.Services.AddHostedService<AutomationScheduler>();
 builder.Services.AddScoped<MemorySyncService>();
 builder.Services.AddHostedService<MemorySyncScheduler>();
+builder.Services.AddScoped<ModelWarmer>();
+builder.Services.AddHostedService<ModelWarmerScheduler>();
 builder.Services.AddHostedService<EvalRunnerService>();
 builder.Services.AddScoped<RetentionService>();
 builder.Services.AddScoped<ToolOutputService>();
@@ -123,6 +125,8 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.RepoBindingContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.AutoinvokeSkillsContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AgentMemoryContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.InstinctContributor>();
@@ -139,6 +143,7 @@ builder.Services.AddScoped<UserConfigOverlayService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
 builder.Services.AddScoped<HistoryResourceService>();
 builder.Services.AddScoped<IContextSummarizer, LlmContextSummarizer>();
+builder.Services.AddScoped<INativeContextCompactor, ProviderNativeCompactor>();
 // Árvore de conversa (SPEC-20261013-chat-branching): walk leaf→raiz,
 // leafs divergentes e resumo do ramo abandonado.
 builder.Services.AddScoped<BranchService>();
@@ -253,6 +258,7 @@ builder.Services.AddScoped<WorkspaceRepoService>();
 builder.Services.AddSingleton<WorktreeService>();
 builder.Services.AddScoped<FormatHookService>();
 builder.Services.AddSingleton<CheckpointService>();
+builder.Services.AddSingleton<RemoteSkillCatalog>();
 builder.Services.AddSingleton<SkillDiscoveryService>();
 builder.Services.AddScoped<AgentDefinitionService>();
 builder.Services.AddScoped<RepoCommandService>();

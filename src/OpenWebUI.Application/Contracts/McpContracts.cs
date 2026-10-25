@@ -49,3 +49,20 @@ public sealed record McpToolResponse(
     string FunctionName,
     string? Description,
     bool Enabled);
+
+/// <summary>
+/// Prompt MCP no catálogo do usuário (SPEC-20261018-agent-polish RF-003)
+/// — invocado como slash <c>{server}:{prompt}</c>.
+/// </summary>
+public sealed record McpPromptItemResponse(
+    string Server,
+    string Name,
+    string? Description,
+    IReadOnlyList<string> Arguments);
+
+/// <summary>Resolve `{server}:{prompt}` — args posicionais separados por espaço.</summary>
+public sealed record McpPromptResolveRequest(
+    string Server, string Prompt, string? Args = null);
+
+/// <summary>Texto retornado por <c>prompts/get</c>.</summary>
+public sealed record McpPromptResolveResponse(string Text);

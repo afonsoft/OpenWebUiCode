@@ -176,18 +176,21 @@ public class McpTests
     {
         var server = await CreateServerAsync();
         var refresh = await RefreshAsync(server.Id);
-        Assert.That(refresh.GetProperty("tools").GetInt32(), Is.EqualTo(3));
+        // 3 tools do FakeMcpServer + read_resource (RF-003: o server
+        // anuncia resources).
+        Assert.That(refresh.GetProperty("tools").GetInt32(), Is.EqualTo(4));
 
         var tools = await _client.GetFromJsonAsync<List<McpToolResponse>>(
             $"/api/v1/mcp/servers/{server.Id}/tools");
-        Assert.That(tools!.Select(t => t.Name), Is.EquivalentTo(new[] { "echo", "boom", "long" }));
+        Assert.That(tools!.Select(t => t.Name), Is.EquivalentTo(
+            new[] { "echo", "boom", "long", "read_resource" }));
         Assert.That(tools!.All(t => t.Enabled), Is.True);
         Assert.That(tools!.All(t => t.FunctionName.StartsWith("mcp_")), Is.True);
 
         // Tools virtuais aparecem no catálogo geral (seletor do chat) com Source=mcp.
         var all = await _client.GetFromJsonAsync<List<ToolResponse>>("/api/v1/tools/");
         var virtuais = all!.Where(t => t.Source == "mcp" && (t.Url ?? "").StartsWith($"mcp://{server.Id}/")).ToList();
-        Assert.That(virtuais, Has.Count.EqualTo(3));
+        Assert.That(virtuais, Has.Count.EqualTo(4));
         Assert.That(virtuais.First(t => t.Name == "echo").SpecJson, Does.Contain("\"msg\""),
             "spec materializada do inputSchema do server");
     }
@@ -243,7 +246,7 @@ public class McpTests
         // Tools continuam existindo (não deletadas) mas fora do catálogo do chat.
         var tools = await _client.GetFromJsonAsync<List<McpToolResponse>>(
             $"/api/v1/mcp/servers/{server.Id}/tools");
-        Assert.That(tools, Has.Count.EqualTo(3));
+        Assert.That(tools, Has.Count.EqualTo(4));
         Assert.That(tools!.All(t => !t.Enabled), Is.True);
 
         var all = await _client.GetFromJsonAsync<List<ToolResponse>>("/api/v1/tools/");
@@ -414,8 +417,85 @@ internal sealed class FakeMcpServer : IDisposable
                         response["result"] = new JsonObject
                         {
                             ["protocolVersion"] = "2025-06-18",
-                            ["capabilities"] = new JsonObject { ["tools"] = new JsonObject() },
+                            ["capabilities"] = new JsonObject
+                            {
+                                ["tools"] = new JsonObject(),
+                                ["resources"] = new JsonObject(),
+                                ["prompts"] = new JsonObject(),
+                            },
                             ["serverInfo"] = new JsonObject { ["name"] = "fake-mcp", ["version"] = "1.0" },
+                        };
+                        break;
+                    case "resources/list":
+                        response["result"] = new JsonObject
+                        {
+                            ["resources"] = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["uri"] = "memo://alpha", ["name"] = "alpha",
+                                    ["mimeType"] = "text/plain",
+                                    ["description"] = "Nota alfa",
+                                },
+                            },
+                        };
+                        break;
+                    case "resources/read":
+                        response["result"] = new JsonObject
+                        {
+                            ["contents"] = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["uri"] = root.GetProperty("params").GetProperty("uri").GetString(),
+                                    ["mimeType"] = "text/plain",
+                                    ["text"] = "conteudo-do-resource",
+                                },
+                            },
+                        };
+                        break;
+                    case "prompts/list":
+                        response["result"] = new JsonObject
+                        {
+                            ["prompts"] = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["name"] = "revisao",
+                                    ["description"] = "Revisão guiada",
+                                    ["arguments"] = new JsonArray
+                                    {
+                                        new JsonObject
+                                        {
+                                            ["name"] = "arquivo",
+                                            ["description"] = "Alvo",
+                                            ["required"] = true,
+                                        },
+                                    },
+                                },
+                            },
+                        };
+                        break;
+                    case "prompts/get":
+                        var arg = root.GetProperty("params")
+                            .TryGetProperty("arguments", out var pa)
+                            && pa.TryGetProperty("arquivo", out var av)
+                            ? av.GetString()
+                            : "";
+                        response["result"] = new JsonObject
+                        {
+                            ["messages"] = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["role"] = "user",
+                                    ["content"] = new JsonObject
+                                    {
+                                        ["type"] = "text",
+                                        ["text"] = $"revise:{arg}",
+                                    },
+                                },
+                            },
                         };
                         break;
                     case "tools/list":
