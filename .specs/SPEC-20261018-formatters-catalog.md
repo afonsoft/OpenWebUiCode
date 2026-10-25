@@ -66,3 +66,35 @@ tests/OpenWebUI.Api.Tests/FormatterCatalogTests.cs          # NOVO
 - Sem formatter pro ext → no-op silencioso (só log).
 - Formatter falhando → tool call retorna ok e warning vai pro log.
 - Custom por binding sobrescreve builtin; testes cobrem seleção, agrupamento, timeout.
+
+## 6. Implementation notes (2026-10-25)
+
+**Entregue:**
+- `FormatterCatalog` (src/OpenWebUI.Infrastructure/Services/FormatterCatalog.cs):
+  11 builtins (dotnet-format, csharpier, ruff, black, prettier, dprint,
+  gofmt, rustfmt, shfmt, stylua, pg-format) com índice ext→entries;
+  `ResolveAsync` aplica binding → `Format:Commands:{ext}` →
+  `Format:Command` (catch-all) → primeiro builtin cujo binário responde
+  ao probe (`command -v`, revalidado a cada run — nada de cache entre
+  invocações); `FormatterEntry` tem `Env` e `TimeoutSeconds` opcionais.
+- `FormatHookService.RunForUserAsync` agrupa por extensão
+  (`GroupByExtension`) e roda cada formatter uma vez por grupo;
+  `{files}` expande a lista quoted, `{file}` roda uma invocação por
+  arquivo, sem placeholder → arquivos como args finais; warnings
+  agregados por formatter; `Format:Disabled` (csv de nomes) pula
+  formatters; log `LogDebug` com {formatter, files, exit, ms}; saída
+  truncada em 4KB (`MaxOutputChars` = 4096).
+- Testes `FormatterCatalogTests` (13): precedência binding/custom/
+  builtin/none, ordem do catálogo, agrupamento multi-ext com binários
+  fake via PATH, override por `Format:Commands:{ext}`, `{file}`
+  por-arquivo, falha→warning+não-quebra, disabled, `Format:Command`
+  catch-all, no-op sem match. Regressão `WorktreeFormatHooksTests`
+  26/26 verdes.
+
+**Desvios documentados:**
+- UI de catálogo efetivo (RF-003): não existe surface de repo/worktree
+  settings no client — visibilidade entregue via run log
+  (`LogDebug` por execução). Badge/toggle fica fora de escopo.
+- `Entities.cs`: sem nova entidade — `FormatterEntry` é record
+  estático no catálogo (SPEC previa entidade; desnecessária pois
+  builtins são código, customs vêm de config existente).
