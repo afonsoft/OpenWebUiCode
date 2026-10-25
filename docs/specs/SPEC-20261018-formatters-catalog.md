@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-formatters-catalog` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | `docs/analise-opencode-v2.md` (P2.7) |
 
 ## 1. User Story
@@ -98,3 +98,10 @@ tests/OpenWebUI.Api.Tests/FormatterCatalogTests.cs          # NOVO
 - `Entities.cs`: sem nova entidade — `FormatterEntry` é record
   estático no catálogo (SPEC previa entidade; desnecessária pois
   builtins são código, customs vêm de config existente).
+
+## Delivered
+
+- **PR:** https://github.com/afonsoft/open-webui/pull/520 (`be79859`)
+- **Issue:** #509
+- **Branch:** `feature/Devin-20261018-formatters-catalog`
+- **Tests:** `FormatterCatalogTests` 13 + regressão `WorktreeFormatHooksTests` 26/26
