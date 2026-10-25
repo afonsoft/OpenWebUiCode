@@ -6,7 +6,7 @@ namespace OpenWebUI.Client.Services;
 /// <summary>Item de sugestão do composer para <c>/</c> — de qualquer fonte.</summary>
 /// <param name="Command">Nome após a barra.</param>
 /// <param name="Title">Descrição curta exibida na lista.</param>
-/// <param name="Source"><c>prompt</c> | <c>skill</c> | <c>command</c>.</param>
+/// <param name="Source"><c>prompt</c> | <c>skill</c> | <c>command</c> | <c>mcp</c> | <c>builtin</c>.</param>
 public sealed record SlashItem(string Command, string Title, string Source);
 
 /// <summary>
@@ -24,7 +24,10 @@ public static class RepoSlashCommands
     /// resolvida no render do composer.
     /// </summary>
     public static IReadOnlyList<SlashItem> Builtins { get; } =
-        [new SlashItem("plan", "chat.cmd_plan", "builtin")];
+    [
+        new SlashItem("plan", "chat.cmd_plan", "builtin"),
+        new SlashItem("compact", "chat.cmd_compact", "builtin"),
+    ];
 
     /// <summary>
     /// Sugestões mescladas: comandos built-in + prompts (source

@@ -1179,5 +1179,11 @@
   "settings.gateway_blocked": "blockiert",
   "settings.gateway_created": "Kanal erstellt — Webhook-URL beim Bot setzen.",
   "settings.gateway_pair_ok": "Verknüpft — der Peer kann nun mit Ihrem Agenten chatten.",
-  "settings.gateway_pair_fail": "Ungültiger oder abgelaufener Code — senden Sie dem Bot eine neue Nachricht."
+  "settings.gateway_pair_fail": "Ungültiger oder abgelaufener Code — senden Sie dem Bot eine neue Nachricht.",
+  "chat.cmd_compact": "Kontext jetzt komprimieren — Verlauf wird zum kompakten Resume",
+  "chat.cmd_compact_empty": "Kein geladener Chat zum Komprimieren",
+  "chat.cmd_compact_failed": "Nichts zu komprimieren (oder fehlgeschlagen)",
+  "chat.cmd_compact_native": "Kontext nativ komprimiert",
+  "chat.cmd_compact_done": "Kontext komprimiert",
+  "chat.tps_title": "Tokens pro Sekunde (Schätzwert, rollierendes Fenster)"
 }

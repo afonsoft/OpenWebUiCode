@@ -8,8 +8,8 @@
 | Type | `Feature` |
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
-| Branch | `feature/Devin-20261018-agent-polish` |
-| Status | `Approved` |
+| Branch | `feature/Devin-20261025-agent-polish` |
+| Status | `In implementation` (PR #516) |
 | Parent | `docs/analise-opencode-v2.md` (P2.9/2.10 + P3.1/3.2/3.3/3.4/3.6/3.9) |
 
 ## 1. User Story
@@ -83,3 +83,12 @@ tests/OpenWebUI.Api.Tests/SkillCatalogTests.cs                  # NOVO
 - MCP com resources/prompts mock: `read_resource` retorna conteúdo; `/{server}:{prompt}` resolve texto.
 - `/compact` compacta sob demanda; native cai no fallback com warning quando não suportado.
 - Testes por item; nenhum comportamento default muda sem opt-in.
+
+## 6. Implementation Notes (2026-10-25)
+
+- **RF-001** — mapa kv `warming.models` (`{modelId: {intervalMinutes, billable}}`) em vez de flag por modelo; ping `max_tokens:1`/`"ping"`; ociosidade = última `ChatRun` do modelo > 3× intervalo; providers não-ollama exigem `billable:true`; OmniRoute detectado por base URL contendo "omniroute".
+- **RF-002** — `RemoteSkillCatalog` (singleton) lê raízes do kv `skills.remoteRoots`; refresh é disparado pelos entry-points async (contributor). Escopo `remote`, local/global vence duplicata. `AutoinvokeSkillsContributor` order 72 injeta `## Skill: {name}` respeitando `u:{id}:skills-disabled` + deny admin.
+- **RF-003** — `read_resource` materializado só quando o server anuncia resources; prompts cacheados 60s junto às tools; slash `{server}:{prompt}` resolve server-side no `ExpandAsync` (sem repo) e client-side via `POST .../prompts/resolve`.
+- **RF-004** — `compaction:native` kv + capability `compaction` no modelo (override `models:capability-overrides` ou reportada); native via `INativeContextCompactor` com payload `context_management` (providers OpenAI-compatíveis); fallback sempre documentado em `CompactResult.Warning`.
+- **RF-005** — `viewSource` vira preferência por chat (`chat:viewSource:{id}`) aplicada a todas as mensagens; `tps` = chars/4 numa janela rolante de 4s, exibido só após ≥1s de stream.
+- **Desvios**: endpoints de prompts ficam sob `/api/v1/users/user/mcp-servers/prompts*` (escopo usuário, mesma família do catálogo efetivo); `compact` expõe `ChatCompactResponse{compacted,native,warning}`.

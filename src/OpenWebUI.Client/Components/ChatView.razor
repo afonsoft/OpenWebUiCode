@@ -9,6 +9,7 @@
 @inject RealtimeService Realtime
 @inject BrowserStorage Storage
 @inject AttentionInboxState Attention
+@inject ToastService Toast
 @implements IDisposable
 
 <div class="flex h-full w-full min-w-0">
@@ -36,6 +37,14 @@
                                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
                                 </svg>
                                 @_statusLabel
+                            </span>
+                        }
+                        @if (_streaming && _tps is { } tps)
+                        {
+                            @* RF-005: vazão ao vivo — janela rolante de 4s. *@
+                            <span class="hidden sm:inline-flex items-center rounded-full border border-gray-200 dark:border-gray-750 bg-gray-50 dark:bg-gray-850 px-2.5 py-1 text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400 tabular-nums"
+                                  title="@L["chat.tps_title"]" aria-label="@L["chat.tps_title"]">
+                                @tps.ToString("0.#") tok/s
                             </span>
                         }
                         @if (_parentChatId is { } parentId)
@@ -273,6 +282,8 @@
                             Message="message"
                             Streaming="_streaming && isLastAssistant"
                             ShowActions="true"
+                            ViewSource="_viewSource"
+                            ViewSourceChanged="SetViewSourceAsync"
                             Initials="@UserInitials"
                             OnRegenerate="() => RegenerateAtAsync(index)"
                             OnEdit="() => EditAt(index)"
@@ -822,6 +833,7 @@
         new(@"(?:^|\s)@(?<q>[\w./-]+)$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private List<RepoSkillItemResponse> _repoSkills = [];
     private List<RepoCommandItemResponse> _repoCommands = [];
+    private List<McpPromptItemResponse> _mcpPrompts = [];
     private List<string> _followUps = [];
     private ArenaCompletionResult? _arena;
     private ArenaFeedbackResponse? _arenaFeedback;
@@ -889,6 +901,10 @@
     // Streaming de tools (SPEC-20261007-chat-tool-streaming):
     // fase atual, calls ao vivo e pedido de aprovação pendente.
     private string? _statusLabel;
+    private bool _viewSource;
+    private double? _tps;
+    private readonly Queue<(DateTime At, int Chars)> _tpsWindow = new();
+    private static readonly TimeSpan TpsWindow = TimeSpan.FromSeconds(4);
     private bool _hasDeltas;
     private readonly List<ToolCallView> _liveToolCalls = [];
 
@@ -1009,10 +1025,13 @@
             var modelsTask = Api.GetModelsConfigAsync();
             var configTask = Api.GetAppConfigCachedAsync();
             var storedTask = StoredWebSearchAsync();
-            await Task.WhenAll(promptsTask, toolsTask, modelsTask, configTask, storedTask);
+            var mcpPromptsTask = Api.GetMcpPromptsAsync();
+            await Task.WhenAll(promptsTask, toolsTask, modelsTask, configTask,
+                storedTask, mcpPromptsTask);
 
             _prompts = await promptsTask;
             _tools = await toolsTask;
+            _mcpPrompts = await mcpPromptsTask;
             _suggestions = (await modelsTask)?.PromptSuggestions ?? [];
             // SPEC-15: repo é por chat — o binding global não aparece em
             // conversa nova; o do chat carrega junto no load abaixo.
@@ -1295,6 +1314,7 @@
             _parentChatId = null;
             _parentTitle = null;
             _messages.Clear();
+            _viewSource = false;
             // SPEC-15: conversa nova nasce sem repo — qualquer seleção
             // feita depois fica pendente até o primeiro envio.
             _repo = null;
@@ -1346,6 +1366,9 @@
             await Realtime.JoinChatAsync(chat.Id);
             _chatTitle = chat.Title;
             _parentChatId = chat.ParentChatId;
+            // RF-005: fonte markdown × renderizado persiste por chat.
+            _viewSource =
+                await Storage.GetAsync($"chat:viewSource:{chat.Id}") == "true";
 
         // Binding por chat (SPEC-15 estrito): só o repo vinculado a ESTA
         // conversa — seleção pendente de chat novo não atravessa.
@@ -1555,8 +1578,14 @@
             if (item.Command == "plan")
             {
                 await SetAgentModeAsync("plan");
+                _input = builtinArgs;
             }
-            _input = builtinArgs;
+            else if (item.Command == "compact")
+            {
+                // RF-004 (SPEC-20261018-agent-polish): /compact força a
+                // compactação do histórico — o resultado vira toast.
+                await CompactNowAsync();
+            }
             _pendingCommand = null;
             return;
         }
@@ -1575,6 +1604,21 @@
         {
             var detail = await Api.GetRepoSkillAsync(item.Command);
             _input = detail?.Content ?? _input;
+            _pendingCommand = null;
+            return;
+        }
+        // RF-003 (SPEC-20261018-agent-polish): `{server}:{prompt}` resolve
+        // via prompts/get — o texto retornado vira o input.
+        if (item.Source == "mcp")
+        {
+            var colon = item.Command.IndexOf(':');
+            if (colon > 0)
+            {
+                var resolved = await Api.ResolveMcpPromptAsync(
+                    item.Command[..colon], item.Command[(colon + 1)..],
+                    RepoSlashCommands.ArgsAfter(_input));
+                _input = resolved?.Text ?? _input;
+            }
             _pendingCommand = null;
             return;
         }
@@ -1599,6 +1643,77 @@
             ? _input
             : RepoSlashCommands.Interpolate(commandDetail.Content, args);
         _pendingCommand = null;
+    }
+
+    /// <summary>
+    /// Janela rolante de vazão (RF-005): cada delta empilha
+    /// (timestamp, chars); o tps exibido = chars da janela de 4s ÷ 4
+    /// (tokens estimados) ÷ segundos decorridos — estabiliza só depois
+    /// de ≥1s de stream para não mostrar ruído do primeiro token.
+    /// </summary>
+    private void TrackTps(int chars)
+    {
+        var now = DateTime.UtcNow;
+        _tpsWindow.Enqueue((now, chars));
+        while (_tpsWindow.Count > 0 && now - _tpsWindow.Peek().At > TpsWindow)
+        {
+            _tpsWindow.Dequeue();
+        }
+        if (_tpsWindow.Count > 1
+            && now - _tpsWindow.Peek().At >= TimeSpan.FromSeconds(1))
+        {
+            var total = _tpsWindow.Sum(e => e.Chars);
+            var elapsed = (now - _tpsWindow.Peek().At).TotalSeconds;
+            _tps = total / 4.0 / elapsed;
+        }
+    }
+
+    /// <summary>
+    /// Toggle fonte/renderizado das respostas (RF-005): a escolha grava
+    /// por chat no localStorage e vale para todas as mensagens.
+    /// </summary>
+    private async Task SetViewSourceAsync(bool value)
+    {
+        _viewSource = value;
+        if (_loadedChatId is not null)
+        {
+            try
+            {
+                await Storage.SetAsync(
+                    $"chat:viewSource:{_loadedChatId}", value ? "true" : "false");
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
+            {
+                // localStorage indisponível — prefere a sessão em memória.
+                await Console.Error.WriteLineAsync(
+                    $"[ChatView] viewSource persist falhou: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// /compact (RF-004): POST /chats/{id}/compact e notifica o resultado
+    /// — sem chat carregado ou falha vira toast de aviso.
+    /// </summary>
+    private async Task CompactNowAsync()
+    {
+        if (_loadedChatId is null)
+        {
+            Toast.Show(L["chat.cmd_compact_empty"], ToastType.Warning);
+            return;
+        }
+        var result = await Api.CompactChatAsync(_loadedChatId);
+        if (result is null)
+        {
+            Toast.Show(L["chat.cmd_compact_failed"], ToastType.Warning);
+            return;
+        }
+        var text = result.Warning
+            ?? (result.Compacted
+                ? L[result.Native ? "chat.cmd_compact_native" : "chat.cmd_compact_done"]
+                : L["chat.cmd_compact_failed"]);
+        Toast.Show(text,
+            result.Compacted ? ToastType.Success : ToastType.Warning);
     }
 
     private async Task OnKeyDown(KeyboardEventArgs e)
@@ -1852,7 +1967,9 @@
         _promptSuggestions = prefix is null
             ? []
             : RepoSlashCommands.Merge(_prompts, _repoSkills, _repoCommands, prefix,
-                builtins: RepoSlashCommands.Builtins);
+                builtins: RepoSlashCommands.Builtins.Concat(
+                    _mcpPrompts.Select(p => new SlashItem(
+                        $"{p.Server}:{p.Name}", p.Description ?? "", "mcp"))));
     }
 
     /// <summary>Classe do anexo pelo MIME (espelha ChatMessageFileModel.Of).</summary>
@@ -2514,6 +2631,8 @@
         _reasoning.Clear();
         _thinkingOpen = null;
         _thinkingElapsed = default;
+        _tpsWindow.Clear();
+        _tps = null;
 
         // Resume loop (SPEC-20261007-chat-tool-streaming): se o stream cair
         // no meio da run (proxy derrubando SSE ocioso, troca de rede, aba
@@ -2624,6 +2743,7 @@
                     content.Append(delta.Text);
                     _messages[index] = placeholder with { Content = content.ToString() };
                     _hasDeltas = true;
+                    TrackTps(delta.Text.Length);
                     // O auto-colapso do pensamento é derivado em
                     // ThinkingExpanded (hasDeltas=true) — aqui só o chip
                     // vira "Escrevendo resposta…".

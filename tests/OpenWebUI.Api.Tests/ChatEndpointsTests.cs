@@ -813,4 +813,47 @@ public class ChatEndpointsTests
         Assert.That(page.Messages[^1].Id, Is.EqualTo("m3"));
         Assert.That(page.Total, Is.EqualTo(3));
     }
+
+    // ---- RF-004 (SPEC-20261018-agent-polish): POST /chats/{id}/compact ----
+
+    [Test]
+    public async Task Compact_ChatComModelo_RetornaResultado()
+    {
+        var auth = await SignUpAsync("Compact", "compact@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("compact",
+            Mensagens("pergunta", "resposta", "pergunta2", "resposta2"));
+
+        var response = await _client.PostAsync($"/api/v1/chats/{chat.Id}/compact", null);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await response.Content.ReadAsStringAsync());
+        var result = await response.Content.ReadFromJsonAsync<ChatCompactResponse>();
+        Assert.That(result, Is.Not.Null);
+        // Sem provider configurado o summarizer falha — o contrato ainda
+        // é honrado (200 + warning, nunca exceção).
+        Assert.That(result!.Native, Is.False);
+    }
+
+    [Test]
+    public async Task Compact_ChatInexistente_404()
+    {
+        var auth = await SignUpAsync("Compact404", "compact404@chats.local", "senha123");
+        UseToken(auth.Token);
+
+        var response = await _client.PostAsync("/api/v1/chats/nao-existe/compact", null);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Compact_ChatSemModelo_400()
+    {
+        var auth = await SignUpAsync("Compact400", "compact400@chats.local", "senha123");
+        UseToken(auth.Token);
+        var created = await _client.PostAsJsonAsync(
+            "/api/v1/chats/", new ChatUpsertRequest("sem-modelo", [], []));
+        var chat = await created.Content.ReadFromJsonAsync<ChatResponse>();
+
+        var response = await _client.PostAsync($"/api/v1/chats/{chat!.Id}/compact", null);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
 }

@@ -1179,5 +1179,11 @@
   "settings.gateway_blocked": "bloqueado",
   "settings.gateway_created": "Canal creado: configura la URL del webhook en el bot.",
   "settings.gateway_pair_ok": "Vinculado: el peer ya puede hablar con tu agente.",
-  "settings.gateway_pair_fail": "Código inválido o expirado: envía otro mensaje al bot."
+  "settings.gateway_pair_fail": "Código inválido o expirado: envía otro mensaje al bot.",
+  "chat.cmd_compact": "Compactar el contexto ahora — el historial se resume",
+  "chat.cmd_compact_empty": "No hay chat cargado para compactar",
+  "chat.cmd_compact_failed": "Nada que compactar (o falló)",
+  "chat.cmd_compact_native": "Contexto compactado de forma nativa",
+  "chat.cmd_compact_done": "Contexto compactado",
+  "chat.tps_title": "Tokens por segundo (estimación, ventana móvil)"
 }

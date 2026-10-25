@@ -32,6 +32,69 @@ public static class UserMcpEndpoints
         group.MapDelete("/{id}", DeleteAsync);
         group.MapPost("/{id}/refresh", RefreshAsync);
         group.MapPut("/{id}/enabled", SetEnabledAsync);
+        group.MapGet("/prompts", ListPromptsAsync);
+        group.MapPost("/prompts/resolve", ResolvePromptAsync);
+    }
+
+    /// <summary>
+    /// Catálogo de prompts dos servidores efetivos habilitados — RF-003
+    /// (SPEC-20261018-agent-polish): o client monta o slash menu
+    /// <c>{server}:{prompt}</c>. Server que falha lista vazio (prompts
+    /// são opcionais).
+    /// </summary>
+    private static async Task<IResult> ListPromptsAsync(
+        HttpContext http, AppDbContext db, UserConfigOverlayService overlay,
+        McpClientService mcp, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        var effective = await overlay.EffectiveMcpServersAsync(user.Id, ct);
+        var items = new List<McpPromptItemResponse>();
+        foreach (var entry in effective.Where(e => e.EnabledForMe))
+        {
+            foreach (var prompt in await mcp.ListPromptsAsync(entry.Server, ct))
+            {
+                items.Add(new McpPromptItemResponse(
+                    entry.Server.Name, prompt.Name,
+                    prompt.Description, prompt.Arguments));
+            }
+        }
+        return Results.Ok(items);
+    }
+
+    /// <summary>
+    /// Resolve `{server}:{prompt}` via <c>prompts/get</c> (RF-003) — o
+    /// texto retornado vira o input do chat. 404 sem server/prompt;
+    /// 400 quando o get falha.
+    /// </summary>
+    private static async Task<IResult> ResolvePromptAsync(
+        [FromBody] McpPromptResolveRequest request,
+        HttpContext http, AppDbContext db, RepoCommandService commands,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (string.IsNullOrWhiteSpace(request.Server)
+            || string.IsNullOrWhiteSpace(request.Prompt))
+        {
+            return Results.BadRequest(new { detail = "server e prompt são obrigatórios." });
+        }
+        var (result, error) = await commands.ExpandAsync(
+            user.Id, workdir: null,
+            $"{request.Server}:{request.Prompt}", request.Args, ct);
+        if (error is not null)
+        {
+            return Results.BadRequest(new { detail = error });
+        }
+        return result is null
+            ? Results.NotFound(new { detail = "Prompt MCP não encontrado." })
+            : Results.Ok(new McpPromptResolveResponse(result.Prompt));
     }
 
     /// <summary>Catálogo efetivo: globais + próprios, com provenance e toggle por usuário.</summary>

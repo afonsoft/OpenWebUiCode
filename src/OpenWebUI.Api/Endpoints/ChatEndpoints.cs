@@ -65,6 +65,7 @@ public static class ChatEndpoints
         group.MapGet("/{id}/messages/{messageId}/versions", GetMessageVersionsAsync);
         group.MapGet("/{id}/branches", ListBranchesAsync);
         group.MapPost("/{id}/branches/activate", ActivateBranchAsync);
+        group.MapPost("/{id}/compact", CompactChatAsync);
 
         // Runs desacopladas (SPEC-20261007-chat-detached-runs).
         ChatRunEndpoints.MapChatRunEndpoints(group);
@@ -1131,6 +1132,56 @@ public static class ChatEndpoints
         return Results.Ok(leaves.Select(l => new BranchLeafResponse(
             l.LeafId, l.Depth, l.MessageCount, l.Preview, l.Summary,
             l.UpdatedAt, l.IsActive)));
+    }
+
+    /// <summary>
+    /// <c>POST /{id}/compact</c> (RF-004, SPEC-20261018-agent-polish):
+    /// força a compactação do histórico via
+    /// <see cref="ContextCompactionService.CompactNowAsync"/> — com
+    /// <c>compaction:native</c> + capacidade, tenta o endpoint nativo do
+    /// provider e cai no summarizer interno com warning.
+    /// </summary>
+    private static async Task<IResult> CompactChatAsync(
+        string id, HttpContext http, AppDbContext db,
+        ContextBoundaryService boundaries,
+        ContextCompactionService compaction,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        var chat = await db.Chats.Include(c => c.Messages)
+            .FirstOrDefaultAsync(c => c.Id == id && c.UserId == user.Id, ct);
+        if (chat is null)
+        {
+            return Results.NotFound(new { detail = "Chat não encontrado." });
+        }
+
+        var path = BranchService.WalkPath(chat);
+        var visible = await boundaries.FilterAsync(chat.Id, path, ct);
+        var history = visible
+            .Select(m => new ChatCompletionMessage(
+                m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
+            .ToList();
+
+        // Modelo para o resumo: 1º da lista do chat → último assistant.
+        var models = JsonSerializer.Deserialize<List<string>>(chat.ModelsJson);
+        var model = models?.FirstOrDefault(m => !string.IsNullOrWhiteSpace(m))
+            ?? visible.LastOrDefault(m => !string.IsNullOrWhiteSpace(m.Model))?.Model;
+        if (model is null)
+        {
+            return Results.BadRequest(new
+            {
+                detail = "Chat sem modelo associado — envie uma mensagem primeiro.",
+            });
+        }
+
+        var result = await compaction.CompactNowAsync(
+            chat.Id, history, model, user.Id, ct);
+        return Results.Ok(new ChatCompactResponse(
+            result.Compacted, result.Native, result.Warning));
     }
 
     /// <summary>

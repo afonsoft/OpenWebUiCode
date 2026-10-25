@@ -32,6 +32,62 @@ public interface IContextSummarizer
         string model, string transcript, string? userId, CancellationToken ct);
 }
 
+/// <summary>
+/// Seam de compactação nativa do provider (SPEC-20261018-agent-polish
+/// RF-004): quando <c>compaction:native</c> e o modelo anuncia a
+/// capacidade <c>"compaction"</c>, tenta o endpoint nativo; null =
+/// não suportado/falhou → fallback ao summarizer.
+/// </summary>
+public interface INativeContextCompactor
+{
+    /// <summary>Compacta o histórico; null quando o provider não suporta.</summary>
+    Task<string?> TryCompactAsync(
+        IReadOnlyList<ChatCompletionMessage> history,
+        string model, string? userId, CancellationToken ct);
+}
+
+/// <summary>
+/// Compactação nativa via completion com <c>context_management</c> no
+/// payload (providers OpenAI-compatíveis que anunciam a capacidade o
+/// reconhecem; os demais ignoram o parâmetro e devolvem prosa comum —
+/// nesse caso o resultado ainda é um resumo utilizável).
+/// </summary>
+public sealed class ProviderNativeCompactor(ProviderService providers)
+    : INativeContextCompactor
+{
+    /// <inheritdoc />
+    public async Task<string?> TryCompactAsync(
+        IReadOnlyList<ChatCompletionMessage> history,
+        string model, string? userId, CancellationToken ct)
+    {
+        var transcript = string.Join("\n\n",
+            history.Select(m => $"{m.Role}: {m.Content}"));
+        var request = new ChatCompletionRequest(
+            model,
+            [new ChatCompletionMessage("user",
+                "Compact this conversation preserving goals, files, decisions " +
+                "and pending tasks. Answer with the compacted context only.\n\n"
+                + transcript)],
+            Stream: false,
+            Params: new Dictionary<string, object>
+            {
+                ["context_management"] = new Dictionary<string, object>
+                {
+                    ["enabled"] = true,
+                },
+            });
+        try
+        {
+            var result = await providers.CompleteAsync(request, userId, ct);
+            return string.IsNullOrWhiteSpace(result) ? null : result.Trim();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+}
+
 /// <summary>Sumarizador real: completion única não-streaming no modelo da própria run.</summary>
 public sealed class LlmContextSummarizer(ProviderService providers) : IContextSummarizer
 {
@@ -107,8 +163,14 @@ public sealed class ContextCompactionService(
     ConfigService config,
     IContextSummarizer summarizer,
     ModelRoleResolver roles,
-    ILogger<ContextCompactionService> logger)
+    ILogger<ContextCompactionService> logger,
+    INativeContextCompactor? native = null,
+    ProviderService? providers = null,
+    ModelCapabilityResolver? caps = null)
 {
+    /// <summary>Resultado de uma compactação manual (RF-004).</summary>
+    public sealed record CompactResult(
+        bool Compacted, bool Native, string? Warning);
     /// <summary>Prefixo da mensagem sintética que injeta o resumo no histórico.</summary>
     public const string SummaryPrefix = "[Contexto compactado de mensagens anteriores]\n";
 
@@ -286,34 +348,108 @@ public sealed class ContextCompactionService(
                 return false;
             }
 
-            await config.SetAsync(KvKey(chatId),
-                new CompactionState(headEnd, summary.Text,
-                    HasDigest(summary) ? summary : null, turnPrefix), ct);
-
-            var tracked = await db.Chats.Include(c => c.Messages)
-                .FirstOrDefaultAsync(c => c.Id == chatId, ct);
-            if (tracked is not null)
-            {
-                var pos = tracked.Messages.Count == 0 ? 0 : tracked.Messages.Max(m => m.Position) + 1;
-                // O marcador pendura no leaf do caminho compactado
-                // (SPEC-20261013-chat-branching): outro ramo não o herda.
-                var marker = new ChatMessage
-                {
-                    ChatId = tracked.Id, Role = "compaction", Content = summary.Text,
-                    Position = pos, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    ParentId = BranchService.ResolveLeaf(tracked)?.Id,
-                };
-                tracked.Messages.Add(marker);
-                tracked.LeafMessageId = marker.Id;
-                tracked.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                await db.SaveChangesAsync(ct);
-            }
+            await PersistCompactionAsync(chatId, headEnd, summary.Text,
+                HasDigest(summary) ? summary : null, turnPrefix, ct);
             return true;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Compactação de contexto falhou para chat {ChatId}.", chatId);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Compactação manual (RF-004, SPEC-20261018-agent-polish): força a
+    /// compactação independente do limiar. Com <c>compaction:native</c> e
+    /// o modelo anunciando a capacidade <c>"compaction"</c>, tenta o
+    /// endpoint nativo; sem capacidade ou falha → summarizer interno com
+    /// <see cref="CompactResult.Warning"/>.
+    /// </summary>
+    public async Task<CompactResult> CompactNowAsync(
+        string chatId, IReadOnlyList<ChatCompletionMessage> history,
+        string model, string? userId, CancellationToken ct)
+    {
+        try
+        {
+            var preferNative = await config.GetAsync("compaction:native", false, ct);
+            var supportsNative = preferNative
+                && native is not null
+                && providers is not null
+                && caps is not null
+                && await NativeSupportedAsync(model, ct);
+            string? warning = preferNative && !supportsNative
+                ? "compaction.native habilitado, mas o modelo não anuncia a " +
+                  "capacidade 'compaction' — usado o summarizer interno."
+                : null;
+
+            if (supportsNative)
+            {
+                var text = await native!.TryCompactAsync(history, model, userId, ct);
+                if (text is not null)
+                {
+                    var t = await ThresholdsAsync(ct);
+                    var headEnd = SplitIndex(history, t);
+                    if (headEnd > 0)
+                    {
+                        await PersistCompactionAsync(
+                            chatId, headEnd, text, null, null, ct);
+                        return new CompactResult(true, true, null);
+                    }
+                }
+                warning = "Compactação nativa falhou — usado o summarizer interno.";
+            }
+
+            var compacted = await MaybeCompactAsync(
+                chatId, history, model, ct, userId, force: true);
+            return new CompactResult(compacted, false,
+                compacted ? warning : warning ?? "Nada para compactar.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Compactação manual falhou para chat {ChatId}.", chatId);
+            return new CompactResult(false, false, "Compactação falhou.");
+        }
+    }
+
+    /// <summary>O modelo anuncia a capacidade <c>"compaction"</c>?</summary>
+    private async Task<bool> NativeSupportedAsync(string model, CancellationToken ct)
+    {
+        var info = (await providers!.ListModelsAsync(ct))
+            .FirstOrDefault(m => m.Id.Equals(model, StringComparison.OrdinalIgnoreCase));
+        if (info is null)
+        {
+            return false;
+        }
+        var resolved = await caps!.ResolveAsync(info.Provider, info.Id, info.Capabilities, ct);
+        return resolved.Any(c => c.Equals("compaction", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Persiste kv + marcador <c>compaction</c> no leaf ativo.</summary>
+    private async Task PersistCompactionAsync(
+        string chatId, int headEnd, string summary,
+        ContextSummary? digest, string? turnPrefix, CancellationToken ct)
+    {
+        await config.SetAsync(KvKey(chatId),
+            new CompactionState(headEnd, summary, digest, turnPrefix), ct);
+
+        var tracked = await db.Chats.Include(c => c.Messages)
+            .FirstOrDefaultAsync(c => c.Id == chatId, ct);
+        if (tracked is not null)
+        {
+            var pos = tracked.Messages.Count == 0 ? 0 : tracked.Messages.Max(m => m.Position) + 1;
+            // O marcador pendura no leaf do caminho compactado
+            // (SPEC-20261013-chat-branching): outro ramo não o herda.
+            var marker = new ChatMessage
+            {
+                ChatId = tracked.Id, Role = "compaction", Content = summary,
+                Position = pos, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ParentId = BranchService.ResolveLeaf(tracked)?.Id,
+            };
+            tracked.Messages.Add(marker);
+            tracked.LeafMessageId = marker.Id;
+            tracked.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await db.SaveChangesAsync(ct);
         }
     }
 

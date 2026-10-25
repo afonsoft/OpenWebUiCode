@@ -1179,5 +1179,11 @@
   "settings.gateway_blocked": "ブロックみ",
   "settings.gateway_created": "チャネルをしました — ボットに Webhook URL をしてください。",
   "settings.gateway_pair_ok": "ペアリングしました — ピアがエージェントとできます。",
-  "settings.gateway_pair_fail": "コードがまたはれです — ボットにしいメッセージをってください。"
+  "settings.gateway_pair_fail": "コードがまたはれです — ボットにしいメッセージをってください。",
+  "chat.cmd_compact": "コンテキストを圧縮 — 履歴を要約に変換",
+  "chat.cmd_compact_empty": "圧縮対象のチャットがありません",
+  "chat.cmd_compact_failed": "圧縮できるものがありません（または失敗）",
+  "chat.cmd_compact_native": "コンテキストをネイティブに圧縮しました",
+  "chat.cmd_compact_done": "コンテキストを圧縮しました",
+  "chat.tps_title": "トークン/秒（推定、ローリングウィンドウ）"
 }

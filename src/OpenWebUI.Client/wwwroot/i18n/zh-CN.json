@@ -1179,5 +1179,11 @@
   "settings.gateway_blocked": "",
   "settings.gateway_created": " —  webhook URL。",
   "settings.gateway_pair_ok": " — 。",
-  "settings.gateway_pair_fail": " — 。"
+  "settings.gateway_pair_fail": " — 。",
+  "chat.cmd_compact": "立即压缩上下文 — 历史记录折叠为摘要",
+  "chat.cmd_compact_empty": "没有已加载的聊天可压缩",
+  "chat.cmd_compact_failed": "没有可压缩的内容（或失败）",
+  "chat.cmd_compact_native": "上下文已原生压缩",
+  "chat.cmd_compact_done": "上下文已压缩",
+  "chat.tps_title": "每秒 token 数（估算，滚动窗口）"
 }

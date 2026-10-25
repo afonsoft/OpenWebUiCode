@@ -1179,5 +1179,11 @@
   "settings.gateway_blocked": "blocked",
   "settings.gateway_created": "Channel created — set the webhook URL on the bot.",
   "settings.gateway_pair_ok": "Paired — the peer can now chat with your agent.",
-  "settings.gateway_pair_fail": "Invalid or expired code — send a new message to the bot."
+  "settings.gateway_pair_fail": "Invalid or expired code — send a new message to the bot.",
+  "chat.cmd_compact": "Compact context now — history collapses into a compacted summary",
+  "chat.cmd_compact_empty": "No loaded chat to compact",
+  "chat.cmd_compact_failed": "Nothing to compact (or it failed)",
+  "chat.cmd_compact_native": "Context compacted natively",
+  "chat.cmd_compact_done": "Context compacted",
+  "chat.tps_title": "Tokens per second (estimate, rolling window)"
 }
