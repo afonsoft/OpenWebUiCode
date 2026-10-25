@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "Rien à compacter (ou échec)",
   "chat.cmd_compact_native": "Contexte compacté en natif",
   "chat.cmd_compact_done": "Contexte compacté",
-  "chat.tps_title": "Tokens par seconde (estimation, fenêtre glissante)"
+  "chat.tps_title": "Tokens par seconde (estimation, fenêtre glissante)",
+  "chat.attach_dir": "Joindre un dossier",
+  "chat.dir_listing_attached": "Dossier joint sous forme de liste ({count} fichiers)",
+  "chat.pasted_as_file": "Texte collé enregistré en pièce jointe ({chars} caractères)",
+  "settings.sec_composer": "Éditeur",
+  "settings.composer_paste_file": "Convertir les longs collages en pièces jointes"
 }

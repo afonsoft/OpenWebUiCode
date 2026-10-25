@@ -275,8 +275,10 @@ public sealed class FileContextContributor(AppDbContext db, RagService rag)
     {
         var referenced = await ChatPipeline.ResolveReferenceFileIdsAsync(
             ctx.LastUserText, ctx.User.Id, db, ctx.Ct);
-        var scopedFileIds = (ctx.Request.FileIds ?? [])
-            .Concat(referenced).Distinct().ToList();
+        // attachments-v2: FileIds do request viram blocos <file> na
+        // mensagem do usuário (ChatPipeline §4.6) — o contributor fica só
+        // com as referências "#nome" resolvidas via RAG.
+        var scopedFileIds = referenced.Distinct().ToList();
         if (scopedFileIds.Count == 0)
         {
             return [];

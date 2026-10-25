@@ -329,9 +329,12 @@ public class InfraServicesTests
             FileIds: [fileId]));
         Assert.That(sse, Does.Contain("data: [DONE]"));
 
+        // attachments-v2 RF-001: FileIds anexados viram <file> inline na
+        // mensagem do usuário (RAG segue só para referências "#nome").
         Assert.Multiple(() =>
         {
-            Assert.That(_lastOllamaChatBody, Does.Contain("Contexto recuperado por similaridade"));
+            Assert.That(_lastOllamaChatBody, Does.Contain("file name="));
+            Assert.That(_lastOllamaChatBody, Does.Contain("manual-rag.txt"));
             Assert.That(_lastOllamaChatBody, Does.Contain("batata-frita"));
         });
     }

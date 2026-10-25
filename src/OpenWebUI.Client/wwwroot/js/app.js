@@ -123,6 +123,40 @@ window.openwebui = {
 			element.click();
 		}
 	},
+	// attachments-v2 RF-002: paths relativos (webkitRelativePath) dos arquivos
+	// selecionados num input type=file com webkitdirectory.
+	dirUploadPaths: function (element) {
+		if (!element || !element.files) return [];
+		const paths = [];
+		for (let i = 0; i < element.files.length; i++) {
+			paths.push(element.files[i].webkitRelativePath || element.files[i].name);
+		}
+		return paths;
+	},
+	// attachments-v2 RF-004: intercepta paste no composer — o texto vai p/
+	// .NET decidir (vira anexo acima do threshold) ou insere de volta.
+	hookPaste: function (element, dotNetRef) {
+		if (!element || element._openwebuiPaste) return;
+		element._openwebuiPaste = true;
+		element.addEventListener('paste', function (e) {
+			const text = e.clipboardData && e.clipboardData.getData('text/plain');
+			if (!text) return; // paste de imagem/arquivo segue o fluxo normal.
+			e.preventDefault();
+			dotNetRef.invokeMethodAsync('HandlePastedTextAsync', text);
+		});
+	},
+	// Insere texto na posição do cursor (fallback do paste abaixo do threshold).
+	insertTextAtCursor: function (element, text) {
+		if (!element) return;
+		const start = element.selectionStart || 0;
+		const end = element.selectionEnd || 0;
+		const before = element.value.slice(0, start);
+		const after = element.value.slice(end);
+		element.value = before + text + after;
+		const caret = start + text.length;
+		element.selectionStart = element.selectionEnd = caret;
+		element.dispatchEvent(new Event('input', { bubbles: true }));
+	},
 	// Divisor arrastável do painel de workspace: arrasta p/ esquerda
 	// alarga o painel (clamp 240–720px), largura persiste em localStorage.
 	panelResize: function (handle, panel) {

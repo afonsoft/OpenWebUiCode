@@ -85,6 +85,10 @@
                             <div class="field-note">@L["settings.audio_unavailable"]</div>
                         }
                     </SettingsSection>
+                    @* attachments-v2 RF-004: paste > 16 KB vira anexo pasted-*.txt (default on). *@
+                    <SettingsSection Title="@L["settings.sec_composer"]">
+                        <label class="check"><input type="checkbox" checked="@_pasteToFile" @onchange="OnPasteToFileChanged" /> @L["settings.composer_paste_file"]</label>
+                    </SettingsSection>
                 }
                 else if (_tab == "account")
                 {
@@ -2304,6 +2308,10 @@
                 _webhookEnabled = _webhook.Enabled;
             }
             await LoadAudioSettingsAsync();
+            _pasteToFile = !string.Equals(
+                await JS.InvokeAsync<string?>(
+                    "localStorage.getItem", "webui.composer.paste_file"),
+                "false", StringComparison.Ordinal);
             await InvokeAsync(StateHasChanged);
 
             if (Auth.CurrentUser?.Role != "admin")
@@ -2502,6 +2510,16 @@
     {
         _audioAutoSend = e.Value is true;
         await JS.InvokeVoidAsync("openwebui.audio.setAutoSend", _audioAutoSend);
+    }
+
+    /// <summary>attachments-v2 RF-004: toggle "paste grande vira anexo" (default on).</summary>
+    private bool _pasteToFile = true;
+
+    private async Task OnPasteToFileChanged(ChangeEventArgs e)
+    {
+        _pasteToFile = e.Value is true;
+        await JS.InvokeVoidAsync("localStorage.setItem",
+            "webui.composer.paste_file", _pasteToFile ? "true" : "false");
     }
 
     private async Task SaveProfileAsync()

@@ -178,6 +178,19 @@ public class ApiSurfaceTests
         return string.Empty;
     }
 
+    private static string LastUserContent(JsonElement payload)
+    {
+        var content = string.Empty;
+        foreach (var message in payload.GetProperty("messages").EnumerateArray())
+        {
+            if (message.GetProperty("role").GetString() == "user")
+            {
+                content = message.GetProperty("content").GetString() ?? string.Empty;
+            }
+        }
+        return content;
+    }
+
     private async Task<AuthResponse> SignUpAsync(string name, string email, string password)
     {
         var response = await _client.PostAsJsonAsync(
@@ -365,7 +378,9 @@ public class ApiSurfaceTests
             FileIds: [file.Id]));
 
         var payload = UltimoPayloadChat();
-        Assert.That(SystemContent(payload), Does.Contain("CONTEUDO-ANEXO-77AB"));
+        // attachments-v2 RF-001: anexo vai inline na mensagem do usuário.
+        Assert.That(LastUserContent(payload), Does.Contain("CONTEUDO-ANEXO-77AB"));
+        Assert.That(LastUserContent(payload), Does.Contain("file name="));
     }
 
     [Test]

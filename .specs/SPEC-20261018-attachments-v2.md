@@ -75,3 +75,11 @@ tests/OpenWebUI.Api.Tests/MediaImageProcessorTests.cs           # NOVO
 - PNG 30MB → enviado ao modelo com ≤2048px e sem falhar.
 - Paste de 20KB → vira anexo automaticamente.
 - Binário `.exe` recusado com mensagem clara; testes cobrem decode, caps, resize, paste.
+
+## 6. Implementation Notes (2026-10-25, PR pendente)
+
+- **RF-001:** `AttachmentContentService` (Infrastructure) — `IsTextCandidate` (text/*, mimes de aplicação ou ~60 extensões), `TryReadTextAsync` (UTF-8 estrito → latin1; NUL nos primeiros 8KB → null), `WrapFile`/`WrapBinary` e `InjectTextFilesAsync` (256 KB/arquivo, 1 MB/mensagem, `[…truncated]`). `ChatPipeline` §4.6 passa a consultar TODOS os FileIds do dono (antes só `image/*`) e injeta os blocos na `Content` da mensagem dona. `FileContextContributor` deixa de olhar `request.FileIds` (evita dupla injeção; RAG segue para referências `#nome`).
+- **RF-002:** composer ganha segundo `InputFile` com `webkitdirectory` (botão pasta). Cada arquivo é persistido via `UploadFileAsync` com o path relativo como nome; os paths relativos vêm de `openwebui.dirUploadPaths` (JS, `webkitRelativePath`). A árvore vira `directory-listing-YYYYmmdd-HHmmss.txt` anexada — sem coluna `AttachmentKind` nova (desvio: convenção de nome em vez de schema). Symlinks/out-of-tree: browsers não emitem paths fora da pasta escolhida; `MaxDirFiles=2000`.
+- **RF-003:** `MediaImageProcessor` (SkiaSharp 4.153.1 + `SkiaSharp.NativeAssets.Linux.NoDependencies`) — ImageSharp 4.x exige licença paga e 3.1.x tem advisories de segurança, por isso Skia. >20 MiB ou dimensão >8192 → reencode JPEG q85; se o lado excede 2048, redimensiona mantendo AR. Original intacto no storage; derivado só em memória para a chamada do LLM.
+- **RF-004:** `openwebui.hookPaste` intercepta paste de texto no composer (imagem/arquivo segue fluxo normal) → `HandlePastedTextAsync`: >16 KB vira `pasted-*.txt` + toast; abaixo, insere no cursor (`insertTextAtCursor`). Toggle em Settings → General → Composer (`webui.composer.paste_file`, default on).
+- **Regressões atualizadas:** `FileEndpointsTests`, `ApiSurfaceTests`, `InfraServicesTests` — asserções migradas de system-context para `<file>` inline.

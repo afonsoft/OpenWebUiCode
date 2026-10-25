@@ -1185,5 +1185,10 @@
   "chat.cmd_compact_failed": "Nichts zu komprimieren (oder fehlgeschlagen)",
   "chat.cmd_compact_native": "Kontext nativ komprimiert",
   "chat.cmd_compact_done": "Kontext komprimiert",
-  "chat.tps_title": "Tokens pro Sekunde (Schätzwert, rollierendes Fenster)"
+  "chat.tps_title": "Tokens pro Sekunde (Schätzwert, rollierendes Fenster)",
+  "chat.attach_dir": "Ordner anhängen",
+  "chat.dir_listing_attached": "Ordner als Auflistung angehängt ({count} Dateien)",
+  "chat.pasted_as_file": "Eingefügter Text als Anhang gespeichert ({chars} Zeichen)",
+  "settings.sec_composer": "Eingabefeld",
+  "settings.composer_paste_file": "Lange eingefügte Texte in Dateianhänge umwandeln"
 }

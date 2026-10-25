@@ -681,7 +681,16 @@
                                 @onclick="TriggerFilePicker">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                         </button>
+                        <button class="size-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition cursor-pointer disabled:opacity-40"
+                                title="@L["chat.attach_dir"]" aria-label="@L["chat.attach_dir"]" disabled="@(_loading || _uploading)"
+                                @onclick="TriggerDirPicker">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
+                        </button>
                         <InputFile @ref="_fileInput" OnChange="OnFileSelected" class="hidden" />
+                        @* attachments-v2 RF-002: seletor de pasta — o atributo
+                           webkitdirectory pede ao browser todos os arquivos da
+                           árvore; os paths relativos são lidos via JS. *@
+                        <InputFile @ref="_dirInput" OnChange="OnDirectorySelected" class="hidden" webkitdirectory="" />
                         <VoiceButton Disabled="@(_loading || _streaming)" Lang="@SttLang"
                                      OnDictationStarted="() => _sttBase = _input"
                                      OnTranscript="OnSttTranscript"
@@ -896,6 +905,7 @@
     /// <summary>Último valor de _input já medido pelo autoResize (dedup por render).</summary>
     private string? _composerSized;
     private InputFile? _fileInput;
+    private InputFile? _dirInput;
     private string? _pendingNavigateId;
 
     // Streaming de tools (SPEC-20261007-chat-tool-streaming):
@@ -1103,6 +1113,10 @@
                 _ttsSupported = await JS.InvokeAsync<bool>("openwebui.audio.ttsSupported");
                 // Listener de "perto do fim" para o auto-scroll do stream.
                 await JS.InvokeVoidAsync("openwebui.initPinnedScroll", _scrollContainer);
+                // attachments-v2 RF-004: hook de paste — texto grande vira
+                // anexo pasted-*.txt; texto pequeno insere na posição do cursor.
+                _selfRef ??= DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("openwebui.hookPaste", _composerEl, _selfRef);
             }
             catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
             {
@@ -2029,6 +2043,105 @@
         finally
         {
             _uploading = false;
+        }
+    }
+
+    /// <summary>attachments-v2 RF-002: máximo de arquivos de uma pasta (SPEC: 2000 paths).</summary>
+    private const int MaxDirFiles = 2000;
+
+    /// <summary>attachments-v2 RF-002: abre o seletor de pasta (webkitdirectory).</summary>
+    private async Task TriggerDirPicker()
+    {
+        await JS.InvokeVoidAsync("openwebui.openFilePicker", _dirInput?.Element);
+    }
+
+    /// <summary>
+    /// attachments-v2 RF-002: cada arquivo da pasta é persistido (leitura
+    /// via tools) e a árvore vira um anexo directory-listing-*.txt —
+    /// é ele que entra no prompt como &lt;file&gt;, não os 50 arquivos.
+    /// </summary>
+    private async Task OnDirectorySelected(InputFileChangeEventArgs e)
+    {
+        _uploading = true;
+        try
+        {
+            var files = e.GetMultipleFiles(MaxDirFiles);
+            string[] relPaths = [];
+            try
+            {
+                relPaths = await JS.InvokeAsync<string[]>(
+                    "openwebui.dirUploadPaths", _dirInput?.Element);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+            {
+                // Sem interop: o listing usa os basenames.
+            }
+            var listing = new List<string>(files.Count);
+            for (var i = 0; i < files.Count; i++)
+            {
+                var file = files[i];
+                var rel = i < relPaths.Length && relPaths[i].Length > 0
+                    ? relPaths[i] : file.Name;
+                await using var stream = file.OpenReadStream(MaxUploadBytes);
+                var uploaded = await Api.UploadFileAsync(stream, rel, file.ContentType);
+                if (uploaded is null)
+                {
+                    _error = L.T("chat.upload_failed", ("file", file.Name));
+                    continue;
+                }
+                listing.Add(rel);
+            }
+            if (listing.Count > 0)
+            {
+                listing.Sort(StringComparer.Ordinal);
+                var name = $"directory-listing-{DateTime.Now:yyyyMMdd-HHmmss}.txt";
+                await using var ms = new MemoryStream(
+                    System.Text.Encoding.UTF8.GetBytes(string.Join('\n', listing)));
+                var dirFile = await Api.UploadFileAsync(ms, name, "text/plain");
+                if (dirFile is not null)
+                {
+                    _attachedFiles.Add(dirFile);
+                    Toast.Show(L.T("chat.dir_listing_attached", ("count", listing.Count.ToString())));
+                }
+            }
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    /// <summary>attachments-v2 RF-004: acima de 16 KB o paste vira anexo (default ligado).</summary>
+    private const int PasteFileThreshold = 16 * 1024;
+
+    /// <summary>
+    /// attachments-v2 RF-004: o hook JS intercepta o paste do composer e
+    /// entrega o texto aqui — abaixo do threshold insere no cursor; acima,
+    /// vira pasted-*.txt anexado (toggle em Settings → Composer).
+    /// </summary>
+    [JSInvokable]
+    public async Task HandlePastedTextAsync(string text)
+    {
+        var enabled = !string.Equals(
+            await JS.InvokeAsync<string?>("localStorage.getItem", "webui.composer.paste_file"),
+            "false", StringComparison.Ordinal);
+        if (!enabled || text.Length < PasteFileThreshold)
+        {
+            await JS.InvokeVoidAsync("openwebui.insertTextAtCursor", _composerEl, text);
+            return;
+        }
+        var name = $"pasted-{DateTime.Now:yyyyMMdd-HHmmss}.txt";
+        await using var ms = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(text));
+        var uploaded = await Api.UploadFileAsync(ms, name, "text/plain");
+        if (uploaded is not null)
+        {
+            _attachedFiles.Add(uploaded);
+            Toast.Show(L.T("chat.pasted_as_file", ("chars", text.Length.ToString())));
+            await InvokeAsync(StateHasChanged);
+        }
+        else
+        {
+            await JS.InvokeVoidAsync("openwebui.insertTextAtCursor", _composerEl, text);
         }
     }
 
