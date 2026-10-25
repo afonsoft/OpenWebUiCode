@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-mcp-oauth` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | `docs/analise-opencode-v2.md` (P1.3) |
 
 ## 1. User Story
@@ -83,3 +83,10 @@ tests/OpenWebUI.Api.Tests/McpOAuthServiceTests.cs              # NOVO (PKCE, DCR
 - Testes `McpOAuthServiceTests` (7): URL+PKCE+DCR, complete→token, state inválido, refresh, refresh-fail→required, disconnect, sem metadata.
 
 **Desvios:** sem `McpOAuthToken` entity/migration — tokens via `UserSecretsService` (cripto config-layer existente); UI popup/botão fora de escopo (endpoint `/authorize` devolve URL para o client abrir); CIMD não implementado (metadata `client_id_metadata_document` ausente no handler — registrado).
+
+## Delivered
+
+- **PR:** https://github.com/afonsoft/open-webui/pull/522 (`3acf649`)
+- **Issue:** #510
+- **Branch:** `feature/Devin-20261018-mcp-oauth`
+- **Tests:** `McpOAuthServiceTests` 11 + endpoints em `McpTests` + regressão 18/18
