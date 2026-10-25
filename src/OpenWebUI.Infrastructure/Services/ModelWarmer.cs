@@ -171,8 +171,10 @@ public sealed class ModelWarmer(
 public class ModelWarmerScheduler(IServiceScopeFactory scopeFactory, ILogger<ModelWarmerScheduler> logger)
     : BackgroundService
 {
-    private static readonly TimeSpan Tick = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(2);
+    // Cadências como estáticos mutáveis — seam de teste (mesmo padrão de
+    // ModelWarmer.Now): a suíte encurta para exercitar o loop real.
+    internal static TimeSpan Tick = TimeSpan.FromSeconds(60);
+    internal static TimeSpan InitialDelay = TimeSpan.FromMinutes(2);
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -321,6 +321,79 @@ public class McpTests
         var gone = (await executor.ExecuteAsync(tools, NomeFuncao(tools, "echo"), "{}")).Text;
         Assert.That(gone, Does.Contain("não existe mais"));
     }
+
+    // ---- RF-003 (SPEC-20261018-agent-polish): endpoints /prompts ----
+
+    /// <summary>POST /api/v1/users/user/mcp-servers — cria server escopo usuário.</summary>
+    private async Task<string> CreateUserServerAsync(string name)
+    {
+        var response = await _client.PostAsJsonAsync(
+            "/api/v1/users/user/mcp-servers/",
+            new McpServerUpsertRequest(name, "http", Url: _mcp.Url,
+                Headers: new Dictionary<string, string> { ["X-Token"] = "segredo" }));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<McpServerResponse>())!.Id;
+    }
+
+    [Test]
+    public async Task Prompts_EndpointListaEResolve()
+    {
+        UseToken(_adminToken);
+        var serverId = await CreateUserServerAsync("fake-user-srv");
+
+        // GET /prompts — catálogo efetivo: server habilitado lista o fake.
+        var prompts = await _client.GetFromJsonAsync<List<McpPromptItemResponse>>(
+            "/api/v1/users/user/mcp-servers/prompts");
+        var revisao = prompts!.FirstOrDefault(p =>
+            p.Server == "fake-user-srv" && p.Name == "revisao");
+        Assert.That(revisao, Is.Not.Null);
+        Assert.That(revisao!.Arguments, Is.EqualTo(new[] { "arquivo" }));
+
+        // Server desligado sai do catálogo efetivo (braço EnabledForMe).
+        var off = await _client.PutAsJsonAsync(
+            $"/api/v1/users/user/mcp-servers/{serverId}/enabled", new { enabled = false });
+        Assert.That(off.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var semServer = await _client.GetFromJsonAsync<List<McpPromptItemResponse>>(
+            "/api/v1/users/user/mcp-servers/prompts");
+        Assert.That(semServer!.Any(p => p.Server == "fake-user-srv"), Is.False);
+
+        // POST /prompts/resolve — texto do prompts/get.
+        await _client.PutAsJsonAsync(
+            $"/api/v1/users/user/mcp-servers/{serverId}/enabled", new { enabled = true });
+        var resolve = await _client.PostAsJsonAsync(
+            "/api/v1/users/user/mcp-servers/prompts/resolve",
+            new McpPromptResolveRequest("fake-user-srv", "revisao", "a.cs"));
+        Assert.That(resolve.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await resolve.Content.ReadAsStringAsync());
+        var resolved = await resolve.Content.ReadFromJsonAsync<McpPromptResolveResponse>();
+        Assert.That(resolved!.Text, Is.EqualTo("revise:a.cs"));
+    }
+
+    [Test]
+    public async Task Prompts_EndpointResolve_Erros()
+    {
+        UseToken(_adminToken);
+        await CreateUserServerAsync("fake-user-srv2");
+
+        // 400 — campos obrigatórios.
+        var bad = await _client.PostAsJsonAsync(
+            "/api/v1/users/user/mcp-servers/prompts/resolve",
+            new McpPromptResolveRequest("", "revisao"));
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // 404 — prompt inexistente no server conhecido.
+        var missing = await _client.PostAsJsonAsync(
+            "/api/v1/users/user/mcp-servers/prompts/resolve",
+            new McpPromptResolveRequest("fake-user-srv2", "naoexiste"));
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+
+        // 404 — server desconhecido.
+        var noServer = await _client.PostAsJsonAsync(
+            "/api/v1/users/user/mcp-servers/prompts/resolve",
+            new McpPromptResolveRequest("ghost", "revisao"));
+        Assert.That(noServer.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
 }
 
 /// <summary>
@@ -332,6 +405,14 @@ internal sealed class FakeMcpServer : IDisposable
 {
     private readonly HttpListener _listener = new();
     private readonly CancellationTokenSource _stop = new();
+    private readonly bool _toolsOnly;
+
+    /// <param name="toolsOnly">
+    /// Server "capado": initialize anuncia só <c>tools</c> e os métodos
+    /// resources/prompts retornam erro JSON-RPC — cobre os braços de
+    /// fallback do client quando o server não tem essas capacidades.
+    /// </param>
+    public FakeMcpServer(bool toolsOnly = false) => _toolsOnly = toolsOnly;
 
     public string Url { get; private set; } = "";
 
@@ -414,16 +495,26 @@ internal sealed class FakeMcpServer : IDisposable
                 switch (method)
                 {
                     case "initialize":
+                        var caps = new JsonObject { ["tools"] = new JsonObject() };
+                        if (!_toolsOnly)
+                        {
+                            caps["resources"] = new JsonObject();
+                            caps["prompts"] = new JsonObject();
+                        }
                         response["result"] = new JsonObject
                         {
                             ["protocolVersion"] = "2025-06-18",
-                            ["capabilities"] = new JsonObject
-                            {
-                                ["tools"] = new JsonObject(),
-                                ["resources"] = new JsonObject(),
-                                ["prompts"] = new JsonObject(),
-                            },
+                            ["capabilities"] = caps,
                             ["serverInfo"] = new JsonObject { ["name"] = "fake-mcp", ["version"] = "1.0" },
+                        };
+                        break;
+                    case "resources/list" when _toolsOnly:
+                    case "resources/read" when _toolsOnly:
+                    case "prompts/list" when _toolsOnly:
+                    case "prompts/get" when _toolsOnly:
+                        response["error"] = new JsonObject
+                        {
+                            ["code"] = -32601, ["message"] = "Method not found",
                         };
                         break;
                     case "resources/list":

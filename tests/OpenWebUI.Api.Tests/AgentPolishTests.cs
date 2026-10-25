@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
@@ -84,6 +85,7 @@ public class AgentPolishTests
         public int TagsCalls;
         public int ChatCalls;
         public int CompletionsCalls;
+        public bool FailCompletions;
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
@@ -103,11 +105,21 @@ public class AgentPolishTests
             else if (path.EndsWith("/api/chat", StringComparison.Ordinal))
             {
                 ChatCalls++;
+                if (FailCompletions)
+                {
+                    return Task.FromResult(
+                        new HttpResponseMessage(HttpStatusCode.InternalServerError));
+                }
                 json = """{"model":"m-warm","message":{"role":"assistant","content":"ok"},"done":true}""";
             }
             else
             {
                 CompletionsCalls++;
+                if (FailCompletions)
+                {
+                    return Task.FromResult(
+                        new HttpResponseMessage(HttpStatusCode.InternalServerError));
+                }
                 json = """{"choices":[{"message":{"role":"assistant","content":"ok"}}]}""";
             }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -231,17 +243,31 @@ public class AgentPolishTests
         public int IndexCalls;
         public int SkillCalls;
         public string? LastIfNoneMatch;
+        public HttpStatusCode IndexStatus = HttpStatusCode.OK;
+        public string IndexBody =
+            """{"skills":[{"name":"alpha","description":"Skill remota"}]}""";
+        public HttpStatusCode SkillStatus = HttpStatusCode.OK;
+        public string? SkillBody;
+        public bool SkillSemContentLength;
+        public bool Throw;
         private const string ETag = "\"v1\"";
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
         {
+            if (Throw)
+            {
+                throw new HttpRequestException("catálogo fora do ar");
+            }
             var path = request.RequestUri!.AbsolutePath;
             if (path.EndsWith("/index.json", StringComparison.Ordinal))
             {
                 IndexCalls++;
-                return Task.FromResult(Json(
-                    """{"skills":[{"name":"alpha","description":"Skill remota"}]}"""));
+                return Task.FromResult(new HttpResponseMessage(IndexStatus)
+                {
+                    Content = new StringContent(
+                        IndexBody, Encoding.UTF8, "application/json"),
+                });
             }
             SkillCalls++;
             LastIfNoneMatch = request.Headers.IfNoneMatch.FirstOrDefault()?.Tag;
@@ -250,7 +276,11 @@ public class AgentPolishTests
                 return Task.FromResult(
                     new HttpResponseMessage(HttpStatusCode.NotModified));
             }
-            var body = """
+            if (SkillStatus != HttpStatusCode.OK)
+            {
+                return Task.FromResult(new HttpResponseMessage(SkillStatus));
+            }
+            var body = SkillBody ?? """
                 ---
                 name: alpha
                 description: Skill remota
@@ -260,6 +290,10 @@ public class AgentPolishTests
                 """;
             var response = Json(body);
             response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(ETag);
+            if (SkillSemContentLength)
+            {
+                response.Content.Headers.ContentLength = null;
+            }
             return Task.FromResult(response);
         }
 
@@ -739,5 +773,500 @@ public class AgentPolishTests
         var text = await compactor.TryCompactAsync(
             [new ChatCompletionMessage("user", "olá")], "m-warm", null, default);
         Assert.That(text, Is.EqualTo("ok"));
+    }
+
+    // ---------- Cobertura: braços de erro e bordas ----------
+
+    private sealed class ThrowingNative : INativeContextCompactor
+    {
+        public Task<string?> TryCompactAsync(
+            IReadOnlyList<ChatCompletionMessage> history,
+            string model, string? userId, CancellationToken ct) =>
+            throw new InvalidOperationException("endpoint nativo fora");
+    }
+
+    [Test]
+    public async Task Warming_SemConfig_NadaAFazer()
+    {
+        var db = Db();
+        db.Database.EnsureCreated();
+        var config = new ConfigService(db, TestCache.Create());
+        var providers = new ProviderService(
+            new StubFactory(new ProviderHandler()), config,
+            NullLogger<ProviderService>.Instance,
+            TestCache.Create(), new ConfigurationBuilder().Build());
+
+        Assert.That(await new ModelWarmer(db, config, providers)
+            .RunOnceAsync(default), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Warming_ModeloForaDoCatalogo_Pula()
+    {
+        var (warmer, handler) = await NewWarmerAsync(
+            ["http://ollama.test"], [], "ghost-model", billable: false);
+        var now = DateTimeOffset.UtcNow;
+        await SeedRunAsync("ghost-model", now.ToUnixTimeSeconds() - 60);
+
+        // Modelo configurado mas ausente do catálogo do provider → skip.
+        Assert.That(await warmer.RunOnceAsync(default), Is.EqualTo(0));
+        Assert.That(handler.ChatCalls, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Warming_PingFalha_ContinuaSemLancar()
+    {
+        var (warmer, handler) = await NewWarmerAsync(
+            ["http://ollama.test"], [], "m-warm", billable: false);
+        handler.FailCompletions = true;
+        var now = DateTimeOffset.UtcNow;
+        await SeedRunAsync("m-warm", now.ToUnixTimeSeconds() - 60);
+
+        // Ping falha → log interno, nunca lança, sent=0.
+        Assert.That(await warmer.RunOnceAsync(default), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Warming_Scheduler_TickSobreviveAFalhaDoWarmer()
+    {
+        var oldDelay = ModelWarmerScheduler.InitialDelay;
+        var oldTick = ModelWarmerScheduler.Tick;
+        ModelWarmerScheduler.InitialDelay = TimeSpan.FromMilliseconds(1);
+        ModelWarmerScheduler.Tick = TimeSpan.FromMilliseconds(15);
+        try
+        {
+            var db = Db();
+            db.Database.EnsureCreated();
+            var config = new ConfigService(db, TestCache.Create());
+            // Config malformada → RunOnceAsync lança → o scheduler engole
+            // e segue o loop (braço catch + while + delay).
+            await config.SetAsync(ModelWarmer.ConfigKey, 42);
+            var providers = new ProviderService(
+                new StubFactory(new ProviderHandler()), config,
+                NullLogger<ProviderService>.Instance,
+                TestCache.Create(), new ConfigurationBuilder().Build());
+            var warmer = new ModelWarmer(db, config, providers);
+            var services = new ServiceCollection()
+                .AddSingleton(warmer).BuildServiceProvider();
+            var scheduler = new ModelWarmerScheduler(
+                services.GetRequiredService<IServiceScopeFactory>(),
+                NullLogger<ModelWarmerScheduler>.Instance);
+
+            await scheduler.StartAsync(CancellationToken.None);
+            await Task.Delay(120);
+            await scheduler.StopAsync(CancellationToken.None);
+            Assert.Pass("loop executou, engoliu a falha e cancelou limpo");
+        }
+        finally
+        {
+            ModelWarmerScheduler.InitialDelay = oldDelay;
+            ModelWarmerScheduler.Tick = oldTick;
+        }
+    }
+
+    [Test]
+    public async Task Warming_Scheduler_CancelaDuranteDelayInicial()
+    {
+        var oldDelay = ModelWarmerScheduler.InitialDelay;
+        ModelWarmerScheduler.InitialDelay = TimeSpan.FromSeconds(30);
+        try
+        {
+            var services = new ServiceCollection().BuildServiceProvider();
+            var scheduler = new ModelWarmerScheduler(
+                services.GetRequiredService<IServiceScopeFactory>(),
+                NullLogger<ModelWarmerScheduler>.Instance);
+            await scheduler.StartAsync(CancellationToken.None);
+            await Task.Delay(30);
+            await scheduler.StopAsync(CancellationToken.None);
+            Assert.Pass("cancelamento durante o delay inicial retorna cedo");
+        }
+        finally
+        {
+            ModelWarmerScheduler.InitialDelay = oldDelay;
+        }
+    }
+
+    [Test]
+    public async Task Remote_IndexFalha_NenhumaEntrada()
+    {
+        var handler = new CatalogHandler { IndexStatus = HttpStatusCode.NotFound };
+        var catalog = NewCatalog(handler);
+        var config = await NewConfigAsync();
+        await SeedRemoteRootAsync(config, "https://skills.test");
+
+        Assert.That(await catalog.RefreshIfStaleAsync(config, default), Is.EqualTo(0));
+        Assert.That(catalog.Entries, Is.Empty);
+    }
+
+    [Test]
+    public async Task Remote_IndexArraySimples_Parsa()
+    {
+        var handler = new CatalogHandler
+        {
+            IndexBody = """[{"name":"arr1","description":"forma array"}]""",
+            SkillBody = "---\nname: arr1\ndescription: forma array\n---\nCorpo arr1.",
+        };
+        var catalog = NewCatalog(handler);
+        var config = await NewConfigAsync();
+        await SeedRemoteRootAsync(config, "https://skills.test");
+
+        Assert.That(await catalog.RefreshIfStaleAsync(config, default), Is.EqualTo(1));
+        Assert.That(catalog.Entries.Select(e => e.Name), Does.Contain("arr1"));
+    }
+
+    [Test]
+    public async Task Remote_Skill404_EhPulada()
+    {
+        var handler = new CatalogHandler { SkillStatus = HttpStatusCode.NotFound };
+        var catalog = NewCatalog(handler);
+        var config = await NewConfigAsync();
+        await SeedRemoteRootAsync(config, "https://skills.test");
+
+        Assert.That(await catalog.RefreshIfStaleAsync(config, default), Is.EqualTo(1));
+        Assert.That(catalog.Entries, Is.Empty);
+    }
+
+    [Test]
+    public async Task Remote_CorpoDeclaradoGigante_EhPulado()
+    {
+        // Content-Length > 64KB → skip antes de ler (braço do header).
+        var handler = new CatalogHandler { SkillBody = new string('x', 70 * 1024) };
+        var catalog = NewCatalog(handler);
+        var config = await NewConfigAsync();
+        await SeedRemoteRootAsync(config, "https://skills.test");
+
+        await catalog.RefreshIfStaleAsync(config, default);
+        Assert.That(catalog.Entries, Is.Empty);
+    }
+
+    [Test]
+    public async Task Remote_CorpoSemHeader_EhTruncado()
+    {
+        // Sem Content-Length → lê e trunca no cap de 64KB (braço do body).
+        var handler = new CatalogHandler
+        {
+            SkillBody = new string('x', 70 * 1024), SkillSemContentLength = true,
+        };
+        var catalog = NewCatalog(handler);
+        var config = await NewConfigAsync();
+        await SeedRemoteRootAsync(config, "https://skills.test");
+
+        await catalog.RefreshIfStaleAsync(config, default);
+        Assert.That(catalog.Entries, Has.Count.EqualTo(1));
+        Assert.That(catalog.Entries[0].Body.Length, Is.EqualTo(64 * 1024));
+    }
+
+    [Test]
+    public async Task Remote_ConfigIlegivel_RetornaZero()
+    {
+        var handler = new CatalogHandler();
+        var catalog = NewCatalog(handler);
+        var config = await NewConfigAsync();
+        // Tipo errado no kv → GetAsync<List<string>> lança → catálogo ignora.
+        await config.SetAsync(RemoteSkillCatalog.ConfigKey, 42);
+
+        Assert.That(await catalog.RefreshIfStaleAsync(config, default), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Remote_FetchLanca_EhEngolido()
+    {
+        var handler = new CatalogHandler { Throw = true };
+        var catalog = NewCatalog(handler);
+        var config = await NewConfigAsync();
+        await SeedRemoteRootAsync(config, "https://skills.test");
+
+        Assert.That(await catalog.RefreshIfStaleAsync(config, default), Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task Mcp_ListResources_PublicoEDesabilitado()
+    {
+        await using var db = Db();
+        db.Database.EnsureCreated();
+        var mcp = NewMcpDb(db);
+
+        var list = await mcp.ListResourcesAsync(HttpServer(), default);
+        Assert.That(list, Has.Count.EqualTo(1));
+        Assert.That(list[0].Uri, Is.EqualTo("memo://alpha"));
+
+        var disabled = HttpServer();
+        disabled.Enabled = false;
+        Assert.That(await mcp.ListResourcesAsync(disabled, default), Is.Empty);
+    }
+
+    [Test]
+    public async Task Mcp_ReadResource_PublicoEDesabilitado()
+    {
+        await using var db = Db();
+        db.Database.EnsureCreated();
+        var mcp = NewMcpDb(db);
+
+        var text = await mcp.ReadResourceAsync(HttpServer(), "memo://alpha", default);
+        Assert.That(text, Does.Contain("conteudo-do-resource"));
+
+        var disabled = HttpServer();
+        disabled.Enabled = false;
+        Assert.That(await mcp.ReadResourceAsync(disabled, "memo://alpha", default),
+            Does.Contain("desabilitado"));
+    }
+
+    [Test]
+    public async Task Mcp_ReadResourceTool_SemUri_ErroAmigavel()
+    {
+        await using var db = Db();
+        db.Database.EnsureCreated();
+        var mcp = NewMcpDb(db);
+
+        var text = await mcp.CallToolAsync(
+            HttpServer(), "read_resource", "{}", default);
+        Assert.That(text, Does.Contain("argumento 'uri'"));
+    }
+
+    [Test]
+    public async Task Mcp_GetPrompt_ServidorMorto_RetornaNull()
+    {
+        await using var db = Db();
+        db.Database.EnsureCreated();
+        var mcp = NewMcpDb(db);
+        var dead = HttpServer();
+        dead.Url = "http://127.0.0.1:1/mcp";
+
+        Assert.That(await mcp.GetPromptAsync(dead, "revisao",
+            new Dictionary<string, object?>(), default), Is.Null);
+
+        var disabled = HttpServer();
+        disabled.Enabled = false;
+        Assert.That(await mcp.GetPromptAsync(disabled, "revisao",
+            new Dictionary<string, object?>(), default), Is.Null);
+        Assert.That(await mcp.ListPromptsAsync(disabled, default), Is.Empty);
+    }
+
+    [Test]
+    public async Task Mcp_Refresh_ServerSoTools_SemVirtualNemPrompts()
+    {
+        using var toolsOnly = new FakeMcpServer(toolsOnly: true);
+        toolsOnly.Start();
+        await using var db = Db();
+        db.Database.EnsureCreated();
+        var server = HttpServer();
+        server.Url = toolsOnly.Url;
+        db.McpServers.Add(server);
+        await db.SaveChangesAsync();
+        var mcp = NewMcpDb(db);
+
+        var count = await mcp.RefreshToolsAsync(server, default);
+        var tools = db.Tools.Where(t => (t.Url ?? "")
+            .StartsWith($"mcp://{server.Id}/")).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(count, Is.EqualTo(3), "só as 3 tools reais do fake");
+            Assert.That(tools.Any(t => t.Url!.EndsWith("/read_resource")), Is.False,
+                "sem resources → sem tool virtual");
+        });
+        Assert.That(await mcp.ListPromptsAsync(server, default), Is.Empty);
+    }
+
+    [Test]
+    public async Task ExpandMcp_SemServerOuPrompt_RetornaNull()
+    {
+        await using var db = Db();
+        db.Database.EnsureCreated();
+        var server = HttpServer();
+        db.McpServers.Add(server);
+        await db.SaveChangesAsync();
+
+        var svc = NewRepoCommandService(db);
+        var (r1, e1) = await svc.ExpandAsync("u1", null, "ghost:revisao", null, default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r1, Is.Null);
+            Assert.That(e1, Is.Null, "server desconhecido não é comando — sem erro");
+        });
+        var (r2, e2) = await svc.ExpandAsync("u1", null, "fake:naoexiste", null, default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r2, Is.Null);
+            Assert.That(e2, Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task ExpandMcp_GetFalha_RetornaErro()
+    {
+        await using var db = Db();
+        db.Database.EnsureCreated();
+        var server = HttpServer();
+        db.McpServers.Add(server);
+        await db.SaveChangesAsync();
+        var svc = NewRepoCommandService(db);
+
+        // Prime o cache de prompts com o server vivo, depois mata a URL —
+        // o get falha mas a listagem sai do cache.
+        var (ok, _) = await svc.ExpandAsync("u1", null, "fake:revisao", "a.cs", default);
+        Assert.That(ok, Is.Not.Null);
+        db.McpServers.Update(server);
+        server.Url = "http://127.0.0.1:1/mcp";
+        await db.SaveChangesAsync();
+
+        var (result, error) = await svc.ExpandAsync(
+            "u1", null, "fake:revisao", "a.cs", default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Null);
+            Assert.That(error, Does.Contain("falha"));
+        });
+    }
+
+    private RepoCommandService NewRepoCommandService(AppDbContext db)
+    {
+        var config = new ConfigService(db, TestCache.Create());
+        var providers = new ProviderService(
+            new StubFactory(new ProviderHandler()), config,
+            NullLogger<ProviderService>.Instance,
+            TestCache.Create(), new ConfigurationBuilder().Build());
+        var agents = new AgentDefinitionService(
+            new StubEnv(_root), config, NullLogger<AgentDefinitionService>.Instance);
+        return new RepoCommandService(
+            new SkillDiscoveryService(), agents, providers,
+            new ConfigurationBuilder().Build(),
+            NewMcpDb(db), db);
+    }
+
+    [Test]
+    public async Task Compact_ModeloAusenteDoCatalogo_SemNativo()
+    {
+        var summarizer = new StubSummarizer(
+            new ContextSummary("resumo interno", [], [], []));
+        var native = new StubNative("não deve ser chamado");
+        var db = Db();
+        db.Database.EnsureCreated();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:native", true);
+        var roles = new ModelRoleResolver(db, config,
+            _ => Task.FromResult<List<ModelInfo>>([]),
+            NullLogger<ModelRoleResolver>.Instance);
+        var caps = new ModelCapabilityResolver(config,
+            NullLogger<ModelCapabilityResolver>.Instance);
+        var providers = new ProviderService(
+            new StubFactory(new ProviderHandler()), config,
+            NullLogger<ProviderService>.Instance,
+            TestCache.Create(), new ConfigurationBuilder().Build());
+        await config.SetAsync("connections",
+            new ConnectionsConfig(["http://ollama.test"], [], []));
+        var svc = new ContextCompactionService(db, config, summarizer, roles,
+            NullLogger<ContextCompactionService>.Instance,
+            native, providers, caps);
+        await SeedChatAsync("chat-out", 4);
+
+        // Modelo fora do catálogo → capacidade não resolve → sem native.
+        var result = await svc.CompactNowAsync(
+            "chat-out", History(40), "m-desconhecido", "u1", default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Compacted, Is.True);
+            Assert.That(native.Calls, Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public async Task Compact_SemResumo_AvisaNadaParaCompactar()
+    {
+        var svc = await NewCompactionAsync(new StubSummarizer(null));
+        await SeedChatAsync("chat-vazio", 4);
+        var result = await svc.CompactNowAsync(
+            "chat-vazio", History(10), "m-warm", "u1", default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Compacted, Is.False);
+            Assert.That(result.Warning, Does.Contain("Nada para compactar"));
+        });
+    }
+
+    [Test]
+    public async Task Compact_NativeLanca_RetornaFalhou()
+    {
+        var db = Db();
+        db.Database.EnsureCreated();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:native", true);
+        await config.SetAsync("models:capability-overrides",
+            new Dictionary<string, string[]> { ["ollama:m-warm"] = ["compaction"] });
+        await config.SetAsync("connections",
+            new ConnectionsConfig(["http://ollama.test"], [], []));
+        var roles = new ModelRoleResolver(db, config,
+            _ => Task.FromResult<List<ModelInfo>>([]),
+            NullLogger<ModelRoleResolver>.Instance);
+        var caps = new ModelCapabilityResolver(config,
+            NullLogger<ModelCapabilityResolver>.Instance);
+        var providers = new ProviderService(
+            new StubFactory(new ProviderHandler()), config,
+            NullLogger<ProviderService>.Instance,
+            TestCache.Create(), new ConfigurationBuilder().Build());
+        var svc = new ContextCompactionService(db, config,
+            new StubSummarizer(null), roles,
+            NullLogger<ContextCompactionService>.Instance,
+            new ThrowingNative(), providers, caps);
+        await SeedChatAsync("chat-throw", 4);
+
+        var result = await svc.CompactNowAsync(
+            "chat-throw", History(10), "m-warm", "u1", default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Compacted, Is.False);
+            Assert.That(result.Warning, Does.Contain("falhou"));
+        });
+    }
+
+    [Test]
+    public async Task Autoinvoke_SkillOculta_NaoInjeta()
+    {
+        var dir = Path.Join(_root, ".agents", "skills", "auto1");
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Join(dir, "SKILL.md"),
+            "---\nname: auto1\ndescription: auto\nautoinvoke: true\n---\nCorpo da auto1.");
+        var db = Db();
+        db.Database.EnsureCreated();
+        var config = new ConfigService(db, TestCache.Create());
+        var overlay = new UserConfigOverlayService(db, config);
+        var catalog = new RemoteSkillCatalog(new StubFactory(new CatalogHandler()));
+        var contributor = new Completions.Contributors.AutoinvokeSkillsContributor(
+            new SkillDiscoveryService(catalog), catalog, overlay, config);
+        var ctx = new OpenWebUI.Infrastructure.SystemPrompt.PromptContext
+        {
+            Request = new ChatCompletionRequest(
+                "m", [new ChatCompletionMessage("user", "oi")], Stream: true),
+            User = new User { Id = "u1", Name = "U", Email = "u@t.local" },
+            LastUserText = "oi", Model = "m", Ct = CancellationToken.None,
+            WorkdirFactory = _ => Task.FromResult(_root!),
+        };
+
+        // Usuário desligou a skill → não injeta.
+        await config.SetAsync("u:u1:skills-disabled", new List<string> { "auto1" });
+        Assert.That(await contributor.ContributeAsync(ctx), Is.Empty);
+
+        // Desligada globalmente pelo admin → também não injeta.
+        await config.SetAsync("u:u1:skills-disabled", new List<string>());
+        await config.SetAsync("skills-disabled", new List<string> { "auto1" });
+        Assert.That(await contributor.ContributeAsync(ctx), Is.Empty);
+    }
+
+    [Test]
+    public async Task NativeCompactor_FalhaNoProvider_RetornaNull()
+    {
+        var db = Db();
+        db.Database.EnsureCreated();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("connections",
+            new ConnectionsConfig(["http://ollama.test"], [], []));
+        var providers = new ProviderService(
+            new StubFactory(new ProviderHandler { FailCompletions = true }), config,
+            NullLogger<ProviderService>.Instance,
+            TestCache.Create(), new ConfigurationBuilder().Build());
+        var compactor = new ProviderNativeCompactor(providers);
+
+        Assert.That(await compactor.TryCompactAsync(
+            [new ChatCompletionMessage("user", "olá")], "m-warm", null, default),
+            Is.Null);
     }
 }
