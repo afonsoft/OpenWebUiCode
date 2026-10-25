@@ -185,6 +185,9 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.Services.Gateway.GatewayInbo
 builder.Services.AddScoped<IChatRunNotifier,
     OpenWebUI.Infrastructure.Services.Gateway.GatewayReplyService>();
 builder.Services.AddHttpClient("gateway");
+builder.Services.AddHttpClient(McpOAuthService.HttpClientName,
+    client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddScoped<McpOAuthService>();
 
 // Tools built-in do chat (SPEC-20261007-chat-agent-tools): registro
 // resolve ids "builtin:*"; desligar via config BuiltinTools:Disabled (csv).
@@ -619,6 +622,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapChatJobEndpoints();
     app.MapMcpEndpoints();
     app.MapUserMcpEndpoints();
+    app.MapMcpOAuthEndpoints();
     app.MapChannelEndpoints();
     app.MapSecretEndpoints();
 }

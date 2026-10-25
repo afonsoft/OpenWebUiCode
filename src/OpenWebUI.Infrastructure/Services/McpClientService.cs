@@ -28,7 +28,8 @@ public partial class McpClientService(
     HybridCache cache,
     PolicyService? policies = null,
     SkillDiscoveryService? skills = null,
-    ILogger<McpClientService>? logger = null)
+    ILogger<McpClientService>? logger = null,
+    McpOAuthService? oauth = null)
 {
 
     /// <summary>Prefixo interno de URL das tools virtuais MCP.</summary>
@@ -447,7 +448,14 @@ public partial class McpClientService(
         return slash <= 0 ? null : (rest[..slash], rest[(slash + 1)..]);
     }
 
-    private static async Task<McpClient> ConnectAsync(McpServer server, CancellationToken ct)
+    /// <summary>
+    /// Abre o transporte (stdio ou streamable HTTP). Servers HTTP do
+    /// usuário ganham <c>Authorization: Bearer</c> via
+    /// <see cref="McpOAuthService"/> quando há token (SPEC-20261018-
+    /// mcp-oauth RF-004); falha 401 marca o server como
+    /// <c>authState=required</c> e repropaga o erro original.
+    /// </summary>
+    private async Task<McpClient> ConnectAsync(McpServer server, CancellationToken ct)
     {
         IClientTransport transport = server.Transport == "stdio"
             ? new StdioClientTransport(new StdioClientTransportOptions
@@ -463,10 +471,37 @@ public partial class McpClientService(
                 Name = server.Name,
                 Endpoint = new Uri(server.Url!, UriKind.Absolute),
                 TransportMode = HttpTransportMode.AutoDetect,
-                AdditionalHeaders = ParseHeaders(server.HeadersJson),
+                AdditionalHeaders = await ResolveHeadersAsync(server, ct),
             });
 
-        return await McpClient.CreateAsync(transport, null, null, ct);
+        try
+        {
+            return await McpClient.CreateAsync(transport, null, null, ct);
+        }
+        catch (Exception ex) when (oauth is not null
+            && server.UserId is not null
+            && McpOAuthService.IsAuthError(ex))
+        {
+            await oauth.MarkRequiredAsync(server.UserId, server.Id, ct);
+            throw;
+        }
+    }
+
+    /// <summary>Headers do server + Bearer OAuth quando há token válido.</summary>
+    private async Task<Dictionary<string, string>> ResolveHeadersAsync(
+        McpServer server, CancellationToken ct)
+    {
+        var headers = ParseHeaders(server.HeadersJson);
+        if (oauth is null || server.UserId is not { Length: > 0 } userId)
+        {
+            return headers;
+        }
+        var token = await oauth.GetAccessTokenAsync(userId, server.Id, ct);
+        if (token is { Length: > 0 })
+        {
+            headers["Authorization"] = $"Bearer {token}";
+        }
+        return headers;
     }
 
     /// <summary>
