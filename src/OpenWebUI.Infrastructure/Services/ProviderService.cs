@@ -390,6 +390,7 @@ public class ProviderService(
         var connections = await ApplyUserKeysAsync(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
+        request = ApplyProviderOverlay(request, provider, connections);
 
         return provider switch
         {
@@ -434,6 +435,7 @@ public class ProviderService(
             }
         }
 
+        request = ApplyProviderOverlay(request, provider, connections);
         var lines = provider switch
         {
             "ollama" => StreamOllamaAsync(request, connections, ct),
@@ -463,6 +465,7 @@ public class ProviderService(
         var connections = await ApplyUserKeysAsync(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
+        request = ApplyProviderOverlay(request, provider, connections);
         var payload = BuildPayload(request, stream: false, provider);
         JsonNode? json;
         bool openAi = provider == "openai";
@@ -492,6 +495,7 @@ public class ProviderService(
                 httpRequest.Headers.Authorization =
                     new AuthenticationHeaderValue("Bearer", apiKey);
             }
+            ApplyExtraHeaders(httpRequest, request);
             using var response = await httpClientFactory.CreateClient()
                 .SendAsync(httpRequest, ct);
             await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -501,10 +505,15 @@ public class ProviderService(
         {
             var baseUrl = FirstBaseUrl(connections)
                 ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
-            using var content = new StringContent(
-                payload.ToJsonString(), Encoding.UTF8, "application/json");
-            using var response = await httpClientFactory.CreateClient().PostAsync(
-                $"{TrimSlash(baseUrl)}/api/chat", content, ct);
+            using var httpRequest = new HttpRequestMessage(
+                HttpMethod.Post, $"{TrimSlash(baseUrl)}/api/chat")
+            {
+                Content = new StringContent(
+                    payload.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            ApplyExtraHeaders(httpRequest, request);
+            using var response = await httpClientFactory.CreateClient()
+                .SendAsync(httpRequest, ct);
             await EnsureSuccessOrProviderErrorAsync(response, ct);
             json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
         }
@@ -732,6 +741,7 @@ public class ProviderService(
         var connections = await ApplyUserKeysAsync(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
+        request = ApplyProviderOverlay(request, provider, connections);
         var payload = BuildPayload(request, stream: true, provider);
 
         try
@@ -798,6 +808,7 @@ public class ProviderService(
             httpRequest.Headers.Authorization =
                 new AuthenticationHeaderValue("Bearer", apiKey);
         }
+        ApplyExtraHeaders(httpRequest, request);
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -1271,6 +1282,7 @@ public class ProviderService(
             Content = new StringContent(
                 payload.ToJsonString(), Encoding.UTF8, "application/json"),
         };
+        ApplyExtraHeaders(httpRequest, request);
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -1419,7 +1431,8 @@ public class ProviderService(
         ?? throw new InvalidOperationException($"Nenhuma conexão '{type}' configurada.");
 
     private static HttpRequestMessage NewAnthropicRequest(
-        ProviderConnection connection, JsonObject payload)
+        ProviderConnection connection, JsonObject payload,
+        ChatCompletionRequest? request = null)
     {
         var httpRequest = new HttpRequestMessage(
             HttpMethod.Post, $"{TrimSlash(connection.BaseUrl)}/v1/messages")
@@ -1432,6 +1445,10 @@ public class ProviderService(
             httpRequest.Headers.Add("x-api-key", connection.ApiKey);
         }
         httpRequest.Headers.Add("anthropic-version", AnthropicVersion);
+        if (request is not null)
+        {
+            ApplyExtraHeaders(httpRequest, request);
+        }
         return httpRequest;
     }
 
@@ -1442,7 +1459,8 @@ public class ProviderService(
     /// assistant viram blocos <c>tool_use</c> com <c>input</c> objeto e tools
     /// OpenAI viram <c>{name, description, input_schema}</c>.
     /// </summary>
-    private static JsonObject BuildAnthropicPayload(ChatCompletionRequest request, bool stream)
+    private static JsonObject BuildAnthropicPayload(
+        ChatCompletionRequest request, bool stream, bool cacheAllowed = true)
     {
         var system = new List<string>();
         var messages = new List<JsonObject>();
@@ -1624,7 +1642,67 @@ public class ProviderService(
             }
         }
 
+        // SPEC-20261018-model-variants RF-003: cache_format anthropic →
+        // cache_control ephemeral em system/tools/última user text; e
+        // overlay de body da variant por cima de tudo.
+        if (cacheAllowed && string.Equals(request.CacheFormat, "anthropic",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyAnthropicCacheControl(payload);
+        }
+        if (request.ExtraBody is { Count: > 0 } overlay)
+        {
+            ModelVariantService.DeepMerge(payload, overlay);
+        }
+
         return payload;
+    }
+
+    /// <summary>
+    /// cacheFormat:"anthropic" (RF-003): cache_control {type:"ephemeral"}
+    /// no system, em cada tool e no último bloco text da última user msg —
+    /// reaproveita o prefixo do prompt/tools entre turnos.
+    /// </summary>
+    private static void ApplyAnthropicCacheControl(JsonObject payload)
+    {
+        JsonObject Marker() => new() { ["type"] = "ephemeral" };
+        if (payload["system"] is JsonValue sys)
+        {
+            // System como array de blocos habilita cache_control por bloco.
+            payload["system"] = new JsonArray(
+                new JsonObject
+                {
+                    ["type"] = TextKey,
+                    [TextKey] = sys.GetValue<string>(),
+                    ["cache_control"] = Marker(),
+                });
+        }
+        if (payload["tools"] is JsonArray tools && tools.Count > 0
+            && tools[^1] is JsonObject lastTool)
+        {
+            lastTool["cache_control"] = Marker();
+        }
+        if (payload["messages"] is JsonArray msgs
+            && msgs.LastOrDefault(m =>
+                m?["role"]?.GetValue<string>() == "user") is JsonObject lastUser)
+        {
+            if (lastUser[ContentKey] is JsonArray blocks
+                && blocks.LastOrDefault(b =>
+                    b?["type"]?.GetValue<string>() == TextKey) is JsonObject textBlock)
+            {
+                textBlock["cache_control"] = Marker();
+            }
+            else if (lastUser[ContentKey] is JsonValue)
+            {
+                lastUser[ContentKey] = new JsonArray(
+                    new JsonObject
+                    {
+                        ["type"] = TextKey,
+                        [TextKey] = lastUser[ContentKey]!.DeepClone(),
+                        ["cache_control"] = Marker(),
+                    });
+            }
+        }
     }
 
     private static JsonNode? ToJsonNode(object? value) => value switch
@@ -1689,8 +1767,9 @@ public class ProviderService(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, "anthropic");
-        var payload = BuildAnthropicPayload(request, stream: false);
-        using var httpRequest = NewAnthropicRequest(connection, payload);
+        var payload = BuildAnthropicPayload(request, stream: false,
+            cacheAllowed: !IsOmniroute(connection.BaseUrl));
+        using var httpRequest = NewAnthropicRequest(connection, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
@@ -1701,8 +1780,9 @@ public class ProviderService(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, "anthropic");
-        var payload = BuildAnthropicPayload(request, stream: false);
-        using var httpRequest = NewAnthropicRequest(connection, payload);
+        var payload = BuildAnthropicPayload(request, stream: false,
+            cacheAllowed: !IsOmniroute(connection.BaseUrl));
+        using var httpRequest = NewAnthropicRequest(connection, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
@@ -1759,8 +1839,9 @@ public class ProviderService(
         [EnumeratorCancellation] CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, "anthropic");
-        var payload = BuildAnthropicPayload(request, stream: true);
-        using var httpRequest = NewAnthropicRequest(connection, payload);
+        var payload = BuildAnthropicPayload(request, stream: true,
+            cacheAllowed: !IsOmniroute(connection.BaseUrl));
+        using var httpRequest = NewAnthropicRequest(connection, payload, request);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -1820,8 +1901,9 @@ public class ProviderService(
         CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, "anthropic");
-        var payload = BuildAnthropicPayload(request, stream: true);
-        using var httpRequest = NewAnthropicRequest(connection, payload);
+        var payload = BuildAnthropicPayload(request, stream: true,
+            cacheAllowed: !IsOmniroute(connection.BaseUrl));
+        using var httpRequest = NewAnthropicRequest(connection, payload, request);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -1918,7 +2000,8 @@ public class ProviderService(
     // ---------------- Google AI Studio (Gemini API) ----------------
 
     private static HttpRequestMessage NewGoogleRequest(
-        ProviderConnection connection, string model, bool stream, JsonObject payload)
+        ProviderConnection connection, string model, bool stream, JsonObject payload,
+        ChatCompletionRequest? request = null)
     {
         var action = stream ? "streamGenerateContent" : "generateContent";
         var url = $"{TrimSlash(connection.BaseUrl)}/models/" +
@@ -1936,6 +2019,10 @@ public class ProviderService(
         if (!string.IsNullOrEmpty(connection.ApiKey))
         {
             httpRequest.Headers.Add("x-goog-api-key", connection.ApiKey);
+        }
+        if (request is not null)
+        {
+            ApplyExtraHeaders(httpRequest, request);
         }
         return httpRequest;
     }
@@ -2184,7 +2271,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, "google");
         var payload = BuildGooglePayload(request);
-        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload);
+        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
@@ -2196,7 +2283,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, "google");
         var payload = BuildGooglePayload(request);
-        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload);
+        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
@@ -2211,7 +2298,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, "google");
         var payload = BuildGooglePayload(request);
-        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload);
+        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -2266,7 +2353,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, "google");
         var payload = BuildGooglePayload(request);
-        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload);
+        using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -2450,11 +2537,109 @@ public class ProviderService(
             }
         }
 
+        // SPEC-20261018-model-variants: overlay de body resolvido por
+        // variant — merge profundo por cima de params/messages/tools.
+        if (request.ExtraBody is { Count: > 0 } overlay)
+        {
+            ModelVariantService.DeepMerge(payload, overlay);
+        }
+
         return payload;
+    }
+
+    /// <summary>
+    /// Overlay da conexão tipada (SPEC-20261018-model-variants RF-004):
+    /// <c>settings</c> semeiam <see cref="ChatCompletionRequest.Params"/>,
+    /// <c>headers</c> viram <c>ExtraHeaders</c> e <c>body</c> <c>ExtraBody</c> —
+    /// sempre na menor precedência (model/variant/persona vencem o provider).
+    /// Sem conexão tipada do provider resolvido → request inalterado.
+    /// </summary>
+    private static ChatCompletionRequest ApplyProviderOverlay(
+        ChatCompletionRequest request, string provider, ConnectionsConfig connections)
+    {
+        var conn = connections.ProvidersOrEmpty.FirstOrDefault(p =>
+            string.Equals(p.Type, provider, StringComparison.OrdinalIgnoreCase));
+        if (conn is null)
+        {
+            return request;
+        }
+
+        var merged = request;
+        if (conn.Settings is { Count: > 0 } settings)
+        {
+            var p = new Dictionary<string, object>();
+            foreach (var (key, value) in settings)
+            {
+                if (value is not null)
+                {
+                    p[key] = JsonSerializer.Deserialize<JsonElement>(value.ToJsonString());
+                }
+            }
+            if (request.Params is not null)
+            {
+                foreach (var (key, value) in request.Params)
+                {
+                    p[key] = value;
+                }
+            }
+            merged = merged with { Params = p };
+        }
+        if (conn.Headers is { Count: > 0 } headers)
+        {
+            var h = headers.ToDictionary(
+                kv => kv.Key,
+                kv => kv.Value?.GetValue<string>() ?? string.Empty,
+                StringComparer.OrdinalIgnoreCase);
+            if (request.ExtraHeaders is not null)
+            {
+                foreach (var (key, value) in request.ExtraHeaders)
+                {
+                    h[key] = value;
+                }
+            }
+            merged = merged with { ExtraHeaders = h };
+        }
+        if (conn.Body is { Count: > 0 } body)
+        {
+            var b = (JsonObject)body.DeepClone();
+            if (request.ExtraBody is not null)
+            {
+                ModelVariantService.DeepMerge(b, request.ExtraBody);
+            }
+            merged = merged with { ExtraBody = b };
+        }
+        return merged;
+    }
+
+    /// <summary>
+    /// Headers extras de variant/overlay (RF-004) — nunca sobrescrevem
+    /// Authorization nem Content-Type (proteção do canal autenticado).
+    /// </summary>
+    private static void ApplyExtraHeaders(
+        HttpRequestMessage httpRequest, ChatCompletionRequest request)
+    {
+        if (request.ExtraHeaders is null)
+        {
+            return;
+        }
+        foreach (var (name, value) in request.ExtraHeaders)
+        {
+            if (string.Equals(name, "Authorization", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "Content-Type", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            httpRequest.Headers.TryAddWithoutValidation(name, value);
+        }
     }
 
     private static string? FirstBaseUrl(ConnectionsConfig connections) =>
         connections.OllamaBaseUrls.FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+
+    /// <summary>Heurística OmniRoute (mesma do ModelWarmer): URL aponta para
+    /// o gateway, que já gerencia prompt-cache próprio → cache local off.</summary>
+    private static bool IsOmniroute(string? baseUrl) =>
+        baseUrl?.Contains("omniroute", StringComparison.OrdinalIgnoreCase) == true;
 
     private async Task<string> CompleteOllamaAsync(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
@@ -2463,10 +2648,15 @@ public class ProviderService(
             ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
 
         var payload = BuildPayload(request, stream: false, ProviderTypes.Ollama);
-        using var content = new StringContent(
-            payload.ToJsonString(), Encoding.UTF8, "application/json");
-        using var response = await httpClientFactory.CreateClient().PostAsync(
-            $"{TrimSlash(baseUrl)}/api/chat", content, ct);
+        using var httpRequest = new HttpRequestMessage(
+            HttpMethod.Post, $"{TrimSlash(baseUrl)}/api/chat")
+        {
+            Content = new StringContent(
+                payload.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        ApplyExtraHeaders(httpRequest, request);
+        using var response = await httpClientFactory.CreateClient()
+            .SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
@@ -2489,6 +2679,7 @@ public class ProviderService(
         {
             httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
+        ApplyExtraHeaders(httpRequest, request);
 
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -2529,6 +2720,7 @@ public class ProviderService(
         {
             Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
         };
+        ApplyExtraHeaders(httpRequest, request);
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -2619,6 +2811,7 @@ public class ProviderService(
         {
             httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
+        ApplyExtraHeaders(httpRequest, request);
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
