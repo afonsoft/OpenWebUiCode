@@ -49,6 +49,15 @@ public sealed class PromptContext
     /// <summary>Modelo custom resolvido (setado pelo contributor dono).</summary>
     public ModelEntry? CustomModel { get; set; }
 
+    /// <summary>Headers extras resolvidos por variant (SPEC-20261018-model-variants).</summary>
+    public Dictionary<string, string>? ExtraHeaders { get; set; }
+
+    /// <summary>Overlay de body resolvido por variant.</summary>
+    public System.Text.Json.Nodes.JsonObject? ExtraBody { get; set; }
+
+    /// <summary><c>anthropic</c> → injeta cache_control ephemeral no payload.</summary>
+    public string? CacheFormat { get; set; }
+
     /// <summary>
     /// Aliases de referências anexadas via menções <c>ref:alias</c>
     /// (SPEC-20261018-references) — populado pelo MentionsContributor e

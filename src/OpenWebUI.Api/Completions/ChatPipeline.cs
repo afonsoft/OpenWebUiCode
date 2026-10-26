@@ -144,7 +144,8 @@ public static class ChatPipeline
                     systemParts.AddRange(sections);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException
+                and not ModelVariantException)
             {
                 log?.LogWarning(ex,
                     "Prompt contributor {Type} falhou — seção omitida.",
@@ -254,6 +255,9 @@ public static class ChatPipeline
             Messages = messages,
             Params = parameters,
             FileIds = null,
+            ExtraHeaders = pctx.ExtraHeaders ?? request.ExtraHeaders,
+            ExtraBody = pctx.ExtraBody ?? request.ExtraBody,
+            CacheFormat = pctx.CacheFormat ?? request.CacheFormat,
             AttachedRefs = pctx.AttachedRefs.Count > 0
                 ? pctx.AttachedRefs.ToList()
                 : null,

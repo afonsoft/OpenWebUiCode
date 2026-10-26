@@ -124,7 +124,8 @@ public class ReferenceService(
     /// Listing relativo ordenado da referência (cap <see cref="MaxListingPaths"/>) —
     /// injetado no contexto quando a referência é anexada (RF-002).
     /// </summary>
-    public Task<List<string>> ListTreeAsync(ResolvedReference reference, CancellationToken ct)
+    public static Task<List<string>> ListTreeAsync(
+        ResolvedReference reference, CancellationToken ct)
     {
         var paths = new List<string>(Math.Min(MaxListingPaths, 256));
         var stack = new Stack<string>();
@@ -132,36 +133,42 @@ public class ReferenceService(
         while (stack.Count > 0 && paths.Count < MaxListingPaths)
         {
             ct.ThrowIfCancellationRequested();
-            var dir = stack.Pop();
-            IEnumerable<string> entries;
-            try
-            {
-                entries = Directory.EnumerateFileSystemEntries(dir);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            foreach (var e in entries.OrderBy(e => e, StringComparer.Ordinal))
-            {
-                if (Directory.Exists(e))
-                {
-                    if (!e.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
-                    {
-                        stack.Push(e);
-                    }
-                    continue;
-                }
-                paths.Add(WorkspaceFiles.RelativeOf(reference.Root, e));
-                if (paths.Count >= MaxListingPaths)
-                {
-                    break;
-                }
-            }
+            CollectDir(stack.Pop(), reference.Root, stack, paths);
         }
         paths.Sort(StringComparer.Ordinal);
         return Task.FromResult(paths);
+    }
+
+    /// <summary>Acumula arquivos do dir (empilha subdirs, exceto <c>.git</c>).</summary>
+    private static void CollectDir(
+        string dir, string root, Stack<string> stack, List<string> paths)
+    {
+        IEnumerable<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFileSystemEntries(dir);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        foreach (var e in entries.OrderBy(e => e, StringComparer.Ordinal))
+        {
+            if (Directory.Exists(e))
+            {
+                if (!e.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+                {
+                    stack.Push(e);
+                }
+                continue;
+            }
+            paths.Add(WorkspaceFiles.RelativeOf(root, e));
+            if (paths.Count >= MaxListingPaths)
+            {
+                return;
+            }
+        }
     }
 
     /// <summary>Alvo de tool resolvido dentro da raiz de uma referência.</summary>
@@ -264,7 +271,7 @@ public class ReferenceService(
         return new ResolvedReference(entry, dir, warning);
     }
 
-    private bool Stale(ReferenceEntry entry) =>
+    private static bool Stale(ReferenceEntry entry) =>
         DateTimeOffset.UtcNow.ToUnixTimeSeconds() - entry.LastFetchedAt
             > (long)RefreshAfter.TotalSeconds;
 

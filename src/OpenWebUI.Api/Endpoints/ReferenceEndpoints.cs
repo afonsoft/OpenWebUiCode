@@ -151,22 +151,11 @@ public static class ReferenceEndpoints
             return Results.NotFound(new { detail = "referência não encontrada." });
         }
 
-        if (body.Alias is not null)
+        if (body.Alias is not null
+            && await TryApplyAliasAsync(db, user, entry, body.Alias, ct)
+                is { } aliasError)
         {
-            var alias = body.Alias.Trim().ToLowerInvariant();
-            if (!ReferenceService.IsValidAlias(alias))
-            {
-                return Results.BadRequest(new
-                {
-                    detail = "alias inválido — use [a-z0-9-]+.",
-                });
-            }
-            if (alias != entry.Alias && await db.ReferenceEntries.AnyAsync(
-                    r => r.UserId == user.Id && r.Alias == alias, ct))
-            {
-                return Results.Conflict(new { detail = $"alias '{alias}' já existe." });
-            }
-            entry.Alias = alias;
+            return aliasError;
         }
         if (body.Source is not null)
         {
@@ -195,6 +184,28 @@ public static class ReferenceEndpoints
         entry.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToView(entry));
+    }
+
+    /// <summary>Valida/aplica o novo alias; null quando aplicado (ou igual).</summary>
+    private static async Task<IResult?> TryApplyAliasAsync(
+        AppDbContext db, User user, ReferenceEntry entry,
+        string raw, CancellationToken ct)
+    {
+        var alias = raw.Trim().ToLowerInvariant();
+        if (!ReferenceService.IsValidAlias(alias))
+        {
+            return Results.BadRequest(new
+            {
+                detail = "alias inválido — use [a-z0-9-]+.",
+            });
+        }
+        if (alias != entry.Alias && await db.ReferenceEntries.AnyAsync(
+                r => r.UserId == user.Id && r.Alias == alias, ct))
+        {
+            return Results.Conflict(new { detail = $"alias '{alias}' já existe." });
+        }
+        entry.Alias = alias;
+        return null;
     }
 
     /// <summary>DELETE /api/v1/references/{id} — remove a referência
@@ -241,7 +252,7 @@ public static class ReferenceEndpoints
             });
         }
 
-        var tree = await refs.ListTreeAsync(resolved, ct);
+        var tree = await ReferenceService.ListTreeAsync(resolved, ct);
         return Results.Ok(new
         {
             alias = resolved.Entry.Alias,

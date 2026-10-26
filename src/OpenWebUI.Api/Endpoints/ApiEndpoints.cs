@@ -236,6 +236,19 @@ public static class ApiEndpoints
             if (await ModelEndpoints.HasModelAccessAsync(user, entry, db, ct))
             {
                 models.Add(new ModelInfo(entry.Id, entry.Name, "custom", "openwebui"));
+                // SPEC-20261018-model-variants RF-001/002/004: variants
+                // (declaradas ou sintéticas por reasoning.effort) e aliases
+                // aparecem como entradas do seletor resolvendo ao entry real.
+                foreach (var v in ModelVariantService.ListVariantIds(entry.MetaJson))
+                {
+                    models.Add(new ModelInfo(
+                        $"{entry.Id}#{v}", $"{entry.Name}#{v}", "custom", "openwebui"));
+                }
+                foreach (var alias in ModelVariantService.ListAliases(entry.MetaJson))
+                {
+                    models.Add(new ModelInfo(
+                        alias, $"{entry.Name} ({alias})", "custom", "openwebui"));
+                }
             }
         }
 
@@ -330,9 +343,20 @@ public static class ApiEndpoints
             return;
         }
 
-        var effective = await ChatPipeline.EnrichRequestAsync(
-            request, user, db, config, rag, webSearch, repos,
-            promptContributors, ct);
+        ChatCompletionRequest effective;
+        try
+        {
+            effective = await ChatPipeline.EnrichRequestAsync(
+                request, user, db, config, rag, webSearch, repos,
+                promptContributors, ct);
+        }
+        catch (ModelVariantException ex)
+        {
+            // RF-001: model#variant inexistente → 400 (SPEC-20261018).
+            http.Response.StatusCode = 400;
+            await EmitAsync(JsonSerializer.Serialize(new { error = ex.Message }));
+            return;
+        }
 
         // Filtros outlet do modelo custom: redação por regex nas linhas SSE.
         var outletRules = ModelFilterService.OutletRules(

@@ -281,7 +281,7 @@ public class ReferenceServiceTests
         await SeedRefAsync(db, "u1", "lib", dir);
 
         var resolved = await refs.ResolveAsync("u1", "lib", default);
-        var tree = await refs.ListTreeAsync(resolved!, default);
+        var tree = await ReferenceService.ListTreeAsync(resolved!, default);
         Assert.That(tree, Is.EqualTo(new[] { "b.txt", "sub/a.txt" })
             .Or.EqualTo(new[] { "b.txt", Path.Join("sub", "a.txt") }));
     }

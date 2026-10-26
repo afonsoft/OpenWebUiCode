@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Endpoints;
 using OpenWebUI.Infrastructure.SystemPrompt;
@@ -172,10 +173,12 @@ public sealed class CustomModelContributor(AppDbContext db) : ISystemPromptContr
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
     {
-        var customModel = await db.ModelEntries.AsNoTracking()
-            .FirstOrDefaultAsync(
-                m => m.IsActive && (m.Id == ctx.Model || m.Name == ctx.Model)
-                    && (m.UserId == ctx.User.Id || m.UserId == "public"), ctx.Ct);
+        // SPEC-20261018-model-variants RF-001: "model#variant" → resolve
+        // o modelo base e aplica a variant (settings > params do modelo).
+        var (baseRef, variantId) = ModelVariantService.Split(ctx.Model);
+        var customModel = await FindModelAsync(ctx, baseRef)
+            ?? (variantId is null ? null : await FindModelAsync(ctx, ctx.Model));
+        customModel ??= await FindByAliasAsync(ctx, baseRef);
         if (customModel is not null
             && !await ModelEndpoints.HasModelAccessAsync(
                 ctx.User, customModel, db, ctx.Ct))
@@ -186,12 +189,36 @@ public sealed class CustomModelContributor(AppDbContext db) : ISystemPromptContr
         ctx.CustomModel = customModel;
         if (customModel is null)
         {
+            // Modelo provider com "#variant" não declarada → o sufixo não
+            // é um id de provider válido; envia o base (variant ignorada).
+            if (variantId is not null)
+            {
+                ctx.Model = baseRef;
+            }
             return [];
         }
 
         if (!string.IsNullOrWhiteSpace(customModel.BaseModelId))
         {
             ctx.Model = customModel.BaseModelId;
+        }
+        else if (variantId is not null)
+        {
+            // Sem BaseModelId o id servido é o do próprio entry — tira o
+            // sufixo #variant antes de enviar ao provider.
+            ctx.Model = customModel.Id;
+        }
+
+        if (variantId is not null)
+        {
+            var variant = ModelVariantService.Resolve(
+                customModel.MetaJson, variantId);
+            if (variant is null)
+            {
+                throw new ModelVariantException(
+                    $"unknown variant '{variantId}' para o modelo '{baseRef}'.");
+            }
+            ApplyVariant(ctx, variant);
         }
 
         if (!string.IsNullOrWhiteSpace(customModel.ParamsJson))
@@ -218,6 +245,53 @@ public sealed class CustomModelContributor(AppDbContext db) : ISystemPromptContr
         return string.IsNullOrWhiteSpace(customModel.SystemPrompt)
             ? []
             : [customModel.SystemPrompt];
+    }
+
+    /// <summary>Lookup direto por id/nome visível ao usuário.</summary>
+    private async Task<ModelEntry?> FindModelAsync(PromptContext ctx, string modelRef) =>
+        await db.ModelEntries.AsNoTracking().FirstOrDefaultAsync(
+            m => m.IsActive && (m.Id == modelRef || m.Name == modelRef)
+                && (m.UserId == ctx.User.Id || m.UserId == "public"), ctx.Ct);
+
+    /// <summary>RF-004: alias em MetaJson.aliases[] → entry real.</summary>
+    private async Task<ModelEntry?> FindByAliasAsync(PromptContext ctx, string modelRef)
+    {
+        var candidates = await db.ModelEntries.AsNoTracking()
+            .Where(m => m.IsActive && m.MetaJson != null
+                && (m.UserId == ctx.User.Id || m.UserId == "public"))
+            .ToListAsync(ctx.Ct);
+        return candidates.FirstOrDefault(
+            m => ModelVariantService.MatchesAlias(m.MetaJson, modelRef));
+    }
+
+    /// <summary>Settings da variant vencem params do modelo (merge profundo).</summary>
+    private static void ApplyVariant(PromptContext ctx, ModelVariant variant)
+    {
+        if (variant.Settings is not null)
+        {
+            ctx.Parameters ??= [];
+            foreach (var (key, value) in variant.Settings)
+            {
+                // TryAdd: params do request/persona já semeados vencem a
+                // variant; params do modelo (TryAdd abaixo) perdem para ela —
+                // ordem provider < model < variant < persona/command (RF-001).
+                ctx.Parameters.TryAdd(key, value is null
+                    ? null!
+                    : JsonSerializer.Deserialize<JsonElement>(
+                        value.ToJsonString()));
+            }
+        }
+        if (variant.Headers is { Count: > 0 } headers)
+        {
+            ctx.ExtraHeaders = headers.ToDictionary(
+                kv => kv.Key, kv => kv.Value?.GetValue<string>() ?? string.Empty,
+                StringComparer.OrdinalIgnoreCase);
+        }
+        if (variant.Body is not null)
+        {
+            ctx.ExtraBody = (JsonObject)variant.Body.DeepClone();
+        }
+        ctx.CacheFormat = variant.CacheFormat;
     }
 }
 
@@ -527,7 +601,7 @@ public sealed class MentionsContributor(ReferenceService? refs = null)
                 }
 
                 ctx.AttachedRefs.Add(alias);
-                var tree = await refs.ListTreeAsync(resolved, ctx.Ct);
+                var tree = await ReferenceService.ListTreeAsync(resolved, ctx.Ct);
                 var block = new StringBuilder($"<reference alias=\"{alias}\">");
                 if (!string.IsNullOrWhiteSpace(resolved.Entry.Description))
                 {
