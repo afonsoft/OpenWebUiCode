@@ -1848,9 +1848,21 @@
         }
     }
 
-    /// <summary>Carrega e cacheia as referências visíveis do usuário (menu @).</summary>
-    private async Task<List<ReferenceItemResponse>> EnsureMentionRefsAsync() =>
-        _mentionRefs ??= await Api.GetReferencesAsync(visible: true);
+    /// <summary>Carrega e cacheia as referências visíveis do usuário (menu @).
+    /// Falha transitória degrada para lista vazia sem cachear — @menções de
+    /// arquivos continuam funcionando e a próxima lookup tenta de novo.</summary>
+    private async Task<List<ReferenceItemResponse>> EnsureMentionRefsAsync()
+    {
+        try
+        {
+            return _mentionRefs ??= await Api.GetReferencesAsync(visible: true);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] mention refs falhou: {ex.Message}");
+            return [];
+        }
+    }
 
     /// <summary>Carrega e cacheia a árvore do workdir (até 3 páginas) por repo vinculado.</summary>
     private async Task<List<WorkspaceFileEntryResponse>?> EnsureMentionTreeAsync()
