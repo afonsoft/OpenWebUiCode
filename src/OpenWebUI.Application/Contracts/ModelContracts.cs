@@ -88,4 +88,7 @@ public sealed record ChatCompletionRequest(
     IReadOnlyList<System.Text.Json.JsonElement>? Tools = null,
     bool? WebSearch = null,
     /// <summary>Caminhos do workdir mencionados via chips @path (SPEC-20261009-ide-mentions-tests).</summary>
-    IReadOnlyList<string>? MentionPaths = null);
+    IReadOnlyList<string>? MentionPaths = null,
+    /// <summary>Aliases de referências anexadas via chips <c>ref:alias</c>
+    /// (interno — resolvido pela pipeline; SPEC-20261018-references RF-003).</summary>
+    IReadOnlyList<string>? AttachedRefs = null);

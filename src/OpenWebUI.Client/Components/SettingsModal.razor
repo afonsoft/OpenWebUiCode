@@ -20,6 +20,7 @@
                     <button class="modal-tab @(_tab == "general" ? "active" : "")" role="tab" aria-selected="@(_tab == "general")" @onclick='() => _tab = "general"'>@L["settings.general"]</button>
                     <button class="modal-tab @(_tab == "account" ? "active" : "")" role="tab" aria-selected="@(_tab == "account")" @onclick='() => _tab = "account"'>@L["settings.account"]</button>
                     <button class="modal-tab @(_tab == "memories" ? "active" : "")" role="tab" aria-selected="@(_tab == "memories")" @onclick='() => _tab = "memories"'>@L["settings.memories"]</button>
+                    <button class="modal-tab @(_tab == "references" ? "active" : "")" role="tab" aria-selected="@(_tab == "references")" @onclick='() => SelectTab("references")'>@L["settings.references"]</button>
                     <button class="modal-tab @(_tab == "notifications" ? "active" : "")" role="tab" aria-selected="@(_tab == "notifications")" @onclick='() => SelectTab("notifications")'>@L["settings.notifications"]</button>
                     <button class="modal-tab @(_tab == "integrations" ? "active" : "")" role="tab" aria-selected="@(_tab == "integrations")" @onclick='() => SelectTab("integrations")'>@L["settings.integrations"]</button>
                     <button class="modal-tab @(_tab == "models" ? "active" : "")" role="tab" aria-selected="@(_tab == "models")" @onclick='() => SelectTab("models")'>@L["settings.models"]</button>
@@ -227,6 +228,70 @@
                                          Message="@_memSyncMessage"
                                          OnSave="SaveMemSyncAsync" OnDiscard="DiscardMemSync" />
                     }
+                }
+                else if (_tab == "references")
+                {
+                    @* SPEC-20261018-references: CRUD de ref:// (dir local ou git). *@
+                    <SettingsSection Title="@L["settings.references"]" Description="@L["settings.references_hint"]">
+                        <div class="field">
+                            @if (_references.Count == 0)
+                            {
+                                <div class="field-note">@L["settings.ref_empty"]</div>
+                            }
+                            @foreach (var r in _references)
+                            {
+                                <div class="memory-row">
+                                    <span class="memory-text">
+                                        <strong>@r.Alias</strong> — @r.Source
+                                        @if (r.Hidden)
+                                        {
+                                            <span class="text-gray-400"> (@L["settings.ref_hidden"])</span>
+                                        }
+                                    </span>
+                                    <label class="check shrink-0" title="@L["settings.ref_hidden_hint"]">
+                                        <input type="checkbox" checked="@r.Hidden"
+                                               @onchange="() => ToggleReferenceHiddenAsync(r)" />
+                                    </label>
+                                    <button class="icon-mini" aria-label="@L["settings.ref_refresh"]"
+                                            title="@L["settings.ref_refresh"]"
+                                            @onclick="() => RefreshReferenceAsync(r)">⟳</button>
+                                    <button class="icon-mini" aria-label="@L["common.delete"]"
+                                            @onclick="() => DeleteReferenceAsync(r)">×</button>
+                                </div>
+                            }
+                        </div>
+                        <div class="field">
+                            <div class="field-label">@L["settings.ref_add"]</div>
+                            <div class="flex gap-2 mb-2">
+                                <input class="input flex-1" @bind="_refAlias"
+                                       aria-label="@L["settings.ref_alias"]"
+                                       placeholder="@L["settings.ref_alias"]" id="fld-ref-alias" />
+                                <input class="input flex-1" @bind="_refBranch"
+                                       aria-label="@L["settings.ref_branch"]"
+                                       placeholder="@L["settings.ref_branch"]" id="fld-ref-branch" />
+                            </div>
+                            <input class="input w-full mb-2" @bind="_refSource"
+                                   aria-label="@L["settings.ref_source"]"
+                                   placeholder="@L["settings.ref_source"]" id="fld-ref-source" />
+                            <input class="input w-full mb-2" @bind="_refDescription"
+                                   aria-label="@L["settings.ref_description"]"
+                                   placeholder="@L["settings.ref_description"]" id="fld-ref-desc" />
+                            <div class="flex gap-2 items-center">
+                                <label class="check">
+                                    <input type="checkbox" @bind="_refHidden" id="fld-ref-hidden" />
+                                    @L["settings.ref_hidden"]
+                                </label>
+                                <button class="primary-btn flex-none"
+                                        disabled="@(string.IsNullOrWhiteSpace(_refAlias) || string.IsNullOrWhiteSpace(_refSource) || _refSaving)"
+                                        @onclick="CreateReferenceAsync">@L["settings.add"]</button>
+                            </div>
+                            <div class="field-note">@L["settings.ref_alias_hint"]</div>
+                            @if (_refMessage is not null)
+                            {
+                                <div class="field-note">@_refMessage</div>
+                            }
+                        </div>
+                    </SettingsSection>
                 }
                 else if (_tab == "notifications")
                 {
@@ -1500,6 +1565,7 @@
             "tools" => LoadToolApprovalsAsync(),
             "admin" => LoadAdminConfigLayersAsync(),
             "notifications" => LoadNotificationsTabAsync(),
+            "references" => LoadReferencesTabAsync(),
             _ => Task.CompletedTask,
         };
     }
@@ -2632,6 +2698,70 @@
         if (await Api.DeleteMemoryAsync(memory.Id))
         {
             _memories.Remove(memory);
+        }
+    }
+
+    // ---------- Referências ref:// (SPEC-20261018-references) ----------
+
+    private List<ReferenceItemResponse> _references = [];
+    private string _refAlias = string.Empty;
+    private string _refSource = string.Empty;
+    private string? _refBranch;
+    private string? _refDescription;
+    private bool _refHidden;
+    private bool _refSaving;
+    private string? _refMessage;
+
+    private async Task LoadReferencesTabAsync()
+    {
+        _references = await Api.GetReferencesAsync(visible: false);
+        _refMessage = null;
+    }
+
+    private async Task CreateReferenceAsync()
+    {
+        _refSaving = true;
+        _refMessage = null;
+        var ok = await Api.CreateReferenceAsync(
+            _refAlias.Trim().ToLowerInvariant(), _refSource.Trim(),
+            _refBranch, _refDescription, _refHidden);
+        _refSaving = false;
+        if (ok)
+        {
+            _refAlias = string.Empty;
+            _refSource = string.Empty;
+            _refBranch = null;
+            _refDescription = null;
+            _refHidden = false;
+            await LoadReferencesTabAsync();
+        }
+        else
+        {
+            _refMessage = L["settings.ref_save_failed"];
+        }
+    }
+
+    private async Task ToggleReferenceHiddenAsync(ReferenceItemResponse r)
+    {
+        if (await Api.PatchReferenceAsync(r.Id, !r.Hidden))
+        {
+            await LoadReferencesTabAsync();
+        }
+    }
+
+    private async Task DeleteReferenceAsync(ReferenceItemResponse r)
+    {
+        if (await Api.DeleteReferenceAsync(r.Id))
+        {
+            _references.Remove(r);
+        }
+    }
+
+    private async Task RefreshReferenceAsync(ReferenceItemResponse r)
+    {
+        if (await Api.RefreshReferenceAsync(r.Id))
+        {
+            await LoadReferencesTabAsync();
         }
     }
 

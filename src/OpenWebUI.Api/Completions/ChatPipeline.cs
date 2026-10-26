@@ -254,6 +254,9 @@ public static class ChatPipeline
             Messages = messages,
             Params = parameters,
             FileIds = null,
+            AttachedRefs = pctx.AttachedRefs.Count > 0
+                ? pctx.AttachedRefs.ToList()
+                : null,
         };
 
         // 5. Filtros declarativos do modelo custom (inlet) em ordem estável.

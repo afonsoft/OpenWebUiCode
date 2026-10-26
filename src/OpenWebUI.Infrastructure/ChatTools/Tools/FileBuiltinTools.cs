@@ -134,7 +134,8 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
 /// Somente leitura.
 /// </summary>
 public sealed class FileReadBuiltinTool(
-    HistoryResourceService history, ToolOutputService toolOutputs) : IBuiltinChatTool
+    HistoryResourceService history, ToolOutputService toolOutputs,
+    ReferenceService? refs = null) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_read";
@@ -207,6 +208,19 @@ public sealed class FileReadBuiltinTool(
             return await ReadFileAsync(managed, managed, args, ct);
         }
 
+        // ref://alias/path — referência anexada (somente-leitura; RF-003).
+        if (refs is not null
+            && ReferenceService.TrySplitRef(path, out _, out _))
+        {
+            var (target, refError) = await refs.ResolveToolTargetAsync(
+                context.UserId, path, context.AttachedRefs, ct);
+            if (target is null)
+            {
+                return new BuiltinToolResult(refError!);
+            }
+            return await ReadFileAsync(target.Full, target.Display, args, ct);
+        }
+
         var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
         if (full is null)
         {
@@ -275,7 +289,9 @@ public sealed class FileReadBuiltinTool(
 /// <c>builtin:file_grep</c> — busca regex no workspace retornando
 /// <c>path:linha: conteúdo</c>. Somente leitura.
 /// </summary>
-public sealed class FileGrepBuiltinTool(HistoryResourceService history) : IBuiltinChatTool
+public sealed class FileGrepBuiltinTool(
+    HistoryResourceService history, ReferenceService? refs = null)
+    : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_grep";
@@ -350,10 +366,30 @@ public sealed class FileGrepBuiltinTool(HistoryResourceService history) : IBuilt
                 ? "Sem matches no histórico."
                 : string.Join('\n', hits.Select(h => $"history: {h}")));
         }
-        var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
-        if (full is null)
+        string root;
+        string full;
+        if (refs is not null
+            && ReferenceService.TrySplitRef(path, out _, out _))
         {
-            return new BuiltinToolResult(error);
+            // ref://alias/dir — raiz da referência vira o jail do grep (RF-003).
+            var (target, refError) = await refs.ResolveToolTargetAsync(
+                context.UserId, path, context.AttachedRefs, ct);
+            if (target is null)
+            {
+                return new BuiltinToolResult(refError!);
+            }
+            root = target.Root;
+            full = target.Full;
+        }
+        else
+        {
+            root = context.WorkspacePath;
+            var resolved = WorkspaceFiles.ResolveInside(root, path, out var error);
+            if (resolved is null)
+            {
+                return new BuiltinToolResult(error);
+            }
+            full = resolved;
         }
 
         var globPattern = args.TryGetProperty("glob", out var g) ? g.GetString() : null;
@@ -370,10 +406,10 @@ public sealed class FileGrepBuiltinTool(HistoryResourceService history) : IBuilt
         {
             files = files.Where(f => glob.IsMatch(globOnBasename
                 ? Path.GetFileName(f)
-                : WorkspaceFiles.RelativeOf(context.WorkspacePath, f)));
+                : WorkspaceFiles.RelativeOf(root, f)));
         }
 
-        var root = Path.GetFullPath(context.WorkspacePath);
+        root = Path.GetFullPath(root);
         var sb = new StringBuilder();
         var matches = 0;
         var scanned = 0;
@@ -429,7 +465,8 @@ public sealed class FileGrepBuiltinTool(HistoryResourceService history) : IBuilt
 /// <c>builtin:file_glob</c> — casamento de arquivos por glob
 /// (<c>**/*.cs</c>, <c>{a,b}</c>, <c>[abc]</c>) no workspace. Somente leitura.
 /// </summary>
-public sealed class FileGlobBuiltinTool : IBuiltinChatTool
+public sealed class FileGlobBuiltinTool(ReferenceService? refs = null)
+    : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_glob";
@@ -457,30 +494,50 @@ public sealed class FileGlobBuiltinTool : IBuiltinChatTool
 
 
     /// <inheritdoc />
-    public Task<BuiltinToolResult> ExecuteAsync(
+    public async Task<BuiltinToolResult> ExecuteAsync(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
         var pattern = args.TryGetProperty("pattern", out var p) ? p.GetString() : null;
         if (string.IsNullOrWhiteSpace(pattern))
         {
-            return Task.FromResult(new BuiltinToolResult("Parâmetro 'pattern' é obrigatório."));
+            return new BuiltinToolResult("Parâmetro 'pattern' é obrigatório.");
         }
 
         var path = args.TryGetProperty("path", out var pEl) ? pEl.GetString() : null;
-        var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
-        if (full is null)
+        string root;
+        string full;
+        if (refs is not null
+            && ReferenceService.TrySplitRef(path, out _, out _))
         {
-            return Task.FromResult(new BuiltinToolResult(error));
+            // ref://alias/dir — raiz da referência vira o jail do glob (RF-003).
+            var (target, refError) = await refs.ResolveToolTargetAsync(
+                context.UserId, path, context.AttachedRefs, ct);
+            if (target is null)
+            {
+                return new BuiltinToolResult(refError!);
+            }
+            root = target.Root;
+            full = target.Full;
+        }
+        else
+        {
+            root = context.WorkspacePath;
+            var resolved = WorkspaceFiles.ResolveInside(root, path, out var error);
+            if (resolved is null)
+            {
+                return new BuiltinToolResult(error);
+            }
+            full = resolved;
         }
 
         if (!Directory.Exists(full))
         {
-            return Task.FromResult(new BuiltinToolResult($"Diretório '{path ?? "."}' não existe."));
+            return new BuiltinToolResult($"Diretório '{path ?? "."}' não existe.");
         }
 
         var regex = WorkspaceFiles.GlobToRegex(pattern);
         var matches = WorkspaceFiles.EnumerateFiles(full)
-            .Select(f => WorkspaceFiles.RelativeOf(context.WorkspacePath, f))
+            .Select(f => WorkspaceFiles.RelativeOf(root, f))
             .Where(rel => regex.IsMatch(rel))
             .OrderBy(rel => rel, StringComparer.OrdinalIgnoreCase)
             .Take(WorkspaceFiles.MaxEntries)
@@ -489,12 +546,12 @@ public sealed class FileGlobBuiltinTool : IBuiltinChatTool
         var text = matches.Count == 0
             ? $"Nenhum arquivo casa '{pattern}'."
             : string.Join('\n', matches);
-        return Task.FromResult(new BuiltinToolResult(text, new
+        return new BuiltinToolResult(text, new
         {
             pattern,
             matches = matches.Count,
             files = matches,
-        }));
+        });
     }
 }
 
@@ -541,6 +598,10 @@ public sealed class FileWriteBuiltinTool(
         if (string.IsNullOrWhiteSpace(path) || content is null)
         {
             return new BuiltinToolResult("Parâmetros 'path' e 'content' são obrigatórios.");
+        }
+        if (ReferenceService.TrySplitRef(path, out _, out _))
+        {
+            return new BuiltinToolResult("ref:// é somente-leitura — escrita negada.");
         }
 
         var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
@@ -652,6 +713,10 @@ public sealed class FileEditBuiltinTool(
         {
             return new BuiltinToolResult(
                 "Parâmetros 'path', 'old_string' e 'new_string' são obrigatórios.");
+        }
+        if (ReferenceService.TrySplitRef(path, out _, out _))
+        {
+            return new BuiltinToolResult("ref:// é somente-leitura — edição negada.");
         }
 
         var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);

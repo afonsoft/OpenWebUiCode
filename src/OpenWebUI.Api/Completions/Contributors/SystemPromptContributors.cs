@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Endpoints;
@@ -489,9 +490,13 @@ public sealed class DelegationPolicyContributor(
 /// <summary>
 /// Bloco 3.5b: menções @path do composer — cada chip vira
 /// <c>&lt;file path="…"&gt;</c> (cap 16KB/arquivo, 64KB total; fora do
-/// jail é descartado em silêncio).
+/// jail é descartado em silêncio). Chips <c>ref:alias</c> anexam a
+/// referência nomeada: descrição + listing (cap 2000) viram bloco
+/// <c>&lt;reference&gt;</c> e o alias entra em
+/// <see cref="PromptContext.AttachedRefs"/> (RF-002/RF-003).
 /// </summary>
-public sealed class MentionsContributor : ISystemPromptContributor
+public sealed class MentionsContributor(ReferenceService? refs = null)
+    : ISystemPromptContributor
 {
     /// <inheritdoc />
     public int Order => 90;
@@ -504,10 +509,61 @@ public sealed class MentionsContributor : ISystemPromptContributor
             return [];
         }
 
-        var mentionWorkdir = await ctx.GetWorkdirAsync();
-        var mentions = await WorkspaceMentionContext.BuildAsync(
-            mentionWorkdir, mentionPaths, ctx.Ct);
-        return string.IsNullOrEmpty(mentions) ? [] : [mentions];
+        var filePaths = mentionPaths
+            .Where(p => !ReferenceService.TrySplitRef(p, out _, out _))
+            .ToList();
+        var sections = new List<string>();
+
+        if (refs is not null)
+        {
+            foreach (var raw in mentionPaths)
+            {
+                if (!ReferenceService.TrySplitRef(raw, out var alias, out _))
+                    continue;
+                var resolved = await refs.ResolveAsync(ctx.User.Id, alias, ctx.Ct);
+                if (resolved is null)
+                {
+                    continue; // alias inexistente/inacessível — drop silencioso
+                }
+
+                ctx.AttachedRefs.Add(alias);
+                var tree = await refs.ListTreeAsync(resolved, ctx.Ct);
+                var block = new StringBuilder($"<reference alias=\"{alias}\">");
+                if (!string.IsNullOrWhiteSpace(resolved.Entry.Description))
+                {
+                    block.Append('\n').Append(resolved.Entry.Description.Trim());
+                }
+                if (resolved.Warning is not null)
+                {
+                    block.Append("\n[aviso] ").Append(resolved.Warning);
+                }
+                block.Append("\nLeitura via ref://").Append(alias)
+                    .Append("/caminho (somente-leitura). Arquivos:\n");
+                foreach (var p in tree)
+                {
+                    block.Append("- ").Append(p).Append('\n');
+                }
+                if (tree.Count >= ReferenceService.MaxListingPaths)
+                {
+                    block.Append($"[… truncado em {ReferenceService.MaxListingPaths} paths]");
+                }
+                block.Append("</reference>");
+                sections.Add(block.ToString());
+            }
+        }
+
+        if (filePaths.Count > 0)
+        {
+            var mentionWorkdir = await ctx.GetWorkdirAsync();
+            var mentions = await WorkspaceMentionContext.BuildAsync(
+                mentionWorkdir, filePaths, ctx.Ct);
+            if (!string.IsNullOrEmpty(mentions))
+            {
+                sections.Add(mentions);
+            }
+        }
+
+        return sections;
     }
 }
 

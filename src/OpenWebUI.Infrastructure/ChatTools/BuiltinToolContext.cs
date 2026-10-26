@@ -15,10 +15,16 @@ namespace OpenWebUI.Infrastructure.ChatTools;
 /// Modelo da run — usado por tools que chamam provider (ex.:
 /// context_compact sumariza com ele; SPEC-20261020-context-snapshots RF-008).
 /// </param>
+/// <param name="AttachedRefs">
+/// Aliases de referências anexadas via <c>@alias</c> no composer
+/// (SPEC-20261018-references RF-003) — tools <c>ref://</c> só resolvem
+/// aliases presentes aqui; subagent herda o conjunto do chat pai.
+/// </param>
 public sealed record BuiltinToolContext(
     string UserId,
     string? ChatId,
     string? RunId,
     string WorkspacePath,
     string UploadDir,
-    string? Model = null);
+    string? Model = null,
+    IReadOnlyList<string>? AttachedRefs = null);

@@ -49,6 +49,14 @@ public sealed class PromptContext
     /// <summary>Modelo custom resolvido (setado pelo contributor dono).</summary>
     public ModelEntry? CustomModel { get; set; }
 
+    /// <summary>
+    /// Aliases de referências anexadas via menções <c>ref:alias</c>
+    /// (SPEC-20261018-references) — populado pelo MentionsContributor e
+    /// propagado ao <c>BuiltinToolContext.AttachedRefs</c>.
+    /// </summary>
+    public HashSet<string> AttachedRefs { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Factory memoizada do binding do workspace (chat → usuário).</summary>
     public Func<CancellationToken, Task<WorkspaceRepoBinding?>>? BindingFactory { get; init; }
 

@@ -1190,5 +1190,18 @@
   "chat.dir_listing_attached": "Dossier joint sous forme de liste ({count} fichiers)",
   "chat.pasted_as_file": "Texte collé enregistré en pièce jointe ({chars} caractères)",
   "settings.sec_composer": "Éditeur",
-  "settings.composer_paste_file": "Convertir les longs collages en pièces jointes"
+  "settings.composer_paste_file": "Convertir les longs collages en pièces jointes",
+  "settings.references": "Références",
+  "settings.references_hint": "Répertoires ou dépôts git nommés (ref://alias) attachables via @alias — lecture seule.",
+  "settings.ref_empty": "Aucune référence.",
+  "settings.ref_add": "Nouvelle référence",
+  "settings.ref_alias": "alias (a-z0-9-)",
+  "settings.ref_branch": "branche (optionnel)",
+  "settings.ref_source": "chemin local ou URL git",
+  "settings.ref_description": "description (injectée au contexte)",
+  "settings.ref_hidden": "masquée",
+  "settings.ref_hidden_hint": "Les masquées n’apparaissent pas au menu @ mais se résolvent directement.",
+  "settings.ref_refresh": "actualiser",
+  "settings.ref_alias_hint": "Utilisez @alias dans le composer pour attacher ; l’agent lit via ref://alias/chemin.",
+  "settings.ref_save_failed": "Échec (alias en double ou source invalide)."
 }

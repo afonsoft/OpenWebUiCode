@@ -515,7 +515,7 @@
                                 <button class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer flex items-center gap-2"
                                         role="option"
                                         @onclick="() => SelectMention(item)">
-                                    <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@(item.Type == "dir" ? "dir" : "file")</span>
+                                    <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@(item.Type is "dir" or "ref" ? item.Type : "file")</span>
                                     <span class="truncate">@item.Path</span>
                                 </button>
                             }
@@ -835,6 +835,7 @@
     // dropdown de sugestões + chips selecionados + cache da árvore.
     private List<WorkspaceFileEntryResponse> _mentionItems = [];
     private readonly List<string> _mentionPaths = [];
+    private List<ReferenceItemResponse>? _mentionRefs;
     private List<WorkspaceFileEntryResponse>? _mentionTree;
     private string? _mentionTreeFor;
     private CancellationTokenSource? _mentionCts;
@@ -1820,16 +1821,25 @@
         try
         {
             await Task.Delay(250, ct);
+            var refs = await EnsureMentionRefsAsync();
             var tree = await EnsureMentionTreeAsync();
-            _mentionItems = tree is null
-                ? []
-                : tree
+            // refs primeiro (@alias → chip ref:alias), depois a árvore
+            // do workdir — refs filtradas pela query (SPEC-20261018-references).
+            _mentionItems = refs
+                .Where(r => query.Length == 0
+                    || r.Alias.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || r.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
+                .Select(r => new WorkspaceFileEntryResponse(
+                    r.Alias, $"ref:{r.Alias}", "ref", null, false))
+                .Concat(tree is null
+                    ? Enumerable.Empty<WorkspaceFileEntryResponse>()
+                    : tree
                     .Where(e => e.Path.Contains(query, StringComparison.OrdinalIgnoreCase)
                                 || e.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
                     .OrderByDescending(e => e.Type == "dir")
-                    .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase)
-                    .Take(20)
-                    .ToList();
+                    .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase))
+                .Take(20)
+                .ToList();
             await InvokeAsync(StateHasChanged);
         }
         catch (OperationCanceledException)
@@ -1837,6 +1847,10 @@
             // keystroke mais recente venceu — esperado.
         }
     }
+
+    /// <summary>Carrega e cacheia as referências visíveis do usuário (menu @).</summary>
+    private async Task<List<ReferenceItemResponse>> EnsureMentionRefsAsync() =>
+        _mentionRefs ??= await Api.GetReferencesAsync(visible: true);
 
     /// <summary>Carrega e cacheia a árvore do workdir (até 3 páginas) por repo vinculado.</summary>
     private async Task<List<WorkspaceFileEntryResponse>?> EnsureMentionTreeAsync()

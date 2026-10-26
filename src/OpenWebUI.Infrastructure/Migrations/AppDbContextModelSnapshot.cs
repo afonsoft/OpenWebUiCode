@@ -2306,6 +2306,49 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("Prompts");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ReferenceEntry", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Alias")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Branch")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Hidden")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("LastFetchedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Alias")
+                        .IsUnique();
+
+                    b.ToTable("ReferenceEntries");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.RunUsageRecord", b =>
                 {
                     b.Property<string>("Id")

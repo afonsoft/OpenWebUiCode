@@ -1151,7 +1151,8 @@ public sealed class ChatRunExecutor(
             run.Id,
             isolated ?? workdir,
             Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id),
-            Model: run.Model);
+            Model: run.Model,
+            AttachedRefs: ExtractAttachedRefs(run.RequestJson));
     }
 
     /// <summary>
@@ -1169,6 +1170,32 @@ public sealed class ChatRunExecutor(
         return mode == PermissionRuleset.BuildMode
             && await repos.GetChatBindingAsync(chatId, ct) is null
                 ? PermissionRuleset.ChatMode : mode;
+    }
+
+    /// <summary>
+    /// Aliases <c>ref:alias</c> anexados via chips no composer
+    /// (SPEC-20261018-references RF-003) — lidos das <c>MentionPaths</c>
+    /// persistidas na run; sub-runs herdam porque o mesmo request
+    /// alimenta o filho.
+    /// </summary>
+    private static IReadOnlyList<string>? ExtractAttachedRefs(string requestJson)
+    {
+        try
+        {
+            var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
+                requestJson, JsonOptions);
+            var refs = req?.MentionPaths
+                ?.Select(p => ReferenceService.TrySplitRef(p, out var a, out _) ? a : null)
+                .Where(a => a is not null)
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return refs is { Count: > 0 } ? refs : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Lê marcador string de <c>Params</c> (valores chegam como
