@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-model-variants` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | `docs/analise-opencode-v2.md` (P1.4 + P3.7/3.8) |
 
 ## 1. User Story
@@ -74,3 +74,11 @@ tests/OpenWebUI.Api.Tests/CacheFormatTests.cs          # NOVO
 - Provider com `headers:{"x-team":"a"}` envia o header em todo request.
 - cacheFormat anthropic injeta `cache_control` nos pontos corretos; desligado sob OmniRoute.
 - Seletor mostra variants agrupadas sob o modelo; testes cobrem merge order, alias, compatibility.
+
+## Delivered
+
+- **PR:** https://github.com/afonsoft/open-webui/pull/524 (`334f373`)
+- **Issue:** #511
+- **Branch:** `feature/Devin-20261018-model-variants`
+- **Tests:** `ModelVariantTests.cs` + `CacheFormatTests.cs` (conforme SPEC §3)
+- **Nota:** arquivada pelo PR #526 (`68c8491`) sem `Status` terminal — status corrigido para `Completed` na épica #506 (SPEC-20261026-spec-bookkeeping).
