@@ -34,7 +34,7 @@ jobs:
 
       - name: 🔍 Qodana Scan
         id: qodana
-        uses: JetBrains/qodana-action@30fde78cf6cbdc081bfc9f575778eeab02c2f761   # v2026.2.2
+        uses: JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f   # v2026.2.2
         continue-on-error: true
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
