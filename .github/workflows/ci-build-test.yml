@@ -192,7 +192,7 @@ jobs:
           echo "Coverage gate passed (line + branch)."
 
       - name: Upload Test Results
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         if: always()
         with:
           name: test-results
@@ -200,7 +200,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload Coverage Report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         if: always()
         with:
           name: coverage-xml
@@ -211,7 +211,7 @@ jobs:
       # atualizado a cada run — só em PRs do próprio repo (token não sai em forks).
       - name: PR coverage comment
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3   # v9
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71   # v9.0.0
         with:
           script: |
             const fs = require("fs");

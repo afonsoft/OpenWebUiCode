@@ -34,7 +34,7 @@ jobs:
 
       - name: 🔍 Qodana Scan
         id: qodana
-        uses: JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f   # v2026.2.2
+        uses: JetBrains/qodana-action@30fde78cf6cbdc081bfc9f575778eeab02c2f761   # v2026.2.2
         continue-on-error: true
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
@@ -44,7 +44,7 @@ jobs:
           upload-result: false
 
       - name: 📊 Upload Qodana Results
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
         if: always()
         with:
           name: qodana-report
@@ -102,7 +102,7 @@ jobs:
 
       - name: ☕ Set up JDK 17
         if: steps.sonar-token.outputs.present == 'true'
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad   # v4
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad   # v6.1.0
         with:
           java-version: '17'
           distribution: 'temurin'
