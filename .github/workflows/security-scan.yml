@@ -46,7 +46,7 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: 🔍 Initialize CodeQL
-        uses: github/codeql-action/init@8498dc4c2b27cdd99baf0f87955b29ebbf30c78d   # v4.39.1
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370   # v4.39.1
         with:
           languages: ${{ matrix.language }}
           queries: security-extended,security-and-quality
@@ -54,10 +54,10 @@ jobs:
 
       - name: 🔍 Autobuild
         if: matrix.language == 'csharp'
-        uses: github/codeql-action/autobuild@8498dc4c2b27cdd99baf0f87955b29ebbf30c78d   # v4.39.1
+        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370   # v4.39.1
 
       - name: 🔍 Perform Analysis
-        uses: github/codeql-action/analyze@8498dc4c2b27cdd99baf0f87955b29ebbf30c78d   # v4.39.1
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370   # v4.39.1
         with:
           category: "/language:${{ matrix.language }}"
 
@@ -264,14 +264,14 @@ jobs:
         run: docker build -t openwebui:scan .
 
       - name: 🔐 Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8   # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25   # v0.36.0
         with:
           image-ref: openwebui:scan
           format: 'sarif'
           output: 'trivy-results.sarif'
 
       - name: 📤 Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@8498dc4c2b27cdd99baf0f87955b29ebbf30c78d   # v4.39.1
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370   # v4.39.1
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'

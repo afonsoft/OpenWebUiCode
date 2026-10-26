@@ -173,10 +173,87 @@ public class ReferenceEndpointsTests
     }
 
     [Test]
+    public async Task Patch_AtualizaCamposParciaisERejeitaInvalidos()
+    {
+        await NewUserAsync();
+        var created = await _client.PostAsJsonAsync(
+            "/api/v1/references", new ReferenceEndpoints.ReferenceBody(
+                "orig", _dir, null, "desc", false));
+        Assert.That(created.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+        var id = (await created.Content
+            .ReadFromJsonAsync<JsonElement>())
+            .GetProperty("view").GetProperty("id").GetString()!;
+
+        // alias inválido e conflito de alias
+        var other = await _client.PostAsJsonAsync(
+            "/api/v1/references", new ReferenceEndpoints.ReferenceBody(
+                "taken", _dir, null, null, false));
+        Assert.That(other.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+        Assert.That((await _client.PatchAsJsonAsync(
+            $"/api/v1/references/{id}", new ReferenceEndpoints.ReferenceBody(
+                "Alias Ruim!", null, null, null, null)))
+            .StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That((await _client.PatchAsJsonAsync(
+            $"/api/v1/references/{id}", new ReferenceEndpoints.ReferenceBody(
+                "taken", null, null, null, null)))
+            .StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+
+        // source vazia rejeitada
+        Assert.That((await _client.PatchAsJsonAsync(
+            $"/api/v1/references/{id}", new ReferenceEndpoints.ReferenceBody(
+                null, " ", null, null, null)))
+            .StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+        // branch + description com valor → trim aplicado
+        var valued = await _client.PatchAsJsonAsync(
+            $"/api/v1/references/{id}", new ReferenceEndpoints.ReferenceBody(
+                null, null, "  main  ", "  nova desc  ", null));
+        Assert.That(valued.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var valuedView = await valued.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(valuedView.GetProperty("branch").GetString(),
+                Is.EqualTo("main"));
+            Assert.That(valuedView.GetProperty("description").GetString(),
+                Is.EqualTo("nova desc"));
+        });
+
+        // source + branch + description atualizam e zeram LastFetchedAt
+        var dir2 = Path.Join(_dir, "sub"); Directory.CreateDirectory(dir2);
+        var patched = await _client.PatchAsJsonAsync(
+            $"/api/v1/references/{id}", new ReferenceEndpoints.ReferenceBody(
+                null, dir2, " ", " ", null));
+        Assert.That(patched.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await patched.Content.ReadAsStringAsync());
+        var view = await patched.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(view.GetProperty("source").GetString(), Is.EqualTo(dir2));
+            Assert.That(view.GetProperty("branch").ValueKind,
+                Is.EqualTo(JsonValueKind.Null));
+            Assert.That(view.GetProperty("description").ValueKind,
+                Is.EqualTo(JsonValueKind.Null));
+            Assert.That(view.GetProperty("lastFetchedAt").GetInt64(), Is.Zero);
+        });
+    }
+
+    [Test]
     public async Task Endpoints_ExigemAuth()
     {
         _client.DefaultRequestHeaders.Authorization = null;
         Assert.That((await _client.GetAsync("/api/v1/references"))
+            .StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        Assert.That((await _client.PostAsJsonAsync("/api/v1/references",
+            new ReferenceEndpoints.ReferenceBody("a", _dir, null, null, null)))
+            .StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        Assert.That((await _client.PatchAsJsonAsync("/api/v1/references/x",
+            new ReferenceEndpoints.ReferenceBody(null, null, null, null, true)))
+            .StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        Assert.That((await _client.DeleteAsync("/api/v1/references/x"))
+            .StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        Assert.That((await _client.GetAsync("/api/v1/references/a/tree"))
+            .StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        Assert.That((await _client.PostAsync("/api/v1/references/x/refresh", null))
             .StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 }
