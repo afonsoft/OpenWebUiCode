@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-references` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | `docs/analise-opencode-v2.md` (P2.6); depends on permissions-v2 (external_directory) |
 
 ## 1. User Story
@@ -87,3 +87,11 @@ tests/OpenWebUI.Api.Tests/ReferenceServiceTests.cs        # NOVO
 - Composer/settings ficaram em `ChatView.razor`/`SettingsModal.razor` (não `ChatComposer`/`Pages/Settings` — paths da SPEC não existem).
 - Anexo usa `ref:` prefix em `MentionPaths` (reuso do pipeline de menções) em vez de kind `reference` no `AttachmentContentService`.
 - Clone com `file://`/URL git; auth de clone privado não coberto (sem creds nas refs v1).
+
+## Delivered
+
+- **PR:** https://github.com/afonsoft/open-webui/pull/525 (`90188d4`)
+- **Issue:** #512
+- **Branch:** `feature/Devin-20261018-references`
+- **Tests:** `ReferenceServiceTests` (14) + `ReferenceEndpointsTests` (4) — 18/18; regressões adjacentes 228/228 (conforme seção Progresso)
+- **Nota:** mergeou sem arquivar a SPEC — arquivada na épica #506 (SPEC-20261026-spec-bookkeeping); issue #512 reportada ao orchestrator por seguir aberta.

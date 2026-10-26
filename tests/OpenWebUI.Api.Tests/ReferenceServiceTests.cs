@@ -231,7 +231,48 @@ public class ReferenceServiceTests
         Assert.That(File.Exists(Path.Join(second.Root, "a.txt")), Is.True);
     }
 
+    [Test]
+    public async Task Resolve_GitCloneFalha_RetornaNull()
+    {
+        await using var db = NewDb();
+        var refs = NewService(db);
+        // Fonte git inexistente, nunca clonada → resolve retorna null.
+        var entry = await SeedRefAsync(
+            db, "u1", "ghost", "file:///nonexistent/repo-xyz");
+        entry.LastFetchedAt = 0;
+        await db.SaveChangesAsync();
+
+        var resolved = await refs.ResolveAsync("u1", "ghost", default);
+        Assert.That(resolved, Is.Null);
+    }
+
     // ---------- Jail / listing / tools ----------
+
+    [Test]
+    public async Task ResolveToolTarget_PathNaoRef_Recusa()
+    {
+        await using var db = NewDb();
+        var refs = NewService(db);
+
+        var (target, error) = await refs.ResolveToolTargetAsync(
+            "u1", "/etc/passwd", ["docs"], default);
+        Assert.That(target, Is.Null);
+        Assert.That(error, Does.Contain("não é um ref:// válido"));
+    }
+
+    [Test]
+    public async Task ResolveToolTarget_RefIndisponivel_Recusa()
+    {
+        await using var db = NewDb();
+        var refs = NewService(db);
+        // Alias anexado mas com fonte que não resolve → "indisponível".
+        await SeedRefAsync(db, "u1", "gone", Path.Join(_tmp, "inexistente"));
+
+        var (target, error) = await refs.ResolveToolTargetAsync(
+            "u1", "ref://gone/a.txt", ["gone"], default);
+        Assert.That(target, Is.Null);
+        Assert.That(error, Does.Contain("indisponível"));
+    }
 
     [Test]
     public async Task ResolveToolTarget_RecusaTraversal()

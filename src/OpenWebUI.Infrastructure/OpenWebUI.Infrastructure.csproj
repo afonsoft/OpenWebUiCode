@@ -13,7 +13,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.14" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Playwright" Version="1.64.1" />
-    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.3.0" />
     <PackageReference Include="Novell.Directory.Ldap.NETStandard" Version="4.0.0" />
     <PackageReference Include="SkiaSharp" Version="4.153.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
