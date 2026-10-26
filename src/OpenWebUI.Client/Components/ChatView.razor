@@ -1853,13 +1853,9 @@
     /// arquivos continuam funcionando e a próxima lookup tenta de novo.</summary>
     private async Task<List<ReferenceItemResponse>> EnsureMentionRefsAsync()
     {
-        if (_mentionRefs is not null)
-        {
-            return _mentionRefs;
-        }
         try
         {
-            return _mentionRefs = await Api.GetReferencesAsync(visible: true);
+            return _mentionRefs ??= await Api.GetReferencesAsync(visible: true);
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
