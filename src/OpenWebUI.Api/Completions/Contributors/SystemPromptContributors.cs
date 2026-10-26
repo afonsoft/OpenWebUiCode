@@ -592,37 +592,10 @@ public sealed class MentionsContributor(ReferenceService? refs = null)
         {
             foreach (var raw in mentionPaths)
             {
-                if (!ReferenceService.TrySplitRef(raw, out var alias, out _))
-                    continue;
-                var resolved = await refs.ResolveAsync(ctx.User.Id, alias, ctx.Ct);
-                if (resolved is null)
+                if (await TryAttachRefAsync(raw, ctx) is { } block)
                 {
-                    continue; // alias inexistente/inacessível — drop silencioso
+                    sections.Add(block);
                 }
-
-                ctx.AttachedRefs.Add(alias);
-                var tree = await ReferenceService.ListTreeAsync(resolved, ctx.Ct);
-                var block = new StringBuilder($"<reference alias=\"{alias}\">");
-                if (!string.IsNullOrWhiteSpace(resolved.Entry.Description))
-                {
-                    block.Append('\n').Append(resolved.Entry.Description.Trim());
-                }
-                if (resolved.Warning is not null)
-                {
-                    block.Append("\n[aviso] ").Append(resolved.Warning);
-                }
-                block.Append("\nLeitura via ref://").Append(alias)
-                    .Append("/caminho (somente-leitura). Arquivos:\n");
-                foreach (var p in tree)
-                {
-                    block.Append("- ").Append(p).Append('\n');
-                }
-                if (tree.Count >= ReferenceService.MaxListingPaths)
-                {
-                    block.Append($"[… truncado em {ReferenceService.MaxListingPaths} paths]");
-                }
-                block.Append("</reference>");
-                sections.Add(block.ToString());
             }
         }
 
@@ -638,6 +611,48 @@ public sealed class MentionsContributor(ReferenceService? refs = null)
         }
 
         return sections;
+    }
+
+    /// <summary>
+    /// Menção <c>ref:alias</c> → bloco <c>&lt;reference&gt;</c> com
+    /// descrição + listing capado; marca o alias em
+    /// <see cref="PromptContext.AttachedRefs"/>. Null quando a menção
+    /// não é ref ou o alias não resolve (drop silencioso).
+    /// </summary>
+    private async Task<string?> TryAttachRefAsync(string raw, PromptContext ctx)
+    {
+        if (!ReferenceService.TrySplitRef(raw, out var alias, out _))
+        {
+            return null;
+        }
+        var resolved = await refs!.ResolveAsync(ctx.User.Id, alias, ctx.Ct);
+        if (resolved is null)
+        {
+            return null; // alias inexistente/inacessível — drop silencioso
+        }
+
+        ctx.AttachedRefs.Add(alias);
+        var tree = await ReferenceService.ListTreeAsync(resolved, ctx.Ct);
+        var block = new StringBuilder($"<reference alias=\"{alias}\">");
+        if (!string.IsNullOrWhiteSpace(resolved.Entry.Description))
+        {
+            block.Append('\n').Append(resolved.Entry.Description.Trim());
+        }
+        if (resolved.Warning is not null)
+        {
+            block.Append("\n[aviso] ").Append(resolved.Warning);
+        }
+        block.Append("\nLeitura via ref://").Append(alias)
+            .Append("/caminho (somente-leitura). Arquivos:\n");
+        foreach (var p in tree)
+        {
+            block.Append("- ").Append(p).Append('\n');
+        }
+        if (tree.Count >= ReferenceService.MaxListingPaths)
+        {
+            block.Append($"[… truncado em {ReferenceService.MaxListingPaths} paths]");
+        }
+        return block.Append("</reference>").ToString();
     }
 }
 
