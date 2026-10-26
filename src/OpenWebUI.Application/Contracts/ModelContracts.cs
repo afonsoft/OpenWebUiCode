@@ -88,4 +88,10 @@ public sealed record ChatCompletionRequest(
     IReadOnlyList<System.Text.Json.JsonElement>? Tools = null,
     bool? WebSearch = null,
     /// <summary>Caminhos do workdir mencionados via chips @path (SPEC-20261009-ide-mentions-tests).</summary>
-    IReadOnlyList<string>? MentionPaths = null);
+    IReadOnlyList<string>? MentionPaths = null,
+    /// <summary>Headers extras resolvidos por variant/overlay (nunca vindos do client).</summary>
+    IReadOnlyDictionary<string, string>? ExtraHeaders = null,
+    /// <summary>Overlay profundo aplicado ao payload do provider (variant/body).</summary>
+    System.Text.Json.Nodes.JsonObject? ExtraBody = null,
+    /// <summary><c>anthropic</c> → injeta cache_control ephemeral (compat).</summary>
+    string? CacheFormat = null);

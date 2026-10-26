@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace OpenWebUI.Application.Contracts;
 
 /// <summary>Tipos de provedor reconhecidos nas conexões tipadas.</summary>
@@ -38,11 +40,20 @@ public static class ProviderTypes
 /// <param name="BaseUrl">URL base do endpoint (oficial pré-preenchida, editável).</param>
 /// <param name="ApiKey">Chave de API da conexão (obrigatória para anthropic/google).</param>
 /// <param name="Name">Nome de exibição opcional.</param>
+/// <param name="Headers">Overlay de headers aplicado a todo request do provider
+/// (SPEC-20261018-model-variants RF-004) — nunca sobrescreve
+/// <c>Authorization</c>/<c>Content-Type</c>.</param>
+/// <param name="Body">Overlay profundo mesclado ao payload de todo request.</param>
+/// <param name="Settings">Defaults de parâmetros de geração do provider
+/// (menor precedência — model/variant/persona vencem).</param>
 public sealed record ProviderConnection(
     string Type,
     string BaseUrl,
     string? ApiKey = null,
-    string? Name = null);
+    string? Name = null,
+    JsonObject? Headers = null,
+    JsonObject? Body = null,
+    JsonObject? Settings = null);
 
 /// <summary>Visão pública de uma conexão tipada: chave nunca é exposta.</summary>
 /// <param name="Type">Tipo do provedor.</param>
