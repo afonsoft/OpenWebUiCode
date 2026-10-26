@@ -58,3 +58,17 @@ Itens 1–8 corrigidos na própria branch `feature/Devin-20261023-messaging-gate
 | 10 SPECs órfãs | issues #506 (epic) + #507–#513 (slices) criadas | gh issues |
 
 Commits: `98c26ff` (fixes), `2a05a7f`/`db53581` (cobertura). CI do #505 em `db53581`.
+
+## Follow-up 2026-10-26 (épica #506, builder)
+
+Verificação pós-merge em `main` (`144096f`):
+
+- **Gateway security (1–8):** fixes presentes em `main` — squash-merge via #497 (`6e92264`); `98c26ff`/`db53581` não aparecem como ancestors porque o squash reescreve. Evidência em `GatewayEndpoints.cs`: `WebhookRateLimit`/`PairAttemptLimit` sempre ativos, cascata `ExecuteDeleteAsync` no delete, `ReadBoundedAsync` + cap por `Content-Length`, allowlist restricted sem `memory_save`/`memory_learn`/`ask_user`.
+- **Slices:** #507–#511 merged + SPECs arquivadas; #512 merged (`90188d4`, PR #525); #513 `in-progress` (agent-devin) — segue aberta.
+- **Bookkeeping corrigido nesta rodada** (SPEC-20261026-spec-bookkeeping):
+  - `docs/specs/SPEC-20261018-model-variants.md`: estava arquivada com `Status: Approved` → `Completed` + `Delivered` (drift guard falhava).
+  - `SPEC-20261018-references.md`: `.specs/` → `docs/specs/` + `Completed` + `Delivered`.
+- **Pendências reportadas ao orchestrator (fora do escopo do builder):**
+  - Issue #512 remota segue `open`/`todo` apesar do merge — fechar/etiquetar.
+  - Labels stale em issues fechadas: #507 (`todo`,`in_progress`), #511 (`todo`).
+  - `check-spec-status.py` é guard local/pre-PR — não roda em CI (diferente dos 3 client guards em `ci-build-test.yml`).
