@@ -258,6 +258,9 @@ public static class ChatPipeline
             ExtraHeaders = pctx.ExtraHeaders ?? request.ExtraHeaders,
             ExtraBody = pctx.ExtraBody ?? request.ExtraBody,
             CacheFormat = pctx.CacheFormat ?? request.CacheFormat,
+            AttachedRefs = pctx.AttachedRefs.Count > 0
+                ? pctx.AttachedRefs.ToList()
+                : null,
         };
 
         // 5. Filtros declarativos do modelo custom (inlet) em ordem estável.

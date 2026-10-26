@@ -605,6 +605,44 @@ public class FileEntry
     public long UpdatedAt { get; set; }
 }
 
+/// <summary>
+/// Referência nomeada (SPEC-20261018-references): diretório local ou
+/// repo git que o agente lê via <c>ref://alias/path</c> e anexa via
+/// menção <c>@alias</c> no composer.
+/// </summary>
+public class ReferenceEntry
+{
+    /// <summary>Identificador único (GUID interno).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono da referência.</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Alias curto (<c>[a-z0-9-]+</c>) — único por usuário.</summary>
+    public string Alias { get; set; } = string.Empty;
+
+    /// <summary>Origem: path absoluto de diretório local ou URL git.</summary>
+    public string Source { get; set; } = string.Empty;
+
+    /// <summary>Branch do clone git (null = default do remote).</summary>
+    public string? Branch { get; set; }
+
+    /// <summary>Descrição injetada no contexto quando anexada (guia de uso).</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Oculta do menu @ — continua resolvível por nome.</summary>
+    public bool Hidden { get; set; }
+
+    /// <summary>Último fetch git bem-sucedido (epoch seconds) — &gt;24h re-fetch.</summary>
+    public long LastFetchedAt { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
 /// <summary>Modelo personalizado do workspace: camada sobre um modelo base com system prompt e parâmetros.</summary>
 public class ModelEntry
 {

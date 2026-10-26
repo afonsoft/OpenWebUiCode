@@ -1190,5 +1190,18 @@
   "chat.dir_listing_attached": "Ordner als Auflistung angehängt ({count} Dateien)",
   "chat.pasted_as_file": "Eingefügter Text als Anhang gespeichert ({chars} Zeichen)",
   "settings.sec_composer": "Eingabefeld",
-  "settings.composer_paste_file": "Lange eingefügte Texte in Dateianhänge umwandeln"
+  "settings.composer_paste_file": "Lange eingefügte Texte in Dateianhänge umwandeln",
+  "settings.references": "Referenzen",
+  "settings.references_hint": "Benannte Verzeichnisse oder Git-Repos (ref://alias) per @alias anhängbar — schreibgeschützt.",
+  "settings.ref_empty": "Keine Referenzen.",
+  "settings.ref_add": "Neue Referenz",
+  "settings.ref_alias": "Alias (a-z0-9-)",
+  "settings.ref_branch": "Branch (optional)",
+  "settings.ref_source": "lokaler Pfad oder Git-URL",
+  "settings.ref_description": "Beschreibung (in Kontext injiziert)",
+  "settings.ref_hidden": "versteckt",
+  "settings.ref_hidden_hint": "Versteckte erscheinen nicht im @-Menü, lösen aber direkt auf.",
+  "settings.ref_refresh": "aktualisieren",
+  "settings.ref_alias_hint": "@alias im Composer zum Anhängen; der Agent liest via ref://alias/pfad.",
+  "settings.ref_save_failed": "Speichern fehlgeschlagen (doppelter Alias oder ungültige Quelle)."
 }

@@ -1190,5 +1190,18 @@
   "chat.dir_listing_attached": "Carpeta adjuntada como listado ({count} archivos)",
   "chat.pasted_as_file": "Texto pegado guardado como adjunto ({chars} caracteres)",
   "settings.sec_composer": "Editor",
-  "settings.composer_paste_file": "Convertir textos pegados largos en archivos adjuntos"
+  "settings.composer_paste_file": "Convertir textos pegados largos en archivos adjuntos",
+  "settings.references": "Referencias",
+  "settings.references_hint": "Directorios o repos git nombrados (ref://alias) anexables con @alias — solo lectura.",
+  "settings.ref_empty": "Sin referencias.",
+  "settings.ref_add": "Nueva referencia",
+  "settings.ref_alias": "alias (a-z0-9-)",
+  "settings.ref_branch": "rama (opcional)",
+  "settings.ref_source": "ruta local o URL git",
+  "settings.ref_description": "descripción (inyectada al contexto)",
+  "settings.ref_hidden": "oculta",
+  "settings.ref_hidden_hint": "Las ocultas no aparecen en el menú @ pero resuelven directo.",
+  "settings.ref_refresh": "actualizar",
+  "settings.ref_alias_hint": "Usa @alias en el composer para anexar; el agente lee vía ref://alias/ruta.",
+  "settings.ref_save_failed": "Error al guardar (alias duplicado u origen inválido)."
 }

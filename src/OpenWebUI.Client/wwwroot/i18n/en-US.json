@@ -1190,5 +1190,18 @@
   "chat.dir_listing_attached": "Folder attached as listing ({count} files)",
   "chat.pasted_as_file": "Pasted text saved as attachment ({chars} chars)",
   "settings.sec_composer": "Composer",
-  "settings.composer_paste_file": "Convert long pastes into file attachments"
+  "settings.composer_paste_file": "Convert long pastes into file attachments",
+  "settings.references": "References",
+  "settings.references_hint": "Named directories or git repos (ref://alias) attachable via @alias in the composer — read-only for the agent.",
+  "settings.ref_empty": "No references yet.",
+  "settings.ref_add": "New reference",
+  "settings.ref_alias": "alias (a-z0-9-)",
+  "settings.ref_branch": "branch (optional)",
+  "settings.ref_source": "local path or git URL",
+  "settings.ref_description": "description (injected into context)",
+  "settings.ref_hidden": "hidden",
+  "settings.ref_hidden_hint": "Hidden refs do not show in the @ menu but still resolve directly.",
+  "settings.ref_refresh": "refresh",
+  "settings.ref_alias_hint": "Use @alias in the composer to attach; the agent reads via ref://alias/path.",
+  "settings.ref_save_failed": "Save failed (duplicate alias or invalid source)."
 }

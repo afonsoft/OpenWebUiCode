@@ -142,6 +142,9 @@ builder.Services.AddScoped<ContextSnapshotService>();
 builder.Services.AddScoped<UserConfigOverlayService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
 builder.Services.AddScoped<HistoryResourceService>();
+// Referências nomeadas ref:// (SPEC-20261018-references): dir local ou
+// clone git cacheado, somente-leitura nas tools de arquivo.
+builder.Services.AddScoped<ReferenceService>();
 builder.Services.AddScoped<IContextSummarizer, LlmContextSummarizer>();
 builder.Services.AddScoped<INativeContextCompactor, ProviderNativeCompactor>();
 // Árvore de conversa (SPEC-20261013-chat-branching): walk leaf→raiz,
@@ -623,6 +626,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapMcpEndpoints();
     app.MapUserMcpEndpoints();
     app.MapMcpOAuthEndpoints();
+    app.MapReferenceEndpoints();
     app.MapChannelEndpoints();
     app.MapSecretEndpoints();
 }

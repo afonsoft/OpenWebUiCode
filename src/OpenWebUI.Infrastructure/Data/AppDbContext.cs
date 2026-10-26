@@ -45,6 +45,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Modelos personalizados do workspace.</summary>
     public DbSet<ModelEntry> ModelEntries => Set<ModelEntry>();
 
+    /// <summary>Referências nomeadas por usuário (SPEC-20261018-references).</summary>
+    public DbSet<ReferenceEntry> ReferenceEntries => Set<ReferenceEntry>();
+
     /// <summary>Batalhas de arena com voto pendente ou registrado.</summary>
     public DbSet<ArenaBattle> ArenaBattles => Set<ArenaBattle>();
 
@@ -319,6 +322,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             entity.HasKey(m => m.Id);
             entity.HasIndex(m => m.UserId);
+        });
+
+        modelBuilder.Entity<ReferenceEntry>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+            entity.HasIndex(r => new { r.UserId, r.Alias }).IsUnique();
         });
 
         modelBuilder.Entity<MemoryEntry>(entity =>

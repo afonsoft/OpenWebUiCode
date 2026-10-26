@@ -1217,6 +1217,41 @@ public class ApiService(HttpClient http, AuthService auth)
             $"/api/v1/workspace/repo/tree{q}");
     }
 
+    /// <summary>Referências nomeadas do usuário (visible=true filtra as
+    /// ocultas — menu @; SPEC-20261018-references RF-002).</summary>
+    public async Task<List<ReferenceItemResponse>> GetReferencesAsync(
+        bool visible = true) =>
+        await SendAsync<List<ReferenceItemResponse>>(HttpMethod.Get,
+            "/api/v1/references" + (visible ? "?visible=true" : "")) ?? [];
+
+    /// <summary>Cria uma referência (alias/source/branch/descrição/hidden).</summary>
+    public async Task<bool> CreateReferenceAsync(
+        string alias, string source, string? branch,
+        string? description, bool hidden) =>
+        (await SendAsync<object>(HttpMethod.Post, "/api/v1/references",
+            new
+            {
+                alias, source,
+                branch = string.IsNullOrWhiteSpace(branch) ? null : branch,
+                description = string.IsNullOrWhiteSpace(description) ? null : description,
+                hidden,
+            })) is not null;
+
+    /// <summary>Atualiza campos mutáveis (só hidden v1; demais via body parcial).</summary>
+    public async Task<bool> PatchReferenceAsync(string id, bool hidden) =>
+        (await SendAsync<object>(HttpMethod.Patch, $"/api/v1/references/{id}",
+            new { hidden })) is not null;
+
+    /// <summary>Remove a referência.</summary>
+    public async Task<bool> DeleteReferenceAsync(string id) =>
+        (await SendAsync<object>(HttpMethod.Delete,
+            $"/api/v1/references/{id}")) is not null;
+
+    /// <summary>Força re-clone/fetch na próxima resolução.</summary>
+    public async Task<bool> RefreshReferenceAsync(string id) =>
+        (await SendAsync<object>(HttpMethod.Post,
+            $"/api/v1/references/{id}/refresh")) is not null;
+
     /// <summary>Catálogo de skills do repo vinculado; vazio sem repo/erro.</summary>
     public async Task<List<RepoSkillItemResponse>> GetRepoSkillsAsync(string? chatId = null) =>
         await SendAsync<List<RepoSkillItemResponse>>(HttpMethod.Get,

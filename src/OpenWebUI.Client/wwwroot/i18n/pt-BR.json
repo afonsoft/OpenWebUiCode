@@ -1190,5 +1190,18 @@
   "chat.dir_listing_attached": "Pasta anexada como listagem ({count} arquivos)",
   "chat.pasted_as_file": "Texto colado salvo como anexo ({chars} caracteres)",
   "settings.sec_composer": "Composer",
-  "settings.composer_paste_file": "Converter pastes longos em anexos de arquivo"
+  "settings.composer_paste_file": "Converter pastes longos em anexos de arquivo",
+  "settings.references": "Referências",
+  "settings.references_hint": "Diretórios ou repositórios git nomeados (ref://alias) anexáveis com @alias no composer — somente-leitura para o agente.",
+  "settings.ref_empty": "Nenhuma referência cadastrada.",
+  "settings.ref_add": "Nova referência",
+  "settings.ref_alias": "alias (a-z0-9-)",
+  "settings.ref_branch": "branch (opcional)",
+  "settings.ref_source": "path local ou URL git",
+  "settings.ref_description": "descrição (injetada no contexto)",
+  "settings.ref_hidden": "oculta",
+  "settings.ref_hidden_hint": "Ocultas não aparecem no menu @ mas resolvem direto.",
+  "settings.ref_refresh": "atualizar",
+  "settings.ref_alias_hint": "Use @alias no composer para anexar; o agente lê via ref://alias/caminho.",
+  "settings.ref_save_failed": "Falha ao salvar (alias duplicado ou origem inválida)."
 }

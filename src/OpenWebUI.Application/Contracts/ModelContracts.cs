@@ -94,4 +94,7 @@ public sealed record ChatCompletionRequest(
     /// <summary>Overlay profundo aplicado ao payload do provider (variant/body).</summary>
     System.Text.Json.Nodes.JsonObject? ExtraBody = null,
     /// <summary><c>anthropic</c> → injeta cache_control ephemeral (compat).</summary>
-    string? CacheFormat = null);
+    string? CacheFormat = null,
+    /// <summary>Aliases de referências anexadas via chips <c>ref:alias</c>
+    /// (interno — resolvido pela pipeline; SPEC-20261018-references RF-003).</summary>
+    IReadOnlyList<string>? AttachedRefs = null);

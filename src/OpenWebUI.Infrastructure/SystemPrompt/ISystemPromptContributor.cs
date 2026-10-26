@@ -58,6 +58,14 @@ public sealed class PromptContext
     /// <summary><c>anthropic</c> → injeta cache_control ephemeral no payload.</summary>
     public string? CacheFormat { get; set; }
 
+    /// <summary>
+    /// Aliases de referências anexadas via menções <c>ref:alias</c>
+    /// (SPEC-20261018-references) — populado pelo MentionsContributor e
+    /// propagado ao <c>BuiltinToolContext.AttachedRefs</c>.
+    /// </summary>
+    public HashSet<string> AttachedRefs { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Factory memoizada do binding do workspace (chat → usuário).</summary>
     public Func<CancellationToken, Task<WorkspaceRepoBinding?>>? BindingFactory { get; init; }
 

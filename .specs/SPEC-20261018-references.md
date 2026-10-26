@@ -71,3 +71,19 @@ tests/OpenWebUI.Api.Tests/ReferenceServiceTests.cs        # NOVO
 - `@docs` anexado → listing + descrição no contexto; `file_read ref://docs/README.md` retorna conteúdo.
 - Referência sem anexo → ask external_directory; anexada → direto.
 - Testes cobrem clone/refresh/path traversal/description injection.
+
+## Progresso (implementado na branch `feature/Devin-20261018-references`)
+
+- `ReferenceEntry` + DbSet + índice único (UserId, Alias) + migration `References`.
+- `ReferenceService`: resolve dir local / git (`clone --depth 1`, cache em `{DATA_ROOT}/references/{user}/{alias-hash12}`, fetch+`reset --hard FETCH_HEAD` após 24h via `LastFetchedAt`), cache stale servido com warning em falha de fetch, jail fail-closed via `WorkspaceFiles.ResolveInside`, listing ordenado cap 2000 (sem `.git`).
+- `ref://alias[/sub]` em `file_read`/`file_grep`/`file_glob` — gated por `BuiltinToolContext.AttachedRefs`; `file_write`/`file_edit` rejeitam ref:// (somente-leitura).
+- Anexo via chip `@alias` → `MentionPaths` com `ref:alias`: `MentionsContributor` emite `<reference alias>` com descrição + listing e popula `PromptContext.AttachedRefs` → request → `ChatRunExecutor` (sub-runs herdam via `RequestJson`).
+- `ReferenceEndpoints`: GET/POST/PATCH/DELETE + `/{alias}/tree` + `/{id}/refresh` sob `/api/v1/references`.
+- UI: menu `@` oferece `ref:alias` (só visíveis; `visible=true`); tab **Referências** no SettingsModal (list/create/delete/hidden/refresh) + 13 chaves i18n × 8 locales.
+- Testes: `ReferenceServiceTests` (14) + `ReferenceEndpointsTests` (4) — 18/18; regressões adjacentes 228/228.
+
+### Desvios
+- `external_directory` (RF-003): o sistema de policies ainda não tem essa permissão — acesso `ref://` exige anexo `@alias` (fail-closed); o "ask para não-anexada" fica pendente do permissions-v2.
+- Composer/settings ficaram em `ChatView.razor`/`SettingsModal.razor` (não `ChatComposer`/`Pages/Settings` — paths da SPEC não existem).
+- Anexo usa `ref:` prefix em `MentionPaths` (reuso do pipeline de menções) em vez de kind `reference` no `AttachmentContentService`.
+- Clone com `file://`/URL git; auth de clone privado não coberto (sem creds nas refs v1).

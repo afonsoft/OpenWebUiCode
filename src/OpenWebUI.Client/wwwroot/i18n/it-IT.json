@@ -1190,5 +1190,18 @@
   "chat.dir_listing_attached": "Cartella allegata come elenco ({count} file)",
   "chat.pasted_as_file": "Testo incollato salvato come allegato ({chars} caratteri)",
   "settings.sec_composer": "Editor",
-  "settings.composer_paste_file": "Converti gli incolla lunghi in allegati"
+  "settings.composer_paste_file": "Converti gli incolla lunghi in allegati",
+  "settings.references": "Riferimenti",
+  "settings.references_hint": "Directory o repo git nominati (ref://alias) allegabili con @alias — sola lettura.",
+  "settings.ref_empty": "Nessun riferimento.",
+  "settings.ref_add": "Nuovo riferimento",
+  "settings.ref_alias": "alias (a-z0-9-)",
+  "settings.ref_branch": "branch (opzionale)",
+  "settings.ref_source": "path locale o URL git",
+  "settings.ref_description": "descrizione (iniettata nel contesto)",
+  "settings.ref_hidden": "nascosto",
+  "settings.ref_hidden_hint": "Le nascoste non appaiono nel menu @ ma si risolvono direttamente.",
+  "settings.ref_refresh": "aggiorna",
+  "settings.ref_alias_hint": "Usa @alias nel composer per allegare; l’agente legge via ref://alias/percorso.",
+  "settings.ref_save_failed": "Salvataggio fallito (alias duplicato o origine non valida)."
 }
