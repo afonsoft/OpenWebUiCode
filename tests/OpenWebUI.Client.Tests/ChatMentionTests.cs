@@ -62,11 +62,12 @@ public sealed class ChatMentionTests
         return Json(new { });
     }
 
-    private static Bunit.BunitContext Setup()
+    private static Bunit.BunitContext Setup(
+        Func<HttpRequestMessage, HttpResponseMessage>? route = null)
     {
         var ctx = new Bunit.BunitContext();
         ctx.JSInterop.Mode = JSRuntimeMode.Loose;
-        var http = new HttpClient(new FakeHandler(Route)) { BaseAddress = new Uri("http://localhost/") };
+        var http = new HttpClient(new FakeHandler(route ?? Route)) { BaseAddress = new Uri("http://localhost/") };
         ctx.Services.AddSingleton(http);
         var l10n = new LocalizationService(http, ctx.JSInterop.JSRuntime);
         var storage = new BrowserStorage(ctx.JSInterop.JSRuntime);
@@ -152,5 +153,52 @@ public sealed class ChatMentionTests
         textarea.KeyDown("Escape");
         cut.WaitForAssertion(() =>
             Assert.That(cut.FindAll(".mention-list"), Is.Empty), TimeSpan.FromSeconds(3));
+    }
+
+    [Test]
+    public void Mention_Refs_SaoSugeridasECacheadas()
+    {
+        var refsCalls = 0;
+        HttpResponseMessage route(HttpRequestMessage req)
+        {
+            if ((req.RequestUri?.AbsolutePath ?? "").Contains("/references"))
+            {
+                refsCalls++;
+                return Json(new object[]
+                {
+                    new
+                    {
+                        id = "r1", alias = "myref", source = "https://git.example/r",
+                        branch = (string?)null, description = "minha ref",
+                        hidden = false, lastFetchedAt = 0L, updatedAt = 0L,
+                    },
+                });
+            }
+            return Route(req);
+        }
+
+        using var ctx = Setup(route);
+        var cut = ctx.Render<ChatView>();
+        var textarea = cut.Find("textarea");
+
+        // 1ª lookup: refs entram na lista como "ref:alias" (badge ref)
+        textarea.Input("@my");
+        var option = cut.WaitForElement(".mention-list [role=option]", TimeSpan.FromSeconds(5));
+        Assert.That(option.TextContent, Does.Contain("myref"));
+
+        // 2ª lookup ("@zzz" casa só arquivo): refs vêm do cache — sem novo fetch
+        textarea.Input("@zzz");
+        cut.WaitForState(() =>
+            cut.FindAll(".mention-list [role=option]")
+                .Any(o => o.TextContent.Contains("zzz.txt")),
+            TimeSpan.FromSeconds(5));
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                cut.FindAll(".mention-list [role=option]")
+                    .Any(o => o.TextContent.Contains("myref")),
+                Is.False, "ref filtrada pela query @zzz não deve aparecer");
+            Assert.That(refsCalls, Is.EqualTo(1), "2ª lookup deve reusar o cache de refs");
+        });
     }
 }
