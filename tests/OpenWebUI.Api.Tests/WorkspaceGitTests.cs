@@ -283,7 +283,8 @@ public class WorkspaceGitTests
         var chat = await CriarChatAsync();
         var run = await EnfileirarAsync(chat.Id, "oi");
 
-        var workdir = Path.Join(_contentRoot, "data", "workspaces", auth.User.Id);
+        var workdir = Path.Join(
+            _contentRoot, "data", "workspaces", auth.User.Id, "scratch", chat.Id);
         Directory.CreateDirectory(workdir);
         try
         {

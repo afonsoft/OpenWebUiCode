@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using OpenWebUI.Application.Contracts;
 
@@ -1243,6 +1244,20 @@ public class ApiService(HttpClient http, AuthService auth)
             HttpMethod.Put, $"/api/v1/chats/{chatId}/workspace-repo",
             repo is null ? null : new WorkspaceRepoOpenRequest(repo, branch));
 
+    /// <summary>Status do workspace scratch da conversa (SPEC-20261027 RF-007).</summary>
+    public Task<ScratchStatusResponse?> GetChatScratchStatusAsync(string chatId) =>
+        SendAsync<ScratchStatusResponse>(
+            HttpMethod.Get, $"/api/v1/chats/{chatId}/workspace/scratch");
+
+    /// <summary>
+    /// Publica o scratch da conversa (SPEC-20261027 RF-006): commit + push
+    /// para repo (slug ou nome novo), remoteUrl com credencial ou PAT ad-hoc.
+    /// </summary>
+    public Task<(PublishWorkspaceResponse? Result, string? Error)> PublishChatWorkspaceAsync(
+        string chatId, PublishWorkspaceRequest request) =>
+        SendOrErrorAsync<PublishWorkspaceResponse>(
+            HttpMethod.Post, $"/api/v1/chats/{chatId}/workspace/publish", request);
+
     /// <summary>
     /// Aplica o diff do worktree da run no workdir compartilhado (E16 S9):
     /// conflitos voltam listados no response — nunca aplicados à força.
@@ -1771,6 +1786,37 @@ public class ApiService(HttpClient http, AuthService auth)
         }
 
         return await response.Content.ReadFromJsonAsync<T>(JsonOptions);
+    }
+
+    /// <summary>
+    /// <see cref="SendAsync{T}"/> que devolve o <c>detail</c> do erro no
+    /// lugar de engolir o status — para ações cujo motivo importa na UI
+    /// (ex.: publish do scratch).
+    /// </summary>
+    private async Task<(T? Result, string? Error)> SendOrErrorAsync<T>(
+        HttpMethod method, string uri, object? body = null)
+    {
+        using var request = auth.CreateRequest(method, uri);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body, options: JsonOptions);
+        }
+
+        using var response = await http.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            return (await response.Content.ReadFromJsonAsync<T>(JsonOptions), null);
+        }
+
+        string? detail = null;
+        try
+        {
+            using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            detail = doc?.RootElement.TryGetProperty("detail", out var d) == true
+                ? d.GetString() : null;
+        }
+        catch (JsonException) { /* corpo não-json — sem detail */ }
+        return (default, detail ?? $"HTTP {(int)response.StatusCode}");
     }
 
     // ---------------- Feed de notificações (D3) ----------------

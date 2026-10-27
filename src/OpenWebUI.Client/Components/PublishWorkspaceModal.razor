@@ -1,0 +1,173 @@
+@inject ApiService Api
+@inject LocalizationService L
+
+@* Modal de publish do workspace scratch (SPEC-20261027 RF-006/007):
+   repo (slug ou nome novo via PAT), remoteUrl com credencial embutida
+   ou PAT ad-hoc — o token nunca é persistido. *@
+@if (Active)
+{
+    <div class="modal-backdrop" @onclick="CloseAsync">
+        <div class="modal flex flex-col" style="max-width: 32rem;" role="dialog" aria-modal="true"
+             aria-label="@L["chat.publish_title"]" tabindex="-1" @onclick:stopPropagation
+             @onkeydown="OnKeyDown" @ref="_dialog">
+            <div class="modal-header">
+                <span>@L["chat.publish_title"]</span>
+                <button type="button" class="icon-btn" aria-label="@L["common.close"]"
+                        @onclick="CloseAsync">×</button>
+            </div>
+            <div class="modal-body">
+                @if (_done is null)
+                {
+                    <div class="field">
+                        <label for="publish-repo">@L["chat.publish_repo"]</label>
+                        <input id="publish-repo" class="input" type="text" @bind="_repo"
+                               placeholder="owner/repo" autocomplete="off" spellcheck="false" />
+                        <div class="field-note">@L["chat.publish_repo_hint"]</div>
+                    </div>
+                    <div class="field">
+                        <label for="publish-remote">@L["chat.publish_remote"]</label>
+                        <input id="publish-remote" class="input" type="text" @bind="_remoteUrl"
+                               placeholder="https://x:TOKEN@github.com/owner/repo.git"
+                               autocomplete="off" spellcheck="false" />
+                    </div>
+                    <div class="field">
+                        <label for="publish-token">@L["chat.publish_token"]</label>
+                        <input id="publish-token" class="input" type="password" @bind="_token"
+                               autocomplete="off" />
+                        <div class="field-note">@L["chat.publish_token_hint"]</div>
+                    </div>
+                    @if (_error is not null)
+                    {
+                        <div class="field-note" role="alert"
+                             style="color: var(--color-red-500, #ef4444);">@_error</div>
+                    }
+                    <div class="card-actions">
+                        <button type="button" class="msg-action" disabled="@_busy"
+                                @onclick="PublishAsync">
+                            @(_busy ? L["common.loading"] : L["chat.publish_submit"])
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <div class="field-note">@L["chat.publish_success"]</div>
+                    <div class="memory-row mt-2">
+                        <div class="memory-text min-w-0">
+                            <a class="text-sm font-mono truncate" href="@_done.RepoUrl"
+                               target="_blank" rel="noopener noreferrer">@_done.RepoUrl</a>
+                            <div class="field-note mt-0 font-mono">@_done.Branch</div>
+                        </div>
+                        @if (_done.CompareUrl is not null)
+                        {
+                            <div class="card-actions">
+                                <a class="msg-action" href="@_done.CompareUrl"
+                                   target="_blank" rel="noopener noreferrer">
+                                    @L["chat.publish_open_pr"]</a>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Controla a visibilidade do modal.</summary>
+    [Parameter] public bool Active { get; set; }
+
+    /// <summary>Notifica mudança de <see cref="Active"/>.</summary>
+    [Parameter] public EventCallback<bool> ActiveChanged { get; set; }
+
+    /// <summary>Chat dono do scratch.</summary>
+    [Parameter] public string? ChatId { get; set; }
+
+    /// <summary>Disparado após publish bem-sucedido (status do scratch muda).</summary>
+    [Parameter] public EventCallback Published { get; set; }
+
+    private bool _wasActive;
+    private bool _focusPending;
+    private bool _busy;
+    private string? _repo;
+    private string? _remoteUrl;
+    private string? _token;
+    private string? _error;
+    private PublishWorkspaceResponse? _done;
+    private ElementReference _dialog;
+
+    protected override void OnParametersSet()
+    {
+        if (Active && !_wasActive)
+        {
+            _wasActive = true;
+            _focusPending = true;
+            _error = null;
+            _done = null;
+        }
+        else if (!Active)
+        {
+            _wasActive = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusPending && Active)
+        {
+            _focusPending = false;
+            await _dialog.FocusAsync();
+        }
+    }
+
+    private async Task PublishAsync()
+    {
+        if (ChatId is null || _busy)
+        {
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_repo) && string.IsNullOrWhiteSpace(_remoteUrl))
+        {
+            _error = L["chat.publish_need_target"];
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+        try
+        {
+            var (result, error) = await Api.PublishChatWorkspaceAsync(
+                ChatId,
+                new PublishWorkspaceRequest(
+                    string.IsNullOrWhiteSpace(_repo) ? null : _repo.Trim(),
+                    string.IsNullOrWhiteSpace(_remoteUrl) ? null : _remoteUrl.Trim(),
+                    string.IsNullOrWhiteSpace(_token) ? null : _token.Trim()));
+            if (result is null)
+            {
+                _error = error ?? L["chat.publish_error"];
+            }
+            else
+            {
+                _done = result;
+                await Published.InvokeAsync();
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CloseAsync()
+    {
+        _token = null;
+        await ActiveChanged.InvokeAsync(false);
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await CloseAsync();
+        }
+    }
+}

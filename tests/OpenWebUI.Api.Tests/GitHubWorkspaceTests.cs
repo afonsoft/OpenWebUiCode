@@ -965,8 +965,11 @@ public class GitHubWorkspaceTests
         {
             Assert.That(source, Is.EqualTo("none"));
             Assert.That(binding, Is.Null);
+            // SPEC-20261027: sem binding o workdir é o scratch da conversa
+            // (era a raiz compartilhada workspaces/{u} antes da SPEC).
             Assert.That(_repos.ResolveWorkdirAsync("u9", "c9", default).Result,
-                Does.EndWith("workspaces/u9".Replace('/', Path.DirectorySeparatorChar)));
+                Does.EndWith("workspaces/u9/scratch/c9"
+                    .Replace('/', Path.DirectorySeparatorChar)));
         });
     }
 

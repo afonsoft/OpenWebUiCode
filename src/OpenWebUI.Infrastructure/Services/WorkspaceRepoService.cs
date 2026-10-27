@@ -33,9 +33,50 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
     public string WorkspaceRoot(string userId) =>
         Path.Join(DataPaths.Root(env.ContentRootPath), "workspaces", userId);
 
+    /// <summary>Raiz das pastas scratch por conversa (SPEC-20261027).</summary>
+    public string ScratchRoot(string userId) =>
+        Path.Join(WorkspaceRoot(userId), "scratch");
+
+    /// <summary>Pasta scratch da conversa (dentro do jail). <c>Sanitize</c>
+    /// preserva pontos — <c>.</c>/<c>..</c> literais são substituídos para
+    /// nunca escapar de <c>scratch/</c>.</summary>
+    public string ScratchDir(string userId, string chatId)
+    {
+        var name = Sanitize(chatId);
+        if (name is "." or "..")
+        {
+            name = "_";
+        }
+        return Path.Join(ScratchRoot(userId), name);
+    }
+
+    /// <summary>True quando <paramref name="dir"/> está sob <c>scratch/</c> —
+    /// runs em scratch não ganham worktree isolado: a pasta já isola por
+    /// conversa e trabalho não-commitado não atravessa <c>--detach</c>.</summary>
+    public bool IsScratchDir(string userId, string dir) =>
+        dir.StartsWith(ScratchRoot(userId) + Path.DirectorySeparatorChar,
+            StringComparison.Ordinal);
+
+    /// <summary>Pai registrado para um chat filho sem binding (null quando
+    /// o chat não é subagente ou o pai não foi registrado).</summary>
+    public Task<string?> GetScratchParentAsync(string chatId, CancellationToken ct) =>
+        config.GetAsync<string?>(ScratchParentKey(chatId), null, ct);
+
+    /// <summary>Registra (ou limpa, null) o pai de um chat filho sem binding.</summary>
+    public Task SetScratchParentAsync(
+        string chatId, string? parentChatId, CancellationToken ct) =>
+        config.SetAsync(ScratchParentKey(chatId), parentChatId, ct);
+
     /// <summary>Binding atual (null quando não há repo vinculado).</summary>
     public Task<WorkspaceRepoBinding?> GetBindingAsync(string userId, CancellationToken ct) =>
         config.GetAsync<WorkspaceRepoBinding?>(BindingKey(userId), null, ct);
+
+    /// <summary>
+    /// kv: pai de um chat filho sem binding (SPEC-20261027-scratch-workspace)
+    /// — o workdir do filho vira <c>scratch/{pai}/agents/{filho}</c> dentro
+    /// do repo do pai, para o publish incluir o trabalho dos subagentes.
+    /// </summary>
+    private static string ScratchParentKey(string chatId) => $"chat:{chatId}:workspace.parent";
 
     /// <summary>Binding por chat (null quando o chat não tem repo próprio).</summary>
     public Task<WorkspaceRepoBinding?> GetChatBindingAsync(string chatId, CancellationToken ct) =>
@@ -85,7 +126,12 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         var (binding, _) = await ResolveBindingAsync(userId, chatId, ct);
         if (binding is null)
         {
-            return WorkspaceRoot(userId);
+            // SPEC-20261027-scratch-workspace: sem repo, cada conversa ganha
+            // pasta própria (materializada aqui, lazy) — a raiz do usuário
+            // só atende uso global sem chat.
+            return chatId is null
+                ? WorkspaceRoot(userId)
+                : await EnsureScratchAsync(userId, chatId, ct);
         }
 
         var dir = Path.Join(WorkspaceRoot(userId), binding.Dir);
@@ -103,6 +149,59 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         }
 
         return WorkspaceRoot(userId);
+    }
+
+    /// <summary>
+    /// Materializa a pasta scratch da conversa (SPEC-20261027): chat filho de
+    /// <c>delegate_task</c> sem binding recebe <c>scratch/{pai}/agents/{filho}</c>
+    /// — subdir do repo do pai (sem .git próprio) para o publish incluir o
+    /// trabalho dos filhos; demais chats ganham <c>scratch/{chatId}</c> com
+    /// <c>git init</c> (idempotente — re-inicializa quando .git some).
+    /// </summary>
+    private async Task<string> EnsureScratchAsync(
+        string userId, string chatId, CancellationToken ct)
+    {
+        var parent = await GetScratchParentAsync(chatId, ct);
+        if (parent is not null)
+        {
+            var agentsDir = Path.Join(
+                ScratchDir(userId, parent), "agents", Sanitize(chatId));
+            Directory.CreateDirectory(agentsDir);
+            return agentsDir;
+        }
+
+        var dir = ScratchDir(userId, chatId);
+        if (IsGitDir(dir))
+        {
+            return dir;
+        }
+        Directory.CreateDirectory(dir);
+        _ = await RunGitAsync(dir, ct, "init", "-q");
+        return dir;
+    }
+
+    /// <summary>
+    /// Status do scratch da conversa (SPEC-20261027 RF-007): existe /
+    /// nº de arquivos de trabalho (sem <c>.git</c>) / se já há commit.
+    /// Não materializa a pasta — resposta puramente observacional.
+    /// </summary>
+    public async Task<ScratchStatusResponse> GetScratchStatusAsync(
+        string userId, string chatId, CancellationToken ct)
+    {
+        // Filho de delegate_task trabalha em agents/{filho} do pai — o
+        // status reflete onde o trabalho realmente mora.
+        var dir = await GetScratchParentAsync(chatId, ct) is { } parent
+            ? Path.Join(ScratchDir(userId, parent), "agents", Sanitize(chatId))
+            : ScratchDir(userId, chatId);
+        if (!Directory.Exists(dir))
+        {
+            return new ScratchStatusResponse(false, 0, false);
+        }
+        var files = Directory
+            .EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+            .Count(p => !p.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}"));
+        var head = await RunGitAsync(dir, ct, "rev-parse", "--verify", "HEAD");
+        return new ScratchStatusResponse(true, files, head is not null);
     }
 
     /// <summary>
@@ -206,21 +305,45 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
     /// worktree é recriado sob demanda no unarchive). Se nenhuma conversa
     /// (nem o binding global) referencia mais o repo, o checkout base em
     /// <c>repos/</c> também sai de disco para liberar espaço.
+    /// SPEC-20261027: a pasta <c>scratch/{chatId}</c> é rascunho descartável —
+    /// sai de disco em delete E em archive (unarchive materializa um scratch
+    /// novo e vazio no próximo uso); leva junto os <c>agents/*</c> dos filhos.
+    /// <paramref name="dropScratch"/>: false no unbind via PUT — desvincular
+    /// o repo não pode apagar o rascunho da conversa, que segue viva.
     /// </summary>
     public async Task ReleaseChatWorkspaceAsync(
-        string userId, string chatId, bool keepBinding, CancellationToken ct)
+        string userId, string chatId, bool keepBinding, CancellationToken ct,
+        bool dropScratch = true)
     {
         var binding = await GetChatBindingAsync(chatId, ct);
+        // Lido antes do kv ser limpo: o subdir do filho mora no pai.
+        var scratchParent = await GetScratchParentAsync(chatId, ct);
         if (!keepBinding)
         {
             await SetChatBindingAsync(chatId, null, ct);
+            await SetScratchParentAsync(chatId, null, ct);
         }
+
+        var root = WorkspaceRoot(userId);
+
+        // Scratch sai só quando a conversa morre/arquiva — nunca no unbind.
+        if (dropScratch)
+        {
+            TryDeleteDir(ScratchDir(userId, chatId));
+            // Filho de delegate_task: o trabalho mora em scratch/{pai}/
+            // agents/{filho} — sai junto quando a sub-conversa é removida.
+            if (scratchParent is not null)
+            {
+                TryDeleteDir(Path.Join(
+                    ScratchDir(userId, scratchParent), "agents", Sanitize(chatId)));
+            }
+        }
+
         if (binding is null)
         {
             return;
         }
 
-        var root = WorkspaceRoot(userId);
         var repoDir = RepoDirName(binding.Repo);
         var baseAbs = Path.Join(root, "repos", repoDir);
 
@@ -475,7 +598,7 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
     }
 
     /// <summary>Roda git e devolve stderr enxuto em falha (sem token no texto).</summary>
-    private static async Task<string?> RunGitLoggedAsync(
+    internal static async Task<string?> RunGitLoggedAsync(
         string? workdir, CancellationToken ct, string? token, params string[] args)
     {
         var (code, _, err) = await RunAsync(workdir, ct, token, args);
@@ -489,11 +612,11 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
         return $"git {args[0]}: {first}";
     }
 
-    private static Task<string?> RunGitAsync(string workdir, CancellationToken ct, params string[] args) =>
+    internal static Task<string?> RunGitAsync(string workdir, CancellationToken ct, params string[] args) =>
         RunAsync(workdir, ct, null, args)
             .ContinueWith(t => t.Result.ExitCode == 0 ? t.Result.Stdout : null, ct);
 
-    private static async Task<(int ExitCode, string Stdout, string? Stderr)> RunAsync(
+    internal static async Task<(int ExitCode, string Stdout, string? Stderr)> RunAsync(
         string? workdir, CancellationToken ct, string? token, params string[] args)
     {
         var psi = new ProcessStartInfo
@@ -581,7 +704,7 @@ public sealed class WorkspaceRepoService(ConfigService config, IHostEnvironment 
                 && p.All(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.'));
     }
 
-    private static string Sanitize(string name)
+    internal static string Sanitize(string name)
     {
         var sb = new StringBuilder(name.Length);
         foreach (var c in name)

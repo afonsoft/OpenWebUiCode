@@ -421,6 +421,101 @@ public sealed class GitHubService(
         }
     }
 
+    /// <summary>
+    /// Resolve o slug efetivo do repo (SPEC-20261027-scratch-workspace RF-006):
+    /// <paramref name="repo"/> com <c>owner/name</c> é usado como está;
+    /// sem owner, assume a conta do token (login persistido ou
+    /// <c>GET /user</c> para PAT ad-hoc).
+    /// </summary>
+    public async Task<string?> ResolveRepoSlugAsync(
+        string userId, string repo, string? adhocToken, CancellationToken ct)
+    {
+        var slug = SanitizeRepoName(repo);
+        if (slug is null)
+        {
+            return null;
+        }
+        if (slug.Contains('/'))
+        {
+            return slug;
+        }
+
+        string? login;
+        if (adhocToken is not null)
+        {
+            login = await ValidateTokenAsync(adhocToken, ct);
+        }
+        else
+        {
+            login = await config.GetAsync<string?>(LoginKey(userId), null, ct)
+                ?? await config.GetAsync<string?>(GlobalLoginKey, null, ct);
+        }
+        return login is null ? null : $"{login}/{slug}";
+    }
+
+    /// <summary>
+    /// Garante que <c>owner/name</c> exista: cria na conta do token quando
+    /// a API responde 404 (com owner ≠ login atual o GitHub recusa e a
+    /// criação falha — devolvemos <c>Ok=false</c>).
+    /// </summary>
+    /// <returns><c>Ok</c> = repo acessível; <c>Created</c> = criado agora (vazio).</returns>
+    public async Task<(bool Ok, bool Created)> EnsureRepoExistsAsync(
+        string userId, string slug, string? adhocToken, CancellationToken ct)
+    {
+        var token = adhocToken ?? await GetTokenAsync(userId, ct);
+        if (token is null)
+        {
+            return (false, false);
+        }
+
+        try
+        {
+            var (status, _) = await SendStatusAsync(
+                token, HttpMethod.Get, $"{ApiBase}/repos/{slug}", ct);
+            if (status == HttpStatusCode.OK)
+            {
+                return (true, false);
+            }
+            if (status != HttpStatusCode.NotFound)
+            {
+                return (false, false);
+            }
+
+            var client = httpFactory.CreateClient(HttpClientName);
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiBase}/user/repos");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
+            request.Headers.UserAgent.ParseAdd("OpenWebUI-NET");
+            request.Content = JsonContent.Create(
+                new { name = slug[(slug.IndexOf('/') + 1)..], @private = true });
+            using var response = await client.SendAsync(request, ct);
+            return (response.IsSuccessStatusCode
+                || response.StatusCode == HttpStatusCode.UnprocessableEntity, // já existia
+                response.IsSuccessStatusCode);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            return (false, false);
+        }
+    }
+
+    /// <summary>
+    /// <c>owner/repo</c> com os caracteres do GitHub; devolve null para
+    /// qualquer outra forma (vazio, caracteres inválidos).
+    /// </summary>
+    private static string? SanitizeRepoName(string? raw)
+    {
+        var s = (raw ?? string.Empty).Trim().Trim('/');
+        if (s.Length == 0 || s.Length > 200)
+        {
+            return null;
+        }
+        return s.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or '/')
+            && !s.Contains("//") && !s.StartsWith('.') && !s.EndsWith('.')
+            ? s
+            : null;
+    }
+
     /// <summary>Chamada autenticada à API do GitHub; null em não-2xx/timeout.</summary>
     private async Task<JsonDocument?> SendAsync(
         string token, HttpMethod method, string uri, CancellationToken ct)

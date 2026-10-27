@@ -658,8 +658,8 @@ public sealed class MentionsContributor(ReferenceService? refs = null)
 
 /// <summary>
 /// Bloco 3.6: diretiva do modo do agente — plan (somente leitura +
-/// plan_exit, com template SDD) ou chat (sem workspace); build não emite
-/// bloco.
+/// plan_exit, com template SDD) ou chat (workspace scratch da conversa);
+/// build não emite bloco.
 /// </summary>
 public sealed class AgentModeContributor : ISystemPromptContributor
 {
@@ -687,12 +687,16 @@ public sealed class AgentModeContributor : ISystemPromptContributor
         {
             return Task.FromResult<IReadOnlyList<string>>(
             [
-                "Modo CHAT ativo: conversa comum sem workspace — NÃO existem "
-                    + "tools de arquivo, shell, jobs ou worktree nesta conversa e "
-                    + "nenhuma call desse tipo será aceita. Responda com texto "
-                    + "(web_search/fetch_url seguem disponíveis se anunciadas). "
-                    + "Para trabalhar num repositório o usuário precisa vincular "
-                    + "um repo ao chat e mudar para o modo build.",
+                // SPEC-20261027-scratch-workspace: a conversa tem pasta
+                // própria (workspaces/{u}/scratch/{chat}) — file/shell
+                // tools a usam quando o pedido exige, via preset de
+                // aprovação. Sem convite a explorar: resposta direta.
+                "Modo CHAT ativo: responda de forma direta ao pedido. Caso "
+                    + "ele exija ler ou criar arquivos, a conversa tem uma "
+                    + "pasta de trabalho própria — tools de arquivo/shell "
+                    + "operam nela mediante aprovação do usuário. Trabalho "
+                    + "em repositório versionado exige vincular um repo ao "
+                    + "chat e mudar para o modo build.",
             ]);
         }
 

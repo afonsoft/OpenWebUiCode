@@ -71,10 +71,11 @@ public static class PermissionRuleset
     /// comandos read-only no futuro).
     /// </summary>
     /// <summary>
-    /// Built-ins que tocam o workspace (SPEC-15, modo <c>chat</c>): sistema
-    /// de arquivos, shell/exec, jobs, worktrees e delegação de subtarefas
-    /// (que herdariam o binding do chat) — negadas e nem anunciadas quando
-    /// a conversa não tem repositório vinculado.
+    /// Built-ins que tocam o workspace (SPEC-15): sistema de arquivos,
+    /// shell/exec, jobs, worktrees e delegação de subtarefas (que herdam
+    /// o binding do chat). No modo <c>plan</c> fora da allowlist são
+    /// negadas; em <c>chat</c> seguem o preset — a pasta scratch da
+    /// conversa garante onde escrever (SPEC-20261027).
     /// </summary>
     private static readonly HashSet<string> WorkspaceTools = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -87,17 +88,28 @@ public static class PermissionRuleset
         "lsp_definition", "lsp_references", "lsp_hover",
     };
 
+    /// <summary>
+    /// Subconjunto de <see cref="WorkspaceTools"/> que só faz sentido com
+    /// repo/worktree real — não é anunciado no modo chat mesmo com scratch
+    /// (evita ruído: worktree/lsp/specs exigem projeto, não pasta vazia).
+    /// </summary>
+    private static readonly HashSet<string> BuildOnlyTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "worktree_diff", "worktree_merge", "specs",
+        "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
+        "lsp_definition", "lsp_references", "lsp_hover",
+    };
+
     public static PermissionDecision Evaluate(
         string? mode, string toolName, bool isBuiltin = true, string? argsSummary = null)
     {
         var normalized = Normalize(mode);
         if (normalized == ChatMode)
         {
-            // chat: nega só as tools de workspace — o resto (web, memória,
-            // ask_user, MCP/HTTP) segue o gate normal do preset.
-            return isBuiltin && WorkspaceTools.Contains(BuiltinName(toolName))
-                ? PermissionDecision.Deny
-                : PermissionDecision.Ask;
+            // SPEC-20261027-scratch-workspace: toda conversa tem pasta
+            // scratch — workspace tools não são mais negadas por falta de
+            // repo; seguem o preset (Ask) como qualquer outra tool.
+            return PermissionDecision.Ask;
         }
         if (normalized != PlanMode)
         {
@@ -135,7 +147,10 @@ public static class PermissionRuleset
         }
         if (Normalize(mode) == ChatMode)
         {
-            return !(isBuiltin && WorkspaceTools.Contains(name!));
+            // SPEC-20261027: com scratch garantido, file/shell/delegate
+            // entram no spec anunciado em modo chat — exceto as que só
+            // servem com repo real (worktree, lsp, specs).
+            return !(isBuiltin && BuildOnlyTools.Contains(name!));
         }
         return Normalize(mode) != PlanMode
             || Evaluate(mode, tool) != PermissionDecision.Deny;

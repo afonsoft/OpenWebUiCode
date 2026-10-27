@@ -651,21 +651,26 @@ public class ChatEndpointsTests
         Assert.That(body!.Source, Is.EqualTo("none"));
     }
 
-    // ---- SPEC-15: modo do agente — chat default; build exige binding ----
+    // ---- SPEC-15 + SPEC-20261027: modo do agente — chat default; build
+    // sem repo é aceito (trabalha na pasta scratch da conversa) ----
 
     [Test]
-    public async Task Patch_Mode_ChatNovoDefaultChat_EBuildSemRepo_400()
+    public async Task Patch_Mode_ChatNovoDefaultChat_EBuildSemRepo_200()
     {
         var auth = await SignUpAsync("ModeNB", "modenb@chats.local", "senha123");
         UseToken(auth.Token);
         var chat = await CriarChatAsync("modo", Mensagens("oi"));
         Assert.That(chat.Mode, Is.EqualTo("chat"));
 
-        // Build sem repositório vinculado → 400.
+        // Build sem repositório: aceito — o trabalho acontece no scratch
+        // workspaces/{u}/scratch/{chat} (SPEC-20261027 RF-003).
         var build = await _client.PatchAsJsonAsync(
             $"/api/v1/chats/{chat.Id}",
             new ChatPatchRequest(null, null, "build"));
-        Assert.That(build.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(build.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(
+            (await build.Content.ReadFromJsonAsync<ChatResponse>())!.Mode,
+            Is.EqualTo("build"));
 
         // chat e plan são válidos sem repo.
         var plan = await _client.PatchAsJsonAsync(
@@ -700,20 +705,22 @@ public class ChatEndpointsTests
             (await build.Content.ReadFromJsonAsync<ChatResponse>())!.Mode,
             Is.EqualTo("build"));
 
-        // Desvincular derruba o modo persistido: build → chat (SPEC-15).
+        // Desvincular NÃO derruba mais o modo: build segue válido — o
+        // trabalho migra para a pasta scratch do chat (SPEC-20261027).
         var unbind = await _client.PutAsJsonAsync(
             $"/api/v1/chats/{chat.Id}/workspace-repo",
             new WorkspaceRepoOpenRequest(null, null));
         Assert.That(unbind.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         var depois = await _client.GetFromJsonAsync<ChatResponse>(
             $"/api/v1/chats/{chat.Id}");
-        Assert.That(depois!.Mode, Is.EqualTo("chat"));
+        Assert.That(depois!.Mode, Is.EqualTo("build"));
 
-        // Sem binding o PATCH de build volta a ser recusado.
+        // Sem binding o PATCH de build segue aceito — trabalho migra para
+        // a pasta scratch do chat (SPEC-20261027 RF-003).
         var again = await _client.PatchAsJsonAsync(
             $"/api/v1/chats/{chat.Id}",
             new ChatPatchRequest(null, null, "build"));
-        Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
     // ── SPEC-20261019-chat-window-perf RF-001: paginação da janela ──
@@ -855,5 +862,191 @@ public class ChatEndpointsTests
 
         var response = await _client.PostAsync($"/api/v1/chats/{chat!.Id}/compact", null);
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    // ---- SPEC-20261027: GET /workspace/scratch + POST /workspace/publish ----
+
+    [Test]
+    public async Task ScratchStatus_ChatInexistente_404()
+    {
+        var auth = await SignUpAsync("Scr404", "scr404@chats.local", "senha123");
+        UseToken(auth.Token);
+
+        var response = await _client.GetAsync(
+            "/api/v1/chats/nao-existe/workspace/scratch");
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task ScratchStatus_ChatNovo_200ExistsFalse()
+    {
+        var auth = await SignUpAsync("Scr200", "scr200@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("scratch", Mensagens("oi"));
+
+        var response = await _client.GetAsync(
+            $"/api/v1/chats/{chat.Id}/workspace/scratch");
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var status = await response.Content
+            .ReadFromJsonAsync<ScratchStatusResponse>();
+        Assert.Multiple(() =>
+        {
+            // Scratch é lazy — chat novo ainda não materializou a pasta.
+            Assert.That(status!.Exists, Is.False);
+            Assert.That(status.FileCount, Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public async Task Publish_SemAuth_401()
+    {
+        _client.DefaultRequestHeaders.Authorization = null;
+
+        var response = await _client.PostAsJsonAsync(
+            "/api/v1/chats/qualquer/workspace/publish",
+            new PublishWorkspaceRequest("o/r", null, null));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task Publish_ChatInexistente_404()
+    {
+        var auth = await SignUpAsync("Pub404", "pub404@chats.local", "senha123");
+        UseToken(auth.Token);
+
+        var response = await _client.PostAsJsonAsync(
+            "/api/v1/chats/nao-existe/workspace/publish",
+            new PublishWorkspaceRequest("o/r", null, null));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
+    public async Task Publish_SemScratch_404()
+    {
+        var auth = await SignUpAsync("PubNS", "pubns@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("sem scratch", Mensagens("oi"));
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/workspace/publish",
+            new PublishWorkspaceRequest("o/r", null, null));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound),
+            await response.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task Publish_SemDestino_400()
+    {
+        var auth = await SignUpAsync("Pub400", "pub400@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("sem destino", Mensagens("oi"));
+        await MaterializarScratchAsync(auth.User.Id, chat.Id);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/workspace/publish",
+            new PublishWorkspaceRequest(null, null, null));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest),
+            await response.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task Publish_FileRemote_200_CommitaEPushSemGravarRemote()
+    {
+        // file:// dispensa token — exercita commit + push de verdade.
+        var auth = await SignUpAsync("PubOK", "pubok@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("publicável", Mensagens("oi"));
+        var dir = await MaterializarScratchAsync(auth.User.Id, chat.Id);
+        await File.WriteAllTextAsync(Path.Join(dir, "rascunho.txt"), "trabalho\n");
+
+        var bare = Path.Join(Path.GetTempPath(), $"owui-pub-{Guid.NewGuid():N}.git");
+        try
+        {
+            RunGit(Path.GetTempPath(), "init", "--bare", "-q", bare);
+            var remote = new Uri(bare).AbsoluteUri;
+
+            var response = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/workspace/publish",
+                new PublishWorkspaceRequest(null, remote, null));
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+                await response.Content.ReadAsStringAsync());
+            var result = await response.Content
+                .ReadFromJsonAsync<PublishWorkspaceResponse>();
+            Assert.Multiple(() =>
+            {
+                Assert.That(result!.Branch, Is.EqualTo($"chat/{chat.Id}"));
+                Assert.That(result.CommitSha, Has.Length.EqualTo(40));
+                Assert.That(result.RepoUrl, Does.StartWith("file://"));
+                Assert.That(result.CompareUrl, Is.Null);
+            });
+
+            var log = RunGit(bare, "log", "--format=%s", $"chat/{chat.Id}");
+            Assert.That(log, Does.Contain($"Work from chat {chat.Id}"));
+        }
+        finally
+        {
+            try { Directory.Delete(bare, recursive: true); } catch { }
+        }
+    }
+
+    [Test]
+    public async Task ScratchStatus_SemAuth_401()
+    {
+        _client.DefaultRequestHeaders.Authorization = null;
+
+        var response = await _client.GetAsync(
+            "/api/v1/chats/qualquer/workspace/scratch");
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task Publish_BodyVazio_400()
+    {
+        var auth = await SignUpAsync("PubNB", "pubnb@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("body vazio", Mensagens("oi"));
+
+        // POST sem JSON → request=null → 400 dedicado (não 404).
+        var response = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/workspace/publish", null);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest),
+            await response.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task Publish_RemoteInalcancavel_502()
+    {
+        var auth = await SignUpAsync("Pub502", "pub502@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("push falha", Mensagens("oi"));
+        var dir = await MaterializarScratchAsync(auth.User.Id, chat.Id);
+        await File.WriteAllTextAsync(Path.Join(dir, "a.txt"), "x");
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/workspace/publish",
+            new PublishWorkspaceRequest(null, "https://127.0.0.1:1/x/y.git", null));
+        Assert.That(response.StatusCode, Is.EqualTo((HttpStatusCode)502),
+            await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>Materializa o scratch do chat via serviço (mesmo path do endpoint).</summary>
+    private async Task<string> MaterializarScratchAsync(string userId, string chatId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var repos = scope.ServiceProvider.GetRequiredService<WorkspaceRepoService>();
+        return await repos.ResolveWorkdirAsync(userId, chatId, CancellationToken.None);
+    }
+
+    private static string RunGit(string cwd, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git", args)
+        {
+            WorkingDirectory = cwd,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+        };
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit(30_000);
+        return p.StandardOutput.ReadToEnd();
     }
 }
