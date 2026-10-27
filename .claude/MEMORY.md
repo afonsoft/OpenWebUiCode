@@ -10,6 +10,7 @@
 | 2026-10-01 | Clean Architecture em 5 projetos | separação Domain/App/Infra/Api/Client | monolito único |
 | 2026-10-01 | `MapStaticAssets` para WASM | resolve `#[.{fingerprint}]` | UseStaticFiles + fallback |
 | 2026-10-13 | Binding de repo estrito por chat + worktree por conversa (SPEC-15) | conversa nova sem repo; build só com repo; isola escrita entre chats | fallback ao binding global, checkout compartilhado |
+| 2026-10-27 | Scratch workspace lazy por chat sem repo (SPEC-20261027, PR #548) | todo chat/build/plan sem repo trabalha em `workspaces/{u}/scratch/{chatId}` com git init; publish empurra para URL/remoto sem gravar `origin` (token nunca toca `.git/config`) | pasta na criação do chat (descartada: lazy evita lixo em conversa pura); origin persistido (descartado: vaza credencial) |
 
 ## Débito Técnico
 
@@ -25,9 +26,9 @@
 | Tarefas LLM | fallback "New Chat" sobrescrevia título | endpoint retorna erro; cliente preserva estado |
 | Modo do agente | default "build" sem repo quebrava o gate de workspace | default "chat" + modo efetivo com downgrade quando não há binding |
 
-## Handoff 2026-10-26 (contexto esgotado)
+## Handoff 2026-10-27 (scratch-workspace entregue)
 
-- **#513 themes-custom**: WIP completo commitado na branch remota `feature/themes-custom-wip` (UserTheme+migration, ThemeEndpoints, ThemeContracts, SettingsAppearance, presets, i18n×8, bootstrap index.html/app.js). Falta: merge com main, build, acceptance da `.specs/SPEC-20261018-themes-custom.md`, drift guards, PR `Closes #513`.
-- **#515 perf load-test**: gate "⚡ Performance Load Test" falhando (run 40177494422, último 26/10 22:20). Diagnosticar `gh run view --log-failed`, corrigir, PR `Closes #515`.
-- **#506 épico**: fechar quando #513 mergear (6/7 slices já entregues; checkboxes atualizados).
-- Worktree `pipe_10a0f6bb` segue checked-out na branch do WIP — não apagar até confirmar o merge.
+- **#547 scratch-workspace**: entregue via PR #548 (merge `b2889d6`), issue fechada, SPEC arquivada em `docs/specs/`. Deploy local feito (container `openwebui`, :3032, healthy, HTTP 200, endpoints `/workspace/scratch` + `/workspace/publish` respondendo 401 sem auth).
+- Ciclo de CI do #548 ensinou: provider real em modo chat entra em loop de tools se o announce incluir tools de build (`worktree_*`, `lsp_*`, `specs`) ou se o prompt convidar exploração — `BuildOnlyTools` no `PermissionRuleset.ShouldAnnounce` + prompt condicional resolveram.
+- Coverage ratchet: baseline linha 92.22% / branch 79.73% — quedas >0.05pp reprovam; cobrir endpoints + services novos desde o primeiro commit.
+- `.specs/SPEC-20261027-context-gen-wizard.md` permanece deferida (não implementar).
