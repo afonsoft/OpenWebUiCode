@@ -1134,11 +1134,16 @@ public sealed class ChatRunExecutor(
         var parentWorktree = sameChatParent
             ? worktrees.ResolveIsolated(user.Id, run.ParentRunId!)
             : null;
+        // SPEC-20261027: workdir sob scratch/ já é isolado por conversa
+        // (e o subdir agents/ isola o filho) — worktree de run seria
+        // redundante e perderia mudanças não-commitadas do scratch.
         var (isolated, warning) = parentWorktree is not null
             ? (parentWorktree, null)
-            : await worktrees.TryCreateForRunAsync(
-                user.Id, run.Id, workdir, ct,
-                force: run.ParentRunId is not null && !sameChatParent);
+            : repos.IsScratchDir(user.Id, workdir)
+                ? (null, null)
+                : await worktrees.TryCreateForRunAsync(
+                    user.Id, run.Id, workdir, ct,
+                    force: run.ParentRunId is not null && !sameChatParent);
         if (warning is not null)
         {
             // Fallback shared: visível no stream como fase informativa.
@@ -1156,20 +1161,16 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>
-    /// Modo efetivo do chat (SPEC-15): o <c>build</c> exige repositório
-    /// vinculado à conversa — sem binding o modo resolve como
-    /// <see cref="PermissionRuleset.ChatMode"/> (tools de workspace nem
-    /// entram no spec anunciado ao provider).
+    /// Modo efetivo do chat (SPEC-15). SPEC-20261027-scratch-workspace:
+    /// <c>build</c> não exige mais repo — sem binding a run trabalha na
+    /// pasta scratch da conversa (<c>workspaces/{u}/scratch/{chat}</c>).
     /// </summary>
     private async Task<string> EffectiveModeAsync(
         string chatId, string? overrideMode, CancellationToken ct)
     {
-        var mode = PermissionRuleset.Normalize(overrideMode ?? await db.Chats.AsNoTracking()
+        return PermissionRuleset.Normalize(overrideMode ?? await db.Chats.AsNoTracking()
             .Where(c => c.Id == chatId)
             .Select(c => c.Mode).FirstOrDefaultAsync(ct));
-        return mode == PermissionRuleset.BuildMode
-            && await repos.GetChatBindingAsync(chatId, ct) is null
-                ? PermissionRuleset.ChatMode : mode;
     }
 
     /// <summary>

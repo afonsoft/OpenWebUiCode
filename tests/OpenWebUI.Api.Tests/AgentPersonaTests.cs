@@ -297,10 +297,11 @@ public class AgentPersonaTests
         var body = _chatBodies.Last();
         Assert.Multiple(() =>
         {
-            // Anunciadas ao provider: só leitura de rede/memória — workspace
-            // tools também caem no modo chat (sem repo vinculado).
-            Assert.That(body, Does.Not.Contain("file_write"));
-            Assert.That(body, Does.Not.Contain("shell_exec"));
+            // Anunciadas ao provider: só leitura — o strict limita o
+            // toolIds; match pelo NOME da tool (a substring "shell_exec"
+            // aparece na descrição do parâmetro de job_output).
+            Assert.That(body, Does.Not.Contain("builtin_file_write"));
+            Assert.That(body, Does.Not.Contain("builtin_shell_exec"));
             Assert.That(body, Does.Contain("builtin_web_search"));
             Assert.That(body, Does.Contain("destrutivas")); // linha strict no system
         });

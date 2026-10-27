@@ -651,21 +651,26 @@ public class ChatEndpointsTests
         Assert.That(body!.Source, Is.EqualTo("none"));
     }
 
-    // ---- SPEC-15: modo do agente — chat default; build exige binding ----
+    // ---- SPEC-15 + SPEC-20261027: modo do agente — chat default; build
+    // sem repo é aceito (trabalha na pasta scratch da conversa) ----
 
     [Test]
-    public async Task Patch_Mode_ChatNovoDefaultChat_EBuildSemRepo_400()
+    public async Task Patch_Mode_ChatNovoDefaultChat_EBuildSemRepo_200()
     {
         var auth = await SignUpAsync("ModeNB", "modenb@chats.local", "senha123");
         UseToken(auth.Token);
         var chat = await CriarChatAsync("modo", Mensagens("oi"));
         Assert.That(chat.Mode, Is.EqualTo("chat"));
 
-        // Build sem repositório vinculado → 400.
+        // Build sem repositório: aceito — o trabalho acontece no scratch
+        // workspaces/{u}/scratch/{chat} (SPEC-20261027 RF-003).
         var build = await _client.PatchAsJsonAsync(
             $"/api/v1/chats/{chat.Id}",
             new ChatPatchRequest(null, null, "build"));
-        Assert.That(build.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(build.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(
+            (await build.Content.ReadFromJsonAsync<ChatResponse>())!.Mode,
+            Is.EqualTo("build"));
 
         // chat e plan são válidos sem repo.
         var plan = await _client.PatchAsJsonAsync(
@@ -700,20 +705,22 @@ public class ChatEndpointsTests
             (await build.Content.ReadFromJsonAsync<ChatResponse>())!.Mode,
             Is.EqualTo("build"));
 
-        // Desvincular derruba o modo persistido: build → chat (SPEC-15).
+        // Desvincular NÃO derruba mais o modo: build segue válido — o
+        // trabalho migra para a pasta scratch do chat (SPEC-20261027).
         var unbind = await _client.PutAsJsonAsync(
             $"/api/v1/chats/{chat.Id}/workspace-repo",
             new WorkspaceRepoOpenRequest(null, null));
         Assert.That(unbind.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         var depois = await _client.GetFromJsonAsync<ChatResponse>(
             $"/api/v1/chats/{chat.Id}");
-        Assert.That(depois!.Mode, Is.EqualTo("chat"));
+        Assert.That(depois!.Mode, Is.EqualTo("build"));
 
-        // Sem binding o PATCH de build volta a ser recusado.
+        // Sem binding o PATCH de build segue aceito — trabalho migra para
+        // a pasta scratch do chat (SPEC-20261027 RF-003).
         var again = await _client.PatchAsJsonAsync(
             $"/api/v1/chats/{chat.Id}",
             new ChatPatchRequest(null, null, "build"));
-        Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(again.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
     // ── SPEC-20261019-chat-window-perf RF-001: paginação da janela ──

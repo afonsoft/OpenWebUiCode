@@ -486,6 +486,13 @@ public sealed class DelegateTaskBuiltinTool(
             await repos.SetChatBindingAsync(
                 childChat.Id, repos.InheritChatBinding(childChat.Id, parentBinding), ct);
         }
+        else if (context.ChatId is { } scratchParent)
+        {
+            // SPEC-20261027-scratch-workspace: pai sem repo → filho trabalha
+            // em scratch/{pai}/agents/{filho} — o publish do pai inclui o
+            // trabalho dos subagentes.
+            await repos.SetScratchParentAsync(childChat.Id, scratchParent, ct);
+        }
 
         var repoError = await BindTargetRepoAsync(scope, context, args, childChat, ct);
         if (repoError is not null)

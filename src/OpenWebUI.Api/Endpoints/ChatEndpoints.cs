@@ -47,6 +47,8 @@ public static class ChatEndpoints
         group.MapGet("/{id}/children", ListChildrenAsync);
         group.MapGet("/{id}/workspace-repo", GetWorkspaceRepoAsync);
         group.MapPut("/{id}/workspace-repo", PutWorkspaceRepoAsync);
+        group.MapGet("/{id}/workspace/scratch", GetScratchStatusAsync);
+        group.MapPost("/{id}/workspace/publish", PublishWorkspaceAsync);
         group.MapPost("/{id}", UpdateChatAsync);
         group.MapPatch("/{id}", PatchChatAsync);
         group.MapDelete("/{id}", DeleteChatAsync);
@@ -560,14 +562,10 @@ public static class ChatEndpoints
         {
             // SPEC-15: desvincular libera o worktree da conversa e, se o
             // repo ficar sem referências, o checkout base sai de disco.
-            // Sem repo o build não resolve — um chat em build cai a chat.
-            await repos.ReleaseChatWorkspaceAsync(user.Id, id, keepBinding: false, ct);
-            var chat = await LoadChatAsync(id, user.Id, db, ct, tracking: true);
-            if (chat is { Mode: "build" })
-            {
-                chat.Mode = PermissionRuleset.ChatMode;
-                await db.SaveChangesAsync(ct);
-            }
+            // O chat segue trabalhando — o scratch o atende (SPEC-20261027)
+            // e NÃO é apagado aqui: desvincular não é deletar a conversa.
+            await repos.ReleaseChatWorkspaceAsync(
+                user.Id, id, keepBinding: false, ct, dropScratch: false);
             return Results.Ok(new ChatWorkspaceRepoResponse(null, "none"));
         }
 
@@ -590,6 +588,69 @@ public static class ChatEndpoints
                 binding.Repo, binding.Branch, binding.Dir,
                 binding.TestCommand, binding.FormatCommand),
             "chat"));
+    }
+
+    /// <summary>
+    /// Status do workspace scratch da conversa (SPEC-20261027 RF-007) —
+    /// a UI usa para decidir se mostra o botão Publicar.
+    /// </summary>
+    private static async Task<IResult> GetScratchStatusAsync(
+        string id, HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (!await db.Chats.AsNoTracking()
+                .AnyAsync(c => c.Id == id && c.UserId == user.Id, ct))
+        {
+            return Results.NotFound();
+        }
+        return Results.Ok(await repos.GetScratchStatusAsync(user.Id, id, ct));
+    }
+
+    /// <summary>
+    /// Publica o scratch da conversa (SPEC-20261027 RF-006): commita o
+    /// rascunho e faz push para <c>repo</c> (slug existente → branch
+    /// <c>chat/{id}</c> + compare; nome novo/inexistente → cria via API e
+    /// push em <c>main</c>), <c>remoteUrl</c> com credencial embutida ou
+    /// PAT ad-hoc em <c>token</c>. O token nunca é gravado no remote.
+    /// </summary>
+    private static async Task<IResult> PublishWorkspaceAsync(
+        string id,
+        PublishWorkspaceRequest? request,
+        HttpContext http,
+        AppDbContext db,
+        WorkspacePublishService publish,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (!await db.Chats.AsNoTracking()
+                .AnyAsync(c => c.Id == id && c.UserId == user.Id, ct))
+        {
+            return Results.NotFound();
+        }
+        if (request is null)
+        {
+            return Results.BadRequest(new { detail = "informe repo ou remoteUrl." });
+        }
+
+        var (result, status, error) = await publish.PublishAsync(
+            user.Id, id, user.Name, user.Email, request, ct);
+        return result is not null
+            ? Results.Ok(result)
+            : status switch
+            {
+                404 => Results.NotFound(new { detail = error }),
+                502 => Results.Json(new { detail = error }, statusCode: 502),
+                _ => Results.BadRequest(new { detail = error }),
+            };
     }
 
     private static async Task<IResult> UpdateChatAsync(
@@ -715,17 +776,12 @@ public static class ChatEndpoints
         }
         if (request.Mode is not null)
         {
-            // SPEC-20261009 RF-001 + SPEC-15: chat | plan | build — build
-            // exige repositório vinculado à conversa.
+            // SPEC-20261009 RF-001 + SPEC-15: chat | plan | build.
+            // SPEC-20261027: build sem repo trabalha na pasta scratch da
+            // conversa — a exigência de binding foi removida.
             if (request.Mode is not ("chat" or "build" or "plan"))
             {
                 return Results.BadRequest(new { detail = "mode inválido." });
-            }
-            if (request.Mode == "build"
-                && await repos.GetChatBindingAsync(id, ct) is null)
-            {
-                return Results.BadRequest(
-                    new { detail = "modo build exige repositório vinculado ao chat." });
             }
             chat.Mode = request.Mode;
             changed = true;

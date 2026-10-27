@@ -71,10 +71,11 @@ public static class PermissionRuleset
     /// comandos read-only no futuro).
     /// </summary>
     /// <summary>
-    /// Built-ins que tocam o workspace (SPEC-15, modo <c>chat</c>): sistema
-    /// de arquivos, shell/exec, jobs, worktrees e delegação de subtarefas
-    /// (que herdariam o binding do chat) — negadas e nem anunciadas quando
-    /// a conversa não tem repositório vinculado.
+    /// Built-ins que tocam o workspace (SPEC-15): sistema de arquivos,
+    /// shell/exec, jobs, worktrees e delegação de subtarefas (que herdam
+    /// o binding do chat). No modo <c>plan</c> fora da allowlist são
+    /// negadas; em <c>chat</c> seguem o preset — a pasta scratch da
+    /// conversa garante onde escrever (SPEC-20261027).
     /// </summary>
     private static readonly HashSet<string> WorkspaceTools = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -93,11 +94,10 @@ public static class PermissionRuleset
         var normalized = Normalize(mode);
         if (normalized == ChatMode)
         {
-            // chat: nega só as tools de workspace — o resto (web, memória,
-            // ask_user, MCP/HTTP) segue o gate normal do preset.
-            return isBuiltin && WorkspaceTools.Contains(BuiltinName(toolName))
-                ? PermissionDecision.Deny
-                : PermissionDecision.Ask;
+            // SPEC-20261027-scratch-workspace: toda conversa tem pasta
+            // scratch — workspace tools não são mais negadas por falta de
+            // repo; seguem o preset (Ask) como qualquer outra tool.
+            return PermissionDecision.Ask;
         }
         if (normalized != PlanMode)
         {
@@ -135,7 +135,9 @@ public static class PermissionRuleset
         }
         if (Normalize(mode) == ChatMode)
         {
-            return !(isBuiltin && WorkspaceTools.Contains(name!));
+            // SPEC-20261027: com scratch garantido, workspace tools entram
+            // no spec anunciado também em modo chat.
+            return true;
         }
         return Normalize(mode) != PlanMode
             || Evaluate(mode, tool) != PermissionDecision.Deny;

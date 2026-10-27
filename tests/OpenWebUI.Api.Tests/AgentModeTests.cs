@@ -93,7 +93,8 @@ public class AgentModeTests
         });
     }
 
-    // ---- PermissionRuleset — modo chat (SPEC-15): workspace negado ----
+    // ---- PermissionRuleset — modo chat: com scratch garantido
+    // (SPEC-20261027), workspace tools seguem o preset como as demais ----
 
     [TestCase("file_read")]
     [TestCase("file_list")]
@@ -117,9 +118,10 @@ public class AgentModeTests
     [TestCase("lsp_definition")]
     [TestCase("lsp_references")]
     [TestCase("lsp_hover")]
-    public void Evaluate_Chat_WorkspaceTools_Deny(string name) =>
+    public void Evaluate_Chat_WorkspaceTools_SeguePreset(string name) =>
+        // Antes de SPEC-20261027: Deny (sem repo não havia onde trabalhar).
         Assert.That(PermissionRuleset.Evaluate("chat", name),
-            Is.EqualTo(PermissionDecision.Deny));
+            Is.EqualTo(PermissionDecision.Ask));
 
     [TestCase("web_search")]
     [TestCase("fetch_url")]
