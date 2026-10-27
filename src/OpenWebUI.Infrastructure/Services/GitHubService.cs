@@ -468,19 +468,19 @@ public sealed class GitHubService(
             return (false, false);
         }
 
-        var (status, _) = await SendStatusAsync(
-            token, HttpMethod.Get, $"{ApiBase}/repos/{slug}", ct);
-        if (status == HttpStatusCode.OK)
-        {
-            return (true, false);
-        }
-        if (status != HttpStatusCode.NotFound)
-        {
-            return (false, false);
-        }
-
         try
         {
+            var (status, _) = await SendStatusAsync(
+                token, HttpMethod.Get, $"{ApiBase}/repos/{slug}", ct);
+            if (status == HttpStatusCode.OK)
+            {
+                return (true, false);
+            }
+            if (status != HttpStatusCode.NotFound)
+            {
+                return (false, false);
+            }
+
             var client = httpFactory.CreateClient(HttpClientName);
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiBase}/user/repos");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
@@ -408,6 +409,305 @@ public class ScratchWorkspaceTests
         Assert.That(gitConfig, Does.Not.Contain("destino.git"));
     }
 
+    // ---------------- RF-006: resolução de destino (slug/repo/remoto) ----------------
+
+    [Test]
+    public async Task Publish_RemoteUrlInvalida_400()
+    {
+        var dir = await _repos.ResolveWorkdirAsync("u1", "chat-badurl", CancellationToken.None);
+        File.WriteAllText(Path.Join(dir, "a.txt"), "x");
+
+        var (_, status, error) = await NewPublish().PublishAsync(
+            "u1", "chat-badurl", "T", "t@t",
+            new PublishWorkspaceRequest(null, "isso-nao-e-url", null),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(error, Does.Contain("remoteUrl"));
+        });
+    }
+
+    [Test]
+    public async Task Publish_RemoteGithub_ComTokenSalvo_MontaCompare_EPush502()
+    {
+        RequireGit();
+        // PAT salvo → extraheader + consulta de branches p/ compare URL.
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var github = new GitHubService(new StubHttpFactory(new StubHandler(req =>
+            req.RequestUri!.AbsolutePath.EndsWith("/branches")
+                ? Json(HttpStatusCode.OK, "[{\"name\":\"main\"}]")
+                : Json(HttpStatusCode.OK, "{\"default_branch\":\"main\"}"))), _config);
+        var dir = await _repos.ResolveWorkdirAsync("u1", "chat-gh", CancellationToken.None);
+        File.WriteAllText(Path.Join(dir, "a.txt"), "x");
+
+        var (_, status, error) = await new WorkspacePublishService(_repos, github)
+            .PublishAsync("u1", "chat-gh", "T", "t@t",
+                new PublishWorkspaceRequest(null, "https://github.com/a/b.git", null),
+                CancellationToken.None);
+
+        // Destino resolvido até o push — que falha sem credencial real.
+        Assert.That(status, Is.EqualTo(502), error);
+    }
+
+    [Test]
+    public async Task Publish_RepoNomeInvalido_400()
+    {
+        var dir = await _repos.ResolveWorkdirAsync("u1", "chat-badname", CancellationToken.None);
+        File.WriteAllText(Path.Join(dir, "a.txt"), "x");
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+
+        var (_, status, error) = await NewPublish().PublishAsync(
+            "u1", "chat-badname", "T", "t@t",
+            new PublishWorkspaceRequest("nome com espaço!", null, null),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(error, Does.Contain("inválido"));
+        });
+    }
+
+    [Test]
+    public async Task Publish_RepoInacessivel_400()
+    {
+        var dir = await _repos.ResolveWorkdirAsync("u1", "chat-down", CancellationToken.None);
+        File.WriteAllText(Path.Join(dir, "a.txt"), "x");
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var github = new GitHubService(new StubHttpFactory(
+            new StubHandler(_ => Json(HttpStatusCode.InternalServerError, "{}"))), _config);
+
+        var (_, status, error) = await new WorkspacePublishService(_repos, github)
+            .PublishAsync("u1", "chat-down", "T", "t@t",
+                new PublishWorkspaceRequest("o/r", null, null), CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(400));
+            Assert.That(error, Does.Contain("inacessível"));
+        });
+    }
+
+    [Test]
+    public async Task Publish_RepoNovo_CriaViaApi_MiraMain_Push502()
+    {
+        RequireGit();
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        await _config.SetAsync("u:u1:github.login", "afonso", CancellationToken.None);
+        var posts = 0;
+        var github = new GitHubService(new StubHttpFactory(new StubHandler(req =>
+        {
+            if (req.Method == HttpMethod.Post)
+            {
+                posts++;
+                return Json(HttpStatusCode.Created, "{}");
+            }
+            return Json(HttpStatusCode.NotFound, "{}");
+        })), _config);
+        var dir = await _repos.ResolveWorkdirAsync("u1", "chat-new", CancellationToken.None);
+        File.WriteAllText(Path.Join(dir, "a.txt"), "x");
+
+        var (_, status, _) = await new WorkspacePublishService(_repos, github)
+            .PublishAsync("u1", "chat-new", "T", "t@t",
+                new PublishWorkspaceRequest("repo-novo", null, null), CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(posts, Is.EqualTo(1), "repo inexistente → POST /user/repos");
+            Assert.That(status, Is.EqualTo(502), "push https falha sem credencial real");
+        });
+    }
+
+    [Test]
+    public async Task Publish_RepoExistente_MiraChatBranch_Push502()
+    {
+        RequireGit();
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var github = new GitHubService(new StubHttpFactory(new StubHandler(req =>
+            req.RequestUri!.AbsolutePath.EndsWith("/branches")
+                ? Json(HttpStatusCode.OK, "[{\"name\":\"dev\"}]")
+                : Json(HttpStatusCode.OK, "{\"default_branch\":\"dev\"}"))), _config);
+        var dir = await _repos.ResolveWorkdirAsync("u1", "chat-exist", CancellationToken.None);
+        File.WriteAllText(Path.Join(dir, "a.txt"), "x");
+
+        var (_, status, _) = await new WorkspacePublishService(_repos, github)
+            .PublishAsync("u1", "chat-exist", "T", "t@t",
+                new PublishWorkspaceRequest("o/r", null, null), CancellationToken.None);
+
+        Assert.That(status, Is.EqualTo(502));
+    }
+
+    [Test]
+    public async Task Publish_SemGitInit_InicializaAntesDeCommitar()
+    {
+        RequireGit();
+        var bare = Path.Join(_root, "semgit.git");
+        Run(_root, "init", "--bare", "-q", bare);
+
+        // Pasta criada "por fora" — sem .git — cobre o init defensivo.
+        var dir = ScratchPath("chat-nogit");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Join(dir, "a.txt"), "x");
+
+        var (result, status, error) = await NewPublish().PublishAsync(
+            "u1", "chat-nogit", "T", "t@t",
+            new PublishWorkspaceRequest(null, new Uri(bare).AbsoluteUri, null),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.EqualTo(0), error);
+            Assert.That(Directory.Exists(Path.Join(dir, ".git")), Is.True);
+            Assert.That(result!.Branch, Is.EqualTo("chat/chat-nogit"));
+        });
+    }
+
+    // ---------------- RF-006: GitHubService slug/ensure ----------------
+
+    [Test]
+    public async Task ResolveSlug_OwnerRepo_PassaDireto()
+    {
+        var slug = await NewGithub(_ => Json(HttpStatusCode.OK, "{}"))
+            .ResolveRepoSlugAsync("u1", "dono/repo", null, CancellationToken.None);
+        Assert.That(slug, Is.EqualTo("dono/repo"));
+    }
+
+    [Test]
+    public async Task ResolveSlug_Invalido_Null()
+    {
+        var github = NewGithub(_ => Json(HttpStatusCode.OK, "{}"));
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await github.ResolveRepoSlugAsync(
+                "u1", "nome com espaço", null, CancellationToken.None), Is.Null);
+            Assert.That(await github.ResolveRepoSlugAsync(
+                "u1", new string('x', 201), null, CancellationToken.None), Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task ResolveSlug_BareName_UsaLoginSalvo()
+    {
+        await _config.SetAsync("u:u1:github.login", "afonso", CancellationToken.None);
+        var slug = await NewGithub(_ => Json(HttpStatusCode.OK, "{}"))
+            .ResolveRepoSlugAsync("u1", "meu-repo", null, CancellationToken.None);
+        Assert.That(slug, Is.EqualTo("afonso/meu-repo"));
+    }
+
+    [Test]
+    public async Task ResolveSlug_BareName_TokenAdHoc_ConsultaUser()
+    {
+        var slug = await NewGithub(req =>
+                req.RequestUri!.AbsolutePath == "/user"
+                    ? Json(HttpStatusCode.OK, "{\"login\":\"u-adhoc\"}")
+                    : Json(HttpStatusCode.NotFound, "{}"))
+            .ResolveRepoSlugAsync("u1", "repo", "token-adhoc", CancellationToken.None);
+        Assert.That(slug, Is.EqualTo("u-adhoc/repo"));
+    }
+
+    [Test]
+    public async Task ResolveSlug_BareName_SemLogin_Null()
+    {
+        var slug = await NewGithub(_ => Json(HttpStatusCode.OK, "{}"))
+            .ResolveRepoSlugAsync("u1", "repo", null, CancellationToken.None);
+        Assert.That(slug, Is.Null);
+    }
+
+    [Test]
+    public async Task EnsureRepo_SemToken_False()
+    {
+        var (ok, created) = await NewGithub(_ => Json(HttpStatusCode.OK, "{}"))
+            .EnsureRepoExistsAsync("u1", "o/r", null, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.False);
+            Assert.That(created, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task EnsureRepo_Existe_OkSemCriar()
+    {
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var (ok, created) = await NewGithub(_ =>
+                Json(HttpStatusCode.OK, "{\"default_branch\":\"main\"}"))
+            .EnsureRepoExistsAsync("u1", "o/r", null, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            Assert.That(created, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task EnsureRepo_ErroApi_False()
+    {
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var (ok, _) = await NewGithub(_ =>
+                Json(HttpStatusCode.InternalServerError, "{}"))
+            .EnsureRepoExistsAsync("u1", "o/r", null, CancellationToken.None);
+        Assert.That(ok, Is.False);
+    }
+
+    [Test]
+    public async Task EnsureRepo_Inexistente_CriaPrivado()
+    {
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        string? postedBody = null;
+        var (ok, created) = await NewGithub(req =>
+            {
+                if (req.Method == HttpMethod.Post)
+                {
+                    postedBody = req.Content!.ReadAsStringAsync().Result;
+                    return Json(HttpStatusCode.Created, "{}");
+                }
+                return Json(HttpStatusCode.NotFound, "{}");
+            })
+            .EnsureRepoExistsAsync("u1", "afonso/novo-repo", null, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True);
+            Assert.That(created, Is.True);
+            Assert.That(postedBody, Does.Contain("\"novo-repo\"").And.Contain("\"private\":true"));
+        });
+    }
+
+    [Test]
+    public async Task EnsureRepo_Conflito422_OkSemCriar()
+    {
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var (ok, created) = await NewGithub(req =>
+                req.Method == HttpMethod.Post
+                    ? Json(HttpStatusCode.UnprocessableEntity, "{}")
+                    : Json(HttpStatusCode.NotFound, "{}"))
+            .EnsureRepoExistsAsync("u1", "o/r", null, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(ok, Is.True, "422 = já existia — concorrência");
+            Assert.That(created, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task EnsureRepo_Excecao_False()
+    {
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var (ok, _) = await NewGithub(_ => throw new HttpRequestException("rede"))
+            .EnsureRepoExistsAsync("u1", "o/r", null, CancellationToken.None);
+        Assert.That(ok, Is.False);
+    }
+
+    private GitHubService NewGithub(Func<HttpRequestMessage, HttpResponseMessage> respond) =>
+        new(new StubHttpFactory(new StubHandler(respond)), _config);
+
+    private static HttpResponseMessage Json(HttpStatusCode code, string body) =>
+        new(code)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+        };
+
     private WorkspacePublishService NewPublish() =>
         new(_repos, new GitHubService(new StubHttpFactory(), _config));
 
@@ -417,9 +717,20 @@ public class ScratchWorkspaceTests
         catch (Exception) { Assert.Ignore("git indisponível no ambiente"); }
     }
 
-    private sealed class StubHttpFactory : IHttpClientFactory
+    private sealed class StubHttpFactory(HttpMessageHandler? handler = null)
+        : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new();
+        public HttpClient CreateClient(string name) =>
+            handler is null ? new() : new HttpClient(handler);
+    }
+
+    /// <summary>Handler roteável por request — usado p/ simular a API do GitHub.</summary>
+    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(respond(request));
     }
 
     private static void Run(string cwd, params string[] args)
