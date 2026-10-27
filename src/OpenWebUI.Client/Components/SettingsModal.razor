@@ -40,14 +40,7 @@
                 @if (_tab == "general")
                 {
                     <SettingsSection Title="@L["settings.sec_appearance"]">
-                        <div class="field">
-                            <label for="fld-1">@L["settings.theme"]</label>
-                            <select class="input" value="@Theme.Current" @onchange="OnThemeChanged" id="fld-1">
-                                <option value="system">@L["settings.theme_system"]</option>
-                                <option value="dark">@L["settings.theme_dark"]</option>
-                                <option value="light">@L["settings.theme_light"]</option>
-                            </select>
-                        </div>
+                        <SettingsAppearance />
                         <div class="field">
                             <label for="fld-2">@L["settings.language"]</label>
                             <select class="input" value="@L.Language" @onchange="OnLanguageChanged" id="fld-2">
@@ -2515,14 +2508,6 @@
             _adminWebhookEvents = [];
             _adminWebhookEnabled = true;
             _adminWebhookMessage = L["settings.webhook_removed"];
-        }
-    }
-
-    private async Task OnThemeChanged(ChangeEventArgs e)
-    {
-        if (e.Value is string theme)
-        {
-            await Theme.SetAsync(theme);
         }
     }
 

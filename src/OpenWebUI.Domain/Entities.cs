@@ -2428,3 +2428,36 @@ public class GatewayDelivery
     /// <summary>Recebimento/envio (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 }
+
+/// <summary>
+/// Tema customizado do usuário (SPEC-20261018-themes-custom): JSON de tokens
+/// validado que vira variáveis CSS na UI. O tema ativo é marcado por
+/// <see cref="Active"/> e a seleção (builtin/instância/custom) vive em
+/// <c>User.SettingsJson["theme"]</c>.
+/// </summary>
+public class UserTheme
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono do tema.</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Slug do tema (kebab-case) — único por usuário; vira classe <c>theme-{id}</c>.</summary>
+    public string ThemeId { get; set; } = string.Empty;
+
+    /// <summary>Nome de exibição.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Payload JSON do tema validado (dark/light/vars).</summary>
+    public string Json { get; set; } = "{}";
+
+    /// <summary>Verdadeiro quando este tema custom é a seleção ativa do usuário.</summary>
+    public bool Active { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}

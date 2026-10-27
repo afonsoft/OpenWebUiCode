@@ -7,6 +7,44 @@ window.openwebui = {
 		document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
 		const meta = document.querySelector('meta[name="theme-color"]');
 		if (meta) meta.setAttribute('content', isDark ? '#171717' : '#ffffff');
+		this._hookSystemTheme();
+	},
+	// SPEC-20261018-themes-custom RF-002: modo 'system' segue o SO em tempo
+	// real — o listener é instalado uma vez e relê webui.theme a cada troca.
+	_hookSystemTheme: function () {
+		if (this._systemThemeHooked) return;
+		this._systemThemeHooked = true;
+		const mq = window.matchMedia('(prefers-color-scheme: dark)');
+		const reapply = function () {
+			const saved = localStorage.getItem('webui.theme') || 'light';
+			if (saved === 'system') {
+				window.openwebui.setTheme('system');
+			}
+		};
+		if (mq.addEventListener) mq.addEventListener('change', reapply);
+		else if (mq.addListener) mq.addListener(reapply); // Safari < 14
+	},
+	// SPEC-20261018-themes-custom RF-001: injeta <style id="user-theme"> com
+	// as vars do tema e marca <html> com theme-{id}. 'default' limpa tudo —
+	// a paleta stock do tailwind volta sem reload.
+	setCustomTheme: function (themeId, css) {
+		const root = document.documentElement;
+		for (const cls of Array.from(root.classList)) {
+			if (cls.startsWith('theme-')) root.classList.remove(cls);
+		}
+		const id = themeId && themeId !== 'default' ? themeId : null;
+		if (id) root.classList.add('theme-' + id);
+		let style = document.getElementById('user-theme');
+		if (!style) {
+			style = document.createElement('style');
+			style.id = 'user-theme';
+			document.head.appendChild(style);
+		}
+		style.textContent = id ? (css || '') : '';
+		try {
+			localStorage.setItem('webui.theme.id', id || 'default');
+			localStorage.setItem('webui.theme.css', id ? (css || '') : '');
+		} catch (e) { /* storage negado — o tema aplica mesmo assim nesta sessão */ }
 	},
 	scrollToEnd: function (element) {
 		if (element) {

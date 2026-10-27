@@ -48,6 +48,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Referências nomeadas por usuário (SPEC-20261018-references).</summary>
     public DbSet<ReferenceEntry> ReferenceEntries => Set<ReferenceEntry>();
 
+    /// <summary>Temas customizados enviados por usuário.</summary>
+    public DbSet<UserTheme> UserThemes => Set<UserTheme>();
+
     /// <summary>Batalhas de arena com voto pendente ou registrado.</summary>
     public DbSet<ArenaBattle> ArenaBattles => Set<ArenaBattle>();
 
@@ -328,6 +331,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             entity.HasKey(r => r.Id);
             entity.HasIndex(r => new { r.UserId, r.Alias }).IsUnique();
+        });
+
+        modelBuilder.Entity<UserTheme>(entity =>
+        {
+            entity.HasKey(t => t.Id);
+            entity.HasIndex(t => new { t.UserId, t.ThemeId }).IsUnique();
         });
 
         modelBuilder.Entity<MemoryEntry>(entity =>

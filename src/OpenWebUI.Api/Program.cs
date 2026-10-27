@@ -627,6 +627,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapUserMcpEndpoints();
     app.MapMcpOAuthEndpoints();
     app.MapReferenceEndpoints();
+    app.MapThemeEndpoints();
     app.MapChannelEndpoints();
     app.MapSecretEndpoints();
 }

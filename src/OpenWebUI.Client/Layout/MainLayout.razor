@@ -64,6 +64,7 @@
         Attention.Changed += OnAttentionChanged;
         _ = ChatNotify.EnsureStartedAsync();
         _ = Attention.EnsureStartedAsync();
+        _ = Theme.SyncFromServerAsync(); // temas: customs + instância + seleção persistida
         _ready = true;
     }
 

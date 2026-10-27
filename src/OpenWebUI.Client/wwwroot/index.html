@@ -17,11 +17,33 @@
 		<script>
 			// Aplica o tema antes do primeiro paint, como no upstream.
 			const theme = localStorage.getItem('webui.theme') || 'light';
+			const themeMq = window.matchMedia('(prefers-color-scheme: dark)');
 			const isDark =
 				theme === 'dark' ||
-				(theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+				(theme === 'system' && themeMq.matches);
 			document.documentElement.classList.toggle('dark', isDark);
 			document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+			// SPEC-20261018-themes-custom: repinta paleta custom do cache e
+			// segue o SO quando o modo é 'system' (listener sobrevive ao boot).
+			try {
+				const themeId = localStorage.getItem('webui.theme.id');
+				const themeCss = localStorage.getItem('webui.theme.css');
+				if (themeId && themeId !== 'default' && themeCss) {
+					document.documentElement.classList.add('theme-' + themeId);
+					const st = document.createElement('style');
+					st.id = 'user-theme';
+					st.textContent = themeCss;
+					document.head.appendChild(st);
+				}
+				const followSystem = function () {
+					if ((localStorage.getItem('webui.theme') || 'light') === 'system') {
+						document.documentElement.classList.toggle('dark', themeMq.matches);
+						document.documentElement.dataset.theme = themeMq.matches ? 'dark' : 'light';
+					}
+				};
+				if (themeMq.addEventListener) themeMq.addEventListener('change', followSystem);
+				else if (themeMq.addListener) themeMq.addListener(followSystem);
+			} catch (e) { /* storage negado */ }
 		</script>
 		<script src="js/app.js" defer></script>
 		<script src="js/audio.js" defer></script>
