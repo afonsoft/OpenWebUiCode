@@ -174,6 +174,47 @@ public class ThemeEndpointsTests
         }
     }
 
+    // Covers RF-003: WEBUI_THEME_JSON malformado → instance null (não quebra).
+    [Test]
+    public async Task ListarTemas_WebuiThemeJsonInvalido_InstanceNull()
+    {
+        Environment.SetEnvironmentVariable("WEBUI_THEME_JSON", "{not json");
+        try
+        {
+            var user = await SignUpAsync("Inv1", "inv1@themes.local", "senha123");
+            UseToken(user.Token);
+
+            var list = await _client.GetFromJsonAsync<JsonElement>("/api/v1/themes");
+            Assert.That(list.GetProperty("instance").ValueKind,
+                Is.EqualTo(JsonValueKind.Null));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("WEBUI_THEME_JSON", null);
+        }
+    }
+
+    // Covers RF-003: WEBUI_THEME_JSON acima de 64KB → instance null.
+    [Test]
+    public async Task ListarTemas_WebuiThemeJsonGigante_InstanceNull()
+    {
+        Environment.SetEnvironmentVariable("WEBUI_THEME_JSON",
+            new string('x', 70 * 1024));
+        try
+        {
+            var user = await SignUpAsync("Inv2", "inv2@themes.local", "senha123");
+            UseToken(user.Token);
+
+            var list = await _client.GetFromJsonAsync<JsonElement>("/api/v1/themes");
+            Assert.That(list.GetProperty("instance").ValueKind,
+                Is.EqualTo(JsonValueKind.Null));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("WEBUI_THEME_JSON", null);
+        }
+    }
+
     // Covers RF-002: escolha persistida por usuário.
     [Test]
     public async Task DefinirAtivo_TemaBuiltin_PersisteSelecao()
@@ -243,6 +284,60 @@ public class ThemeEndpointsTests
 
         var list = await _client.GetFromJsonAsync<JsonElement>("/api/v1/themes");
         Assert.That(list.GetProperty("customs").GetArrayLength(), Is.EqualTo(0));
+    }
+
+    // Covers RF-002/RF-003: deletar o tema ativo reverte a seleção a default.
+    [Test]
+    public async Task DeletarTema_Ativo_ReverteSelecaoParaDefault()
+    {
+        var user = await SignUpAsync("Del2", "del2@themes.local", "senha123");
+        UseToken(user.Token);
+
+        var created = await _client.PostAsync("/api/v1/themes", Json(ValidTheme));
+        var doc = await created.Content.ReadFromJsonAsync<JsonElement>();
+        var id = doc.GetProperty("id").GetString()!;
+        var themeId = doc.GetProperty("themeId").GetString()!;
+
+        var put = await _client.PutAsJsonAsync("/api/v1/themes/active",
+            new { themeId, mode = "dark" });
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var del = await _client.DeleteAsync($"/api/v1/themes/{id}");
+        Assert.That(del.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var list = await _client.GetFromJsonAsync<JsonElement>("/api/v1/themes");
+        var active = list.GetProperty("active");
+        Assert.That(active.GetProperty("themeId").GetString(), Is.EqualTo("default"));
+    }
+
+    // Covers RF-002: themeId fora do formato (slug kebab-case ou "default") → 400.
+    [TestCase("EVIL!")]
+    [TestCase("  ")]
+    [TestCase("tema_com_underscore")]
+    public async Task DefinirAtivo_ThemeIdInvalido_Retorna400(string themeId)
+    {
+        var user = await SignUpAsync("Sel4", $"sel4-{Guid.NewGuid():N}@themes.local", "senha123");
+        UseToken(user.Token);
+
+        var put = await _client.PutAsJsonAsync("/api/v1/themes/active",
+            new { themeId, mode = "system" });
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
+    // Covers RF-002: mode "light" persiste como "light" (ramo de fallback).
+    [Test]
+    public async Task DefinirAtivo_ModoLight_PersisteLight()
+    {
+        var user = await SignUpAsync("Sel5", "sel5@themes.local", "senha123");
+        UseToken(user.Token);
+
+        var put = await _client.PutAsJsonAsync("/api/v1/themes/active",
+            new { themeId = "default", mode = "light" });
+        Assert.That(put.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var list = await _client.GetFromJsonAsync<JsonElement>("/api/v1/themes");
+        Assert.That(list.GetProperty("active").GetProperty("mode").GetString(),
+            Is.EqualTo("light"));
     }
 
     // Covers RF-003: tema de outro usuário não é deletável → 404.
