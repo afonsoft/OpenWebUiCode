@@ -6,6 +6,7 @@ using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using OpenWebUI.Application.Contracts;
+using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
@@ -697,6 +698,106 @@ public class ScratchWorkspaceTests
         var (ok, _) = await NewGithub(_ => throw new HttpRequestException("rede"))
             .EnsureRepoExistsAsync("u1", "o/r", null, CancellationToken.None);
         Assert.That(ok, Is.False);
+    }
+
+    [Test]
+    public async Task SetGlobalToken_Valido_PersisteTokenELogin()
+    {
+        var github = NewGithub(_ => Json(HttpStatusCode.OK, "{\"login\":\"afonso\"}"));
+
+        var login = await github.SetGlobalTokenAsync("tok-global", CancellationToken.None);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(login, Is.EqualTo("afonso"));
+            Assert.That(await _config.GetAsync<string?>(
+                "github.token", null, CancellationToken.None), Is.EqualTo("tok-global"));
+            Assert.That(await _config.GetAsync<string?>(
+                "github.login", null, CancellationToken.None), Is.EqualTo("afonso"));
+        });
+    }
+
+    [Test]
+    public async Task SetGlobalToken_Invalido_NaoPersiste()
+    {
+        var github = NewGithub(_ => Json(HttpStatusCode.Unauthorized, "{}"));
+
+        var login = await github.SetGlobalTokenAsync("tok-ruim", CancellationToken.None);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That(login, Is.Null);
+            Assert.That(await _config.GetAsync<string?>(
+                "github.token", null, CancellationToken.None), Is.Null);
+        });
+    }
+
+    [Test]
+    public void ArgPattern_JsonNuloOuInvalido_DevolvePadraoEstavel()
+    {
+        // TryGetString defensivo: json nulo → null; inválido → catch.
+        // Em todos os casos o padrão default da tool é devolvido.
+        Assert.Multiple(() =>
+        {
+            Assert.That(PermissionRuleset.ArgPattern("shell_exec", null),
+                Is.EqualTo("exec:*"));
+            Assert.That(PermissionRuleset.ArgPattern("shell_exec", "{invalido"),
+                Is.EqualTo("exec:*"));
+            Assert.That(PermissionRuleset.ArgPattern("file_write", "\"so-string\""),
+                Is.EqualTo("write:./**"));
+        });
+    }
+
+    [Test]
+    public async Task RunGit_DirInexistente_ErroControlado()
+    {
+        // Workdir que não existe → Win32Exception → (-1, "", msg), nunca throw.
+        var (code, _, err) = await WorkspaceRepoService.RunAsync(
+            "/definitivamente/nao/existe", CancellationToken.None, null, "status");
+        Assert.Multiple(() =>
+        {
+            Assert.That(code, Is.EqualTo(-1));
+            Assert.That(err, Is.Not.Null.And.Not.Empty);
+        });
+    }
+
+    [Test]
+    public async Task SetCommands_SemBinding_NaoFazemNada()
+    {
+        // Guards: sem binding global as setters retornam cedo.
+        await _repos.SetTestCommandAsync("u1", "make test", CancellationToken.None);
+        await _repos.SetTestCommandAsync("u1", "chat-x", "make test", CancellationToken.None);
+        await _repos.SetFormatCommandAsync("u1", "dotnet format", CancellationToken.None);
+        // Nenhuma exceção e nenhum binding criado de propósito.
+        var (binding, _) = await _repos.ResolveBindingAsync("u1", "chat-x", CancellationToken.None);
+        Assert.That(binding, Is.Null);
+    }
+
+    [Test]
+    public async Task ListPulls_ChecksSemArrays_GuardasDefensivas()
+    {
+        // Resposta de checks sem "statuses"/"check_runs" → guardas saem
+        // cedo e o rollup vira pending (nunca exceção).
+        await _config.SetAsync("u:u1:github.token", "tok", CancellationToken.None);
+        var github = NewGithub(req =>
+            req.RequestUri!.AbsolutePath switch
+            {
+                "/repos/o/r/pulls" => Json(HttpStatusCode.OK, """
+                    [{"number":7,"title":"feat","draft":false,
+                      "user":{"login":"afonso"},"head":{"ref":"dev","sha":"abc1"},
+                      "updated_at":"2026-10-09T10:00:00Z","html_url":"https://x/pr/7"}]
+                    """),
+                _ => Json(HttpStatusCode.OK, "{}"),
+            });
+
+        var pulls = await github.ListPullRequestsAsync("u1", "o", "r", CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pulls, Is.Not.Null);
+            Assert.That(pulls!.Pulls, Has.Count.EqualTo(1));
+            Assert.That(pulls.Pulls[0].Checks.State, Is.EqualTo("pending"));
+        });
     }
 
     private GitHubService NewGithub(Func<HttpRequestMessage, HttpResponseMessage> respond) =>

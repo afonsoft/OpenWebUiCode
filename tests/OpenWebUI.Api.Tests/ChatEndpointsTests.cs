@@ -989,6 +989,46 @@ public class ChatEndpointsTests
         }
     }
 
+    [Test]
+    public async Task ScratchStatus_SemAuth_401()
+    {
+        _client.DefaultRequestHeaders.Authorization = null;
+
+        var response = await _client.GetAsync(
+            "/api/v1/chats/qualquer/workspace/scratch");
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
+
+    [Test]
+    public async Task Publish_BodyVazio_400()
+    {
+        var auth = await SignUpAsync("PubNB", "pubnb@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("body vazio", Mensagens("oi"));
+
+        // POST sem JSON → request=null → 400 dedicado (não 404).
+        var response = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/workspace/publish", null);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest),
+            await response.Content.ReadAsStringAsync());
+    }
+
+    [Test]
+    public async Task Publish_RemoteInalcancavel_502()
+    {
+        var auth = await SignUpAsync("Pub502", "pub502@chats.local", "senha123");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync("push falha", Mensagens("oi"));
+        var dir = await MaterializarScratchAsync(auth.User.Id, chat.Id);
+        await File.WriteAllTextAsync(Path.Join(dir, "a.txt"), "x");
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/workspace/publish",
+            new PublishWorkspaceRequest(null, "https://127.0.0.1:1/x/y.git", null));
+        Assert.That(response.StatusCode, Is.EqualTo((HttpStatusCode)502),
+            await response.Content.ReadAsStringAsync());
+    }
+
     /// <summary>Materializa o scratch do chat via serviço (mesmo path do endpoint).</summary>
     private async Task<string> MaterializarScratchAsync(string userId, string chatId)
     {

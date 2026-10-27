@@ -106,11 +106,7 @@ public sealed class WorkspacePublishService(WorkspaceRepoService repos, GitHubSe
             return (url, token, clean, compareUrl, branch, null);
         }
 
-        if (string.IsNullOrWhiteSpace(req.Repo))
-        {
-            return (null, null, null, null, branch, "informe repo ou remoteUrl");
-        }
-
+        // Repo é não-vazio aqui — PublishAsync já rejeitou os dois vazios.
         var adhocToken = req.Token;
         if (adhocToken is null && storedToken is null)
         {
@@ -118,7 +114,7 @@ public sealed class WorkspacePublishService(WorkspaceRepoService repos, GitHubSe
                 "sem token GitHub — configure o PAT ou passe token no payload");
         }
 
-        var slugRepo = await github.ResolveRepoSlugAsync(userId, req.Repo, adhocToken, ct);
+        var slugRepo = await github.ResolveRepoSlugAsync(userId, req.Repo!, adhocToken, ct);
         if (slugRepo is null)
         {
             return (null, null, null, null, branch, "nome de repo inválido");
