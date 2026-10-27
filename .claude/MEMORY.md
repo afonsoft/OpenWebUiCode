@@ -24,3 +24,10 @@
 | Boot WASM | placeholder não resolvido → app muda | smoke test deve validar boot, não só HTML 200 |
 | Tarefas LLM | fallback "New Chat" sobrescrevia título | endpoint retorna erro; cliente preserva estado |
 | Modo do agente | default "build" sem repo quebrava o gate de workspace | default "chat" + modo efetivo com downgrade quando não há binding |
+
+## Handoff 2026-10-26 (contexto esgotado)
+
+- **#513 themes-custom**: WIP completo commitado na branch remota `feature/themes-custom-wip` (UserTheme+migration, ThemeEndpoints, ThemeContracts, SettingsAppearance, presets, i18n×8, bootstrap index.html/app.js). Falta: merge com main, build, acceptance da `.specs/SPEC-20261018-themes-custom.md`, drift guards, PR `Closes #513`.
+- **#515 perf load-test**: gate "⚡ Performance Load Test" falhando (run 40177494422, último 26/10 22:20). Diagnosticar `gh run view --log-failed`, corrigir, PR `Closes #515`.
+- **#506 épico**: fechar quando #513 mergear (6/7 slices já entregues; checkboxes atualizados).
+- Worktree `pipe_10a0f6bb` segue checked-out na branch do WIP — não apagar até confirmar o merge.

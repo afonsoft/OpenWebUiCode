@@ -467,6 +467,20 @@ async def scenario_subagents(
     if not chats:
         raise RuntimeError("não consegui criar chats para subagents")
 
+    # delegate_task é workspace-gated: no modo chat (default) o ruleset nega a
+    # tool e nenhum filho spawna. Modo build sem repo vinculado degrada para
+    # chat — então cada chat precisa de binding + preset que auto-aprova.
+    repo = os.environ.get("LT_REPO_SLUG") or "afonsoft/open-webui"
+    branch = os.environ.get("LT_REPO_BRANCH") or "main"
+    for cid in chats:
+        await api.req(
+            session, "chat_patch", "PATCH", f"/api/v1/chats/{cid}", token,
+            json_body={"mode": "build", "approvalPreset": "always-allow"})
+        await api.req(
+            session, "chat_bind", "PUT",
+            f"/api/v1/chats/{cid}/workspace-repo", token,
+            json_body={"repo": repo, "branch": branch})
+
     async def wave(w: int) -> None:
         async def one(cid: str) -> None:
             t0 = time.perf_counter()
