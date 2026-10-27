@@ -499,6 +499,57 @@
                     }
                 </div>
             }
+            @if (_messageQueue.Count > 0)
+            {
+                @* Fila do composer: cada item vira a próxima run quando a
+                   atual encerra. Lápis edita inline; ↵ para a run e envia
+                   já; × remove sem enviar. *@
+                <div class="mb-1 mx-1 flex flex-col gap-0.5 rounded-xl bg-gray-50 dark:bg-gray-850 px-2 py-1.5"
+                     role="list" aria-label="@L["chat.queue_title"]">
+                    @foreach (var item in _messageQueue)
+                    {
+                        <div class="flex items-center gap-1 min-w-0" role="listitem" @key="item.Id">
+                            @if (_queueEditId == item.Id)
+                            {
+                                <textarea class="flex-1 min-w-0 bg-transparent outline-none resize-none text-sm py-0.5 px-1 text-gray-800 dark:text-gray-200"
+                                          rows="1" aria-label="@L["chat.queue_edit"]"
+                                          @bind="_queueEditText" @bind:event="oninput"
+                                          @onkeydown="e => OnQueueEditKeyDown(item, e)"></textarea>
+                                <button class="flex-none size-6 flex items-center justify-center rounded-full text-green-600 hover:bg-gray-200 dark:text-green-400 dark:hover:bg-gray-700 transition cursor-pointer"
+                                        title="@L["chat.queue_save"]" aria-label="@L["chat.queue_save"]"
+                                        @onclick="() => SaveQueueEdit(item)">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                                </button>
+                                <button class="flex-none size-6 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition cursor-pointer"
+                                        title="@L["common.cancel"]" aria-label="@L["common.cancel"]"
+                                        @onclick="CancelQueueEdit">×</button>
+                            }
+                            else
+                            {
+                                <span class="flex-1 min-w-0 truncate text-sm py-0.5 text-gray-700 dark:text-gray-300"
+                                      title="@item.Text">@(item.Text.Length > 0 ? item.Text : QueueItemFallback(item))</span>
+                                @if (item.Files.Count + item.Mentions.Count > 0)
+                                {
+                                    <span class="flex-none text-[0.6875rem] text-gray-400 dark:text-gray-500">📎 @(item.Files.Count + item.Mentions.Count)</span>
+                                }
+                                <button class="flex-none size-6 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300 transition cursor-pointer"
+                                        title="@L["chat.queue_edit"]" aria-label="@L["chat.queue_edit"]"
+                                        @onclick="() => StartQueueEdit(item)">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
+                                </button>
+                                <button class="flex-none size-6 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300 transition cursor-pointer"
+                                        title="@L["chat.queue_send_now"]" aria-label="@L["chat.queue_send_now"]"
+                                        @onclick="() => ForceSendQueueItemAsync(item)">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20 4v7a4 4 0 0 1-4 4H5m0 0 4 4m-4-4 4-4" /></svg>
+                                </button>
+                                <button class="flex-none size-6 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300 transition cursor-pointer"
+                                        title="@L["chat.queue_remove"]" aria-label="@L["chat.queue_remove"]"
+                                        @onclick="() => _messageQueue.Remove(item)">×</button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
 
             <div class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border border-gray-100/30 dark:border-gray-850/30 hover:border-gray-200 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition px-0.5 bg-white/5 dark:bg-gray-500/5 backdrop-blur-sm dark:text-gray-100">
                 <div class="px-2 relative">
@@ -749,6 +800,11 @@
                                          Disabled="@_loading" OnSelect="SetAgentModeAsync" />
                         @if (_streaming)
                         {
+                            <button class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40
+                                           @(SendDisabled ? "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-600" : "bg-gray-900 text-white dark:bg-white dark:text-gray-900")"
+                                    title="@L["chat.queue_add"]" aria-label="@L["chat.queue_add"]" disabled="@SendDisabled" @onclick="EnqueueMessage">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" /></svg>
+                            </button>
                             if (_paused)
                             {
                                 <button class="size-8 flex items-center justify-center rounded-full bg-blue-600 text-white transition cursor-pointer"
@@ -933,6 +989,23 @@
     private static readonly TimeSpan TpsWindow = TimeSpan.FromSeconds(4);
     private bool _hasDeltas;
     private readonly List<ToolCallView> _liveToolCalls = [];
+
+    // Fila de mensagens do composer: enquanto uma run executa, Enter ou o
+    // botão de enviar deposita o texto (+ anexos/mentions) aqui — os itens
+    // ficam visíveis acima do composer, editáveis, e o drain dispara a
+    // próxima run assim que a atual encerra. O ícone ↵ de um item força o
+    // envio: marca _forceQueueId e para a run ativa; ao cair, o drain o
+    // envia primeiro. A fila é por tela — troca de chat ou reload a esvazia.
+    private readonly List<ComposerQueueItem> _messageQueue = [];
+    private string? _queueEditId;
+    private string _queueEditText = string.Empty;
+    private string? _forceQueueId;
+    private bool _drainingQueue;
+
+    /// <summary>Item da fila do composer (texto + snapshot de anexos/mentions).</summary>
+    private sealed record ComposerQueueItem(
+        string Id, string Text,
+        List<FileResponse> Files, List<string> Mentions);
 
     // Raciocínio/thinking do modelo (SPEC-20261015-chat-thinking-stream):
     // buffer separado do conteúdo — nunca entra na mensagem persistida.
@@ -1325,6 +1398,9 @@
         _error = null;
         _followUps = [];
         _attachedFiles.Clear();
+        _messageQueue.Clear();
+        _forceQueueId = null;
+        _queueEditId = null;
         _liveToolCalls.Clear();
         _runTasks = [];
         _runChanges = [];
@@ -1469,6 +1545,20 @@
             catch (Exception ex) when (ClientErrors.IsTransient(ex))
             {
                 await Console.Error.WriteLineAsync($"[ChatView] active run falhou: {ex.Message}");
+                // Falha transitória de fetch (proxy/CF — visto em produção):
+                // sem retry o chat ficava sem attach e a run parecia parada
+                // até um reload manual. Uma segunda tentativa curta cobre
+                // a maioria das quedas de borda.
+                try
+                {
+                    await Task.Delay(1_000);
+                    activeRun = await ChatStream.GetActiveRunAsync(chat.Id);
+                }
+                catch (Exception retryEx) when (ClientErrors.IsTransient(retryEx))
+                {
+                    await Console.Error.WriteLineAsync(
+                        $"[ChatView] active run retry falhou: {retryEx.Message}");
+                }
             }
             _ = activeRun is not null
                 ? AttachActiveRunAsync(activeRun)
@@ -1566,6 +1656,10 @@
                 {
                     await AttachActiveRunAsync(next);
                 }
+                // Cobre o caso do stream da própria run ter morrido antes do
+                // terminal (proxy/aba em background): a fila do composer
+                // anda pelo run.completed mesmo sem consume anexado.
+                await DrainMessageQueueAsync();
             }
             catch (Exception ex)
             {
@@ -1764,9 +1858,18 @@
             return;
         }
 
-        if (e.Key == "Enter" && !e.ShiftKey && !SendDisabled && !_streaming)
+        if (e.Key == "Enter" && !e.ShiftKey && !SendDisabled)
         {
-            await SendAsync();
+            // Com run ativa o Enter não é perdido: a mensagem vai para a
+            // fila acima do composer e roda quando a atual terminar.
+            if (_streaming)
+            {
+                EnqueueMessage();
+            }
+            else
+            {
+                await SendAsync();
+            }
             return;
         }
 
@@ -2379,6 +2482,166 @@
     }
 
     /// <summary>
+    /// Deposita o conteúdo do composer na fila enquanto uma run executa —
+    /// o item é despachado como a próxima run quando a atual encerra
+    /// (ver <see cref="DrainMessageQueueAsync"/>).
+    /// </summary>
+    private void EnqueueMessage()
+    {
+        var text = _input.Trim();
+        if (text.Length == 0 && _attachedFiles.Count == 0 && _mentionPaths.Count == 0)
+        {
+            return;
+        }
+
+        _messageQueue.Add(new ComposerQueueItem(
+            Guid.NewGuid().ToString("N"), text,
+            [.. _attachedFiles], [.. _mentionPaths]));
+        _input = string.Empty;
+        _promptSuggestions = [];
+        _mentionItems = [];
+        _pendingCommand = null;
+        _attachedFiles.Clear();
+        _mentionPaths.Clear();
+        _ = PushHistoryAsync(text);
+        _ = Storage.RemoveAsync($"chat:draft:{_loadedChatId ?? "new"}");
+    }
+
+    /// <summary>Fallback do preview quando o item da fila só tem anexos/mentions.</summary>
+    private string QueueItemFallback(ComposerQueueItem item) =>
+        item.Files.Count > 0
+            ? string.Join(", ", item.Files.Select(f => f.Filename))
+            : string.Join(", ", item.Mentions);
+
+    private void StartQueueEdit(ComposerQueueItem item)
+    {
+        _queueEditId = item.Id;
+        _queueEditText = item.Text;
+    }
+
+    private void SaveQueueEdit(ComposerQueueItem item)
+    {
+        var text = _queueEditText.Trim();
+        var index = _messageQueue.IndexOf(item);
+        if (index >= 0)
+        {
+            // Editar para vazio sem anexos/mentions = remover da fila.
+            if (text.Length == 0 && item.Files.Count == 0 && item.Mentions.Count == 0)
+            {
+                _messageQueue.RemoveAt(index);
+            }
+            else
+            {
+                _messageQueue[index] = item with { Text = text };
+            }
+        }
+        CancelQueueEdit();
+    }
+
+    private void CancelQueueEdit()
+    {
+        _queueEditId = null;
+        _queueEditText = string.Empty;
+    }
+
+    private void OnQueueEditKeyDown(ComposerQueueItem item, KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            SaveQueueEdit(item);
+        }
+        else if (e.Key == "Escape")
+        {
+            CancelQueueEdit();
+        }
+    }
+
+    /// <summary>
+    /// Força o envio: marca o item e para a run ativa — quando o stream
+    /// encerra, o drain o despacha primeiro (send-now). Sem run ativa o
+    /// item sai direto.
+    /// </summary>
+    private async Task ForceSendQueueItemAsync(ComposerQueueItem item)
+    {
+        if (!_messageQueue.Contains(item))
+        {
+            return;
+        }
+
+        _forceQueueId = item.Id;
+        if (_streaming)
+        {
+            StopStreaming();
+        }
+        else
+        {
+            await DrainMessageQueueAsync();
+        }
+    }
+
+    /// <summary>
+    /// Despacha os itens da fila como runs sequenciais — chamado pelos
+    /// finally do consume quando a run atual encerra e pelo run.completed
+    /// solto. Com force-send o item marcado sai primeiro; sem, vale a
+    /// ordem de chegada. Reentrância é barrada por _drainingQueue — os
+    /// itens novos entram na mesma volta do while.
+    /// </summary>
+    private async Task DrainMessageQueueAsync()
+    {
+        if (_drainingQueue || _streaming || _messageQueue.Count == 0
+            || string.IsNullOrEmpty(_model))
+        {
+            return;
+        }
+
+        _drainingQueue = true;
+        try
+        {
+            while (!_streaming && _messageQueue.Count > 0)
+            {
+                ComposerQueueItem item;
+                var forced = _forceQueueId is { } forceId
+                    ? _messageQueue.FindIndex(q => q.Id == forceId)
+                    : -1;
+                if (forced >= 0)
+                {
+                    item = _messageQueue[forced];
+                    _messageQueue.RemoveAt(forced);
+                }
+                else
+                {
+                    item = _messageQueue[0];
+                    _messageQueue.RemoveAt(0);
+                }
+                _forceQueueId = null;
+                if (_queueEditId == item.Id)
+                {
+                    CancelQueueEdit();
+                }
+
+                // Reidrata o composer com o snapshot do item e segue o
+                // fluxo normal de envio (cada item = uma run nova).
+                _input = item.Text;
+                _attachedFiles.AddRange(item.Files);
+                _mentionPaths.AddRange(item.Mentions);
+                try
+                {
+                    await SendAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"fila: envio do item falhou: {ex.Message}");
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            _drainingQueue = false;
+        }
+    }
+
+    /// <summary>
     /// Ativa uma mensagem como leaf do caminho (SPEC-20261013-chat-branching):
     /// "ramificar daqui" nas bolhas e troca de leaf no popover usam o mesmo
     /// endpoint — a resposta já vem renderizada no caminho ativado.
@@ -2639,6 +2902,7 @@
             _cts?.Dispose();
             _cts = null;
             await InvokeAsync(StateHasChanged);
+            await DrainMessageQueueAsync();
         }
     }
 
@@ -2716,6 +2980,7 @@
             {
                 Console.WriteLine($"reload pós-run falhou: {ex.Message}");
             }
+            await DrainMessageQueueAsync();
         }
     }
 
@@ -2771,6 +3036,7 @@
             {
                 Console.WriteLine($"reload pós-reattach falhou: {ex.Message}");
             }
+            await DrainMessageQueueAsync();
         }
     }
 
@@ -2803,7 +3069,9 @@
         var lastSeq = 0;
         var emptyAttaches = 0;
         var sawEvent = false;
-        const int StallMs = 60_000;
+        // 35s = 2 heartbeats perdidos (15s) + margem — antes 60s deixava a
+        // tela congelada por um minuto inteiro antes do reattach.
+        const int StallMs = 35_000;
         const int MaxEmptyAttaches = 5;
         var lastRender = DateTime.MinValue;
         var dirty = false;
@@ -3326,6 +3594,12 @@
         if (_activeRunId is not null && _loadedChatId is not null)
         {
             _ = ChatStream.StopRunAsync(_loadedChatId, _activeRunId);
+        }
+        else
+        {
+            // Stream legado (playground): sem run no servidor, o stop é o
+            // cancel local do consume — antes não fazia nada.
+            _cts?.Cancel();
         }
     }
 

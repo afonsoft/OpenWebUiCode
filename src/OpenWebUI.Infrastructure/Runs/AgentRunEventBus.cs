@@ -23,6 +23,17 @@ public sealed class AgentRunEventBus(
         int.TryParse(configuration["interceptors.timeout_ms"], out var ms)
             ? Math.Max(100, ms) : 5000;
 
+    /// <summary>
+    /// Timeout para eventos terminais (<c>run.completed/stopped/failed</c>):
+    /// a run já encerrou e observers pós-run fazem trabalho pesado — o
+    /// InstinctExtractor chama o LLM e sempre estourava os 5s dos
+    /// interceptors (TaskCanceledException em todo run.completed).
+    /// <c>observers.timeout_ms</c>, default 90s.
+    /// </summary>
+    private int TerminalTimeoutMs { get; } =
+        int.TryParse(configuration["observers.timeout_ms"], out var ms)
+            ? Math.Max(100, ms) : 90_000;
+
     /// <summary>Se há observers — permite ao emissor pular serialização.</summary>
     public bool HasObservers => _observers.Count > 0;
 
@@ -32,13 +43,16 @@ public sealed class AgentRunEventBus(
     /// </summary>
     public async Task PublishAsync(AgentRunEvent e, CancellationToken ct)
     {
+        var timeoutMs = e.Type is "run.completed" or "run.stopped" or "run.failed"
+            ? TerminalTimeoutMs
+            : TimeoutMs;
         foreach (var observer in _observers)
         {
             try
             {
                 using var timeout = CancellationTokenSource
                     .CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeoutMs);
+                timeout.CancelAfter(timeoutMs);
                 await observer.OnRunEventAsync(e, timeout.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
