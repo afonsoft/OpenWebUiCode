@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` (github.com/afonsoft/open-webui) |
 | Branch | `feature/scratch-workspace` |
 | Ticket | #547 — https://github.com/afonsoft/open-webui/issues/547 |
-| Status | `In implementation` |
+| Status | `Completed` |
 
 ## 1. User Story
 
