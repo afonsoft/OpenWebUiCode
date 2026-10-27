@@ -88,6 +88,18 @@ public static class PermissionRuleset
         "lsp_definition", "lsp_references", "lsp_hover",
     };
 
+    /// <summary>
+    /// Subconjunto de <see cref="WorkspaceTools"/> que só faz sentido com
+    /// repo/worktree real — não é anunciado no modo chat mesmo com scratch
+    /// (evita ruído: worktree/lsp/specs exigem projeto, não pasta vazia).
+    /// </summary>
+    private static readonly HashSet<string> BuildOnlyTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "worktree_diff", "worktree_merge", "specs",
+        "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
+        "lsp_definition", "lsp_references", "lsp_hover",
+    };
+
     public static PermissionDecision Evaluate(
         string? mode, string toolName, bool isBuiltin = true, string? argsSummary = null)
     {
@@ -135,9 +147,10 @@ public static class PermissionRuleset
         }
         if (Normalize(mode) == ChatMode)
         {
-            // SPEC-20261027: com scratch garantido, workspace tools entram
-            // no spec anunciado também em modo chat.
-            return true;
+            // SPEC-20261027: com scratch garantido, file/shell/delegate
+            // entram no spec anunciado em modo chat — exceto as que só
+            // servem com repo real (worktree, lsp, specs).
+            return !(isBuiltin && BuildOnlyTools.Contains(name!));
         }
         return Normalize(mode) != PlanMode
             || Evaluate(mode, tool) != PermissionDecision.Deny;
