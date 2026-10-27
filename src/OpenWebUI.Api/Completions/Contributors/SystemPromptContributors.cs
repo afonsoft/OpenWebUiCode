@@ -688,13 +688,15 @@ public sealed class AgentModeContributor : ISystemPromptContributor
             return Task.FromResult<IReadOnlyList<string>>(
             [
                 // SPEC-20261027-scratch-workspace: a conversa tem pasta
-                // própria (workspaces/{u}/scratch/{chat}) — tools de
-                // arquivo/shell existem e passam pelo preset de aprovação.
-                "Modo CHAT ativo: a conversa tem uma pasta de trabalho scratch "
-                    + "própria — tools de arquivo e shell estão disponíveis "
-                    + "sob aprovação do usuário e escrevem nela. Para trabalhar "
-                    + "num repositório versionado o usuário pode vincular um "
-                    + "repo ao chat e mudar para o modo build.",
+                // própria (workspaces/{u}/scratch/{chat}) — file/shell
+                // tools a usam quando o pedido exige, via preset de
+                // aprovação. Sem convite a explorar: resposta direta.
+                "Modo CHAT ativo: responda de forma direta ao pedido. Caso "
+                    + "ele exija ler ou criar arquivos, a conversa tem uma "
+                    + "pasta de trabalho própria — tools de arquivo/shell "
+                    + "operam nela mediante aprovação do usuário. Trabalho "
+                    + "em repositório versionado exige vincular um repo ao "
+                    + "chat e mudar para o modo build.",
             ]);
         }
 
