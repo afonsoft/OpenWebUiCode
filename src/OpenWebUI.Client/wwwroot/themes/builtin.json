@@ -1,0 +1,84 @@
+[
+	{
+		"id": "default",
+		"name": "Default",
+		"dark": {},
+		"light": {},
+		"vars": {}
+	},
+	{
+		"id": "midnight",
+		"name": "Midnight",
+		"dark": {
+			"bg": "#0b0f14",
+			"surface": "#141c26",
+			"muted": "#7d8fa3",
+			"text": "#dbe4ee",
+			"border": "#1f2d3d",
+			"accent": "#58a6ff",
+			"code-bg": "#0e1520",
+			"danger": "#f85149"
+		},
+		"light": {
+			"bg": "#f4f7fa",
+			"surface": "#e9eff6",
+			"muted": "#5a6b7d",
+			"text": "#1c2b3a",
+			"border": "#c9d6e3",
+			"accent": "#2f6fd0",
+			"code-bg": "#e3eaf2",
+			"danger": "#c9302c"
+		},
+		"vars": {}
+	},
+	{
+		"id": "solarized",
+		"name": "Solarized",
+		"dark": {
+			"bg": "#002b36",
+			"surface": "#073642",
+			"muted": "#586e75",
+			"text": "#93a1a1",
+			"border": "#0f4c5c",
+			"accent": "#268bd2",
+			"code-bg": "#073642",
+			"danger": "#dc322f"
+		},
+		"light": {
+			"bg": "#fdf6e3",
+			"surface": "#eee8d5",
+			"muted": "#93a1a1",
+			"text": "#586e75",
+			"border": "#d3cbb7",
+			"accent": "#268bd2",
+			"code-bg": "#eee8d5",
+			"danger": "#dc322f"
+		},
+		"vars": {}
+	},
+	{
+		"id": "high-contrast",
+		"name": "High Contrast",
+		"dark": {
+			"bg": "#000000",
+			"surface": "#0d0d0d",
+			"muted": "#d4d4d4",
+			"text": "#ffffff",
+			"border": "#ffffff",
+			"accent": "#ffd700",
+			"code-bg": "#0d0d0d",
+			"danger": "#ff5f5f"
+		},
+		"light": {
+			"bg": "#ffffff",
+			"surface": "#f0f0f0",
+			"muted": "#404040",
+			"text": "#000000",
+			"border": "#000000",
+			"accent": "#0050c8",
+			"code-bg": "#f0f0f0",
+			"danger": "#b30000"
+		},
+		"vars": {}
+	}
+]

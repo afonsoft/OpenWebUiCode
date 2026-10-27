@@ -2611,6 +2611,44 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("UserAttentions");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.UserTheme", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ThemeId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ThemeId")
+                        .IsUnique();
+
+                    b.ToTable("UserThemes");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.Automation", b =>
                 {
                     b.HasOne("OpenWebUI.Domain.User", "User")

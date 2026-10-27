@@ -1,0 +1,127 @@
+@* SPEC-20261018-themes-custom: seção de aparência — modo (system/light/dark)
+   + paleta de tokens (presets builtin, tema de instância e JSONs do usuário).
+   A paleta é aplicada injetando <style id="user-theme"> com as vars do tema. *@
+@implements IDisposable
+@inject ThemeService Theme
+@inject AuthService Auth
+@inject LocalizationService L
+@inject IJSRuntime JS
+
+<div class="field">
+    <label for="fld-theme-mode">@L["settings.theme"]</label>
+    <select class="input" value="@Theme.Current" @onchange="OnModeChanged" id="fld-theme-mode">
+        <option value="system">@L["settings.theme_system"]</option>
+        <option value="dark">@L["settings.theme_dark"]</option>
+        <option value="light">@L["settings.theme_light"]</option>
+    </select>
+</div>
+<div class="field">
+    <label for="fld-theme-palette">@L["settings.theme_palette"]</label>
+    <div class="flex items-center gap-2">
+        <select class="input flex-1" value="@Theme.ThemeId" @onchange="OnPaletteChanged" id="fld-theme-palette">
+            @foreach (var t in Theme.Catalog())
+            {
+                <option value="@t.Id">@(Theme.Instance?.Id == t.Id ? $"{t.Name} · {L["settings.theme_instance_suffix"]}" : t.Name)</option>
+            }
+        </select>
+        @if (CustomSelected is not null)
+        {
+            <button type="button" class="button-sm" aria-label="@L["settings.theme_delete"]"
+                    title="@L["settings.theme_delete"]" @onclick="DeleteCustomAsync">
+                ×
+            </button>
+        }
+    </div>
+    <div class="field-note">@L["settings.theme_palette_hint"]</div>
+</div>
+@if (Auth.IsAuthenticated)
+{
+    <div class="field">
+        <InputFile @ref="_fileInput" OnChange="OnFileSelectedAsync" accept=".json,application/json"
+                   class="hidden" aria-label="@L["settings.theme_upload"]" />
+        <button type="button" class="button-sm" disabled="@_uploading" @onclick="TriggerUploadAsync">
+            @(_uploading ? L["common.saving"] : L["settings.theme_upload"])
+        </button>
+        @if (_uploadError is not null)
+        {
+            <div class="field-note text-red-500 dark:text-red-400">@_uploadError</div>
+        }
+    </div>
+}
+
+@code {
+    private InputFile? _fileInput;
+    private bool _uploading;
+    private string? _uploadError;
+
+    /// <summary>Tema custom atualmente selecionado (permite deletar).</summary>
+    private UserThemeResponse? CustomSelected =>
+        Theme.Customs.FirstOrDefault(c => c.ThemeId == Theme.ThemeId);
+
+    protected override void OnInitialized()
+    {
+        Theme.Changed += OnThemeChanged;
+    }
+
+    private async Task OnModeChanged(ChangeEventArgs e)
+    {
+        if (e.Value is string mode)
+        {
+            await Theme.SetAsync(mode);
+        }
+    }
+
+    private async Task OnPaletteChanged(ChangeEventArgs e)
+    {
+        if (e.Value is string themeId)
+        {
+            _uploadError = null;
+            await Theme.SetThemeAsync(themeId);
+        }
+    }
+
+    private async Task TriggerUploadAsync() =>
+        await JS.InvokeVoidAsync("openwebui.openFilePicker", _fileInput?.Element);
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        _uploadError = null;
+        _uploading = true;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(ThemeValidator.MaxJsonBytes + 1);
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+            var (theme, error) = await Theme.UploadThemeAsync(json);
+            if (theme is not null)
+            {
+                await Theme.SetThemeAsync(theme.ThemeId);
+            }
+            else
+            {
+                _uploadError = error ?? L["settings.theme_upload_error"];
+            }
+        }
+        catch (IOException)
+        {
+            _uploadError = L["settings.theme_upload_error"];
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task DeleteCustomAsync()
+    {
+        if (CustomSelected is { } custom)
+        {
+            _uploadError = null;
+            await Theme.DeleteThemeAsync(custom.Id);
+        }
+    }
+
+    private void OnThemeChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Theme.Changed -= OnThemeChanged;
+}

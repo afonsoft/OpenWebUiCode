@@ -728,6 +728,54 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<bool> UpdateUserSettingsAsync(object settings) =>
         await SendStatusAsync(HttpMethod.Post, "/api/v1/users/user/settings/update", settings);
 
+    // ---------------- Temas (SPEC-20261018-themes-custom) ----------------
+
+    /// <summary>Catálogo de temas: instância (WEBUI_THEME_JSON), customs e seleção ativa.</summary>
+    public Task<ThemeCatalogResponse?> GetThemesAsync() =>
+        SendAsync<ThemeCatalogResponse>(HttpMethod.Get, "/api/v1/themes/");
+
+    /// <summary>Envia um tema JSON customizado; retorna o tema criado ou a mensagem de erro.</summary>
+    public async Task<(UserThemeResponse? Theme, string? Error)> CreateThemeAsync(string themeJson)
+    {
+        using var request = auth.CreateRequest(HttpMethod.Post, "/api/v1/themes/");
+        request.Content = new StringContent(themeJson, System.Text.Encoding.UTF8, "application/json");
+        using var response = await http.SendAsync(request);
+        if (response.IsSuccessStatusCode)
+        {
+            return (await response.Content.ReadFromJsonAsync<UserThemeResponse>(JsonOptions), null);
+        }
+
+        return (null, await ReadErrorAsync(response));
+    }
+
+    /// <summary>Persiste a seleção de tema do usuário (paleta + modo).</summary>
+    public Task<bool> SetActiveThemeAsync(string themeId, string mode) =>
+        SendStatusAsync(HttpMethod.Put, "/api/v1/themes/active",
+            new SetActiveThemeRequest(themeId, mode));
+
+    /// <summary>Remove um tema customizado do usuário.</summary>
+    public Task<bool> DeleteThemeAsync(string id) =>
+        SendStatusAsync(HttpMethod.Delete, $"/api/v1/themes/{id}");
+
+    private static async Task<string> ReadErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(
+                await response.Content.ReadAsStringAsync());
+            if (doc.RootElement.TryGetProperty("error", out var e) && e.GetString() is { } msg)
+            {
+                return msg;
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // corpo não-JSON — cai no status HTTP
+        }
+
+        return $"HTTP {(int)response.StatusCode}";
+    }
+
     /// <summary>
     /// Catálogo de aprovações por tool: tier declarado + override vigente
     /// do usuário (SPEC-20261013-approval-tiers).
