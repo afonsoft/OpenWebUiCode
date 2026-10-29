@@ -93,7 +93,7 @@
                                         <circle cx="6" cy="18" r="3" />
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M18 9a9 9 0 0 1-9 9" />
                                     </svg>
-                                    <span class="max-w-14 sm:max-w-44 truncate font-mono">@_repo.Branch</span>
+                                    <span class="max-w-14 sm:max-w-44 truncate font-mono">@EffectiveRepoBranch</span>
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
                                 </button>
                                 <a href="@(_loadedChatId is null ? "/ide" : $"/ide?chatId={_loadedChatId}")" class="hidden sm:flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
@@ -899,6 +899,15 @@
     /// <summary>Snapshot git do workspace (git bar do header + aba Changes).</summary>
     private WorkspaceGitResponse? _git;
     private WorkspaceRepoResponse? _repo;
+
+    /// <summary>Branch mostrada no pill do header: a branch real do checkout do
+    /// workspace quando o git bar já carregou (o agente pode criar/trocar de
+    /// branch durante a run — o binding continua apontando a base), senão a
+    /// branch gravada no binding repo↔chat.</summary>
+    private string? EffectiveRepoBranch =>
+        _git?.Git == true && !string.IsNullOrWhiteSpace(_git.Branch)
+            ? _git.Branch
+            : _repo?.Branch;
     private string? _repoSource;
     private bool _repoPicker;
     /// <summary>Status do scratch da conversa (botão Publicar — SPEC-20261027).</summary>

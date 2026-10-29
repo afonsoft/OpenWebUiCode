@@ -192,6 +192,49 @@ public class AttentionTests
     }
 
     [Test]
+    public async Task Attention_ItemDoChat_ListaConta_E_LimpaAoAbrir()
+    {
+        var auth = await SignUpAsync("Chat", "chat@attention.local");
+        UseToken(auth.Token);
+
+        var chatRes = await _client.PostAsJsonAsync("/api/v1/chats/",
+            new ChatUpsertRequest("Chat com run", ["llama3"], []));
+        Assert.That(chatRes.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await chatRes.Content.ReadAsStringAsync());
+        var chat = await chatRes.Content.ReadFromJsonAsync<ChatResponse>();
+
+        using var db = NewDb();
+        var user = await db.Users.SingleAsync(u => u.Email == "chat@attention.local");
+        await AttentionService.RaiseAsync(
+            db, user.Id, $"run:{Guid.NewGuid():N}", "run_failed",
+            "run falhou", chat!.Id, default);
+
+        // Item persistido põe o chat no filtro "aguardando", na flag e no
+        // badge — paridade entre o número e a lista (o bug: badge=3 com
+        // lista vazia porque o filtro só olhava aprovações em memória).
+        var filtrado = await _client.GetFromJsonAsync<List<ChatSummaryResponse>>(
+            "/api/v1/chats/?attention=1");
+        Assert.That(filtrado!.Select(c => c.Id), Does.Contain(chat.Id));
+        var lista = await _client.GetFromJsonAsync<List<ChatSummaryResponse>>(
+            "/api/v1/chats/");
+        Assert.That(lista!.First(c => c.Id == chat.Id).Awaiting, Is.True);
+        var count = await _client.GetFromJsonAsync<AttentionCountResponse>(
+            "/api/v1/chats/attention/count");
+        Assert.That(count!.Count, Is.EqualTo(1));
+
+        // Abrir o chat marca os itens como vistos: badge zera e o chat sai
+        // do filtro.
+        var opened = await _client.GetAsync($"/api/v1/chats/{chat.Id}");
+        Assert.That(opened.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        count = await _client.GetFromJsonAsync<AttentionCountResponse>(
+            "/api/v1/chats/attention/count");
+        Assert.That(count!.Count, Is.EqualTo(0));
+        filtrado = await _client.GetFromJsonAsync<List<ChatSummaryResponse>>(
+            "/api/v1/chats/?attention=1");
+        Assert.That(filtrado!.Select(c => c.Id), Does.Not.Contain(chat.Id));
+    }
+
+    [Test]
     public async Task Attention_DeleteChat_Limpa_Itens_Do_Chat()
     {
         var auth = await SignUpAsync("Del", "del@attention.local");

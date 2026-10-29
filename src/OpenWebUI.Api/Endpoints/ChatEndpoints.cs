@@ -99,6 +99,18 @@ public static class ChatEndpoints
         // banco: um snapshot do HashSet vira filtro/flag sem N+1.
         var awaiting = approvals.PendingChatIds();
 
+        // Chats sinalizados = aprovações pendentes ∪ chats com itens
+        // persistidos do inbox de atenção (run concluída/falha, terminal
+        // encerrado) — mesma definição do /chats/attention/count. Sem a
+        // união o badge contava itens que o filtro "aguardando" não listava.
+        var attentionChatIds = await db.UserAttentions.AsNoTracking()
+            .Where(a => a.UserId == user.Id && a.ChatId != null)
+            .Select(a => a.ChatId!)
+            .Distinct()
+            .ToListAsync(ct);
+        var flagged = new HashSet<string>(awaiting);
+        flagged.UnionWith(attentionChatIds);
+
         var chats = db.Chats.AsNoTracking().Where(c => c.UserId == user.Id && !c.Archived && !c.IsEphemeral);
 
         if (!string.IsNullOrEmpty(folderId))
@@ -112,7 +124,7 @@ public static class ChatEndpoints
 
         if (attention is "1" or "true")
         {
-            chats = chats.Where(c => awaiting.Contains(c.Id));
+            chats = chats.Where(c => flagged.Contains(c.Id));
         }
 
         if (!string.IsNullOrWhiteSpace(query))
@@ -141,7 +153,7 @@ public static class ChatEndpoints
             .ToDictionaryAsync(x => x.ParentId, x => x.Count, ct);
 
         return Results.Ok(list.Select(c => ToSummary(
-                c, awaiting.Contains(c.Id), childrenCounts.GetValueOrDefault(c.Id)))
+                c, flagged.Contains(c.Id), childrenCounts.GetValueOrDefault(c.Id)))
             .ToList());
     }
 
@@ -159,12 +171,18 @@ public static class ChatEndpoints
             return Results.Unauthorized();
         }
 
-        var awaiting = approvals.PendingChatIds();
+        // Badge = chats que o filtro "aguardando" da sidebar listaria
+        // (aprovações pendentes ∪ chats com itens persistidos do inbox) +
+        // itens órfãos sem chat — nunca a soma de itens, senão o número
+        // diverge da lista exibida.
+        var flagged = approvals.PendingChatIds();
         var count = await db.Chats.CountAsync(
-            c => c.UserId == user.Id && !c.Archived && awaiting.Contains(c.Id), ct);
-        // SPEC-20261022 RF-C3: badge = aprovações pendentes + itens
-        // persistidos (run concluída/falha, terminal não lido).
-        count += await AttentionService.CountAsync(db, user.Id, ct);
+            c => c.UserId == user.Id && !c.Archived && !c.IsEphemeral
+                && (flagged.Contains(c.Id)
+                    || db.UserAttentions.Any(a => a.UserId == user.Id && a.ChatId == c.Id)),
+            ct);
+        count += await db.UserAttentions.CountAsync(
+            a => a.UserId == user.Id && a.ChatId == null, ct);
         return Results.Ok(new AttentionCountResponse(count));
     }
 
@@ -414,6 +432,13 @@ public static class ChatEndpoints
         if (chat is null)
         {
             return Results.NotFound();
+        }
+
+        // Abrir o chat marca os itens de atenção dele como vistos — o badge
+        // da sidebar não fica preso contando pendências já lidas.
+        if (user is not null && chat.UserId == user.Id)
+        {
+            await AttentionService.MarkChatSeenAsync(db, user.Id, chat.Id, ct);
         }
 
         var parentTitle = chat.ParentChatId is { } pid

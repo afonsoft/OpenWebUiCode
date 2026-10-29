@@ -61,7 +61,9 @@ else
                 <div class="self-center font-normal text-gray-700 dark:text-gray-200">Open WebUI</div>
             </button>
 
-            <NotificationBell />
+            @* left-0: o sino fica na barra da sidebar rente à margem esquerda
+               da viewport — ancorar à direita jogava o dropdown fora da tela. *@
+            <NotificationBell MenuClass="left-0" />
             <AttentionBadge Count="Attention.Count" Active="Attention.FilterActive" OnClick="ToggleAttentionFilter" />
 
             <button class="hidden md:flex size-[1.875rem] justify-center items-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition cursor-w-resize"
