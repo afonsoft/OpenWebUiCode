@@ -1,4 +1,4 @@
-# Open-WebUI+Code — .NET (Coding Agent Edition)
+# OpenWebUiCode - Open-WebUI+Code — .NET (Coding Agent Edition)
 
 A migration of [Open WebUI](https://github.com/open-webui/open-webui) to
 **.NET 10 · C# 14 · Blazor WebAssembly** (SvelteKit + FastAPI → ASP.NET Core + Blazor),
