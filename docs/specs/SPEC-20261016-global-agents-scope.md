@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-global-agents-scope` |
-| Ticket | [#399](https://github.com/afonsoft/open-webui/issues/399) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
+| Ticket | [#399](https://github.com/afonsoft/OpenWebUiCode/issues/399) · Epic [#398](https://github.com/afonsoft/OpenWebUiCode/issues/398) |
 | Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`skill/discovery.ts`, docs `/skills`, `/commands`) — pedido explícito do mantenedor: ler skills/tools/mcp/commands de `~/.agents` + `.agents` do projeto |
 
@@ -137,4 +137,4 @@
 | Item | Link |
 | --- | --- |
 | PR/commit | #415 + #422 · 2dd6bf8ba |
-| Issue | https://github.com/afonsoft/open-webui/issues/399 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/399 |

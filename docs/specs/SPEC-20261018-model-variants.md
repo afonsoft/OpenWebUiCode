@@ -77,7 +77,7 @@ tests/OpenWebUI.Api.Tests/CacheFormatTests.cs          # NOVO
 
 ## Delivered
 
-- **PR:** https://github.com/afonsoft/open-webui/pull/524 (`334f373`)
+- **PR:** https://github.com/afonsoft/OpenWebUiCode/pull/524 (`334f373`)
 - **Issue:** #511
 - **Branch:** `feature/Devin-20261018-model-variants`
 - **Tests:** `ModelVariantTests.cs` + `CacheFormatTests.cs` (conforme SPEC §3)

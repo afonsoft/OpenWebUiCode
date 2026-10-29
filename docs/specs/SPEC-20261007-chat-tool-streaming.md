@@ -7,7 +7,7 @@
 | Feature | `chat-tool-streaming` (P3 da série harness-chat; depende de P1) |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261007-chat-tool-streaming` |
 | Ticket | `GAP-chat-tool-streaming` |
 | Status | `Completed` |

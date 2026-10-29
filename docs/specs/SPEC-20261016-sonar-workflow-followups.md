@@ -8,7 +8,7 @@
 | Type | `Security` + `Automation` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Status | `Delivered` |
-| Ticket | [#394](https://github.com/afonsoft/open-webui/issues/394) · Epic [#392](https://github.com/afonsoft/open-webui/issues/392) |
+| Ticket | [#394](https://github.com/afonsoft/OpenWebUiCode/issues/394) · Epic [#392](https://github.com/afonsoft/OpenWebUiCode/issues/392) |
 | Fonte | `gap-analysis`/`sonarqube-autofix` run 2026-10-16 — gap `GAP-automation-sonar-followups` |
 
 ## 1. User Story

@@ -7,7 +7,7 @@
 | Feature | `notes-collab` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-notes-collab` |
 | Ticket | Issue #85 |
 | Status | `Completed` |
@@ -60,8 +60,8 @@ Hub `/ws` grupo `note:{id}`: `note:join`, `note:update` {ops|text,version}, `not
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/105 |
-| Issue | https://github.com/afonsoft/open-webui/issues/85 |
-| Epic | https://github.com/afonsoft/open-webui/issues/79 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/105 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/85 |
+| Epic | https://github.com/afonsoft/OpenWebUiCode/issues/79 |
 
 Spike `[A DEFINIR]` (yjs vs nativo): decidido por implementação nativa SignalR com last-write-wins por `UpdatedAt` — yjs exigiria runtime JS no servidor, fora do stack .NET-only.

@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-provider-resilience` |
-| Ticket | [#400](https://github.com/afonsoft/open-webui/issues/400) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
+| Ticket | [#400](https://github.com/afonsoft/OpenWebUiCode/issues/400) · Epic [#398](https://github.com/afonsoft/OpenWebUiCode/issues/398) |
 | Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`session/runner/retry.ts`, `runner/llm.ts:273-330`, `compaction.ts`) |
 
@@ -124,4 +124,4 @@ Sem endpoints novos — comportamento interno do pipeline + evento SSE `phase: r
 | Item | Link |
 | --- | --- |
 | PR/commit | #428 · 689510ea1 |
-| Issue | https://github.com/afonsoft/open-webui/issues/400 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/400 |

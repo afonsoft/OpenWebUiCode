@@ -55,4 +55,4 @@ lista as criadas pela tool).
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/306 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/306 |

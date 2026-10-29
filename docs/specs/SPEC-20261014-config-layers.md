@@ -110,5 +110,5 @@ tests/OpenWebUI.Api.Tests/ConfigLayersTests.cs                      # NOVO
 
 | Item | Link |
 | --- | --- |
-| Commit | https://github.com/afonsoft/open-webui/commit/9636dd88c |
-| Issue | https://github.com/afonsoft/open-webui/issues/364 |
+| Commit | https://github.com/afonsoft/OpenWebUiCode/commit/9636dd88c |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/364 |

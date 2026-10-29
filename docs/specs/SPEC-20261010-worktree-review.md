@@ -31,4 +31,4 @@ UI nova (a aba Changes + botão Merge já existem); merge de branch (o merge é 
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/304 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/304 |

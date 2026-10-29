@@ -3,7 +3,7 @@
 #   docker compose -f docker-compose.prod.yaml up -d
 #
 # App: http://localhost:3032 (WEBUI_PORT no .env)
-# Imagem: ghcr.io/afonsoft/open-webui:latest (amd64+arm64, publicada em cada
+# Imagem: ghcr.io/afonsoft/openwebuicode:latest (amd64+arm64, publicada em cada
 # release v*.*.* pelo workflow release.yml).
 # Watchtower: a cada 5min verifica se :latest mudou; se mudou, faz pull,
 # recria o container e apaga a imagem antiga (--cleanup). Escopo limitado
@@ -13,7 +13,7 @@
 
 services:
   openwebui:
-    image: ghcr.io/afonsoft/open-webui:latest
+    image: ghcr.io/afonsoft/openwebuicode:latest
     container_name: openwebui
     labels:
       - com.centurylinklabs.watchtower.enable=true

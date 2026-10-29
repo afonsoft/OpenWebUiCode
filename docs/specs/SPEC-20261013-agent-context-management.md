@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-agent-context-management` |
-| Ticket | [#353](https://github.com/afonsoft/open-webui/issues/353) |
+| Ticket | [#353](https://github.com/afonsoft/OpenWebUiCode/issues/353) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -153,5 +153,5 @@ Sem endpoints novos. Tools `builtin:checkpoint`, `builtin:rewind`, `builtin:cont
 
 | Item | Link |
 | --- | --- |
-| Commit | https://github.com/afonsoft/open-webui/commit/1110f9e6c |
-| Issue | https://github.com/afonsoft/open-webui/issues/353 |
+| Commit | https://github.com/afonsoft/OpenWebUiCode/commit/1110f9e6c |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/353 |

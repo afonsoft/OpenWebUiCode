@@ -26,4 +26,4 @@ Merge automático ao fim da run; review/diff tooling (SPEC-20261010-review-befor
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/301 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/301 |

@@ -7,7 +7,7 @@
 | Feature | `model-filters` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-model-filters` |
 | Ticket | Issue #87 |
 | Status | `Completed` |
@@ -57,9 +57,9 @@ Sem endpoint novo — MetaJson do modelo + pipeline interno.
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/97
-- Issue: https://github.com/afonsoft/open-webui/issues/87
-- Epic: https://github.com/afonsoft/open-webui/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/97
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/87
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79
 
 ## Reconciliation
 

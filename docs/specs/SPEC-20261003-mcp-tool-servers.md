@@ -7,7 +7,7 @@
 | Feature | `mcp-tool-servers` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-mcp-tool-servers` |
 | Status | `Completed` |
 

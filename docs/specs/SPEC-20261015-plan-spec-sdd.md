@@ -7,9 +7,9 @@
 | Feature | `plan-spec-sdd` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261015-plan-spec-sdd` |
-| Ticket | [#381](https://github.com/afonsoft/open-webui/issues/381) |
+| Ticket | [#381](https://github.com/afonsoft/OpenWebUiCode/issues/381) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -121,4 +121,4 @@ Sem endpoints novos — reutiliza `PATCH /api/v1/chats/{id}` (`Mode`) e o fluxo 
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/380 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/380 |

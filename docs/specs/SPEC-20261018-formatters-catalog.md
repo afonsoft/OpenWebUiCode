@@ -101,7 +101,7 @@ tests/OpenWebUI.Api.Tests/FormatterCatalogTests.cs          # NOVO
 
 ## Delivered
 
-- **PR:** https://github.com/afonsoft/open-webui/pull/520 (`be79859`)
+- **PR:** https://github.com/afonsoft/OpenWebUiCode/pull/520 (`be79859`)
 - **Issue:** #509
 - **Branch:** `feature/Devin-20261018-formatters-catalog`
 - **Tests:** `FormatterCatalogTests` 13 + regressão `WorktreeFormatHooksTests` 26/26

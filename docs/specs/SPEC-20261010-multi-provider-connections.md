@@ -7,7 +7,7 @@
 | Feature | `multi-provider-connections` |
 | Type | `Feature` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-multi-provider-connections` |
 | Ticket | `[A DEFINIR — create-issues after approval]` |
 | Status | `Completed` |
@@ -206,4 +206,4 @@ tests/OpenWebUI.Client.Tests/*                              # SettingsModal prov
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/319 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/319 |

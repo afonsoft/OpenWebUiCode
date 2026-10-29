@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261021-harness-seams` |
-| Ticket | [#486](https://github.com/afonsoft/open-webui/issues/486) |
+| Ticket | [#486](https://github.com/afonsoft/OpenWebUiCode/issues/486) |
 | Status | Completed |
 | Parent | `README.md` → "deepseek-harness: architecture deltas & ideas to adopt" (benchmark [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)) |
 

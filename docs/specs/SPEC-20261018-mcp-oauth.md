@@ -86,7 +86,7 @@ tests/OpenWebUI.Api.Tests/McpOAuthServiceTests.cs              # NOVO (PKCE, DCR
 
 ## Delivered
 
-- **PR:** https://github.com/afonsoft/open-webui/pull/522 (`3acf649`)
+- **PR:** https://github.com/afonsoft/OpenWebUiCode/pull/522 (`3acf649`)
 - **Issue:** #510
 - **Branch:** `feature/Devin-20261018-mcp-oauth`
 - **Tests:** `McpOAuthServiceTests` 11 + endpoints em `McpTests` + regressão 18/18

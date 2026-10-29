@@ -7,7 +7,7 @@
 | Feature | `chat-thinking-stream` |
 | Type | `Feature` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261015-chat-thinking-stream` |
 | Ticket | `[A DEFINIR — create-issues after approval]` |
 | Status | `Completed` |
@@ -194,4 +194,4 @@ data: {"choices":[{"index":0,"delta":{"content":"A resposta…"}}]}
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/388 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/388 |

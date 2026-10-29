@@ -7,7 +7,7 @@
 | Feature | `web-ide-surface` (série web-ide, fatia S2 — o "IDE" visível) |
 | Type | `Feature` |
 | Stack | `.NET 10 / Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-web-ide-surface` |
 | Ticket | `GAP-impl-ide-surface` |
 | Status | `Completed` |
@@ -95,4 +95,4 @@ Flag `features.ide` (`ConfigService` + env `IDE_ENABLED`, default on em dev / of
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/247 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/247 |

@@ -7,7 +7,7 @@
 | Feature | `chat-agent-ux` (série chat-harness, rodada 2 — Devin Web × OpenHands × opencode TUI) |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `devin/1791375000-chat-tool-ux` |
 | Ticket | `GAP-chat-agent-ux` |
 | Status | `Completed` |

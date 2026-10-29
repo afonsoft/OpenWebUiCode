@@ -7,7 +7,7 @@
 | Feature | `ci-tool-guards` |
 | Type | `Feature` (CI/chore) |
 | Stack | `GitHub Actions / Python` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `ci/tool-guards` |
 | Ticket | `GAP-automation-ci-guards` |
 | Status | `Completed` |

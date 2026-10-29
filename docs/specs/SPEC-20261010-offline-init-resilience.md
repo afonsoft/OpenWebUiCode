@@ -7,7 +7,7 @@
 | Feature | `offline-init-resilience` |
 | Type | `Bugfix` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-offline-init-resilience` |
 | Ticket | `GAP-impl-offline-init` |
 | Status | `Completed` |

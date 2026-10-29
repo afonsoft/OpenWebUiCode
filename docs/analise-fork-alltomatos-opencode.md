@@ -1,7 +1,7 @@
 # Análise: alltomatos/opencode → melhorias aplicáveis ao nosso fork .NET
 
 Data: 2026-10-10 · Fonte: https://github.com/alltomatos/opencode @ v1.21.78 (branch dev, 136 releases no changelog)
-Foco: melhorias de **agente/core** para o afonsoft/open-webui (.NET 10 + Blazor WASM)
+Foco: melhorias de **agente/core** para o afonsoft/OpenWebUiCode (.NET 10 + Blazor WASM)
 Regra aplicada: paridade upstream — melhorias entram como **camada adicional** (tools/endpoints/serviços novos), nunca reestruturando gateway de providers nem superfície de rotas.
 
 ---

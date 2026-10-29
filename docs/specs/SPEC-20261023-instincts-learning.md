@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261023-instincts-learning` |
-| Ticket | [#496](https://github.com/afonsoft/open-webui/issues/496) |
+| Ticket | [#496](https://github.com/afonsoft/OpenWebUiCode/issues/496) |
 | Status | `Completed` |
 | Parent | Análise comparativa hermes-agent/OpenHarness/ECC (out/2026) — item #5. Inspirado no `continuous-learning-v2` do ECC (instincts com confidence scoring, injeção no session-start, `/evolve` clustering) e no Memory Vault (scopes + trust boundary). |
 
@@ -239,5 +239,5 @@ se houver instincts `active`), `Agent:Instincts:MaxInjected` (6),
 | Linha do bloco injetado | Implementado | `- [domain] {trigger} → {body} (conf .NN)` — sem "when" no template (triggers já carregam o advérbio; evita "when when …") |
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/502 (merged into agent-evals) + https://github.com/afonsoft/open-webui/pull/503 (merged to main)
-- Issue: https://github.com/afonsoft/open-webui/issues/496
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/502 (merged into agent-evals) + https://github.com/afonsoft/OpenWebUiCode/pull/503 (merged to main)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/496

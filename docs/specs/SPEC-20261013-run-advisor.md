@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-run-advisor` |
-| Ticket | [#352](https://github.com/afonsoft/open-webui/issues/352) |
+| Ticket | [#352](https://github.com/afonsoft/OpenWebUiCode/issues/352) |
 | Status | `Completed` |
 | Depends on | `SPEC-20261013-model-roles` (papel `advisor`; sem ele usa o modelo do chat) |
 
@@ -160,5 +160,5 @@ tests/OpenWebUI.Api.Tests/                                  # gatilhos, cadênci
 
 | Item | Link |
 | --- | --- |
-| Commit | https://github.com/afonsoft/open-webui/commit/9e88803e7 |
-| Issue | https://github.com/afonsoft/open-webui/issues/352 |
+| Commit | https://github.com/afonsoft/OpenWebUiCode/commit/9e88803e7 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/352 |

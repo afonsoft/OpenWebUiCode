@@ -7,7 +7,7 @@
 | Feature | `i18n-locales` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-i18n-locales` |
 | Ticket | Issue #88 |
 | Status | `Completed` |
@@ -58,9 +58,9 @@ Sem mudança de contrato — `error_code` aditivo; `GET /i18n/{locale}.json` já
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/98
-- Issue: https://github.com/afonsoft/open-webui/issues/88
-- Epic: https://github.com/afonsoft/open-webui/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/98
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/88
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79
 
 ## Reconciliation
 

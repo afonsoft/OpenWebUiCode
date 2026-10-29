@@ -7,7 +7,7 @@
 | Feature | `automations-calendar` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-automations` |
 | Ticket | `[automations-calendar] Issue #17` |
 | Status | `Completed` |
@@ -83,6 +83,6 @@ tests/OpenWebUI.Api.Tests/AutomationEndpointsTests.cs
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/40 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/26
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/40 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/26
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

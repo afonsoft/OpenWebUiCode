@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-agent-steps-usage` |
-| Ticket | [#405](https://github.com/afonsoft/open-webui/issues/405) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
+| Ticket | [#405](https://github.com/afonsoft/OpenWebUiCode/issues/405) · Epic [#398](https://github.com/afonsoft/OpenWebUiCode/issues/398) |
 | Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`agent` `steps` + `llm.ts:226-244` toolChoice none no último step; `session/usage.ts` custo por step) |
 
@@ -119,4 +119,4 @@ O teto do tool loop é `maxRounds=5` global fixo (`ChatPipeline.cs:523`) e o mod
 | Item | Link |
 | --- | --- |
 | PR/commit | #425 · e7941a329 |
-| Issue | https://github.com/afonsoft/open-webui/issues/405 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/405 |

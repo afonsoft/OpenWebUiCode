@@ -8,10 +8,10 @@ chats running on dedicated git worktrees, sub-agents in parallel, mid-run steeri
 durable memory, scheduled routines, a VS Code-style IDE and a worktree review
 pipeline.
 
-[![CI Build & Test](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml)
-[![Code Quality](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml)
-[![Security Scan](https://github.com/afonsoft/open-webui/actions/workflows/security-scan.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/security-scan.yml)
-[![Accessibility Audit](https://github.com/afonsoft/open-webui/actions/workflows/a11y-audit.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/a11y-audit.yml)
+[![CI Build & Test](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/ci-build-test.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/ci-build-test.yml)
+[![Code Quality](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/code-quality.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/code-quality.yml)
+[![Security Scan](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/security-scan.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/security-scan.yml)
+[![Accessibility Audit](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/a11y-audit.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/a11y-audit.yml)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=alert_status)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
 
 > **Versão em português:** [README.pt-BR.md](README.pt-BR.md)
@@ -264,7 +264,7 @@ Docker (`:3032 → :8080`) — published **multi-arch image (amd64 + arm64)** on
 ```bash
 docker run -d -p 3032:8080 -v openwebui-data:/data afonsoft/open-webui
 # or compose against the published image (no clone needed)
-curl -LO https://raw.githubusercontent.com/afonsoft/open-webui/main/docker-compose.hub.yaml
+curl -LO https://raw.githubusercontent.com/afonsoft/OpenWebUiCode/main/docker-compose.hub.yaml
 docker compose -f docker-compose.hub.yaml up -d
 # or build from source
 docker compose up -d --build
@@ -306,7 +306,7 @@ Coverage gate via Coverlet + ratchet (`.ci/coverage-baseline.txt` only goes up).
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=afonsoft/open-webui&type=date&legend=bottom-right)](https://www.star-history.com/?repos=afonsoft%2Fopen-webui&type=date&legend=bottom-right)
+[![Star History Chart](https://api.star-history.com/chart?repos=afonsoft/OpenWebUiCode&type=date&legend=bottom-right)](https://www.star-history.com/?repos=afonsoft%2FOpenWebUiCode&type=date&legend=bottom-right)
 
 ## License
 

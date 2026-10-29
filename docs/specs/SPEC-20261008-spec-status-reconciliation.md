@@ -7,7 +7,7 @@
 | Feature | `spec-status-reconciliation` |
 | Type | `Chore` (docs/verificação) |
 | Stack | `Markdown / NUnit (verificação)` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `chore/spec-reconciliation` |
 | Ticket | `GAP-housekeeping-spec-status` |
 | Status | `Completed` |

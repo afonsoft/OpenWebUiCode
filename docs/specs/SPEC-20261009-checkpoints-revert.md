@@ -7,7 +7,7 @@
 | Feature | `checkpoints-revert` (série web-ide, fatia S6) |
 | Type | `Feature` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-checkpoints` |
 | Ticket | `GAP-impl-checkpoints` |
 | Status | `Completed` |
@@ -89,4 +89,4 @@ On por padrão quando há repo vinculado; `Checkpoints:Enabled=false` desliga.
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/257 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/257 |

@@ -7,7 +7,7 @@
 | Feature | `mcp-ux-chat-polish` — UX de MCPs + elementos de chat inspirados no harness |
 | Type | `Improvement` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261007-mcp-ux-chat-polish` |
 | Ticket | `GAP-mcp-ux-chat-polish` |
 | Status | `Completed` |

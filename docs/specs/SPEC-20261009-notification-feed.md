@@ -7,7 +7,7 @@
 | Feature | `notification-feed` (série devin-webapp, item D3) |
 | Type | `Feature` |
 | Stack | `.NET 10 / Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-notification-feed` |
 | Ticket | `GAP-devin-D3-notification-feed` |
 | Status | `Completed` |

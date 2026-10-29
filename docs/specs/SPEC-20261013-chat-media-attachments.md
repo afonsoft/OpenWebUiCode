@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-chat-media-attachments` |
-| Ticket | [#349](https://github.com/afonsoft/open-webui/issues/349) |
+| Ticket | [#349](https://github.com/afonsoft/OpenWebUiCode/issues/349) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -234,5 +234,5 @@ Sem endpoints novos. Contratos alterados:
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/360 |
-| Issue | https://github.com/afonsoft/open-webui/issues/349 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/360 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/349 |

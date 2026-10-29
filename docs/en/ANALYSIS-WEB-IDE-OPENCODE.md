@@ -1,6 +1,6 @@
 # Analysis: migrating opencode features → Open WebUI (.NET) — the path to a Web IDE
 
-> Date: 2026-10-09 · Sources: `afonsoft/open-webui` (main @ `5579e4e`), `afonsoft/opencode` (fork of `anomalyco/opencode`, branch `dev` @ `ecc4916`)
+> Date: 2026-10-09 · Sources: `afonsoft/OpenWebUiCode` (main @ `5579e4e`), `afonsoft/opencode` (fork of `anomalyco/opencode`, branch `dev` @ `ecc4916`)
 > Status: **analysis** — nothing here is approved implementation; draft SPECs in `.specs/` await the gate.
 
 ## 1. Goal and method

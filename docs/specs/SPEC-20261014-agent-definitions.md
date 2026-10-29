@@ -100,5 +100,5 @@ tests/OpenWebUI.Api.Tests/AgentDefinitionsTests.cs                  # NOVO
 
 | Item | Link |
 | --- | --- |
-| Commit | https://github.com/afonsoft/open-webui/commit/6671025cc |
-| Issue | https://github.com/afonsoft/open-webui/issues/363 |
+| Commit | https://github.com/afonsoft/OpenWebUiCode/commit/6671025cc |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/363 |

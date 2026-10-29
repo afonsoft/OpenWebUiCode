@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-websearch-failover` |
-| Ticket | [#406](https://github.com/afonsoft/open-webui/issues/406) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
+| Ticket | [#406](https://github.com/afonsoft/OpenWebUiCode/issues/406) · Epic [#398](https://github.com/afonsoft/OpenWebUiCode/issues/398) |
 | Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (docs `/websearch` — provider `random` + retry em outro provider no 429 com cooldown `Retry-After|60s`) |
 
@@ -91,4 +91,4 @@ Sem endpoints novos. Config: `websearch.provider=auto`.
 | Item | Link |
 | --- | --- |
 | PR/commit | #424 · 4c457fc54 |
-| Issue | https://github.com/afonsoft/open-webui/issues/406 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/406 |

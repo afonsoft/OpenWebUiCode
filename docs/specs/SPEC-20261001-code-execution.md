@@ -7,7 +7,7 @@
 | Feature | `code-execution` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-code-execution` |
 | Ticket | `GAP-implementation-code-execution — Issue a criar` |
 | Status | `Completed` |
@@ -78,6 +78,6 @@ N/A (client-side). Flag exposta em `GET /api/config`.
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/35 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/21
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/35 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/21
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

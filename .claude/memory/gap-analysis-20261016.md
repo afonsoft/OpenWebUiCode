@@ -61,7 +61,7 @@ Pergunta do usuário: o repo funciona como **agent** (codificação + conversaç
 | Issues | Epic #392 `gap-analysis-20261016` + slices #393 (sweep), #394 (sonar followups, label `blocked` — hard rule workflows), #395 (IDE visual) |
 | Branch | `docs/Devin-20261016-gap-analysis-r2` |
 | #393 sweep | Executado — escopo ampliado de 10→52 SPECs terminais movidos `.specs/`→`docs/specs/` com `Delivered`; guard `tools/check-spec-status.py` criado (ativo sem Status / terminal em .specs/ / não-terminal em docs/specs/ → exit 1); convenção em `.specs/README.md` + `CLAUDE.md` |
-| #395 IDE visual | Executado — Playwright/Chromium headless, app :8080, usuário e2e + repo `afonsoft/open-webui@main` bound; 8 screenshots em `docs/screenshots/ide-visual-20261016/`; **0 console/page/request errors**; 5 views activity bar OK; mobile OK; `ide-bundle` → Completed → `docs/specs/` |
+| #395 IDE visual | Executado — Playwright/Chromium headless, app :8080, usuário e2e + repo `afonsoft/OpenWebUiCode@main` bound; 8 screenshots em `docs/screenshots/ide-visual-20261016/`; **0 console/page/request errors**; 5 views activity bar OK; mobile OK; `ide-bundle` → Completed → `docs/specs/` |
 | #394 sonar followups | Parcial — tracking durável entregue (a própria issue); itens de workflow ficam `blocked` aguardando humano |
 | Guard final | `python3 tools/check-spec-status.py` → `OK: 3 SPECs em voo, 116 arquivados` |
 | Estado pós-execução | `.specs/` = 3 SPECs (ide-visual-validation, sonar-workflow-followups, spec-status-sweep-r2 — aguardando merge) |

@@ -7,7 +7,7 @@
 | Feature | `spec-status-sweep` |
 | Type | `Documentation` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-spec-status-sweep` |
 | Ticket | `GAP-doc-stale-specs` |
 | Status | `Completed` |
@@ -38,5 +38,5 @@
 
 ## Delivered
 
-- PR: this sweep PR (issue #285: https://github.com/afonsoft/open-webui/issues/285)
+- PR: this sweep PR (issue #285: https://github.com/afonsoft/OpenWebUiCode/issues/285)
 - 8 SPECs verified with merged delivery PRs (#191–#198): all flipped to `Completed` and archived under `docs/specs/`.

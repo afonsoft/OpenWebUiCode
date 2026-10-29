@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-external-agent-registry` |
-| Ticket | [#412](https://github.com/afonsoft/open-webui/issues/412) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
+| Ticket | [#412](https://github.com/afonsoft/OpenWebUiCode/issues/412) · Epic [#408](https://github.com/afonsoft/OpenWebUiCode/issues/408) |
 | Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `core/src/external-agent-{registry,detect,skill}.ts` + `docs/agents/batuta-external-agents.md` |
 
@@ -89,4 +89,4 @@
 | Item | Link |
 | --- | --- |
 | PR/commit | #419 (cadeia #421) · 7a2bb4265 |
-| Issue | https://github.com/afonsoft/open-webui/issues/412 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/412 |

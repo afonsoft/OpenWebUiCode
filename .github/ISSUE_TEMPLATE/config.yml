@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/open-webui/open-webui
     about: Bugs e features do produto original (Python/Svelte) pertencem ao upstream — este repositório é o fork .NET/Blazor.
   - name: Documentação do fork
-    url: https://github.com/afonsoft/open-webui/tree/main/docs
+    url: https://github.com/afonsoft/OpenWebUiCode/tree/main/docs
     about: docs/ — overview, tecnologias, API e mapa de paridade (MIGRACAO-DOTNET.md).

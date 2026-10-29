@@ -28,4 +28,4 @@ Auto-sync periódico (SPEC-20261010-memory-autosync); esquecer/retention/expurgo
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/305 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/305 |

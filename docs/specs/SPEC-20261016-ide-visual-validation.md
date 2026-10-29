@@ -8,7 +8,7 @@
 | Type | `Tests` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Status | `Completed` |
-| Ticket | [#395](https://github.com/afonsoft/open-webui/issues/395) · Epic [#392](https://github.com/afonsoft/open-webui/issues/392) |
+| Ticket | [#395](https://github.com/afonsoft/OpenWebUiCode/issues/395) · Epic [#392](https://github.com/afonsoft/OpenWebUiCode/issues/392) |
 | Fonte | `gap-analysis` run 2026-10-16 — gap `GAP-tests-ide-visual` (único item pendente do SPEC-20261011-ide-bundle) |
 
 ## 1. User Story
@@ -45,7 +45,7 @@
 
 ## 5. Acceptance Criteria
 
-- [x] Evidência visual existe e referencia commit — `docs/screenshots/ide-visual-20261016/` (8 PNGs), app `dotnet run` :8080, usuário e2e, repo `afonsoft/open-webui@main` bound.
+- [x] Evidência visual existe e referencia commit — `docs/screenshots/ide-visual-20261016/` (8 PNGs), app `dotnet run` :8080, usuário e2e, repo `afonsoft/OpenWebUiCode@main` bound.
 - [x] `ide-bundle` sai de "Em execução" → Completed → `docs/specs/`.
 - [x] Issues visuais encontrados são reportados como pendências separadas — nenhum encontrado.
 
@@ -59,7 +59,7 @@
 
 - Navegação `http://localhost:8080/ide` autenticada: **0 erros de console, 0 pageerror, 0 requestfailed**.
 - Activity bar: Explorer, Busca, Controle de Código-Fonte, Outline, Modo Zen — todas as views clicáveis e renderizando.
-- Explorer: árvore do repo bound `afonsoft/open-webui@main` (header correto). SCM: "Árvore de trabalho limpa" + "Rodar testes". Painel direito: abas Chat/PRs/Testes. Status bar: branch, problemas, UTF-8, LF. Editor CodeMirror (`.cm-editor`) montado no DOM. Mobile 390×844: layout responsivo (hamburger + activity bar colapsada).
+- Explorer: árvore do repo bound `afonsoft/OpenWebUiCode@main` (header correto). SCM: "Árvore de trabalho limpa" + "Rodar testes". Painel direito: abas Chat/PRs/Testes. Status bar: branch, problemas, UTF-8, LF. Editor CodeMirror (`.cm-editor`) montado no DOM. Mobile 390×844: layout responsivo (hamburger + activity bar colapsada).
 - Screenshots: `docs/screenshots/ide-visual-20261016/{ide-desktop,ide-editor,ide-mobile,ide-view-*}.png`.
 - Issue #395; SPEC `ide-bundle` arquivado como Completed em `docs/specs/`.
 
@@ -68,4 +68,4 @@
 | Item | Link |
 | --- | --- |
 | PR/commit | #396 · 2852ac095 · docs/screenshots/ide-visual-20261016/ |
-| Issue | https://github.com/afonsoft/open-webui/issues/392 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/392 |

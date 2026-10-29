@@ -7,7 +7,7 @@
 | Feature | `knowledge-v2` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-knowledge-v2` |
 | Ticket | Issue #81 |
 | Status | `Completed` |
@@ -63,6 +63,6 @@ Hoje: coleções + itens + embeddings + access grants. Falta: anexar arquivo já
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/95
-- Issue: https://github.com/afonsoft/open-webui/issues/81
-- Epic: https://github.com/afonsoft/open-webui/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/95
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/81
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79

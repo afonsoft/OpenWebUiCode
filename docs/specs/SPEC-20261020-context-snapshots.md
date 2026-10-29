@@ -7,9 +7,9 @@
 | Feature | Compactação automática do contexto da run ao se aproximar de 256k **tokens** estimados, com snapshots persistidos por chat (e repo do binding) e 3 builtin tools: `context_save`, `context_recovery`, `context_compact` |
 | Type | Feature (Backend: builtin tools + EF Core + config KV) |
 | Stack | .NET 10, C# 14, EF Core (**SQLite único** — não há provider Postgres no repo), `ContextCompactionService`, `ContextPruner`, `IContextSummarizer`, `IBuiltinChatTool` |
-| Repository | afonsoft/open-webui (SPEC adaptada — não copiada — da SPEC-v3 de afonsoft/KnowledgeRAG) |
+| Repository | afonsoft/OpenWebUiCode (SPEC adaptada — não copiada — da SPEC-v3 de afonsoft/KnowledgeRAG) |
 | Branch | `feature/OpenWebUI-20261020-context-snapshots` |
-| Ticket | [#483](https://github.com/afonsoft/open-webui/issues/483) |
+| Ticket | [#483](https://github.com/afonsoft/OpenWebUiCode/issues/483) |
 | Status | Completed |
 | Supersedes | Adapta SPEC-v3 (KnowledgeRAG): tools MCP viram builtin tools; parâmetro `repo` vira binding do chat (`WorkspaceRepoService`) |
 

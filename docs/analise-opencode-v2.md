@@ -1,6 +1,6 @@
-# Análise: OpenCode v2 Docs → melhorias aplicáveis ao afonsoft/open-webui
+# Análise: OpenCode v2 Docs → melhorias aplicáveis ao afonsoft/OpenWebUiCode
 
-Data: 2026-10-18 · Fonte: https://opencode.ai/v2/docs/ (todas as 30 páginas lidas) · Alvo: `afonsoft/open-webui` (.NET 10 + Blazor WASM)
+Data: 2026-10-18 · Fonte: https://opencode.ai/v2/docs/ (todas as 30 páginas lidas) · Alvo: `afonsoft/OpenWebUiCode` (.NET 10 + Blazor WASM)
 Complementa `docs/analise-fork-alltomatos-opencode.md` (análise do fork alltomatos, v1.21). Aqui o foco é a **documentação oficial do OpenCode v2** — que descreve um produto diferente do nosso (agente de coding CLI/desktop vs. nossa web UI multiusuário), então a régua é "o que faz sentido portar para um app web hospedado".
 
 ---

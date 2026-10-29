@@ -7,7 +7,7 @@
 | Feature | `chats-advanced` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-chats-advanced` |
 | Ticket | Issue #80 |
 | Status | `Completed` |
@@ -64,6 +64,6 @@ Upstream: `/chats/{id}/messages/{mid}` guarda histórico de edições (versions)
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/94
-- Issue: https://github.com/afonsoft/open-webui/issues/80
-- Epic: https://github.com/afonsoft/open-webui/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/94
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/80
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79

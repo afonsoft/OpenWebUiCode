@@ -7,7 +7,7 @@
 | Feature | `port-preview` (série devin-webapp, item D4) |
 | Type | `Feature` |
 | Stack | `.NET 10 / Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-port-preview` |
 | Ticket | `GAP-devin-D4-port-preview` |
 | Status | `Completed` |
@@ -61,4 +61,4 @@ Flag `preview.enabled` (default ON?) — `[A DEFINIR]`; admin config como `ide.e
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/263 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/263 |

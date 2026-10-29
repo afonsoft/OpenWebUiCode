@@ -12,7 +12,7 @@
 
 - **started_at**: `2026-10-01 22:00:00`
 - **current_phase**: `Phase 7` concluída — issues reconciliadas, sonar mergeado (#378), warnings Windows em PR (#379), plan-spec-sdd em implementação
-- **repository**: `afonsoft/open-webui`
+- **repository**: `afonsoft/OpenWebUiCode`
 - **branch**: `fix/Devin-20261015-warnings-windows`
 - **last_updated**: `2026-10-15 12:35:00`
 

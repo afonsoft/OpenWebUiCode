@@ -7,7 +7,7 @@
 | Feature | `spec-bookkeeping` |
 | Type | `Docs` (SPEC bookkeeping / drift fix) |
 | Stack | `Docs` (Markdown + `tools/check-spec-status.py` guard) |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/agent-pipe_10cb088ca2d9439e884234def1454dd0-single-agent` |
 | Ticket | `#506` ([Epic] gap-analysis-20261024 — gateway hardening + orphan approved SPECs) |
 | Status | `Completed` |

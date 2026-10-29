@@ -7,7 +7,7 @@
 | Feature | `permissions-granular` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-permissions` |
 | Ticket | Issue #86 |
 | Status | `Completed` |
@@ -58,9 +58,9 @@ Hoje permissões vêm do papel (admin/user/pending) + flags de grupo. Upstream p
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/96
-- Issue: https://github.com/afonsoft/open-webui/issues/86
-- Epic: https://github.com/afonsoft/open-webui/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/96
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/86
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79
 
 ## Reconciliation
 

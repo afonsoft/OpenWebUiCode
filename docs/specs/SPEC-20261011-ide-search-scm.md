@@ -58,4 +58,4 @@ completo do explorer e commit pela SCM view — gated por flag.
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/336 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/336 |

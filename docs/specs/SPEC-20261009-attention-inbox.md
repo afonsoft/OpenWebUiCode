@@ -7,7 +7,7 @@
 | Feature | `attention-inbox` (série devin-webapp, item D2) |
 | Type | `Feature` |
 | Stack | `.NET 10 / Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-attention-inbox` |
 | Ticket | `GAP-devin-D2-attention-inbox` |
 | Status | `Completed` |
@@ -57,4 +57,4 @@ Sem flag.
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/261 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/261 |

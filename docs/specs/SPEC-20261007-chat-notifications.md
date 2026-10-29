@@ -7,7 +7,7 @@
 | Feature | `chat-notifications` (P2 da série harness-chat; depende de P1 `chat-detached-runs`) |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261007-chat-notifications` |
 | Ticket | `GAP-chat-notifications` |
 | Status | `Completed` |

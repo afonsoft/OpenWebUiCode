@@ -7,7 +7,7 @@
 | Feature | `tools-functions` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-tools-functions` |
 | Ticket | `GAP-implementation-tools-functions — Issue a criar` |
 | Status | `Completed` |
@@ -93,6 +93,6 @@ tests/OpenWebUI.Api.Tests/ToolEndpointsTests.cs
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/33 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/19
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/33 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/19
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

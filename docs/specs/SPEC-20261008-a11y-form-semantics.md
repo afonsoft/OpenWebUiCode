@@ -9,7 +9,7 @@
 | Stack | `.NET` (Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261008-a11y-form-semantics` |
-| Ticket | [#185](https://github.com/afonsoft/open-webui/issues/185) (Epic [#182](https://github.com/afonsoft/open-webui/issues/182)) |
+| Ticket | [#185](https://github.com/afonsoft/OpenWebUiCode/issues/185) (Epic [#182](https://github.com/afonsoft/OpenWebUiCode/issues/182)) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -138,6 +138,6 @@ N/A — client-only.
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/193 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/185
-- Epic: https://github.com/afonsoft/open-webui/issues/182
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/193 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/185
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/182

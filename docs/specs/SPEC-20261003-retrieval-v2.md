@@ -7,7 +7,7 @@
 | Feature | `retrieval-v2` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-retrieval-v2` |
 | Ticket | Issue #84 |
 | Status | `Completed` |
@@ -57,9 +57,9 @@ Entregue: searxng/duckduckgo/tavily/brave + híbrido BM25+vetor + rerank por cob
 
 ## Delivered
 
-- **PR**: https://github.com/afonsoft/open-webui/pull/100
-- **Issue**: https://github.com/afonsoft/open-webui/issues/84
-- **Epic**: https://github.com/afonsoft/open-webui/issues/79
+- **PR**: https://github.com/afonsoft/OpenWebUiCode/pull/100
+- **Issue**: https://github.com/afonsoft/OpenWebUiCode/issues/84
+- **Epic**: https://github.com/afonsoft/OpenWebUiCode/issues/79
 
 Entregue: 5 engines novas (`google_pse`, `jina`, `exa`, `kagi`, `perplexity`)
 com base URL configurável por engine (permite mocks e endpoints regionais),

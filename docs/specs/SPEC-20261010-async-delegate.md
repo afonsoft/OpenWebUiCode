@@ -21,4 +21,4 @@ Owner: Afonso
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/294 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/294 |

@@ -7,7 +7,7 @@
 | Feature | `sw-register-observability` |
 | Type | `Observability` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-sw-register-observability` |
 | Ticket | `GAP-obs-sw-register` |
 | Status | `Completed` |

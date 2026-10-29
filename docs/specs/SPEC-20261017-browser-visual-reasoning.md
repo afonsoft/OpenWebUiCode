@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/agent-20261017-browser-visual-loop` |
 | Status | `Completed` |
-| Ticket | [#446](https://github.com/afonsoft/open-webui/issues/446) |
+| Ticket | [#446](https://github.com/afonsoft/OpenWebUiCode/issues/446) |
 | Origem | pedido do usuário 2026-10-17 — portar para o fork a ferramenta "Visual Browser Reasoning Loop com Playwright e OCR" (padrão OpenHands/Devin) |
 
 ## 1. User Story
@@ -125,5 +125,5 @@ Endpoint existente `GET /api/v1/browser/config` resposta ampliada:
 
 | Item | Link |
 | --- | --- |
-| Issue | https://github.com/afonsoft/open-webui/issues/446 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/446 |
 | PR/commit | #447 · 72e1bcabe |

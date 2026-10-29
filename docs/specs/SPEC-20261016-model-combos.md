@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-model-combos` |
-| Ticket | [#410](https://github.com/afonsoft/open-webui/issues/410) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
+| Ticket | [#410](https://github.com/afonsoft/OpenWebUiCode/issues/410) · Epic [#408](https://github.com/afonsoft/OpenWebUiCode/issues/408) |
 | Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `opencode/src/combo/index.ts` (failover strategies + rate limit + report loop) |
 
@@ -91,4 +91,4 @@
 | Item | Link |
 | --- | --- |
 | PR/commit | #417 (cadeia #421) · 7a2bb4265 |
-| Issue | https://github.com/afonsoft/open-webui/issues/410 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/410 |

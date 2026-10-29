@@ -7,7 +7,7 @@
 | Feature | `audio-server` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261002-audio-server` |
 | Ticket | Issue #54 |
 | Status | `Completed` |
@@ -97,6 +97,6 @@ Seguir o padrão de `ImageGenerationService` (config admin + `501`). Avaliar Whi
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/69 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/54
-- Epic: https://github.com/afonsoft/open-webui/issues/48
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/69 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/54
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/48

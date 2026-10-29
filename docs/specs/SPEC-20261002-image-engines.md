@@ -7,7 +7,7 @@
 | Feature | `image-engines` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261002-image-engines` |
 | Ticket | Issue #57 |
 | Status | `Completed` |
@@ -89,6 +89,6 @@ ComfyUI exige workflow JSON por instalação — config guarda template, não wo
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/72 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/57
-- Epic: https://github.com/afonsoft/open-webui/issues/48
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/72 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/57
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/48

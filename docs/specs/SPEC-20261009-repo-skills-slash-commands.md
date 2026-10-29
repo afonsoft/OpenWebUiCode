@@ -7,7 +7,7 @@
 | Feature | `repo-skills-slash-commands` (série web-ide, fatias S3+S4) |
 | Type | `Feature` |
 | Stack | `.NET 10 / Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-repo-skills` |
 | Ticket | `GAP-impl-repo-skills` + `GAP-impl-project-instructions` |
 | Status | `Completed` |
@@ -92,4 +92,4 @@ Sem flag. Skills lidas são texto — superfície de ataque limitada (injeção 
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/248 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/248 |

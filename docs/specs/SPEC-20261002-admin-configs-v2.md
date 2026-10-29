@@ -7,7 +7,7 @@
 | Feature | `admin-configs-v2` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261002-admin-configs` |
 | Ticket | Issue #51 |
 | Status | `Completed` |
@@ -85,6 +85,6 @@ Upstream usa chaves `ENABLE_*`/`DEFAULT_*` em `DEFAULT_CONFIG` — manter nomes 
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/66 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/51
-- Epic: https://github.com/afonsoft/open-webui/issues/48
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/66 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/51
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/48

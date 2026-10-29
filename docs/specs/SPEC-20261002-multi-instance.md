@@ -7,7 +7,7 @@
 | Feature | `multi-instance` |
 | Type | `Infra` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261002-multi-instance` |
 | Ticket | Issue #63 |
 | Status | `Completed` |
@@ -89,6 +89,6 @@ EF multi-provider: manter migrations em `Migrations/Sqlite/` + `Migrations/Postg
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/78 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/63
-- Epic: https://github.com/afonsoft/open-webui/issues/48
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/78 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/63
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/48

@@ -7,7 +7,7 @@
 | Feature | `frontend-routes-parity` |
 | Type | `Frontend` |
 | Stack | `Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261002-frontend-routes` |
 | Ticket | Issue #49 |
 | Status | `Completed` |
@@ -88,6 +88,6 @@ Estratégia: reutilizar componentes existentes extraindo form de `Workspace.razo
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/64 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/49
-- Epic: https://github.com/afonsoft/open-webui/issues/48
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/64 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/49
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/48

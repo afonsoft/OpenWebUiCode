@@ -7,7 +7,7 @@
 | Feature | `theme-layout-refresh` (série chat-harness, rodada visual) |
 | Type | `Feature` |
 | Stack | `.NET / Blazor / Tailwind v4` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `devin/1791385000-theme-layout` |
 | Ticket | `GAP-theme-layout` |
 | Status | `Completed` |

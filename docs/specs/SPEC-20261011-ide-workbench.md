@@ -54,4 +54,4 @@ decorations git, diff editor (C), IntelliSense completo (D).
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/334 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/334 |

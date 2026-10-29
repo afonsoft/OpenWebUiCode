@@ -7,7 +7,7 @@
 | Feature | `pwa-offline` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-pwa-offline` |
 | Ticket | `[pwa-offline] Issue #23` |
 | Status | `Completed` |
@@ -79,6 +79,6 @@ N/A (infra de hosting). Feature flag `pwa` em `/api/config` se quisermos opt-out
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/39 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/25
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/39 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/25
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14
