@@ -28,7 +28,7 @@
                            @(active ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
                                     : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800")"
                     role="tab" aria-selected="@active"
-                    @onclick="() => _tab = tab">
+                    @onclick="() => SelectTab(tab)">
                 @L["chat.panel_tab_" + tab]
             </button>
         }
@@ -326,6 +326,114 @@
                 }
                 break;
 
+            case "skills":
+                @* Skills descobertas no repo vinculado (**/SKILL.md). *@
+                @if (_skills is null)
+                {
+                    <div class="px-2 py-6 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["chat.panel_skills_loading"]</div>
+                }
+                else if (_skills.Count == 0)
+                {
+                    <div class="px-2 py-6 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["chat.panel_skills_empty"]</div>
+                }
+                else
+                {
+                    <ul class="flex flex-col gap-1">
+                        @foreach (var skill in _skills)
+                        {
+                            <li class="rounded-lg border border-gray-100 dark:border-gray-800 px-2 py-1.5">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] font-medium text-gray-700 dark:text-gray-300" title="@skill.Name">/@skill.Name</span>
+                                    <span class="flex-none rounded bg-gray-100 dark:bg-gray-800 px-1 text-[0.5625rem] font-medium text-gray-500 dark:text-gray-400">@skill.Scope</span>
+                                    @if (!skill.Enabled)
+                                    {
+                                        <span class="flex-none rounded bg-amber-100 dark:bg-amber-900/40 px-1 text-[0.5625rem] font-medium text-amber-700 dark:text-amber-400"
+                                              title="@(skill.DisabledByAdmin ? L["chat.panel_skill_admin_off"] : "")">@L["chat.panel_skill_disabled"]</span>
+                                    }
+                                </div>
+                                @if (skill.Description is { Length: > 0 } desc)
+                                {
+                                    <div class="mt-0.5 text-[0.625rem] leading-4 text-gray-500 dark:text-gray-400" title="@desc">@desc</div>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+                break;
+
+            case "memories":
+                @* Memórias do repo: .claude/memory + .agents/memory — lê e grava
+                   arquivos .md via workspace file API. *@
+                <div class="mb-1.5 rounded-lg border border-blue-100 dark:border-blue-900/40 bg-blue-50/50 dark:bg-blue-950/20 px-2 py-1.5 text-[0.625rem] leading-4 text-blue-800 dark:text-blue-300">
+                    @L["chat.panel_mem_suggest"]
+                </div>
+                @if (_memFiles is null)
+                {
+                    <div class="px-2 py-6 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["chat.panel_mem_loading"]</div>
+                }
+                else if (_memFiles.Count == 0)
+                {
+                    <div class="px-2 py-6 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["chat.panel_mem_empty"]</div>
+                }
+                else
+                {
+                    <ul class="flex flex-col gap-1">
+                        @foreach (var file in _memFiles)
+                        {
+                            var selected = _memViewPath == file.Path;
+                            <li class="rounded-lg border border-gray-100 dark:border-gray-800">
+                                <button class="flex w-full items-center gap-1.5 px-2 py-1.5 text-left cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850 rounded-lg"
+                                        aria-expanded="@selected"
+                                        @onclick="() => ToggleMemoryAsync(file.Path)">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                         class="size-3 flex-none text-gray-400 transition @(selected ? "rotate-90" : "")">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                                    </svg>
+                                    <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300" title="@file.Path">@file.Path</span>
+                                </button>
+                                @if (selected && _memView is { } memView)
+                                {
+                                    <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all border-t border-gray-100 dark:border-gray-800 px-2 py-1.5 text-[0.625rem] font-mono leading-4 text-gray-600 dark:text-gray-400">@memView.Content</pre>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+                @* Nova memória — grava .md em .agents/memory (ou .claude/memory). *@
+                <div class="mt-2 rounded-lg border border-gray-100 dark:border-gray-800 px-2 py-1.5">
+                    <div class="mb-1 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">@L["chat.panel_mem_new"]</div>
+                    <div class="flex gap-1">
+                        @foreach (var dir in MemoryDirs)
+                        {
+                            <button class="cursor-pointer rounded px-1.5 py-0.5 text-[0.5625rem] font-mono transition
+                                           @(_memDir == dir ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900" : "text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800")"
+                                    @onclick="() => _memDir = dir">@dir</button>
+                        }
+                    </div>
+                    <input class="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent px-2 py-1 text-[0.6875rem] font-mono text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
+                           placeholder="@L["chat.panel_mem_name_ph"]" aria-label="@L["chat.panel_mem_name_ph"]"
+                           @bind="_memNewName" />
+                    <textarea class="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent px-2 py-1 text-[0.6875rem] text-gray-700 dark:text-gray-300 placeholder:text-gray-400"
+                              rows="3" placeholder="@L["chat.panel_mem_content_ph"]" aria-label="@L["chat.panel_mem_content_ph"]"
+                              @bind="_memNewContent"></textarea>
+                    <div class="mt-1 flex items-center gap-2">
+                        <button class="cursor-pointer rounded-lg bg-gray-900 px-2 py-1 text-[0.625rem] font-medium text-white transition hover:bg-gray-700 disabled:opacity-50 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
+                                disabled="@(_memSaving || string.IsNullOrWhiteSpace(_memNewName) || string.IsNullOrWhiteSpace(_memNewContent))"
+                                @onclick="SaveMemoryAsync">
+                            @(_memSaving ? L["chat.panel_mem_saving"] : L["chat.panel_mem_save"])
+                        </button>
+                        @if (_memNotice is { } memNotice)
+                        {
+                            <span class="text-[0.625rem] text-green-600 dark:text-green-400">@memNotice</span>
+                        }
+                        @if (_memError is { } memError)
+                        {
+                            <span class="text-[0.625rem] text-red-600 dark:text-red-400">@memError</span>
+                        }
+                    </div>
+                </div>
+                break;
+
             default:
                 <dl class="flex flex-col gap-1.5 px-1 text-xs">
                     <div class="flex justify-between gap-2">
@@ -370,6 +478,72 @@
                         <dd class="text-gray-700 dark:text-gray-300">@Jobs.Count(j => j.Status == "running")/@Jobs.Count</dd>
                     </div>
                 </dl>
+
+                @* Uso de LLM do chat: tokens/custo por run + por modelo. *@
+                <div class="mt-2 border-t border-gray-100 dark:border-gray-800 px-1 pt-2">
+                    <div class="mb-1 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">@L["chat.panel_usage_title"]</div>
+                    @if (_usageLoading)
+                    {
+                        <div class="py-4 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["chat.panel_usage_loading"]</div>
+                    }
+                    else if (_usage is not { } usage || usage.Totals.Runs == 0)
+                    {
+                        <div class="py-4 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["chat.panel_usage_empty"]</div>
+                    }
+                    else
+                    {
+                        <dl class="flex flex-col gap-1 text-xs">
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_runs"]</dt>
+                                <dd class="text-gray-700 dark:text-gray-300">@usage.Totals.Runs</dd>
+                            </div>
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_input"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@FormatCount(usage.Totals.PromptTokens)</dd>
+                            </div>
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_output"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@FormatCount(usage.Totals.CompletionTokens)</dd>
+                            </div>
+                            @if (usage.Totals.ReasoningTokens > 0)
+                            {
+                                <div class="flex justify-between gap-2">
+                                    <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_reasoning"]</dt>
+                                    <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@FormatCount(usage.Totals.ReasoningTokens)</dd>
+                                </div>
+                            }
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_cost"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">$@usage.Totals.CostUsd.ToString("0.####")</dd>
+                            </div>
+                        </dl>
+
+                        @* Série por run (tokens/run por modelo). *@
+                        <div class="mt-2">
+                            <LineChart Series="@UsageSeries()" AriaLabel="@L["chat.panel_usage_chart"]" />
+                        </div>
+
+                        @* Share por modelo (tokens + %). *@
+                        <div class="mt-1.5 flex flex-col gap-1">
+                            @foreach (var (model, index) in usage.Models.Select((m, i) => (m, i)))
+                            {
+                                var pct = usage.Totals.PromptTokens + usage.Totals.CompletionTokens + usage.Totals.ReasoningTokens is { } total && total > 0
+                                    ? model.Tokens * 100.0 / total : 0d;
+                                <div>
+                                    <div class="flex items-center justify-between gap-2 text-[0.625rem]">
+                                        <span class="min-w-0 flex-1 truncate font-mono text-gray-600 dark:text-gray-400" title="@model.ModelId">
+                                            <span class="mr-1 inline-block size-1.5 rounded-full" style="background:@ModelColor(index)"></span>@model.ModelId
+                                        </span>
+                                        <span class="flex-none font-mono text-gray-500 dark:text-gray-400">@FormatCount(model.Tokens) · @pct.ToString("0.#")%</span>
+                                    </div>
+                                    <div class="mt-0.5 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                                        <div class="h-full rounded-full" style="width:@pct.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%;background:@ModelColor(index)"></div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
                 break;
         }
     </div>
@@ -513,8 +687,173 @@
     }
 
     private IEnumerable<string> Tabs => IsAdmin
-        ? ["tasks", "changes", "pulls", "tests", "jobs", "terminal", "mcps", "info"]
-        : ["tasks", "changes", "pulls", "tests", "jobs", "terminal", "info"];
+        ? ["tasks", "changes", "pulls", "tests", "jobs", "terminal", "mcps", "skills", "memories", "info"]
+        : ["tasks", "changes", "pulls", "tests", "jobs", "terminal", "skills", "memories", "info"];
+
+    /// <summary>Troca de aba — dispara a carga lazy dos dados dela.</summary>
+    private void SelectTab(string tab)
+    {
+        _tab = tab;
+        _ = EnsureTabDataAsync(tab);
+    }
+
+    /// <summary>Carga lazy por aba: usage (info), skills do repo e memórias.</summary>
+    private async Task EnsureTabDataAsync(string tab)
+    {
+        try
+        {
+            switch (tab)
+            {
+                case "info":
+                    if (ChatId is not null && !_usageLoaded)
+                    {
+                        _usageLoaded = true;
+                        _usageLoading = true;
+                        _usage = await Api.GetChatUsageAsync(ChatId);
+                        _usageLoading = false;
+                    }
+                    break;
+                case "skills":
+                    if (_skills is null)
+                    {
+                        _skills = await Api.GetRepoSkillsAsync(ChatId);
+                    }
+                    break;
+                case "memories":
+                    if (_memFiles is null)
+                    {
+                        await LoadMemoriesAsync();
+                    }
+                    break;
+            }
+        }
+        catch
+        {
+            _usageLoading = false;
+            _skills ??= [];
+            _memFiles ??= [];
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private ChatUsageResponse? _usage;
+    private bool _usageLoaded;
+    private bool _usageLoading;
+    private List<RepoSkillItemResponse>? _skills;
+
+    private List<WorkspaceFileEntryResponse>? _memFiles;
+    private string? _memViewPath;
+    private WorkspaceFileReadResponse? _memView;
+    private string _memDir = ".agents/memory";
+    private string _memNewName = "";
+    private string _memNewContent = "";
+    private bool _memSaving;
+    private string? _memNotice;
+    private string? _memError;
+
+    /// <summary>Diretórios de memória reconhecidos no workdir.</summary>
+    private static readonly string[] MemoryDirs = [".claude/memory", ".agents/memory"];
+
+    /// <summary>Lista os .md de .claude/memory e .agents/memory do workdir.</summary>
+    private async Task LoadMemoriesAsync()
+    {
+        var files = new List<WorkspaceFileEntryResponse>();
+        foreach (var dir in MemoryDirs)
+        {
+            var tree = await Api.GetWorkspaceTreeAsync(dir, depth: 1, chatId: ChatId);
+            if (tree?.Entries is { } entries)
+            {
+                files.AddRange(entries.Where(e => e.Type == "file"));
+            }
+        }
+        _memFiles = files.OrderBy(f => f.Path).ToList();
+    }
+
+    /// <summary>Expande/recolhe o conteúdo de uma memória (lazy read).</summary>
+    private async Task ToggleMemoryAsync(string path)
+    {
+        if (_memViewPath == path)
+        {
+            _memViewPath = null;
+            _memView = null;
+            return;
+        }
+        _memViewPath = path;
+        _memView = await Api.GetWorkspaceFileAsync(path, maxLines: 200, chatId: ChatId);
+    }
+
+    /// <summary>Salva uma memória .md nova no diretório escolhido.</summary>
+    private async Task SaveMemoryAsync()
+    {
+        _memError = null;
+        _memNotice = null;
+        var name = _memNewName.Trim();
+        if (name.Length == 0 || _memSaving)
+        {
+            return;
+        }
+        if (name.Contains('/') || name.Contains('\\'))
+        {
+            _memError = L["chat.panel_mem_name_invalid"];
+            return;
+        }
+        if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            name += ".md";
+        }
+
+        _memSaving = true;
+        try
+        {
+            await Api.WorkspaceMkdirAsync(_memDir, ChatId);
+            var result = await Api.PutWorkspaceFileAsync(
+                $"{_memDir}/{name}", _memNewContent, chatId: ChatId);
+            if (result.Ok)
+            {
+                _memNewName = "";
+                _memNewContent = "";
+                _memNotice = L["chat.panel_mem_saved"];
+                await LoadMemoriesAsync();
+            }
+            else
+            {
+                _memError = L["chat.panel_mem_save_failed"];
+            }
+        }
+        finally
+        {
+            _memSaving = false;
+        }
+    }
+
+    /// <summary>Séries do line chart: tokens (in+out+reasoning) por run de cada modelo.</summary>
+    private IReadOnlyList<LineChart.ChartSeries> UsageSeries()
+    {
+        if (_usage is null)
+        {
+            return [];
+        }
+        return _usage.Models.Select(m => new LineChart.ChartSeries(
+            m.ModelId,
+            _usage.Runs.Where(r => (r.ModelId ?? "unknown") == m.ModelId)
+                .Select(r => (double)(r.PromptTokens + r.CompletionTokens + r.ReasoningTokens))
+                .ToList())).ToList();
+    }
+
+    /// <summary>Mesma paleta do LineChart — mantém cor por índice de modelo.</summary>
+    private static string ModelColor(int index)
+    {
+        string[] palette = ["#3b82f6", "#a855f7", "#10b981", "#f59e0b", "#ef4444", "#06b6d4"];
+        return palette[index % palette.Length];
+    }
+
+    /// <summary>Compacta contagens grandes (123k / 1.2M) para o painel.</summary>
+    private static string FormatCount(long value) => value switch
+    {
+        >= 1_000_000 => (value / 1_000_000d).ToString("0.#") + "M",
+        >= 1_000 => (value / 1_000d).ToString("0.#") + "k",
+        _ => value.ToString(),
+    };
 
     /// <summary>Salta à aba Tests quando um run é iniciado (botão Run tests).</summary>
     protected override void OnInitialized() => TestRun.Changed += OnTestRunChanged;

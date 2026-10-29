@@ -139,6 +139,63 @@ public class UsageEndpointsTests
         });
     }
 
+    // Covers info-panel: /usage/chats/{id} devolve totais, agregado por
+    // modelo e série por run; chat de outro usuário → 404.
+    [Test]
+    public async Task ChatUsage_PerChatTotalsModelsAndRuns()
+    {
+        UseToken(_user.Token);
+        var chat = await _client.PostAsJsonAsync("/api/v1/chats/",
+            new ChatUpsertRequest("Chat usage", ["llama3"], []));
+        Assert.That(chat.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await chat.Content.ReadAsStringAsync());
+        var chatId = JsonDocument.Parse(await chat.Content
+            .ReadAsStringAsync()).RootElement.GetProperty("id").GetString()!;
+
+        await using (var db = CreateDb())
+        {
+            db.RunUsageRecords.AddRange(
+                new RunUsageRecord
+                {
+                    RunId = "r1", ChatId = chatId, UserId = _user.User.Id,
+                    ModelId = "gemini", Steps = 2, PromptTokens = 100,
+                    CompletionTokens = 50, CostUsd = 0.1, CreatedAt = 1,
+                },
+                new RunUsageRecord
+                {
+                    RunId = "r2", ChatId = chatId, UserId = _user.User.Id,
+                    ModelId = "gpt", Steps = 1, PromptTokens = 200,
+                    CompletionTokens = 80, CostUsd = 0.2, CreatedAt = 2,
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var doc = JsonDocument.Parse(await (await _client.GetAsync(
+            $"/api/v1/usage/chats/{chatId}")).Content.ReadAsStringAsync());
+        var totals = doc.RootElement.GetProperty("totals");
+        var models = doc.RootElement.GetProperty("models");
+        var runs = doc.RootElement.GetProperty("runs");
+        Assert.Multiple(() =>
+        {
+            Assert.That(totals.GetProperty("runs").GetInt32(), Is.EqualTo(2));
+            Assert.That(totals.GetProperty("promptTokens").GetInt64(), Is.EqualTo(300));
+            Assert.That(totals.GetProperty("completionTokens").GetInt64(), Is.EqualTo(130));
+            Assert.That(totals.GetProperty("costUsd").GetDouble(), Is.EqualTo(0.3).Within(1e-6));
+            Assert.That(models.GetArrayLength(), Is.EqualTo(2));
+            Assert.That(models.EnumerateArray().First(
+                m => m.GetProperty("modelId").GetString() == "gpt")
+                .GetProperty("tokens").GetInt64(), Is.EqualTo(280));
+            Assert.That(runs.GetArrayLength(), Is.EqualTo(2));
+            Assert.That(runs.EnumerateArray().First()
+                .GetProperty("modelId").GetString(), Is.EqualTo("gemini"));
+        });
+
+        UseToken(_admin.Token);
+        var other = await _client.GetAsync($"/api/v1/usage/chats/{chatId}");
+        Assert.That(other.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        UseToken(_user.Token);
+    }
+
     // Covers RF-005: /admin/usage agrega por usuário e top chats;
     // não-admin recebe 403.
     [Test]

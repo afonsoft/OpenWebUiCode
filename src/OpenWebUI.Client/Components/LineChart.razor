@@ -1,0 +1,68 @@
+@* Gráfico de linhas SVG multi-série (uso de tokens por run, por modelo). *@
+@inject LocalizationService L
+@using System.Globalization
+
+<svg viewBox="0 0 @(Width) @(Height)" class="w-full h-28" role="img" aria-label="@AriaLabel">
+    <line x1="0" y1="@Fmt(Height - Pad)" x2="@Width" y2="@Fmt(Height - Pad)"
+          class="stroke-gray-200 dark:stroke-gray-700" stroke-width="1" />
+    @foreach (var (series, index) in Series.Select((s, i) => (s, i)))
+    {
+        var color = Palette[index % Palette.Length];
+        <polyline points="@Polyline(series)" fill="none"
+                  stroke="@color" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
+        @foreach (var (cx, cy, v) in Dots(series))
+        {
+            <circle cx="@Fmt(cx)" cy="@Fmt(cy)" r="2" fill="@color"><title>@series.Name · @Fmt(v)</title></circle>
+        }
+    }
+</svg>
+
+@code {
+    /// <summary>Uma série nomeada de valores (ex.: tokens por run de um modelo).</summary>
+    public sealed record ChartSeries(string Name, IReadOnlyList<double> Values);
+
+    /// <summary>Séries a plotar; eixo X compartilhado (posição i do maior array).</summary>
+    [Parameter] public IReadOnlyList<ChartSeries> Series { get; set; } = [];
+
+    /// <summary>Label acessível do gráfico.</summary>
+    [Parameter] public string AriaLabel { get; set; } = "chart";
+
+    private const int Width = 300;
+    private const int Height = 112;
+    private const int Pad = 8;
+
+    private static readonly string[] Palette =
+        ["#3b82f6", "#a855f7", "#10b981", "#f59e0b", "#ef4444", "#06b6d4"];
+
+    private int MaxPoints => Series.Count == 0 ? 0 : Series.Max(s => s.Values.Count);
+
+    private double MaxValue => Math.Max(1, Series.SelectMany(s => s.Values).DefaultIfEmpty(0).Max());
+
+    private (double X, double Y) PointAt(int i, double v)
+    {
+        var n = Math.Max(1, MaxPoints - 1);
+        var x = Pad + (Width - 2 * Pad) * (i / (double)n);
+        var y = Height - Pad - (Height - 2 * Pad) * (v / MaxValue);
+        return (x, y);
+    }
+
+    private string Polyline(ChartSeries series) => string.Join(" ",
+        series.Values.Select((v, i) =>
+        {
+            var (x, y) = PointAt(i, v);
+            return $"{Fmt(x)},{Fmt(y)}";
+        }));
+
+    private IEnumerable<(double X, double Y, double V)> Dots(ChartSeries series)
+    {
+        for (var i = 0; i < series.Values.Count; i++)
+        {
+            var (x, y) = PointAt(i, series.Values[i]);
+            yield return (x, y, series.Values[i]);
+        }
+    }
+
+    // SVG exige separador decimal '.' — a cultura pt-BR renderizaria "68,57".
+    private static string Fmt(double value) =>
+        value.ToString("0.###", CultureInfo.InvariantCulture);
+}

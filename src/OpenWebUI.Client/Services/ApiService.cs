@@ -1321,6 +1321,11 @@ public class ApiService(HttpClient http, AuthService auth)
             "/api/v1/workspace/repo/skills"
             + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId))) ?? [];
 
+    /// <summary>Uso do chat (totais/por modelo/série por run); null sem auth ou 404.</summary>
+    public Task<ChatUsageResponse?> GetChatUsageAsync(string chatId) =>
+        SendAsync<ChatUsageResponse>(HttpMethod.Get,
+            $"/api/v1/usage/chats/{Uri.EscapeDataString(chatId)}");
+
     /// <summary>Corpo de uma skill do repo; null quando não existe.</summary>
     public Task<RepoSkillDetailResponse?> GetRepoSkillAsync(string name, string? chatId = null) =>
         SendAsync<RepoSkillDetailResponse>(HttpMethod.Get,
