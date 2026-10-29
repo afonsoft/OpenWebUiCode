@@ -19,6 +19,7 @@ public static class UsageEndpoints
     {
         var me = app.MapGroup("/api/v1/usage").RequireAuthorization();
         me.MapGet("/me", MyUsageAsync);
+        me.MapGet("/chats/{chatId}", ChatUsageAsync);
 
         var admin = app.MapGroup("/api/v1/admin").RequireAuthorization();
         admin.MapGet("/usage", AdminUsageAsync);
@@ -61,6 +62,49 @@ public static class UsageEndpoints
             runs = totals.Runs,
             cap,
         });
+    }
+
+    /// <summary>Uso de um chat do próprio usuário: totais, por modelo e série por run.</summary>
+    private static async Task<IResult> ChatUsageAsync(
+        string chatId, HttpContext http, AppDbContext db, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (!await db.Chats.AsNoTracking().AnyAsync(
+            c => c.Id == chatId && c.UserId == user.Id, ct))
+        {
+            return Results.NotFound(new { detail = "Chat não encontrado." });
+        }
+
+        var records = await db.RunUsageRecords.AsNoTracking()
+            .Where(r => r.ChatId == chatId)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync(ct);
+        var models = records
+            .GroupBy(r => r.ModelId ?? "unknown")
+            .Select(g => new ChatUsageModelRow(
+                g.Key, g.Count(),
+                g.Sum(r => r.PromptTokens), g.Sum(r => r.CompletionTokens),
+                g.Sum(r => r.ReasoningTokens),
+                g.Sum(r => r.PromptTokens + r.CompletionTokens + r.ReasoningTokens),
+                Math.Round(g.Sum(r => r.CostUsd ?? 0), 6)))
+            .OrderByDescending(m => m.Tokens)
+            .ToList();
+        return Results.Ok(new ChatUsageResponse(
+            chatId,
+            new ChatUsageTotals(
+                records.Count,
+                records.Sum(r => r.PromptTokens),
+                records.Sum(r => r.CompletionTokens),
+                records.Sum(r => r.ReasoningTokens),
+                Math.Round(records.Sum(r => r.CostUsd ?? 0), 6)),
+            models,
+            records.Select(r => new ChatUsageRunRow(
+                r.RunId, r.ModelId, r.Steps, r.PromptTokens, r.CompletionTokens,
+                r.ReasoningTokens, r.CostUsd, r.CreatedAt)).ToList()));
     }
 
     /// <summary>Agregado admin por usuário e top chats por custo na janela.</summary>
