@@ -7,7 +7,7 @@
 | Feature | `chat-agent-tools` (P4 — tools built-in do harness no open-webui) |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261007-chat-agent-tools` |
 | Ticket | `GAP-chat-agent-tools` |
 | Status | `Completed` |

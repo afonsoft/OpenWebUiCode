@@ -7,7 +7,7 @@
 | Feature | `ef-migrations` |
 | Type | `Refactor / Infra` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-ef-migrations` |
 | Ticket | `GAP-architecture-ef-migrations — Issue a criar` |
 | Status | `Completed` |
@@ -81,6 +81,6 @@ N/A (infra).
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/29 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/15
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/29 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/15
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

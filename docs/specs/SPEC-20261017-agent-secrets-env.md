@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/agent-20261017-secrets-env` |
 | Status | `Completed` |
-| Ticket | [#445](https://github.com/afonsoft/open-webui/issues/445) |
+| Ticket | [#445](https://github.com/afonsoft/OpenWebUiCode/issues/445) |
 | Origem | análise de sessão 2026-10-17 — agente falhou em `git push`/`gh pr create` ("Could not read Username", "gh: not found", `GITHUB_TOKEN` ausente) apesar do PAT configurado. Usuário pediu: **seção de Secrets nas configurações** (chave→valor, ex.: `SONAR_TOKEN`) repassada ao shell e terminal — **com nível global (admin) e override por usuário**, e o `GITHUB_TOKEN` da integração já entra por padrão. |
 
 ## 1. User Story
@@ -134,5 +134,5 @@ DELETE /api/v1/configs/secrets/{name}     → 200 { "status": true }            
 
 | Item | Link |
 | --- | --- |
-| Issue | https://github.com/afonsoft/open-webui/issues/445 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/445 |
 | PR/commit | #447 · 72e1bcabe |

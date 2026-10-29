@@ -86,6 +86,6 @@ tests/OpenWebUI.Api.Tests/MediaImageProcessorTests.cs           # NOVO
 
 ## Delivered
 
-- **PR:** [#518](https://github.com/afonsoft/open-webui/pull/518) (merged `e3b868e`, 2026-10-25).
-- **Issue:** [#508](https://github.com/afonsoft/open-webui/issues/508).
+- **PR:** [#518](https://github.com/afonsoft/OpenWebUiCode/pull/518) (merged `e3b868e`, 2026-10-25).
+- **Issue:** [#508](https://github.com/afonsoft/OpenWebUiCode/issues/508).
 - **Arquivos:** `AttachmentContentService`, `MediaImageProcessor` (Infrastructure); `ChatPipeline` §4.6, `FileContextContributor` (Api); `ChatView`, `SettingsModal`, `app.js`, 8 locales (Client); `AttachmentContentTests`, `MediaImageProcessorTests` + regressões (Tests).

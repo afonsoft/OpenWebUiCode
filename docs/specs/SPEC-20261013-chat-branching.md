@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-chat-branching` |
-| Ticket | [#354](https://github.com/afonsoft/open-webui/issues/354) |
+| Ticket | [#354](https://github.com/afonsoft/OpenWebUiCode/issues/354) |
 | Status | `Completed` |
 | Child SPECs (prováveis) | `chat-branching-schema`, `chat-branching-ux`, `branch-summary` |
 
@@ -167,5 +167,5 @@ tests/OpenWebUI.Api.Tests/                              # walk, fork, legado lin
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/372 |
-| Issue | https://github.com/afonsoft/open-webui/issues/354 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/372 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/354 |

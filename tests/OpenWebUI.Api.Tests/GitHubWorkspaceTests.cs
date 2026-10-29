@@ -112,10 +112,10 @@ public class GitHubWorkspaceTests
         Assert.That(repos, Has.Count.EqualTo(2));
         Assert.Multiple(() =>
         {
-            Assert.That(repos[0].FullName, Is.EqualTo("afonsoft/open-webui"));
+            Assert.That(repos[0].FullName, Is.EqualTo("afonsoft/OpenWebUiCode"));
             Assert.That(repos[0].Private, Is.True);
             Assert.That(repos[0].DefaultBranch, Is.EqualTo("main"));
-            Assert.That(repos[0].HtmlUrl, Does.Contain("github.com/afonsoft/open-webui"));
+            Assert.That(repos[0].HtmlUrl, Does.Contain("github.com/afonsoft/OpenWebUiCode"));
             Assert.That(repos[1].Description, Is.EqualTo("repo 2"));
         });
     }
@@ -124,7 +124,7 @@ public class GitHubWorkspaceTests
     public async Task ListBranches_RetornaDefaultELista()
     {
         await _svc.SetTokenAsync("u1", "pat-1", default);
-        var branches = await _svc.ListBranchesAsync("u1", "afonsoft", "open-webui", default);
+        var branches = await _svc.ListBranchesAsync("u1", "afonsoft", "OpenWebUiCode", default);
         Assert.That(branches, Is.Not.Null);
         Assert.Multiple(() =>
         {
@@ -854,8 +854,8 @@ public class GitHubWorkspaceTests
                 ?? (Status != HttpStatusCode.OK ? "{}"
                 : path == "/user" ? "{\"login\":\"afonso\"}"
                 : path == "/user/repos" ? """
-                    [{"full_name":"afonsoft/open-webui","name":"open-webui","private":true,
-                      "default_branch":"main","html_url":"https://github.com/afonsoft/open-webui",
+                    [{"full_name":"afonsoft/OpenWebUiCode","name":"OpenWebUiCode","private":true,
+                      "default_branch":"main","html_url":"https://github.com/afonsoft/OpenWebUiCode",
                       "description":"fork dotnet","updated_at":"2026-10-08T00:00:00Z"},
                      {"full_name":"afonsoft/outro","name":"outro","private":false,
                       "default_branch":"dev","html_url":"https://github.com/afonsoft/outro",

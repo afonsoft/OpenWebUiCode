@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-approval-tiers` |
-| Ticket | [#351](https://github.com/afonsoft/open-webui/issues/351) |
+| Ticket | [#351](https://github.com/afonsoft/OpenWebUiCode/issues/351) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -150,5 +150,5 @@ tests/OpenWebUI.Api.Tests/                                      # matriz tier×p
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/357 |
-| Issue | https://github.com/afonsoft/open-webui/issues/351 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/357 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/351 |

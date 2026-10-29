@@ -7,7 +7,7 @@
 | Feature | `agent-modes-plan-build` (série web-ide, fatia S5) |
 | Type | `Feature` |
 | Stack | `.NET 10 / Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-agent-modes` |
 | Ticket | `GAP-impl-agent-modes` (+ absorve `GAP-arch-permission-rulesets`) |
 | Status | `Completed` |
@@ -82,4 +82,4 @@ Sem flag — `build` é o default e comportamento atual.
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/250 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/250 |

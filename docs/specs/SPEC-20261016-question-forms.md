@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-question-forms` |
-| Ticket | [#414](https://github.com/afonsoft/open-webui/issues/414) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
+| Ticket | [#414](https://github.com/afonsoft/OpenWebUiCode/issues/414) · Epic [#408](https://github.com/afonsoft/OpenWebUiCode/issues/408) |
 | Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `opencode/src/question/index.ts` (ask multi-pergunta com options/tool attribution/reject) |
 
@@ -81,4 +81,4 @@ Evento `question_asked` payload: `{questions:[{question,header,options,multiple,
 | Item | Link |
 | --- | --- |
 | PR/commit | #421 · 7a2bb4265 |
-| Issue | https://github.com/afonsoft/open-webui/issues/414 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/414 |

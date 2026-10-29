@@ -7,7 +7,7 @@
 | Feature | `model-visibility-settings` |
 | Type | `Feature` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-model-visibility-settings` |
 | Ticket | `[A DEFINIR — create-issues after approval]` |
 | Status | `Completed` |
@@ -173,4 +173,4 @@ tests/OpenWebUI.Client.Tests/*                         # toggles, groups, fallba
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/319 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/319 |

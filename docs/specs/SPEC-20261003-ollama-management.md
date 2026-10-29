@@ -7,7 +7,7 @@
 | Feature | `ollama-management` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-ollama-management` |
 | Ticket | Issue #82 |
 | Status | `Completed` |
@@ -60,6 +60,6 @@ Espelho upstream: `/ollama/api/{pull,create,delete,copy}`, `/ollama/api/blobs/{d
 
 ## Delivered
 
-- Issue: https://github.com/afonsoft/open-webui/issues/82
-- Epic: https://github.com/afonsoft/open-webui/issues/79
-- PR: https://github.com/afonsoft/open-webui/pull/103
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/82
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/103

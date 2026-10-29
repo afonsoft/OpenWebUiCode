@@ -35,4 +35,4 @@ Endpoints de workspace aceitam `?chatId=` opcional: quando presente (e o chat pe
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/295 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/295 |

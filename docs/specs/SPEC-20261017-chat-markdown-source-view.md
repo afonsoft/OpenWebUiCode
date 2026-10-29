@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/agent-20261017-markdown-source-view` |
 | Status | `Completed` |
-| Ticket | [#443](https://github.com/afonsoft/open-webui/issues/443) |
+| Ticket | [#443](https://github.com/afonsoft/OpenWebUiCode/issues/443) |
 | Origem | pedido do usuário 2026-10-17 — "exibir opção de visualizar o markdown (view, source) e copiar" |
 
 ## 1. User Story
@@ -90,5 +90,5 @@
 
 | Item | Link |
 | --- | --- |
-| Issue | https://github.com/afonsoft/open-webui/issues/443 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/443 |
 | PR/commit | #447 · 72e1bcabe |

@@ -7,7 +7,7 @@
 | Feature | `utils-community` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-utils-community` |
 | Ticket | Issue #89 |
 | Status | `Completed` |
@@ -60,9 +60,9 @@ Upstream `utils`: `/gravatar` (avatar por email), `/litellm/config`, `/code/form
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/99
-- Issue: https://github.com/afonsoft/open-webui/issues/89
-- Epic: https://github.com/afonsoft/open-webui/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/99
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/89
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79
 
 Nota: o upstream usa **SHA256** (não MD5) para o hash do gravatar — seguido o upstream.
 

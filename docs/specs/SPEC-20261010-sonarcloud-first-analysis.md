@@ -7,7 +7,7 @@
 | Feature | `sonarcloud-first-analysis` |
 | Type | `Automation` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-sonarcloud-first-analysis` |
 | Ticket | `GAP-automation-sonarcloud` |
 | Status | `Completed` |
@@ -23,7 +23,7 @@
 ## 2. Scope
 
 **In scope:**
-- Provision the project on SonarCloud (manual, user action: https://sonarcloud.io → org `afonsoft` → Analyze new project → `afonsoft/open-webui`, key `afonsoft_open-webui`).
+- Provision the project on SonarCloud (manual, user action: https://sonarcloud.io → org `afonsoft` → Analyze new project → `afonsoft/OpenWebUiCode`, key `afonsoft_open-webui`).
 - Add `SONAR_TOKEN` to repo Actions secrets (user or admin with repo settings).
 - Verify the next `code-quality` run produces an analysis + real quality gate.
 - Baseline triage of the first findings (bulk-dismiss boilerplate FPs, file real ones).

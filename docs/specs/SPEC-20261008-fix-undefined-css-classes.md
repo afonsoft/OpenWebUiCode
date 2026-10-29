@@ -9,7 +9,7 @@
 | Stack | `.NET` (Blazor WASM + Tailwind CSS v4) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261008-fix-undefined-css-classes` |
-| Ticket | [#183](https://github.com/afonsoft/open-webui/issues/183) (Epic [#182](https://github.com/afonsoft/open-webui/issues/182)) |
+| Ticket | [#183](https://github.com/afonsoft/OpenWebUiCode/issues/183) (Epic [#182](https://github.com/afonsoft/OpenWebUiCode/issues/182)) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -119,6 +119,6 @@ N/A — client-only.
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/191 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/183
-- Epic: https://github.com/afonsoft/open-webui/issues/182
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/191 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/183
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/182

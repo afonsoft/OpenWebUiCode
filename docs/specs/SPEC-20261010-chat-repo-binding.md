@@ -35,4 +35,4 @@ Commit `.specs/SPEC-20261010-chat-repo-binding.md` (este documento, Status: Comp
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/295 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/295 |

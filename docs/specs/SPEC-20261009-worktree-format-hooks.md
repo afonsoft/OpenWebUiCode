@@ -7,7 +7,7 @@
 | Feature | `worktree-format-hooks` (série web-ide, fatia S9 — opcional) |
 | Type | `Feature` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-worktree-hooks` |
 | Ticket | `GAP-impl-worktree` + `GAP-impl-apply-patch` |
 | Status | `Completed` |
@@ -82,4 +82,4 @@ Api.Tests: worktree create/cleanup/merge-conflict; apply_patch edge cases; hook 
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/262 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/262 |

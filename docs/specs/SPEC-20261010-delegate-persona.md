@@ -26,4 +26,4 @@ Tools por persona (filho herda tools do pai); model override por persona; catál
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/303 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/303 |

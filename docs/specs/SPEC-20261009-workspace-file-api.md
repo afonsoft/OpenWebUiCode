@@ -7,7 +7,7 @@
 | Feature | `workspace-file-api` (série web-ide, fatia S1) |
 | Type | `Feature` |
 | Stack | `.NET 10 / ASP.NET Core Minimal API` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-workspace-file-api` |
 | Ticket | `GAP-impl-workspace-file-api` |
 | Status | `Completed` |
@@ -92,4 +92,4 @@ Sem flag — API nova, inativa até a UI (S2) consumir. Documentação em `docs/
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/246 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/246 |

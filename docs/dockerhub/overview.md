@@ -1,6 +1,6 @@
 # Open WebUI (.NET)
 
-![Open WebUI (.NET)](https://raw.githubusercontent.com/afonsoft/open-webui/main/src/OpenWebUI.Client/wwwroot/assets/icons/icon-512.png)
+![Open WebUI (.NET)](https://raw.githubusercontent.com/afonsoft/OpenWebUiCode/main/src/OpenWebUI.Client/wwwroot/assets/icons/icon-512.png)
 
 **The Open WebUI experience rewritten in .NET 10 — a single self-contained container**: Blazor WebAssembly UI + ASP.NET Core backend + SQLite, with chat, RAG, tools, channels, notes, admin **and a full coding-agent platform** — faithful to the upstream `open-webui/open-webui` layout and features, extended with parallel sub-agents, durable agent memory and a workspace/IDE, no Python or Node required at runtime.
 
@@ -18,7 +18,7 @@ docker run -d --name open-webui \
 - App: `http://localhost:3032` — the first registered user becomes admin (or seed one via `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME`).
 - Health probe: `GET /health` (already wired as the image `HEALTHCHECK`).
 
-The same image is also on GHCR: `docker pull ghcr.io/afonsoft/open-webui`.
+The same image is also on GHCR: `docker pull ghcr.io/afonsoft/openwebuicode`.
 
 **Multi-arch:** `linux/amd64` + `linux/arm64` — the same tag runs on x86 servers and ARM boards (Raspberry Pi, Apple Silicon).
 
@@ -80,4 +80,4 @@ Full stack with Ollama + Whisper for local testing lives in `docker-compose.full
 
 ## Docs
 
-Deploy guide (EN/PT-BR): `docs/en/DEPLOY-DOCKER.md` / `docs/pt/DEPLOY-DOCKER.md` in the repository. Source: https://github.com/afonsoft/open-webui
+Deploy guide (EN/PT-BR): `docs/en/DEPLOY-DOCKER.md` / `docs/pt/DEPLOY-DOCKER.md` in the repository. Source: https://github.com/afonsoft/OpenWebUiCode

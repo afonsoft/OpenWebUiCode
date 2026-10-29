@@ -7,7 +7,7 @@
 | Feature | `analytics` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-analytics` |
 | Ticket | `GAP-observability-analytics — Issue a criar` |
 | Status | `Completed` |
@@ -79,6 +79,6 @@ tests/OpenWebUI.Api.Tests/AnalyticsEndpointsTests.cs
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/34 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/20
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/34 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/20
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

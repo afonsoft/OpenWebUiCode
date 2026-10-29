@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `fix/agent-20261017-workspace-changes-run-diff` |
 | Status | `Completed` |
-| Ticket | [#444](https://github.com/afonsoft/open-webui/issues/444) |
+| Ticket | [#444](https://github.com/afonsoft/OpenWebUiCode/issues/444) |
 | Origem | bug reportado 2026-10-17 — aba Changes do workspace mostra só o arquivo novo (spec) após a run; alterações commitadas pelo agente não aparecem |
 
 ## 1. User Story
@@ -112,5 +112,5 @@ Erros inalterados (401/404 existentes).
 
 | Item | Link |
 | --- | --- |
-| Issue | https://github.com/afonsoft/open-webui/issues/444 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/444 |
 | PR/commit | #447 · 72e1bcabe |

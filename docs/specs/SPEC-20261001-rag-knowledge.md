@@ -7,7 +7,7 @@
 | Feature | `rag-knowledge` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-rag-knowledge` |
 | Ticket | `GAP-implementation-rag-knowledge — Issue a criar via create-issues` |
 | Status | `Completed` |
@@ -108,6 +108,6 @@ tests/OpenWebUI.Api.Tests/KnowledgeEndpointsTests.cs
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/32 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/18
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/32 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/18
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

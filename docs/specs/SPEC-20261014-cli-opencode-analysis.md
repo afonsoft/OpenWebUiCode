@@ -130,4 +130,4 @@ Cenário do usuário: cada request pode cair em um provider/modelo diferente; o 
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/358 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/358 |

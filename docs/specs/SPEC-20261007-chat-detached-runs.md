@@ -7,7 +7,7 @@
 | Feature | `chat-detached-runs` (P1 da série harness-chat) |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `devin/1791337561-chat-detached-runs` |
 | Ticket | `GAP-chat-detached-runs` |
 | Status | `Completed` |

@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261022-ade-surfaces` |
-| Ticket | [#488](https://github.com/afonsoft/open-webui/issues/488) |
+| Ticket | [#488](https://github.com/afonsoft/OpenWebUiCode/issues/488) |
 | Status | Completed |
 | Parent | `SPEC-20261021-harness-seams` (merged as PR #487) — benchmark [afonsoft/agent-harness](https://github.com/afonsoft/agent-harness); direção: ADE (Agentic Development Environment) / AI Orchestrator |
 

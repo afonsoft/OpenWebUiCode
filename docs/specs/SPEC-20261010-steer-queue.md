@@ -28,4 +28,4 @@ UI dedicada do steer (o evento SSE + mensagem user cobrem); client-side; múltip
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/302 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/302 |

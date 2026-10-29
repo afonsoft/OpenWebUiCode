@@ -17,7 +17,7 @@
 | `CLAUDE.md` / `README.md` | present | convenção do repo é `CLAUDE.md` (plataforma table) |
 | `AGENTS.md` (raiz) | absent | não é gap — convenção documentada usa `CLAUDE.md` |
 | tests / linters / CI | present | NUnit (723+4skip API, 25 client), 5 workflows, guards em `tools/` |
-| `gh` auth + remote | ok | `afonsoft/open-webui`, sem issues abertas, PR aberto apenas #180 (dependabot) |
+| `gh` auth + remote | ok | `afonsoft/OpenWebUiCode`, sem issues abertas, PR aberto apenas #180 (dependabot) |
 | `ORCHESTRATOR-ROADMAP.md` | absent | não referenciado por nenhuma fonte ativa |
 
 ## 2. AS-IS × TO-BE matrix
@@ -54,7 +54,7 @@
 
 ## 5. Issues
 
-- Epic: gap-analysis-20261008 → https://github.com/afonsoft/open-webui/issues/200
+- Epic: gap-analysis-20261008 → https://github.com/afonsoft/OpenWebUiCode/issues/200
 - Slices: #201 (tests-coverage-gate), #202 (ci-tool-guards), #203 (spec-status-reconciliation)
 
 ## 6. Orchestrator handoff

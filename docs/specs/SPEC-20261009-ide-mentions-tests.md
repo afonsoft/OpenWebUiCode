@@ -7,7 +7,7 @@
 | Feature | `ide-mentions-tests` (série web-ide, fatia S7) |
 | Type | `Feature` |
 | Stack | `.NET 10 / Blazor WASM` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-mentions-tests` |
 | Ticket | `GAP-impl-at-mentions` + `GAP-impl-test-runner` |
 | Status | `Completed` |
@@ -79,4 +79,4 @@ Sem flag. Runner cobre os 4 manifestos acima — extensível por config.
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/256 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/256 |

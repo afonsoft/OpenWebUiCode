@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-agent-personas-channels` |
-| Ticket | [#413](https://github.com/afonsoft/open-webui/issues/413) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
+| Ticket | [#413](https://github.com/afonsoft/OpenWebUiCode/issues/413) · Epic [#408](https://github.com/afonsoft/OpenWebUiCode/issues/408) |
 | Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `opencode/src/agentui/index.ts` (personas com guardrails + dispatchChannelMessage + audit log por agente) |
 
@@ -89,4 +89,4 @@
 | Item | Link |
 | --- | --- |
 | PR/commit | #420 (cadeia #421) · 7a2bb4265 |
-| Issue | https://github.com/afonsoft/open-webui/issues/413 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/413 |

@@ -7,7 +7,7 @@
 | Feature | `channels-v2` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261002-channels-v2` |
 | Ticket | Issue #55 |
 | Status | `Completed` |
@@ -99,6 +99,6 @@ Checar upstream `channels.py` para shape exato de `access_grants` (mesmo modelo 
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/70 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/55
-- Epic: https://github.com/afonsoft/open-webui/issues/48
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/70 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/55
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/48

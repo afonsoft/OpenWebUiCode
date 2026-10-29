@@ -4,7 +4,7 @@
 
 - `.specs/` PRESENT (13 SPECs gerados neste run) · `docs/` PRESENT · `docs/architecture/` ABSENT
 - `.claude/` PRESENT (CONTEXT/MEMORY/memory/rules/agents) · `CLAUDE.md` PRESENT · `AGENTS.md` ABSENT (por decisão do harness)
-- `gh auth` OK; remote `afonsoft/open-webui` (nota: `gh` resolve `open-webui/open-webui` por default neste clone — usar `--repo`)
+- `gh auth` OK; remote `afonsoft/OpenWebUiCode` (nota: `gh` resolve `open-webui/open-webui` por default neste clone — usar `--repo`)
 - Build manifests: 5 csproj + testes NUnit + Dockerfile + docker-compose + dotnet.yml
 
 ## Candidatos e veredictos

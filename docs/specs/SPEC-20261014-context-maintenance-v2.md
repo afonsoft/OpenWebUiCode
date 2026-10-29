@@ -95,4 +95,4 @@ tests/OpenWebUI.Api.Tests/HistoryResourceTests.cs                 # NOVO
 
 | Item | Link |
 | --- | --- |
-| Issue | https://github.com/afonsoft/open-webui/issues/365 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/365 |

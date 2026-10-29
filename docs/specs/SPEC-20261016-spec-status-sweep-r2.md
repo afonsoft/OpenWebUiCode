@@ -8,7 +8,7 @@
 | Type | `Docs/Process` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Status | `Completed` |
-| Ticket | [#393](https://github.com/afonsoft/open-webui/issues/393) · Epic [#392](https://github.com/afonsoft/open-webui/issues/392) |
+| Ticket | [#393](https://github.com/afonsoft/OpenWebUiCode/issues/393) · Epic [#392](https://github.com/afonsoft/OpenWebUiCode/issues/392) |
 | Fonte | `gap-analysis` run 2026-10-16 — gap `GAP-doc-stale-specs-r2` (recorrência do GAP-doc-stale-specs do run 2026-10-10) |
 
 ## 1. User Story
@@ -74,4 +74,4 @@ Sweep anterior (SPEC-20261008-spec-status-reconciliation, Completed) resolveu um
 | Item | Link |
 | --- | --- |
 | PR/commit | #396 · 2852ac095 |
-| Issue | https://github.com/afonsoft/open-webui/issues/392 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/392 |

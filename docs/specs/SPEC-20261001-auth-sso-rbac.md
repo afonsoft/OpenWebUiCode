@@ -7,7 +7,7 @@
 | Feature | `auth-sso-rbac` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-auth-sso-rbac` |
 | Ticket | `GAP-security-auth-sso-rbac — Issue a criar` |
 | Status | `Completed` |
@@ -102,6 +102,6 @@ tests/OpenWebUI.Api.Tests/{OAuthEndpoints,GroupEndpoints}Tests.cs
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/30 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/16
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/30 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/16
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

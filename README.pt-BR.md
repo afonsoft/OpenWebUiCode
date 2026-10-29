@@ -8,10 +8,10 @@ conversas vinculadas a repositório rodando em worktrees git dedicadas, sub-agen
 em paralelo, steer no meio da run, memória durável, rotinas agendadas, IDE no
 estilo VS Code e pipeline de revisão em worktree.
 
-[![CI Build & Test](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/ci-build-test.yml)
-[![Code Quality](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/code-quality.yml)
-[![Security Scan](https://github.com/afonsoft/open-webui/actions/workflows/security-scan.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/security-scan.yml)
-[![Accessibility Audit](https://github.com/afonsoft/open-webui/actions/workflows/a11y-audit.yml/badge.svg)](https://github.com/afonsoft/open-webui/actions/workflows/a11y-audit.yml)
+[![CI Build & Test](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/ci-build-test.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/ci-build-test.yml)
+[![Code Quality](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/code-quality.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/code-quality.yml)
+[![Security Scan](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/security-scan.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/security-scan.yml)
+[![Accessibility Audit](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/a11y-audit.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/a11y-audit.yml)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=alert_status)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
 
 > **English version:** [README.md](README.md)
@@ -266,7 +266,7 @@ Docker (`:3032 → :8080`) — imagem **multi-arch (amd64 + arm64)** publicada n
 ```bash
 docker run -d -p 3032:8080 -v openwebui-data:/data afonsoft/open-webui
 # ou compose com a imagem publicada (sem clone)
-curl -LO https://raw.githubusercontent.com/afonsoft/open-webui/main/docker-compose.hub.yaml
+curl -LO https://raw.githubusercontent.com/afonsoft/OpenWebUiCode/main/docker-compose.hub.yaml
 docker compose -f docker-compose.hub.yaml up -d
 # ou build a partir do fonte
 docker compose up -d --build
@@ -308,7 +308,7 @@ Gate de cobertura via Coverlet + ratchet (`.ci/coverage-baseline.txt` só sobe).
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=afonsoft/open-webui&type=date&legend=bottom-right)](https://www.star-history.com/?repos=afonsoft%2Fopen-webui&type=date&legend=bottom-right)
+[![Star History Chart](https://api.star-history.com/chart?repos=afonsoft/OpenWebUiCode&type=date&legend=bottom-right)](https://www.star-history.com/?repos=afonsoft%2FOpenWebUiCode&type=date&legend=bottom-right)
 
 ## Licença
 

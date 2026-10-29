@@ -7,9 +7,9 @@
 | Feature | `scratch-workspace` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `/home/ubuntu/repos/open-webui` (github.com/afonsoft/open-webui) |
+| Repository | `/home/ubuntu/repos/open-webui` (github.com/afonsoft/OpenWebUiCode) |
 | Branch | `feature/scratch-workspace` |
-| Ticket | #547 — https://github.com/afonsoft/open-webui/issues/547 |
+| Ticket | #547 — https://github.com/afonsoft/OpenWebUiCode/issues/547 |
 | Status | `Completed` |
 
 ## 1. User Story

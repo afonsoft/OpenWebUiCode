@@ -7,7 +7,7 @@
 | Feature | `rate-limiting` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-rate-limiting` |
 | Ticket | Issue #90 |
 | Status | `Completed` |
@@ -59,6 +59,6 @@ Respostas `429`/`423` documentadas; `GET|POST /api/v1/configs/ratelimit` (admin)
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/93
-- Issue: https://github.com/afonsoft/open-webui/issues/90
-- Epic: https://github.com/afonsoft/open-webui/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/93
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/90
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79

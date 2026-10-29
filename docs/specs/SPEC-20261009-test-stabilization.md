@@ -7,7 +7,7 @@
 | Feature | `test-stabilization` (Api.Tests flaky infra) |
 | Type | `BugFix` (infra de testes) |
 | Stack | `.NET 10` / NUnit |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `devin/{ts}-flake-stabilization` |
 | Status | `Completed` |
 
@@ -48,4 +48,4 @@ Cada falha foi mapeada para um bug de código de teste (não probabilístico):
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/267 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/267 |

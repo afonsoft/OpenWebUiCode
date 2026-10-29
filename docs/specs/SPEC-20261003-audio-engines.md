@@ -7,7 +7,7 @@
 | Feature | `audio-engines` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261003-audio-engines` |
 | Ticket | Issue #83 |
 | Status | `Completed` |
@@ -62,9 +62,9 @@ Mesmos endpoints; `engine` aceita `openai|deepgram|whisper|elevenlabs|azure`.
 
 ## Delivered
 
-- Issue: https://github.com/afonsoft/open-webui/issues/83
-- Epic: https://github.com/afonsoft/open-webui/issues/79
-- PR: https://github.com/afonsoft/open-webui/pull/104
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/83
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/79
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/104
 
 ## Reconciliation
 

@@ -30,4 +30,4 @@ Compactação manual por comando; UI dedicada do marcador; compactação de tool
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/300 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/300 |

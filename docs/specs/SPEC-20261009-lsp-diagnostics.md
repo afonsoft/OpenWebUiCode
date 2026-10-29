@@ -7,7 +7,7 @@
 | Feature | `lsp-diagnostics` (série web-ide, fatia S8 — **fase 2**, maior custo) |
 | Type | `Feature` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-{YYYYMMDD}-lsp` |
 | Ticket | `GAP-impl-lsp` |
 | Status | `Completed` |
@@ -88,4 +88,4 @@ Flag `Lsp:Enabled`; docs `docs/{en,pt}/` listam servidores suportados e instala�
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/273 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/273 |

@@ -7,7 +7,7 @@
 | Feature | `coverage-backfill-r2` |
 | Type | `Tests` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-coverage-backfill-r2` |
 | Ticket | `GAP-tests-coverage-r2` |
 | Status | `Completed` |

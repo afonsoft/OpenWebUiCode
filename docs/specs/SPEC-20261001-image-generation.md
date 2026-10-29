@@ -7,7 +7,7 @@
 | Feature | `image-generation` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-image-generation` |
 | Ticket | `[image-generation] Issue #21` |
 | Status | `Completed` |
@@ -87,6 +87,6 @@ tests/OpenWebUI.Api.Tests/ImageEndpointsTests.cs
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/37 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/23
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/37 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/23
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

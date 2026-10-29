@@ -6,7 +6,7 @@
 | --- | --- |
 | `.specs/` (12 em voo), `docs/specs/` (152 arquivadas) | present |
 | `CLAUDE.md`, `AGENTS.md`, `.claude/rules/`, memory | present |
-| gh auth `afonsoft/open-webui` | ok |
+| gh auth `afonsoft/OpenWebUiCode` | ok |
 | Sibling skills write-specs/create-issues/orchestrator | present |
 | Working tree | clean (`feature/Devin-20261023-messaging-gateway` @ ebf7407) |
 | Submodules | none |

@@ -7,7 +7,7 @@
 | Feature | `app-csp-header` |
 | Type | `Security` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-app-csp-header` |
 | Ticket | `GAP-sec-csp-absent` |
 | Status | `Completed` |
@@ -41,4 +41,4 @@
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/288 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/288 |

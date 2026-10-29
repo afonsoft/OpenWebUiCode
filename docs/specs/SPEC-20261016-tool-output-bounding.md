@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-tool-output-bounding` |
-| Ticket | [#402](https://github.com/afonsoft/open-webui/issues/402) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
+| Ticket | [#402](https://github.com/afonsoft/OpenWebUiCode/issues/402) · Epic [#398](https://github.com/afonsoft/OpenWebUiCode/issues/398) |
 | Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (`tool-output.ts`: bound genérico 2000 linhas/50KiB, output completo em arquivo gerenciado + path no resultado) |
 
@@ -117,4 +117,4 @@ Sem API nova. O resultado da tool carrega o marcador:
 | Item | Link |
 | --- | --- |
 | PR/commit | #423 · d3ffa5cd3 |
-| Issue | https://github.com/afonsoft/open-webui/issues/402 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/402 |

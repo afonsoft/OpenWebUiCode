@@ -51,4 +51,4 @@ pipeline (Fase D pode trazer junto com LSP completion).
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/335 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/335 |

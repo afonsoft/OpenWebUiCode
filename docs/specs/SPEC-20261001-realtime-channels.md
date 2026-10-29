@@ -7,7 +7,7 @@
 | Feature | `realtime-channels` |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261001-realtime-channels` |
 | Ticket | `GAP-implementation-realtime-channels — Issue a criar` |
 | Status | `Completed` |
@@ -101,6 +101,6 @@ tests/OpenWebUI.Api.Tests/ChannelEndpointsTests.cs
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/31 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/17
-- Epic: https://github.com/afonsoft/open-webui/issues/14
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/31 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/17
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/14

@@ -9,7 +9,7 @@
 | Stack | `.NET` (Blazor WASM hosting + JS) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261008-perf-boot` |
-| Ticket | [#189](https://github.com/afonsoft/open-webui/issues/189) (Epic [#182](https://github.com/afonsoft/open-webui/issues/182)) |
+| Ticket | [#189](https://github.com/afonsoft/OpenWebUiCode/issues/189) (Epic [#182](https://github.com/afonsoft/OpenWebUiCode/issues/182)) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -139,6 +139,6 @@ N/A — client/hosting only. (If `MapStaticAssets` precompression turns out to m
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/197 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/189
-- Epic: https://github.com/afonsoft/open-webui/issues/182
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/197 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/189
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/182

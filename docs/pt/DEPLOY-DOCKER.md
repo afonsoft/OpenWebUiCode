@@ -1,6 +1,6 @@
 # Deploy com Docker
 
-Guia completo para rodar o Open WebUI (.NET) — `afonsoft/open-webui` — com Docker: imagem pronta, layouts de compose, referência do `.env`, volumes, upgrade e troubleshooting.
+Guia completo para rodar o Open WebUI (.NET) — `afonsoft/OpenWebUiCode` — com Docker: imagem pronta, layouts de compose, referência do `.env`, volumes, upgrade e troubleshooting.
 
 > 🇺🇸 [English version](../en/DEPLOY-DOCKER.md)
 
@@ -12,7 +12,7 @@ Guia completo para rodar o Open WebUI (.NET) — `afonsoft/open-webui` — com D
 ## Início rápido
 
 A imagem é publicada no [Docker Hub](https://hub.docker.com/r/afonsoft/open-webui)
-e no [GHCR](https://github.com/afonsoft/open-webui/pkgs/container/open-webui) a
+e no [GHCR](https://github.com/afonsoft/OpenWebUiCode/pkgs/container/openwebuicode) a
 cada tag `v*.*.*` — **multi-arch (`linux/amd64` + `linux/arm64`)**, rodando
 igual em servidores x86 e placas ARM (Raspberry Pi, VMs Apple Silicon).
 
@@ -30,15 +30,15 @@ Abra `http://localhost:3032` — o **primeiro usuário registrado vira admin** (
 **2. Compose com a imagem publicada (sem clone, sem build):**
 
 ```bash
-curl -LO https://raw.githubusercontent.com/afonsoft/open-webui/main/docker-compose.hub.yaml
+curl -LO https://raw.githubusercontent.com/afonsoft/OpenWebUiCode/main/docker-compose.hub.yaml
 docker compose -f docker-compose.hub.yaml up -d
 ```
 
 **3. Compose buildando do fonte (recomendado para desenvolvimento):**
 
 ```bash
-git clone https://github.com/afonsoft/open-webui.git
-cd open-webui
+git clone https://github.com/afonsoft/OpenWebUiCode.git
+cd OpenWebUiCode
 cp .env.exemplo .env                 # ajuste os valores — referência abaixo
 docker compose up -d --build
 ```
@@ -49,7 +49,7 @@ Baixar de um registry específico ou fixar versão:
 
 ```bash
 docker pull afonsoft/open-webui:latest        # Docker Hub
-docker pull ghcr.io/afonsoft/open-webui:latest # GHCR
+docker pull ghcr.io/afonsoft/openwebuicode:latest # GHCR
 docker pull afonsoft/open-webui:1.2.3          # versão fixada
 ```
 
@@ -170,7 +170,7 @@ As imagens são buildadas e publicadas **somente quando uma tag de versão é cr
 git tag v1.2.3 && git push origin v1.2.3
 ```
 
-O `.github/workflows/release.yml` então: valida `X.Y.Z` → builda os arquivos Linux/Windows → builda uma **imagem multi-arch (amd64 + arm64)** e publica `ghcr.io/afonsoft/open-webui:{X.Y.Z,latest}` → retagueia e publica `docker.io/afonsoft/open-webui:{X.Y.Z,latest}` quando os secrets `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` existem → cria a GitHub Release e o registro de **deployment** do GitHub. A página de overview do Docker Hub é sincronizada manualmente pelo workflow **🐳 Docker Hub Overview** (`docs/dockerhub/overview.md` → descrição do Hub).
+O `.github/workflows/release.yml` então: valida `X.Y.Z` → builda os arquivos Linux/Windows → builda uma **imagem multi-arch (amd64 + arm64)** e publica `ghcr.io/afonsoft/openwebuicode:{X.Y.Z,latest}` → retagueia e publica `docker.io/afonsoft/open-webui:{X.Y.Z,latest}` quando os secrets `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` existem → cria a GitHub Release e o registro de **deployment** do GitHub. A página de overview do Docker Hub é sincronizada manualmente pelo workflow **🐳 Docker Hub Overview** (`docs/dockerhub/overview.md` → descrição do Hub).
 
 ## Troubleshooting
 

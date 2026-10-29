@@ -7,7 +7,7 @@
 | Feature | `tests-coverage-gate` |
 | Type | `Bugfix` |
 | Stack | `.NET / NUnit / GitHub Actions` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `fix/coverage-gate` |
 | Ticket | `GAP-tests-coverage-gate` |
 | Status | `Completed` |

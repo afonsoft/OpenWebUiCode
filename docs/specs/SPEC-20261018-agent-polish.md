@@ -95,5 +95,5 @@ tests/OpenWebUI.Api.Tests/SkillCatalogTests.cs                  # NOVO
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/516 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/507
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/516 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/507

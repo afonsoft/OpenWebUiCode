@@ -7,7 +7,7 @@
 | Feature | `notifications-webhooks` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261002-notifications-webhooks` |
 | Ticket | Issue #58 |
 | Status | `Completed` |
@@ -95,6 +95,6 @@ SSRF: avaliar blocklist de IPs internos (link-local, loopback) — upstream perm
 
 ## Delivered
 
-- PR: https://github.com/afonsoft/open-webui/pull/73 (merged)
-- Issue: https://github.com/afonsoft/open-webui/issues/58
-- Epic: https://github.com/afonsoft/open-webui/issues/48
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/73 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/58
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/48

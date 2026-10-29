@@ -7,7 +7,7 @@
 | Feature | `chat-activity-feed` |
 | Type | `Feature` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-chat-activity-feed` |
 | Ticket | `[A DEFINIR — create-issues after approval]` |
 | Status | `Completed` |
@@ -164,4 +164,4 @@ No new endpoints — consumes the existing run SSE (`tool_call`, `tool_result`, 
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/324 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/324 |

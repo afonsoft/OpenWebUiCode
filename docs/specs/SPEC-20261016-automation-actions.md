@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-automation-actions` |
-| Ticket | [#409](https://github.com/afonsoft/open-webui/issues/409) · Epic [#408](https://github.com/afonsoft/open-webui/issues/408) |
+| Ticket | [#409](https://github.com/afonsoft/OpenWebUiCode/issues/409) · Epic [#408](https://github.com/afonsoft/OpenWebUiCode/issues/408) |
 | Status | `Completed` |
 | Fonte | análise fork alltomatos/opencode — `core/src/schedule/runner.ts` + callers (`agentui/mcp/reminder/skill`) |
 
@@ -96,4 +96,4 @@
 | Item | Link |
 | --- | --- |
 | PR/commit | #416 (cadeia #421) · 7a2bb4265 |
-| Issue | https://github.com/afonsoft/open-webui/issues/409 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/409 |

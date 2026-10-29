@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load/perf harness for Open WebUI (.NET) — repo: afonsoft/open-webui.
+"""Load/perf harness for Open WebUI (.NET) — repo: afonsoft/OpenWebUiCode.
 
 Exercises the API under load with an async client and measures throughput,
 latency percentiles and error rates.
@@ -471,7 +471,7 @@ async def scenario_subagents(
     # tool e nenhum filho spawna. PATCH mode=build exige binding prévio
     # (ChatEndpoints.PatchChatAsync rejeita build sem repo) — então o PUT de
     # workspace-repo precisa vir primeiro, seguido do preset que auto-aprova.
-    repo = os.environ.get("LT_REPO_SLUG") or "afonsoft/open-webui"
+    repo = os.environ.get("LT_REPO_SLUG") or "afonsoft/OpenWebUiCode"
     branch = os.environ.get("LT_REPO_BRANCH") or "main"
     for cid in chats:
         await api.req(

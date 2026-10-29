@@ -90,7 +90,7 @@ tests/OpenWebUI.Api.Tests/ReferenceServiceTests.cs        # NOVO
 
 ## Delivered
 
-- **PR:** https://github.com/afonsoft/open-webui/pull/525 (`90188d4`)
+- **PR:** https://github.com/afonsoft/OpenWebUiCode/pull/525 (`90188d4`)
 - **Issue:** #512
 - **Branch:** `feature/Devin-20261018-references`
 - **Tests:** `ReferenceServiceTests` (14) + `ReferenceEndpointsTests` (4) — 18/18; regressões adjacentes 228/228 (conforme seção Progresso)

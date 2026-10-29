@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/devin-20261016-run-recovery` |
-| Ticket | [#404](https://github.com/afonsoft/open-webui/issues/404) · Epic [#398](https://github.com/afonsoft/open-webui/issues/398) |
+| Ticket | [#404](https://github.com/afonsoft/OpenWebUiCode/issues/404) · Epic [#398](https://github.com/afonsoft/OpenWebUiCode/issues/398) |
 | Status | `Completed` |
 | Fonte | análise opencode v2.0.31 (AGENTS.md "Session Core" + `runner/llm.ts:332-385` — eventos duráveis, settle de órfãos, resume no drain) |
 
@@ -121,4 +121,4 @@ Sem endpoints novos; `GET /api/v1/runs/{id}` passa a incluir `resumedCount`/`las
 | Item | Link |
 | --- | --- |
 | PR/commit | #434 · cd8940643 |
-| Issue | https://github.com/afonsoft/open-webui/issues/404 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/404 |

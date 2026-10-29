@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261013-model-roles` |
-| Ticket | [#350](https://github.com/afonsoft/open-webui/issues/350) — PR [#356](https://github.com/afonsoft/open-webui/pull/356) |
+| Ticket | [#350](https://github.com/afonsoft/OpenWebUiCode/issues/350) — PR [#356](https://github.com/afonsoft/OpenWebUiCode/pull/356) |
 | Status | `Completed` |
 
 ## 1. User Story
@@ -165,5 +165,5 @@ tests/OpenWebUI.Api.Tests/                                   # resolver, fallbac
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/356 |
-| Issue | https://github.com/afonsoft/open-webui/issues/350 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/356 |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/350 |

@@ -52,7 +52,7 @@ body:
     attributes:
       label: Versão
       description: Tag de release, imagem Docker ou commit (git rev-parse HEAD).
-      placeholder: v0.2.0 ou ghcr.io/afonsoft/open-webui:latest ou sha
+      placeholder: v0.2.0 ou ghcr.io/afonsoft/openwebuicode:latest ou sha
     validations:
       required: true
 

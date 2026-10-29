@@ -99,5 +99,5 @@ tests/OpenWebUI.Api.Tests/MemoryPipelineTests.cs                    # NOVO
 
 | Item | Link |
 | --- | --- |
-| Commit | https://github.com/afonsoft/open-webui/commit/2e199503e |
-| Issue | https://github.com/afonsoft/open-webui/issues/366 |
+| Commit | https://github.com/afonsoft/OpenWebUiCode/commit/2e199503e |
+| Issue | https://github.com/afonsoft/OpenWebUiCode/issues/366 |

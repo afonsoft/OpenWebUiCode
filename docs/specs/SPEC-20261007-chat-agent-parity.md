@@ -7,7 +7,7 @@
 | Feature | `chat-agent-parity` (série chat-harness, rodada 3 — tools & autonomia) |
 | Type | `Feature` |
 | Stack | `.NET / Blazor` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `devin/1791380000-chat-agent-parity` |
 | Ticket | `GAP-chat-agent-parity` |
 | Status | `Completed` |

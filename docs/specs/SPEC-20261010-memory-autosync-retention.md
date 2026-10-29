@@ -66,4 +66,4 @@ config existentes).
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/307 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/307 |

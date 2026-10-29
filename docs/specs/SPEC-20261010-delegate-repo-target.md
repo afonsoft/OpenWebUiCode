@@ -27,4 +27,4 @@ Status: Completed
 
 | Item | Link |
 | --- | --- |
-| PR | https://github.com/afonsoft/open-webui/pull/297 |
+| PR | https://github.com/afonsoft/OpenWebUiCode/pull/297 |

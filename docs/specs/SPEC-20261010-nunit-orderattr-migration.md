@@ -7,7 +7,7 @@
 | Feature | `nunit-orderattr-migration` |
 | Type | `Tests` |
 | Stack | `.NET 10` |
-| Repository | `afonsoft/open-webui` |
+| Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/devin-20261010-nunit-orderattr-migration` |
 | Ticket | `GAP-tests-nunit-order` |
 | Status | `Completed` |

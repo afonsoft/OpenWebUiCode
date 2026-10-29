@@ -6,7 +6,7 @@ Read-only: nenhum branch/commit/issue criado neste run; para no approval gate.
 
 ## Fontes (inventário)
 
-- `gh issue list` autoritativo (repo `afonsoft/open-webui`); `origin/main` em `e7941a329`, worktree limpo.
+- `gh issue list` autoritativo (repo `afonsoft/OpenWebUiCode`); `origin/main` em `e7941a329`, worktree limpo.
 - `.specs/` 17 SPECs em voo; `docs/specs/` 116 arquivados; `tools/check-spec-status.py` OK.
 - SonarCloud público (sem token local — `SONAR_TOKEN` é secret do CI): 2900 issues abertas, coletadas via `api/issues/search` paginado em `/tmp/sonar_issues.json`.
 - Deploy local `docker compose` healthy em `:3032` (`e7941a329`).
