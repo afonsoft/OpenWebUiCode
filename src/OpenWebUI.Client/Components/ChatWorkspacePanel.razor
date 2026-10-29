@@ -516,12 +516,44 @@
                                 <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_cost"]</dt>
                                 <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">$@usage.Totals.CostUsd.ToString("0.####")</dd>
                             </div>
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_avg_tokens"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@FormatCount((usage.Totals.PromptTokens + usage.Totals.CompletionTokens + usage.Totals.ReasoningTokens) / usage.Totals.Runs)</dd>
+                            </div>
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_avg_cost"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">$@((usage.Totals.CostUsd / usage.Totals.Runs).ToString("0.####"))</dd>
+                            </div>
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_steps"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@usage.Runs.Sum(r => r.Steps) (@L["chat.panel_usage_avg_abbr"] @((usage.Runs.Sum(r => r.Steps) / (double)usage.Totals.Runs).ToString("0.#")))</dd>
+                            </div>
+                            @if (usage.Runs.Count(r => r.ParentRunId is not null) is { } subRuns && subRuns > 0)
+                            {
+                                <div class="flex justify-between gap-2">
+                                    <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_subagents"]</dt>
+                                    <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@(usage.Totals.Runs - subRuns)/@subRuns</dd>
+                                </div>
+                            }
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_last"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@FormatDate(usage.Runs.Max(r => r.CreatedAt))</dd>
+                            </div>
                         </dl>
 
                         @* Série por run (tokens/run por modelo). *@
                         <div class="mt-2">
                             <LineChart Series="@UsageSeries()" AriaLabel="@L["chat.panel_usage_chart"]" />
                         </div>
+
+                        @* Custo acumulado por run. *@
+                        @if (usage.Runs.Any(r => r.CostUsd is > 0))
+                        {
+                            <div class="mt-2">
+                                <div class="mb-0.5 text-[0.625rem] text-gray-400 dark:text-gray-500">@L["chat.panel_usage_chart_cost"]</div>
+                                <LineChart Series="@CostSeries()" AriaLabel="@L["chat.panel_usage_chart_cost"]" />
+                            </div>
+                        }
 
                         @* Share por modelo (tokens + %). *@
                         <div class="mt-1.5 flex flex-col gap-1">
@@ -534,7 +566,7 @@
                                         <span class="min-w-0 flex-1 truncate font-mono text-gray-600 dark:text-gray-400" title="@model.ModelId">
                                             <span class="mr-1 inline-block size-1.5 rounded-full" style="background:@ModelColor(index)"></span>@model.ModelId
                                         </span>
-                                        <span class="flex-none font-mono text-gray-500 dark:text-gray-400">@FormatCount(model.Tokens) · @pct.ToString("0.#")%</span>
+                                        <span class="flex-none font-mono text-gray-500 dark:text-gray-400">@FormatCount(model.Tokens) · $@model.CostUsd.ToString("0.###") · @pct.ToString("0.#")%</span>
                                     </div>
                                     <div class="mt-0.5 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
                                         <div class="h-full rounded-full" style="width:@pct.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%;background:@ModelColor(index)"></div>
@@ -544,6 +576,40 @@
                         </div>
                     }
                 </div>
+
+                @* Uso do usuário no mês + barra do cap efetivo. *@
+                @if (_myUsage is { } myUsage)
+                {
+                    <div class="mt-2 border-t border-gray-100 dark:border-gray-800 px-1 pt-2">
+                        <div class="mb-1 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">@L["chat.panel_month_title"] · @myUsage.Month</div>
+                        <dl class="flex flex-col gap-1 text-xs">
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_runs"]</dt>
+                                <dd class="text-gray-700 dark:text-gray-300">@myUsage.Runs</dd>
+                            </div>
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_input"] + @L["chat.panel_usage_output"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">@FormatCount(myUsage.PromptTokens) / @FormatCount(myUsage.CompletionTokens)</dd>
+                            </div>
+                            <div class="flex justify-between gap-2">
+                                <dt class="text-gray-400 dark:text-gray-500">@L["chat.panel_usage_cost"]</dt>
+                                <dd class="font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300">$@myUsage.CostUsd.ToString("0.##")</dd>
+                            </div>
+                        </dl>
+                        @if (myUsage.Cap is { } cap)
+                        {
+                            <div class="mt-1.5">
+                                <div class="flex items-center justify-between text-[0.625rem]">
+                                    <span class="text-gray-400 dark:text-gray-500">@L["chat.panel_month_cap"]</span>
+                                    <span class="font-mono text-gray-500 dark:text-gray-400">$@myUsage.CostUsd.ToString("0.##") / $@cap.UsdPerMonth.ToString("0.##") · @cap.UsedPct.ToString("0.#")%</span>
+                                </div>
+                                <div class="mt-0.5 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                                    <div class="h-full rounded-full @(cap.UsedPct >= 90 ? "bg-red-500" : cap.UsedPct >= 70 ? "bg-amber-500" : "bg-emerald-500")" style="width:@Math.Min(cap.UsedPct, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
                 break;
         }
     </div>
@@ -710,6 +776,7 @@
                         _usageLoaded = true;
                         _usageLoading = true;
                         _usage = await Api.GetChatUsageAsync(ChatId);
+                        _myUsage = await Api.GetMyUsageAsync();
                         _usageLoading = false;
                     }
                     break;
@@ -737,6 +804,7 @@
     }
 
     private ChatUsageResponse? _usage;
+    private MyUsageResponse? _myUsage;
     private bool _usageLoaded;
     private bool _usageLoading;
     private List<RepoSkillItemResponse>? _skills;
@@ -839,6 +907,25 @@
                 .Select(r => (double)(r.PromptTokens + r.CompletionTokens + r.ReasoningTokens))
                 .ToList())).ToList();
     }
+
+    /// <summary>Série única: custo USD acumulado por run (ordem cronológica).</summary>
+    private IReadOnlyList<LineChart.ChartSeries> CostSeries()
+    {
+        if (_usage is null)
+        {
+            return [];
+        }
+        var acc = 0d;
+        var values = _usage.Runs
+            .Select(r => acc += r.CostUsd ?? 0)
+            .ToList();
+        return [new LineChart.ChartSeries("cost", values)];
+    }
+
+    /// <summary>Formata epoch seconds como data/hora local curta.</summary>
+    private static string FormatDate(long epochSec) =>
+        DateTimeOffset.FromUnixTimeSeconds(epochSec)
+            .ToLocalTime().ToString("dd/MM HH:mm");
 
     /// <summary>Mesma paleta do LineChart — mantém cor por índice de modelo.</summary>
     private static string ModelColor(int index)
