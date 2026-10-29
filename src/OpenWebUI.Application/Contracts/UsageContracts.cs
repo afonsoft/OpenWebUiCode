@@ -20,9 +20,10 @@ public sealed record ChatUsageModelRow(
     long ReasoningTokens, long Tokens, double CostUsd);
 
 /// <summary>Registro de uma run do chat (ponto do gráfico de uso).</summary>
+/// <param name="ParentRunId">Run pai quando spawnada por delegate_task; null = raiz.</param>
 /// <param name="CreatedAt">Gravação (epoch seconds).</param>
 public sealed record ChatUsageRunRow(
-    string RunId, string? ModelId, int Steps, long PromptTokens,
+    string RunId, string? ModelId, string? ParentRunId, int Steps, long PromptTokens,
     long CompletionTokens, long ReasoningTokens, double? CostUsd, long CreatedAt);
 
 /// <summary>Uso por chat: totais, por modelo e série por run (RF info-panel).</summary>
@@ -30,3 +31,14 @@ public sealed record ChatUsageResponse(
     string ChatId, ChatUsageTotals Totals,
     IReadOnlyList<ChatUsageModelRow> Models,
     IReadOnlyList<ChatUsageRunRow> Runs);
+
+/// <summary>Teto de budget efetivo do usuário (null = ilimitado).</summary>
+/// <param name="UsdPerMonth">Teto USD/mês efetivo.</param>
+/// <param name="UsedPct">Percentual do teto já consumido no mês.</param>
+public sealed record MyUsageCap(double UsdPerMonth, double UsedPct);
+
+/// <summary>Uso do próprio usuário no mês UTC corrente + cap efetivo.</summary>
+/// <param name="Month">Mês de referência (yyyy-MM).</param>
+public sealed record MyUsageResponse(
+    string Month, long PromptTokens, long CompletionTokens,
+    double CostUsd, int Runs, MyUsageCap? Cap);

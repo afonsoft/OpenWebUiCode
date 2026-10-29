@@ -1326,6 +1326,10 @@ public class ApiService(HttpClient http, AuthService auth)
         SendAsync<ChatUsageResponse>(HttpMethod.Get,
             $"/api/v1/usage/chats/{Uri.EscapeDataString(chatId)}");
 
+    /// <summary>Uso do próprio usuário no mês UTC + cap efetivo; null sem auth.</summary>
+    public Task<MyUsageResponse?> GetMyUsageAsync() =>
+        SendAsync<MyUsageResponse>(HttpMethod.Get, "/api/v1/usage/me");
+
     /// <summary>Corpo de uma skill do repo; null quando não existe.</summary>
     public Task<RepoSkillDetailResponse?> GetRepoSkillAsync(string name, string? chatId = null) =>
         SendAsync<RepoSkillDetailResponse>(HttpMethod.Get,

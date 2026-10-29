@@ -164,7 +164,8 @@ public class UsageEndpointsTests
                 new RunUsageRecord
                 {
                     RunId = "r2", ChatId = chatId, UserId = _user.User.Id,
-                    ModelId = "gpt", Steps = 1, PromptTokens = 200,
+                    ModelId = "gpt", ParentRunId = "r1", Steps = 1,
+                    PromptTokens = 200,
                     CompletionTokens = 80, CostUsd = 0.2, CreatedAt = 2,
                 });
             await db.SaveChangesAsync();
@@ -188,6 +189,8 @@ public class UsageEndpointsTests
             Assert.That(runs.GetArrayLength(), Is.EqualTo(2));
             Assert.That(runs.EnumerateArray().First()
                 .GetProperty("modelId").GetString(), Is.EqualTo("gemini"));
+            Assert.That(runs.EnumerateArray().ElementAt(1)
+                .GetProperty("parentRunId").GetString(), Is.EqualTo("r1"));
         });
 
         UseToken(_admin.Token);

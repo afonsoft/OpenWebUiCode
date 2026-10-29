@@ -103,8 +103,9 @@ public static class UsageEndpoints
                 Math.Round(records.Sum(r => r.CostUsd ?? 0), 6)),
             models,
             records.Select(r => new ChatUsageRunRow(
-                r.RunId, r.ModelId, r.Steps, r.PromptTokens, r.CompletionTokens,
-                r.ReasoningTokens, r.CostUsd, r.CreatedAt)).ToList()));
+                r.RunId, r.ModelId, r.ParentRunId, r.Steps, r.PromptTokens,
+                r.CompletionTokens, r.ReasoningTokens, r.CostUsd,
+                r.CreatedAt)).ToList()));
     }
 
     /// <summary>Agregado admin por usuário e top chats por custo na janela.</summary>
