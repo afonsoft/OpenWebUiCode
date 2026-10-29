@@ -26,6 +26,14 @@
 | Tarefas LLM | fallback "New Chat" sobrescrevia título | endpoint retorna erro; cliente preserva estado |
 | Modo do agente | default "build" sem repo quebrava o gate de workspace | default "chat" + modo efetivo com downgrade quando não há binding |
 
+## Handoff 2026-10-27 (fila do composer + resiliência de stream)
+
+- **Fila de mensagens do composer** (`ChatView.razor`): enquanto `_streaming`, Enter/botão envia para `_messageQueue` (texto + snapshot de anexos/mentions); painel cinza acima do composer com edição inline (lápis), force-send (↵ para a run e prioriza o item via `_forceQueueId`) e remover (×). `DrainMessageQueueAsync` nos finally dos 3 caminhos de stream + `HandleRunCompleted` despacha itens como runs sequenciais; `_drainingQueue` barra reentrância (o finally interno retorna e o while externo continua).
+- **Links em nova aba**: `MarkdownService` injeta `target="_blank" rel="noopener noreferrer"` pós-sanitize em `<a href>` não-`#` (raw string com conteúdo terminando em `"` precisa delimitador de 4+ aspas — bug pego por teste).
+- **Resiliência**: stall watchdog 60s→35s (2 heartbeats de 15s + margem); `GetActiveRunAsync` na carga do chat ganhou retry único de 1s para falhas transitórias de fetch (proxy CF/nginx em produção); `StopStreaming` do caminho legado (playground) agora cancela `_cts` — antes era no-op.
+- **AgentRunEventBus**: eventos terminais (`run.completed/stopped/failed`) usam `observers.timeout_ms` (default 90s) — observers pós-run que chamam LLM (InstinctExtractor) estouravam o timeout de 5s dos interceptors e morriam com TaskCanceledException em todo fim de run.
+- Produção (`open-webui.afonsoft.dev`) é Browser → Cloudflare → nginx (aaPanel, `proxy_pass localhost:3032`, timeouts 1200s) → Kestrel; SSE tem flush+heartbeat+`X-Accel-Buffering: no` server-side — travadas residuais vinham de fetch transitório de borda, não de buffering de origem.
+
 ## Handoff 2026-10-27 (scratch-workspace entregue)
 
 - **#547 scratch-workspace**: entregue via PR #548 (merge `b2889d6`), issue fechada, SPEC arquivada em `docs/specs/`. Deploy local feito (container `openwebui`, :3032, healthy, HTTP 200, endpoints `/workspace/scratch` + `/workspace/publish` respondendo 401 sem auth).

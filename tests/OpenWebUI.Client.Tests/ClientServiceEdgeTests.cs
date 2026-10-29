@@ -47,6 +47,28 @@ public class ClientServiceEdgeTests
     }
 
     [Test]
+    public void ToHtml_LinkExterno_AbreEmNovaAba()
+    {
+        var svc = new MarkdownService();
+        var html = svc.ToHtml("[doc](https://example.com/x)");
+        Assert.Multiple(() =>
+        {
+            Assert.That(html, Does.Contain("target=\"_blank\""));
+            Assert.That(html, Does.Contain("rel=\"noopener noreferrer\""));
+            Assert.That(html, Does.Contain("href=\"https://example.com/x\""));
+        });
+    }
+
+    [Test]
+    public void ToHtml_AncoraInterna_PermaneceNaMesmaAba()
+    {
+        var svc = new MarkdownService();
+        var html = svc.ToHtml("[topo](#secao)");
+        Assert.That(html, Does.Not.Contain("target=\"_blank\""));
+        Assert.That(html, Does.Contain("href=\"#secao\""));
+    }
+
+    [Test]
     public async Task Theme_SemPreferenciaSalva_CaiEmLight()
     {
         var js = new FakeJs();
