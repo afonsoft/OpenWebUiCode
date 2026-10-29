@@ -2628,9 +2628,14 @@
                 {
                     await SendAsync();
                 }
-                catch (Exception ex)
+                catch (OperationCanceledException ex)
                 {
-                    Console.WriteLine($"fila: envio do item falhou: {ex.Message}");
+                    Console.WriteLine($"fila: envio do item cancelado: {ex.Message}");
+                    return;
+                }
+                catch (HttpRequestException ex)
+                {
+                    Console.WriteLine($"fila: falha de rede ao enviar item: {ex.Message}");
                     return;
                 }
             }
