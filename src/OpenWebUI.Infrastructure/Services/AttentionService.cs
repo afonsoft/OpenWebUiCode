@@ -75,6 +75,17 @@ public static class AttentionService
         return removed > 0;
     }
 
+    /// <summary>
+    /// Marca como vistos todos os itens do usuário ligados a um chat —
+    /// chamado quando o dono abre a conversa, para o badge não contar
+    /// pendências já lidas.
+    /// </summary>
+    public static Task MarkChatSeenAsync(
+        AppDbContext db, string userId, string chatId, CancellationToken ct) =>
+        db.UserAttentions
+            .Where(a => a.UserId == userId && a.ChatId == chatId)
+            .ExecuteDeleteAsync(ct);
+
     /// <summary>Limpa os itens ligados a um chat (delete de conversa).</summary>
     public static Task RemoveForChatAsync(
         AppDbContext db, string chatId, CancellationToken ct) =>
