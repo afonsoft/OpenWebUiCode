@@ -19,7 +19,7 @@
 @if (_collapsed)
 {
     @* Rail fina quando a sidebar está recolhida, como no upstream *@
-    <div class="w-[42px] shrink-0 py-1 px-1 hidden md:flex flex-col justify-between text-gray-700 dark:text-gray-300 h-full z-10 transition-[width] border-e-[0.5px] border-gray-50 dark:border-gray-850/30">
+    <div class="w-[42px] shrink-0 py-1 px-1 hidden md:flex flex-col justify-between text-gray-700 dark:text-gray-300 h-full z-40 transition-[width] border-e-[0.5px] border-gray-50 dark:border-gray-850/30">
         <div class="flex flex-col flex-1 items-center">
             <button class="flex size-8.5 items-center justify-center transition group cursor-pointer" title="@L["sidebar.new_chat"]" aria-label="@L["sidebar.new_chat"]" @onclick="NewChat">
                 <div class="self-center flex size-[30px] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900">
@@ -48,8 +48,8 @@
 else
 {
     @* Mobile: gaveta fixa que desliza; desktop: coluna estática *@
-    <div class="my-auto flex flex-col justify-between h-screen max-h-[100dvh] w-[260px] shrink-0 overflow-x-hidden scrollbar-hidden z-50 bg-white dark:bg-gray-900 border-e border-gray-50 dark:border-gray-850/30
-                fixed inset-y-0 left-0 transition-transform duration-200 @(MobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full") md:static md:translate-x-0 md:z-10 md:shadow-none"
+    <div class="my-auto flex flex-col justify-between h-screen max-h-[100dvh] w-[260px] shrink-0 scrollbar-hidden z-50 bg-white dark:bg-gray-900 border-e border-gray-50 dark:border-gray-850/30
+                fixed inset-y-0 left-0 transition-transform duration-200 @(MobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full") md:static md:translate-x-0 md:z-40 md:shadow-none"
          role="@(MobileOpen ? "dialog" : null)" aria-modal="@(MobileOpen ? "true" : null)" aria-label="@(MobileOpen ? L["sidebar.expand"] : null)"
          @onkeydown="OnKeyDown">
         <div class="px-1 pt-1.5 pb-1 flex justify-between space-x-1 text-gray-600 dark:text-gray-400 sticky top-0 z-10 -mb-2">
@@ -76,7 +76,7 @@ else
             </button>
         </div>
 
-        <div class="relative flex flex-col flex-1 overflow-y-auto scrollbar-hidden space-y-1.5 pt-2.5 pb-2.5">
+        <div class="relative flex flex-col flex-1 overflow-y-auto overflow-x-hidden scrollbar-hidden space-y-1.5 pt-2.5 pb-2.5">
             <div class="pb-1">
                 <div class="px-1 flex justify-center text-gray-700 dark:text-gray-300">
                     <button class="group grow flex items-center space-x-2 rounded-xl px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-900 transition outline-none cursor-pointer"
