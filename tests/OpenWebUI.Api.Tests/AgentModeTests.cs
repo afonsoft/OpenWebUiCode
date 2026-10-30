@@ -313,6 +313,35 @@ public class AgentModeTests
         });
     }
 
+    // ---- ChatRunApprovals.PendingAsked — polling-fallback do GET da run
+    // (SPEC-20261030): o evento asked volta no snapshot para o cliente que
+    // perdeu o attach SSE atrás de proxy que derruba o stream. ----
+
+    [Test]
+    public async Task PendingAsked_DevolvePayload_EnquantoPendente()
+    {
+        var approvals = new ChatRunApprovals();
+        var asked = new RunApprovalAskedEvent("call-9", "builtin:shell_exec",
+            "builtin", "git status");
+        var wait = approvals.WaitAsync("run-9", "chat-9", "call-9",
+            "builtin:shell_exec", CancellationToken.None, askedPayload: asked);
+
+        // Pendência devolve o payload asked (approval_asked/question_asked).
+        Assert.That(approvals.PendingAsked("run-9"), Is.SameAs(asked));
+
+        approvals.Resolve("run-9", "chat-9", "call-9",
+            approved: true, remember: false);
+        await wait;
+
+        Assert.Multiple(() =>
+        {
+            // Resolvida → pendência some (polling para de mostrar o card).
+            Assert.That(approvals.PendingAsked("run-9"), Is.Null);
+            // Outra run nunca teve pendência.
+            Assert.That(approvals.PendingAsked("run-x"), Is.Null);
+        });
+    }
+
     // ---- plan_exit — gravação do plano (RF-003) ----
 
     [Test]
