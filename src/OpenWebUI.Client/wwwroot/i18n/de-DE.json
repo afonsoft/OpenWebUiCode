@@ -564,6 +564,8 @@
   "chat.status_approval": "Wartet auf Ihre Genehmigung",
   "chat.panel_title": "Workspace",
   "chat.panel_close": "Panel schließen",
+  "chat.panel_tabs_prev": "Vorherige Tabs",
+  "chat.panel_tabs_next": "Nächste Tabs",
   "chat.panel_resize": "Panel-Größe ändern",
   "chat.panel_tab_tasks": "Aufgaben",
   "chat.panel_tab_changes": "Änderungen",

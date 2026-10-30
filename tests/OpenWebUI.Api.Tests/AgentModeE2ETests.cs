@@ -13,11 +13,13 @@ namespace OpenWebUI.Api.Tests;
 
 /// <summary>
 /// Fluxo e2e do SPEC-20261009-agent-modes-plan-build: chat em modo
-/// <c>plan</c> não anuncia tools de escrita ao provider, a call
-/// <c>builtin:plan_exit</c> pergunta "Executar este plano?" e a aprovação
-/// promove o chat a <c>build</c> (persistido + evento <c>mode</c>);
-/// chamada de tool de escrita em plan devolve erro estruturado e o modo
-/// permanece. O mock local (HttpListener) faz de Ollama.
+/// <c>plan</c> anuncia as tools gated (SPEC-20261030-plan-exec-analysis:
+/// escrita só de SPECs/planos + exec via preset) mas esconde as negadas,
+/// a call <c>builtin:plan_exit</c> pergunta "Executar este plano?" e a
+/// aprovação promove o chat a <c>build</c> (persistido + evento
+/// <c>mode</c>); chamada de escrita fora do escopo de SPECs em plan
+/// devolve erro estruturado e o modo permanece. O mock local
+/// (HttpListener) faz de Ollama.
 /// </summary>
 [TestFixture, IsolateEnvironment]
 [NonParallelizable]
@@ -304,17 +306,21 @@ public class AgentModeE2ETests
                 new WorkspaceRepoBinding("a/b", "main", "repos/a__b", null, null),
                 default);
         }
-        var run = await EnfileirarAsync(chat.Id, ["builtin:file_read", "builtin:file_write"]);
+        var run = await EnfileirarAsync(chat.Id,
+            ["builtin:file_read", "builtin:file_write", "builtin:job_kill"]);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var eventos = await LerStreamAteFecharAsync(chat.Id, run.Id, true, cts.Token);
 
         Assert.Multiple(() =>
         {
-            // 1. Plan não anunciou write ao provider; plan_exit sim.
+            // 1. Plan anuncia a escrita gated (SPEC-20261030) e o
+            //    plan_exit; a tool negada (job_kill) fica de fora.
             var primeira = _chatBodies.First(b => !b.Contains("\"tool_call_id\""));
-            Assert.That(primeira, Does.Not.Contain("builtin_file_write"),
-                "file_write não pode ser anunciada em plan");
+            Assert.That(primeira, Does.Contain("builtin_file_write"),
+                "file_write gated é anunciada em plan");
+            Assert.That(primeira, Does.Not.Contain("builtin_job_kill"),
+                "job_kill segue negada — não anunciada em plan");
             Assert.That(primeira, Does.Contain("builtin_plan_exit"),
                 "plan_exit precisa ser anunciado em plan");
             Assert.That(primeira, Does.Contain("builtin_file_read"));

@@ -156,6 +156,15 @@ window.openwebui = {
 		else return;
 		items[index].focus();
 	},
+	// Rola a tab de índice `index` para dentro da área visível da tablist —
+	// usado pelas setas < > do painel de workspace quando as tabs excedem a
+	// largura do painel (sidebar estreita).
+	scrollTabIntoView: function (element, index) {
+		if (!element) return;
+		const items = element.querySelectorAll('[role="tab"]');
+		const item = items[index];
+		if (item) item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	},
 	openFilePicker: function (element) {
 		if (element) {
 			element.click();

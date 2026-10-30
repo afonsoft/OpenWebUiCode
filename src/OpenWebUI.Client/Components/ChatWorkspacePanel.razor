@@ -19,19 +19,39 @@
         </button>
     </div>
 
-    <div class="flex gap-1 overflow-x-auto px-2 py-1.5 border-b border-gray-100 dark:border-gray-800"
-         role="tablist" @ref="_tabList" @onkeydown="OnTabKeyDown">
-        @foreach (var tab in Tabs)
-        {
-            var active = _tab == tab;
-            <button class="rounded-lg px-2.5 py-1 text-[0.6875rem] font-medium transition cursor-pointer flex-none
-                           @(active ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
-                                    : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800")"
-                    role="tab" aria-selected="@active"
-                    @onclick="() => SelectTab(tab)">
-                @L["chat.panel_tab_" + tab]
-            </button>
-        }
+    @* Setas < > navegam as tabs quando a largura do painel não as comporta
+       (sidebar estreita): a seta ativa a tab vizinha e a rola para a vista. *@
+    <div class="flex items-center gap-0.5 px-1 py-1.5 border-b border-gray-100 dark:border-gray-800">
+        <button class="flex size-5 flex-none cursor-pointer items-center justify-center rounded-md text-gray-400 transition
+                       hover:bg-gray-100 hover:text-gray-600 disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent
+                       dark:hover:bg-gray-800 dark:hover:text-gray-300 dark:disabled:hover:bg-transparent"
+                title="@L["chat.panel_tabs_prev"]" aria-label="@L["chat.panel_tabs_prev"]"
+                disabled="@(TabIndex <= 0)"
+                @onclick="() => SelectTabByIndex(TabIndex - 1)">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5"><path fill-rule="evenodd" d="M11.78 5.22a.75.75 0 0 1 0 1.06L8.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06l-4.25-4.25a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z" clip-rule="evenodd" /></svg>
+        </button>
+        <div class="flex flex-1 gap-1 overflow-x-auto"
+             role="tablist" @ref="_tabList" @onkeydown="OnTabKeyDown">
+            @foreach (var tab in Tabs)
+            {
+                var active = _tab == tab;
+                <button class="rounded-lg px-2.5 py-1 text-[0.6875rem] font-medium transition cursor-pointer flex-none
+                               @(active ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+                                        : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800")"
+                        role="tab" aria-selected="@active"
+                        @onclick="() => SelectTab(tab)">
+                    @L["chat.panel_tab_" + tab]
+                </button>
+            }
+        </div>
+        <button class="flex size-5 flex-none cursor-pointer items-center justify-center rounded-md text-gray-400 transition
+                       hover:bg-gray-100 hover:text-gray-600 disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent
+                       dark:hover:bg-gray-800 dark:hover:text-gray-300 dark:disabled:hover:bg-transparent"
+                title="@L["chat.panel_tabs_next"]" aria-label="@L["chat.panel_tabs_next"]"
+                disabled="@(TabIndex < 0 || TabIndex >= TabCount - 1)"
+                @onclick="() => SelectTabByIndex(TabIndex + 1)">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5"><path fill-rule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" /></svg>
+        </button>
     </div>
 
     <div class="flex-1 overflow-y-auto p-2" role="tabpanel">
@@ -675,6 +695,7 @@
     [Parameter] public EventCallback<string> OnKillJob { get; set; }
 
     private string _tab = "tasks";
+    private bool _scrollTabPending;
     private string? _expandedChange;
     private string? _consumedTab;
     private bool _mergingWorktree;
@@ -734,6 +755,18 @@
         {
             _consumedTab = requested;
             _tab = requested;
+            _scrollTabPending = true;
+        }
+    }
+
+    /// <summary>Rola a aba ativa para a vista quando uma troca ficou pendente
+    /// de render (RequestedTab consumido antes do primeiro paint).</summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_scrollTabPending)
+        {
+            _scrollTabPending = false;
+            await ScrollTabIntoViewAsync(_tab);
         }
     }
 
@@ -761,6 +794,41 @@
     {
         _tab = tab;
         _ = EnsureTabDataAsync(tab);
+        _ = ScrollTabIntoViewAsync(tab);
+    }
+
+    /// <summary>Índice/quantidade da aba ativa — alimenta as setas &lt; &gt;.</summary>
+    private int TabIndex => Tabs.ToList().IndexOf(_tab);
+
+    private int TabCount => Tabs.Count();
+
+    /// <summary>Seta &lt; &gt;: ativa a aba vizinha e a rola para a área visível.</summary>
+    private void SelectTabByIndex(int index)
+    {
+        var tabs = Tabs.ToList();
+        if (index < 0 || index >= tabs.Count)
+        {
+            return;
+        }
+        SelectTab(tabs[index]);
+    }
+
+    /// <summary>Rola a tablist até a aba ativa — painel estreito esconde as pontas.</summary>
+    private async Task ScrollTabIntoViewAsync(string tab)
+    {
+        var index = Tabs.ToList().IndexOf(tab);
+        if (index < 0)
+        {
+            return;
+        }
+        try
+        {
+            await JS.InvokeVoidAsync("openwebui.scrollTabIntoView", _tabList, index);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // JS interop indisponível no shutdown/attach — scroll é best-effort.
+        }
     }
 
     /// <summary>Carga lazy por aba: usage (info), skills do repo e memórias.</summary>

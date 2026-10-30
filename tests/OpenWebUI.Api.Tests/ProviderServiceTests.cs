@@ -329,15 +329,17 @@ public class ProviderServiceTests
     }
 
     [Test]
-    public async Task ListModels_RaizNaoObjeto_LancaInvalidOperation()
+    public async Task ListModels_RaizNaoObjeto_RetornaVazio()
     {
-        // Raiz JsonArray/JsonValue não tem indexador por nome: o serviço lança
-        // InvalidOperationException (comportamento atual, não filtrado pelo catch).
+        // Raiz JsonArray/JsonValue fora do shape esperado (gateway/proxy):
+        // SPEC-20261019 — indexador defensivo degrada para lista vazia em
+        // vez de InvalidOperationException.
         _routes["/api/tags"] = (200, "[]", 0);
         await SetConnectionsAsync([_mockUrl], [], []);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await NewService().ListModelsAsync());
+        var models = await NewService().ListModelsAsync();
+
+        Assert.That(models, Is.Empty);
     }
 
     [Test]

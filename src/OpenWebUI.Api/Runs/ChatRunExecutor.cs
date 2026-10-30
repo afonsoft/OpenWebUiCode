@@ -1686,8 +1686,10 @@ public sealed class ChatRunExecutor(
         {
             return new ToolGateDecision(true, Output:
                 $"Erro: a tool '{call.Name}' está bloqueada no modo {mode} "
-                + "(somente leitura). Ajuste o plano com as tools de leitura "
-                + "disponíveis e chame builtin_plan_exit quando terminar.");
+                + "(planejamento: leitura livre; execução via aprovação; "
+                + "escrita só em planos/SPECs — *.md, .openwebui/plans/, "
+                + ".specs/ ou docs/specs/). Ajuste o plano e chame "
+                + "builtin_plan_exit quando terminar.");
         }
 
         // Overrides persistentes do dono (SPEC-20261013-approval-tiers

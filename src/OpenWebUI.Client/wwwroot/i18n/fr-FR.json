@@ -564,6 +564,8 @@
   "chat.status_approval": "En attente de votre approbation",
   "chat.panel_title": "Workspace",
   "chat.panel_close": "Fermer le panneau",
+  "chat.panel_tabs_prev": "Onglets précédents",
+  "chat.panel_tabs_next": "Onglets suivants",
   "chat.panel_resize": "Redimensionner le panneau",
   "chat.panel_tab_tasks": "Tâches",
   "chat.panel_tab_changes": "Modifs",

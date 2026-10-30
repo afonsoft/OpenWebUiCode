@@ -152,19 +152,21 @@ public class ProviderService(
 
             var json = await response.Content.ReadAsStringAsync(ct);
             var node = JsonNode.Parse(json);
-            foreach (var model in node?["models"]?.AsArray() ?? [])
+            // Indexer defensivo (SPEC-20261019-gemini-response-shape): lista
+            // escalar ou sem "models" (gateway/proxy de erro) vira vazio em
+            // vez de InvalidOperationException.
+            foreach (var model in Prop(node, "models") as JsonArray ?? [])
             {
-                var id = model?["model"]?.GetValue<string>()
-                    ?? model?["name"]?.GetValue<string>();
+                var id = Str(Prop(model, "model")) ?? Str(Prop(model, "name"));
                 if (!string.IsNullOrEmpty(id))
                 {
                     // Ollama recente reporta capabilities no /api/tags (SPEC-20261013-model-roles).
-                    var caps = model!["capabilities"]?.AsArray()
-                        .Select(c => c?.GetValue<string>())
+                    var caps = (Prop(model, "capabilities") as JsonArray)
+                        ?.Select(Str)
                         .OfType<string>()
                         .Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
                     models.Add(new ModelInfo(
-                        id, model!["name"]?.GetValue<string>() ?? id, "ollama", "ollama",
+                        id, Str(Prop(model, "name")) ?? id, "ollama", "ollama",
                         caps is { Count: > 0 } ? caps : null));
                 }
             }
@@ -208,16 +210,16 @@ public class ProviderService(
 
             var json = await response.Content.ReadAsStringAsync(ct);
             var node = JsonNode.Parse(json);
-            foreach (var model in node?["data"]?.AsArray() ?? [])
+            foreach (var model in Prop(node, "data") as JsonArray ?? [])
             {
-                var id = model?["id"]?.GetValue<string>();
+                var id = Str(Prop(model, "id"));
                 if (!string.IsNullOrEmpty(id))
                 {
                     models.Add(new ModelInfo(
                         id,
                         id,
                         "openai",
-                        model!["owned_by"]?.GetValue<string>()));
+                        Str(Prop(model, "owned_by"))));
                 }
             }
         }
@@ -259,14 +261,14 @@ public class ProviderService(
 
             var json = await response.Content.ReadAsStringAsync(ct);
             var node = JsonNode.Parse(json);
-            foreach (var model in node?["data"]?.AsArray() ?? [])
+            foreach (var model in Prop(node, "data") as JsonArray ?? [])
             {
-                var id = model?["id"]?.GetValue<string>();
+                var id = Str(Prop(model, "id"));
                 if (!string.IsNullOrEmpty(id))
                 {
                     models.Add(new ModelInfo(
                         id,
-                        model!["display_name"]?.GetValue<string>() ?? id,
+                        Str(Prop(model, "display_name")) ?? id,
                         "anthropic",
                         "anthropic"));
                 }
@@ -309,9 +311,9 @@ public class ProviderService(
 
             var json = await response.Content.ReadAsStringAsync(ct);
             var node = JsonNode.Parse(json);
-            foreach (var model in node?["models"]?.AsArray() ?? [])
+            foreach (var model in Prop(node, "models") as JsonArray ?? [])
             {
-                var name = model?["name"]?.GetValue<string>();
+                var name = Str(Prop(model, "name"));
                 if (string.IsNullOrEmpty(name))
                 {
                     continue;
@@ -322,7 +324,7 @@ public class ProviderService(
                     : name;
                 models.Add(new ModelInfo(
                     id,
-                    model!["displayName"]?.GetValue<string>() ?? id,
+                    Str(Prop(model, "displayName")) ?? id,
                     "google",
                     "google"));
             }
@@ -1726,23 +1728,25 @@ public class ProviderService(
         var reasoning = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
-        foreach (var block in json?[ContentKey]?.AsArray() ?? [])
+        // Indexers defensivos (SPEC-20261019-gemini-response-shape): bloco
+        // escalar ou content fora de array não pode derrubar a run.
+        foreach (var block in Prop(json, ContentKey) as JsonArray ?? [])
         {
-            switch (block?["type"]?.GetValue<string>())
+            switch (Str(Prop(block, "type")))
             {
                 case TextKey:
-                    content.Append(block?[TextKey]?.GetValue<string>());
+                    content.Append(Str(Prop(block, TextKey)));
                     break;
                 case ThinkingKey:
                     // Bloco de raciocínio (extended thinking): canal separado —
                     // não entra no Content persistido.
-                    reasoning.Append(block?[ThinkingKey]?.GetValue<string>());
+                    reasoning.Append(Str(Prop(block, ThinkingKey)));
                     break;
                 case "tool_use":
-                    var id = block?["id"]?.GetValue<string>()
+                    var id = Str(Prop(block, "id"))
                         ?? Guid.NewGuid().ToString("N");
-                    var name = block?["name"]?.GetValue<string>() ?? string.Empty;
-                    var input = block?["input"]?.ToJsonString() ?? "{}";
+                    var name = Str(Prop(block, "name")) ?? string.Empty;
+                    var input = Prop(block, "input")?.ToJsonString() ?? "{}";
                     calls.Add(new ProviderToolCall(id, name, input));
                     callsJson.Add(new JsonObject
                     {
@@ -1760,7 +1764,7 @@ public class ProviderService(
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
-            FinishReason: json?["stop_reason"]?.GetValue<string>());
+            FinishReason: Str(Prop(json, "stop_reason")));
     }
 
     private async Task<string> CompleteAnthropicAsync(
@@ -2660,7 +2664,7 @@ public class ProviderService(
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
-        return json?[MessageKey]?[ContentKey]?.GetValue<string>() ?? string.Empty;
+        return Str(Prop(Prop(json, MessageKey), ContentKey)) ?? string.Empty;
     }
 
     private async Task<string> CompleteOpenAiAsync(
@@ -2685,8 +2689,8 @@ public class ProviderService(
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
-        return json?[ChoicesKey] is JsonArray { Count: > 0 } arr
-            ? arr[0]?[MessageKey]?[ContentKey]?.GetValue<string>() ?? string.Empty
+        return Prop(json, ChoicesKey) is JsonArray { Count: > 0 } arr
+            ? Str(Prop(Prop(arr[0], MessageKey), ContentKey)) ?? string.Empty
             : string.Empty;
     }
 
@@ -2745,18 +2749,26 @@ public class ProviderService(
             {
                 continue;
             }
+            // Linha escalar (heartbeat "keepalive" etc.) ou message fora de
+            // objeto — mesmo guarda do stream OpenAI (SPEC-20261019): pular
+            // em vez de quebrar o bridge com InvalidOperationException.
+            if (node is not JsonObject)
+            {
+                continue;
+            }
 
-            var done = node?["done"]?.GetValue<bool>() ?? false;
-            var content = node?[MessageKey]?[ContentKey]?.GetValue<string>();
+            var done = Prop(node, "done") is JsonValue doneValue
+                && doneValue.TryGetValue<bool>(out var doneFlag)
+                && doneFlag;
+            var message = Prop(node, MessageKey);
+            var content = Str(Prop(message, ContentKey));
             var delta = new JsonObject
             {
                 ["role"] = "assistant",
                 [ContentKey] = content ?? string.Empty,
             };
             // Modelos "think" do Ollama: message.thinking sai separado.
-            if (node?[MessageKey]?[ThinkingKey] is JsonValue think
-                && think.TryGetValue<string>(out var thinking)
-                && thinking.Length > 0)
+            if (Str(Prop(message, ThinkingKey)) is { Length: > 0 } thinking)
             {
                 delta["reasoning"] = thinking;
             }
@@ -2877,7 +2889,8 @@ public class ProviderService(
         {
             return line;
         }
-        if (node?[ChoicesKey] is not JsonArray { Count: > 0 } choices
+        if (node is not JsonObject
+            || Prop(node, ChoicesKey) is not JsonArray { Count: > 0 } choices
             || choices[0] is not JsonObject first
             || first[DeltaKey] is not JsonObject delta)
         {
