@@ -895,6 +895,10 @@
     [Parameter] public bool Playground { get; set; }
 
     private readonly List<ChatMessageModel> _messages = [];
+    /// <summary>Instância viva do placeholder de streaming — o índice
+    /// capturado no attach fica obsoleto quando a lista é reconstruída
+    /// (reload/replay), então os deltas resolvem a posição por referência.</summary>
+    private ChatMessageModel? _streamingEntry;
     private readonly List<FileResponse> _attachedFiles = [];
     private List<PromptResponse> _prompts = [];
     private List<PromptSuggestion> _suggestions = [];
@@ -2397,6 +2401,12 @@
         _attachedFiles.Clear();
         _mentionPaths.Clear();
 
+        // Envio sempre ancora no fim: mesmo quem subiu para ler mensagens
+        // antigas volta para a última ao mandar (e o pin re-armado faz o
+        // auto-scroll do stream seguir a partir daí).
+        await InvokeAsync(StateHasChanged);
+        await ScrollToEndAsync();
+
         var isNew = _loadedChatId is null && !Playground;
         if (isNew)
         {
@@ -2874,6 +2884,7 @@
             Guid.NewGuid().ToString(), "assistant", string.Empty, _model,
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _messages.Add(placeholder);
+        _streamingEntry = placeholder;
         var index = _messages.Count - 1;
 
         _streaming = true;
@@ -2945,6 +2956,7 @@
             Guid.NewGuid().ToString(), "assistant", string.Empty, _model,
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _messages.Add(placeholder);
+        _streamingEntry = placeholder;
         var index = _messages.Count - 1;
 
         _streaming = true;
@@ -3015,6 +3027,7 @@
             Guid.NewGuid().ToString(), "assistant", string.Empty, run.Model,
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _messages.Add(placeholder);
+        _streamingEntry = placeholder;
         var index = _messages.Count - 1;
 
         _streaming = true;
@@ -3093,15 +3106,15 @@
         var lastSeq = 0;
         var emptyAttaches = 0;
         var sawEvent = false;
-        // 35s = 2 heartbeats perdidos (15s) + margem — antes 60s deixava a
-        // tela congelada por um minuto inteiro antes do reattach.
-        const int StallMs = 35_000;
+        // 45s = ~4 heartbeats perdidos (10s) + margem para jitter de proxy —
+        // antes 35s/15s marcava stall em hiccup curto e re-anexava à toa.
+        const int StallMs = 45_000;
         // Cadência de retry: até SoftEmptyAttaches o backoff exponencial é
         // rápido (0,5–4s); depois disso o attach continua em ~8s enquanto a
         // run estiver viva — proxies corporativos derrubam todo attach antes
         // do primeiro evento, e desistir cedo congelava a UI até o F5.
         const int SoftEmptyAttaches = 5;
-        // ~40 attaches vazios (~30min de stall de 35s + 8s cada) sem ver a
+        // ~40 attaches vazios (~35min de stall de 45s + 8s cada) sem ver a
         // run morrer: só então desiste — run viva demais já é anômalo.
         const int HardEmptyAttaches = 40;
         var lastRender = DateTime.MinValue;
@@ -3234,7 +3247,31 @@
         {
                 case ChatStreamService.ChatStreamEvent.Delta delta:
                     content.Append(delta.Text);
-                    _messages[index] = placeholder with { Content = content.ToString() };
+                    {
+                        var updated = placeholder with { Content = content.ToString() };
+                        // Replay/reattach: a lista pode ter sido reconstruída
+                        // (reload, mensagens duráveis) e o índice capturado no
+                        // attach ficar obsoleto — resolve a posição viva do
+                        // placeholder em vez de indexar às cegas (loop de
+                        // ArgumentOutOfRange visto atrás de proxy).
+                        var liveIdx = _streamingEntry is null
+                            ? -1
+                            : _messages.FindIndex(m => ReferenceEquals(m, _streamingEntry));
+                        if (liveIdx >= 0)
+                        {
+                            _messages[liveIdx] = updated;
+                        }
+                        else if (index < _messages.Count
+                                 && _messages[index].Id == placeholder.Id)
+                        {
+                            _messages[index] = updated;
+                        }
+                        else
+                        {
+                            _messages.Add(updated);
+                        }
+                        _streamingEntry = updated;
+                    }
                     _hasDeltas = true;
                     TrackTps(delta.Text.Length);
                     // O auto-colapso do pensamento é derivado em

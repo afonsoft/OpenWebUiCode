@@ -408,10 +408,19 @@ public static class ChatRunEndpoints
             http.Response.Body, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         try
         {
-            // Heartbeat `: hb` a cada 15s sem evento: proxies/balanceadores
+            // Padding inicial (~2KB de comentário): proxies corporativos que
+            // bufferizam o corpo só começam a repassar bytes após um
+            // threshold — sem isso attach + replay ficam presos no buffer e
+            // o watchdog do cliente mata a conexão antes do 1º evento.
+            await writer.WriteLineAsync($": pad {new string('x', 2048)}");
+            await writer.WriteLineAsync();
+            await writer.FlushAsync(ct);
+
+            // Heartbeat `: hb` a cada 10s sem evento: proxies/balanceadores
             // derrubam ou bufferizam SSE ocioso — o comentário mantém o pipe
-            // vivo e o cliente re-arma o watchdog de stall. Sem heartbeat a
-            // UI congela no meio da run e "só atualiza no refresh".
+            // vivo e o cliente re-arma o watchdog de stall (45s ⇒ ~4 beats
+            // perdidos antes de re-anexar). Sem heartbeat a UI congela no
+            // meio da run e "só atualiza no refresh".
             await using var enumerator = broadcaster
                 .SubscribeAsync(runId, since, ct)
                 .GetAsyncEnumerator(ct);
@@ -421,7 +430,7 @@ public static class ChatRunEndpoints
             var moveNext = enumerator.MoveNextAsync().AsTask();
             try
             {
-                using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(15));
+                using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(10));
                 var tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
                 while (true)
                 {

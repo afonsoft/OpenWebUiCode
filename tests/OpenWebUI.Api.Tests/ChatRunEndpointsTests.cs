@@ -332,6 +332,29 @@ public class ChatRunEndpointsTests
     }
 
     [Test]
+    public async Task Stream_Abre_ComPaddingComentario_AntiBuffer()
+    {
+        // SPEC-20261030 (proxy-resilience): o attach abre com ~2KB de
+        // comentário `: pad …` — proxies corporativos que bufferizam o corpo
+        // só liberam bytes após um threshold; sem o pad o replay morre no
+        // buffer e o watchdog do cliente mata o attach antes do 1º evento.
+        var auth = await SignUpAsync("RunH", "runh@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+        var run = await EnfileirarAsync(chat.Id, "pad");
+        await AguardarFinalAsync(chat.Id, run.Id);
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, $"/api/v1/chats/{chat.Id}/runs/{run.Id}/stream");
+        using var response = await _client.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.That(body, Does.StartWith(": pad "));
+    }
+
+    [Test]
     public async Task RunsActive_SemRunEmAndamento_RetornaVazio()
     {
         var auth = await SignUpAsync("RunG", "rung@runs.local");
