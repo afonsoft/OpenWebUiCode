@@ -48,6 +48,10 @@ window.openwebui = {
 	},
 	scrollToEnd: function (element) {
 		if (element) {
+			// Re-arma o pin: scroll explícito (envio de mensagem, load do
+			// chat) também devolve o follow do stream — senão quem rolou
+			// para cima ficava fora do auto-scroll para sempre.
+			element._openwebuiStuck = true;
 			element.scrollTop = element.scrollHeight;
 		}
 	},
