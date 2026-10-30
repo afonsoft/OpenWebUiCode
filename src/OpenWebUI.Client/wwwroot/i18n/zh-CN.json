@@ -564,6 +564,8 @@
   "chat.status_approval": "",
   "chat.panel_title": "工作区",
   "chat.panel_close": "关闭面板",
+  "chat.panel_tabs_prev": "上一个标签",
+  "chat.panel_tabs_next": "下一个标签",
   "chat.panel_resize": "调整面板宽度",
   "chat.panel_tab_tasks": "任务",
   "chat.panel_tab_changes": "更改",

@@ -43,18 +43,95 @@ public class AgentModeTests
         Assert.That(PermissionRuleset.Evaluate(mode, name, isBuiltin),
             Is.EqualTo(PermissionDecision.Allow));
 
-    [TestCase("file_write")]
-    [TestCase("file_edit")]
-    [TestCase("shell_exec")]
-    [TestCase("code_interpreter")]
     [TestCase("n8n_trigger")]
     [TestCase("job_kill")]
     [TestCase("delegate_task")]
     [TestCase("generate_image")]
     [TestCase("generate_video")]
+    [TestCase("worktree_merge")]
     public void Evaluate_Plan_WriteTools_Deny(string name) =>
         Assert.That(PermissionRuleset.Evaluate("plan", name),
             Is.EqualTo(PermissionDecision.Deny));
+
+    // SPEC-20261030-plan-exec-analysis: execução para análise detalhada —
+    // anunciada no plan, mas a decisão fica com o gate do preset (Ask).
+    [TestCase("shell_exec")]
+    [TestCase("code_interpreter")]
+    public void Evaluate_Plan_ExecTools_SeguePreset(string name) =>
+        Assert.That(PermissionRuleset.Evaluate("plan", name),
+            Is.EqualTo(PermissionDecision.Ask));
+
+    // Leitura estrutural do projeto — diffs, SPECs e LSP rodam livres.
+    [TestCase("worktree_diff")]
+    [TestCase("specs")]
+    [TestCase("lsp_diagnostics")]
+    [TestCase("lsp_symbols")]
+    [TestCase("lsp_workspace_symbols")]
+    [TestCase("lsp_definition")]
+    [TestCase("lsp_references")]
+    [TestCase("lsp_hover")]
+    public void Evaluate_Plan_LeituraEstrutural_Allow(string name) =>
+        Assert.That(PermissionRuleset.Evaluate("plan", name),
+            Is.EqualTo(PermissionDecision.Allow));
+
+    // Escrita em modo plan só em artefatos de planejamento: *.md e as
+    // pastas de SPECs/planos — decidido pelo path dos args.
+    [Test]
+    public void Evaluate_Plan_EscritaSpecs_Allow()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PermissionRuleset.Evaluate("plan", "file_write",
+                true, """{"path":".specs/SPEC-20261030-x.md"}"""),
+                Is.EqualTo(PermissionDecision.Allow));
+            Assert.That(PermissionRuleset.Evaluate("plan", "file_write",
+                true, """{"path":".openwebui/plans/plano.json"}"""),
+                Is.EqualTo(PermissionDecision.Allow));
+            Assert.That(PermissionRuleset.Evaluate("plan", "file_edit",
+                true, """{"path":"docs/specs/SPEC-antiga.md"}"""),
+                Is.EqualTo(PermissionDecision.Allow));
+            Assert.That(PermissionRuleset.Evaluate("plan", "file_write",
+                true, """{"path":"docs/notas.md"}"""),
+                Is.EqualTo(PermissionDecision.Allow));
+        });
+    }
+
+    [Test]
+    public void Evaluate_Plan_EscritaForaDeSpecs_Deny()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PermissionRuleset.Evaluate("plan", "file_write",
+                true, """{"path":"src/App.cs"}"""),
+                Is.EqualTo(PermissionDecision.Deny));
+            Assert.That(PermissionRuleset.Evaluate("plan", "file_edit",
+                true, """{"path":"../fora.md"}"""),
+                Is.EqualTo(PermissionDecision.Deny));
+            Assert.That(PermissionRuleset.Evaluate("plan", "file_write",
+                true, """{"path":"/abs/notas.md"}"""),
+                Is.EqualTo(PermissionDecision.Deny));
+        });
+    }
+
+    [Test]
+    public void Evaluate_Plan_EscritaSemPath_SeguePreset() =>
+        // Args ausentes/ilegíveis — a prévia da aprovação decide.
+        Assert.That(PermissionRuleset.Evaluate("plan", "file_write", true, null),
+            Is.EqualTo(PermissionDecision.Ask));
+
+    [Test]
+    public void Evaluate_Plan_ApplyPatch_SpecsVsCodigo()
+    {
+        var patchSpecs = """{"patch":"*** Begin Patch\n*** Update File: docs/specs/SPEC.md\n@@\n-old\n+new\n*** End Patch"}""";
+        var patchCodigo = """{"patch":"*** Begin Patch\n*** Update File: src/A.cs\n@@\n-old\n+new\n*** End Patch"}""";
+        Assert.Multiple(() =>
+        {
+            Assert.That(PermissionRuleset.Evaluate("plan", "apply_patch", true, patchSpecs),
+                Is.EqualTo(PermissionDecision.Allow));
+            Assert.That(PermissionRuleset.Evaluate("plan", "apply_patch", true, patchCodigo),
+                Is.EqualTo(PermissionDecision.Deny));
+        });
+    }
 
     [Test]
     public void Evaluate_Plan_ToolNaoBuiltin_Deny() =>
@@ -83,9 +160,9 @@ public class AgentModeTests
         Assert.Multiple(() =>
         {
             Assert.That(PermissionRuleset.Evaluate("plan", "builtin:file_write"),
-                Is.EqualTo(PermissionDecision.Deny));
+                Is.EqualTo(PermissionDecision.Ask));
             Assert.That(PermissionRuleset.Evaluate("plan", "builtin_file_write"),
-                Is.EqualTo(PermissionDecision.Deny));
+                Is.EqualTo(PermissionDecision.Ask));
             Assert.That(PermissionRuleset.Evaluate("PLAN", "file_read"),
                 Is.EqualTo(PermissionDecision.Allow));
             Assert.That(PermissionRuleset.Evaluate(null, "file_write"),

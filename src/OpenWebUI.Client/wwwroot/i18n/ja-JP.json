@@ -564,6 +564,8 @@
   "chat.status_approval": "をまっています",
   "chat.panel_title": "ワークスペース",
   "chat.panel_close": "パネルを閉じる",
+  "chat.panel_tabs_prev": "前のタブ",
+  "chat.panel_tabs_next": "次のタブ",
   "chat.panel_resize": "パネル幅を変更",
   "chat.panel_tab_tasks": "タスク",
   "chat.panel_tab_changes": "変更",

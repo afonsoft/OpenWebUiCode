@@ -2369,7 +2369,7 @@
         _followUps = [];
         _error = null;
         _ = PushHistoryAsync(text);
-        _ = Storage.RemoveAsync($"chat:draft:{_loadedChatId ?? "new"}");
+        _ = GuardedAsync(Storage.RemoveAsync($"chat:draft:{_loadedChatId ?? "new"}").AsTask(), "limpar rascunho");
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var content = text.Length > 0
@@ -2442,9 +2442,19 @@
             }
             // Modo escolhido antes do primeiro envio: aplica no chat criado
             // (o gate relê o preset por call — vale já na primeira tool).
+            // Awaitado: o fire-and-forget deixava a run começar antes do
+            // patch aterrissar e escondia a falha como exceção não observada.
             if (_approvalPreset != "approve-mutations" || EffectiveAgentMode != "chat")
             {
-                _ = Api.PatchChatAsync(created.Id, _approvalPreset, mode: EffectiveAgentMode);
+                try
+                {
+                    await Api.PatchChatAsync(created.Id, _approvalPreset, mode: EffectiveAgentMode);
+                }
+                catch (Exception ex) when (ClientErrors.IsTransient(ex))
+                {
+                    await Console.Error.WriteLineAsync(
+                        $"[ChatView] patch preset/modo falhou: {ex.Message}");
+                }
             }
         }
 
@@ -2513,7 +2523,7 @@
         _attachedFiles.Clear();
         _mentionPaths.Clear();
         _ = PushHistoryAsync(text);
-        _ = Storage.RemoveAsync($"chat:draft:{_loadedChatId ?? "new"}");
+        _ = GuardedAsync(Storage.RemoveAsync($"chat:draft:{_loadedChatId ?? "new"}").AsTask(), "limpar rascunho");
     }
 
     /// <summary>Fallback do preview quando o item da fila só tem anexos/mentions.</summary>
@@ -3086,7 +3096,14 @@
         // 35s = 2 heartbeats perdidos (15s) + margem — antes 60s deixava a
         // tela congelada por um minuto inteiro antes do reattach.
         const int StallMs = 35_000;
-        const int MaxEmptyAttaches = 5;
+        // Cadência de retry: até SoftEmptyAttaches o backoff exponencial é
+        // rápido (0,5–4s); depois disso o attach continua em ~8s enquanto a
+        // run estiver viva — proxies corporativos derrubam todo attach antes
+        // do primeiro evento, e desistir cedo congelava a UI até o F5.
+        const int SoftEmptyAttaches = 5;
+        // ~40 attaches vazios (~30min de stall de 35s + 8s cada) sem ver a
+        // run morrer: só então desiste — run viva demais já é anômalo.
+        const int HardEmptyAttaches = 40;
         var lastRender = DateTime.MinValue;
         var dirty = false;
 
@@ -3152,11 +3169,26 @@
             if (!sawEvent)
             {
                 emptyAttaches++;
-                var run = await ChatStream.GetRunAsync(chatId, runId, ct);
-                if (run is null
-                    || run.Status is "completed" or "failed" or "stopped" or "interrupted"
-                    || emptyAttaches >= MaxEmptyAttaches)
+                // O status check cai na mesma queda de rede que derrubou o
+                // attach — tratar como "run viva" e seguir o backoff em vez
+                // de abortar o resume com erro.
+                string? status;
+                try
                 {
+                    status = (await ChatStream.GetRunAsync(chatId, runId, ct))?.Status;
+                }
+                catch (Exception ex) when (ClientErrors.IsTransient(ex))
+                {
+                    status = "running";
+                }
+                if (status is null or "completed" or "failed" or "stopped" or "interrupted")
+                {
+                    return;
+                }
+                if (emptyAttaches >= HardEmptyAttaches)
+                {
+                    Console.WriteLine(
+                        $"stream da run {runId}: {emptyAttaches} attaches vazios, desistindo.");
                     return;
                 }
             }
@@ -3167,7 +3199,9 @@
             }
 
             await Task.Delay(
-                Math.Min(500 * (1 << emptyAttaches), 4_000), ct);
+                emptyAttaches >= SoftEmptyAttaches
+                    ? 8_000
+                    : Math.Min(500 * (1 << emptyAttaches), 4_000), ct);
         }
     }
 
@@ -3602,12 +3636,28 @@
         }
     }
 
+    /// <summary>
+    /// Observa uma task fire-and-forget: nenhuma exceção sobe para o
+    /// handler global — a falha vira log com o contexto da ação.
+    /// </summary>
+    private static async Task GuardedAsync(Task task, string what)
+    {
+        try
+        {
+            await task;
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] {what} falhou: {ex.Message}");
+        }
+    }
+
     private void StopStreaming()
     {
         // Run desacoplada: pede o stop no servidor (o cancel local só fecha o attach).
         if (_activeRunId is not null && _loadedChatId is not null)
         {
-            _ = ChatStream.StopRunAsync(_loadedChatId, _activeRunId);
+            _ = GuardedAsync(ChatStream.StopRunAsync(_loadedChatId, _activeRunId), "stop da run");
         }
         else
         {
@@ -3622,7 +3672,7 @@
     {
         if (_activeRunId is not null && _loadedChatId is not null)
         {
-            _ = ChatStream.PauseRunAsync(_loadedChatId, _activeRunId);
+            _ = GuardedAsync(ChatStream.PauseRunAsync(_loadedChatId, _activeRunId), "pause da run");
         }
     }
 
@@ -3632,7 +3682,7 @@
         if (_activeRunId is not null && _loadedChatId is not null)
         {
             _paused = false;
-            _ = ChatStream.ResumeRunAsync(_loadedChatId, _activeRunId);
+            _ = GuardedAsync(ChatStream.ResumeRunAsync(_loadedChatId, _activeRunId), "resume da run");
         }
     }
 
@@ -3965,11 +4015,24 @@
             return;
         }
 
-        var title = await Api.GenerateTitleAsync(_model, _messages.Take(4).ToList(), _loadedChatId);
-        if (!string.IsNullOrWhiteSpace(title))
+        // Fire-and-forget: a falha precisa parar aqui em vez de chegar ao
+        // handler de exceção não observada (PersistAsync → SendAsync<ChatResponse>).
+        try
         {
-            _chatTitle = title;
-            await PersistAsync();
+            var title = await Api.GenerateTitleAsync(_model, _messages.Take(4).ToList(), _loadedChatId);
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                _chatTitle = title;
+                await PersistAsync();
+            }
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Sem rede — o título automático (primeira mensagem) já serve.
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] título falhou: {ex.Message}");
         }
     }
 
@@ -3980,12 +4043,23 @@
             return;
         }
 
-        var followUps = await Api.GenerateFollowUpsAsync(
-            _model, _messages.TakeLast(6).ToList(), _loadedChatId);
-        if (followUps.Count > 0)
+        try
         {
-            _followUps = followUps.Take(3).ToList();
-            await InvokeAsync(StateHasChanged);
+            var followUps = await Api.GenerateFollowUpsAsync(
+                _model, _messages.TakeLast(6).ToList(), _loadedChatId);
+            if (followUps.Count > 0)
+            {
+                _followUps = followUps.Take(3).ToList();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Sem rede — follow-ups são opcionais.
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] follow-ups falhou: {ex.Message}");
         }
     }
 

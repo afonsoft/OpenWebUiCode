@@ -679,6 +679,8 @@
   "chat.status_approval": "Aguardando sua aprovação",
   "chat.panel_title": "Workspace",
   "chat.panel_close": "Fechar painel",
+  "chat.panel_tabs_prev": "Tabs anteriores",
+  "chat.panel_tabs_next": "Próximas tabs",
   "chat.panel_resize": "Redimensionar painel",
   "chat.panel_tab_tasks": "Tarefas",
   "chat.panel_tab_changes": "Mudanças",

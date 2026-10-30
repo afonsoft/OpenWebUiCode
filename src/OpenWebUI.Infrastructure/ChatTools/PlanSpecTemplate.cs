@@ -18,9 +18,10 @@ public static partial class PlanSpecTemplate
     public const string Prompt = """
         A saída do plano é uma SPEC SDD completa em markdown — outro agente
         deve conseguir implementar lendo apenas o documento. Antes de escrever,
-        analise o requisito: leia os arquivos relevantes do workspace, entenda
-        os padrões existentes e resolva ambiguidades pelo contexto; o que
-        continuar bloqueante vai para "Open Questions".
+        analise o requisito: leia os arquivos relevantes do workspace, rode
+        build/testes quando ajudarem a fundamentar o plano (via aprovação),
+        entenda os padrões existentes e resolva ambiguidades pelo contexto;
+        o que continuar bloqueante vai para "Open Questions".
 
         Estrutura obrigatória (siga exatamente estas seções):
 

@@ -657,9 +657,9 @@ public sealed class MentionsContributor(ReferenceService? refs = null)
 }
 
 /// <summary>
-/// Bloco 3.6: diretiva do modo do agente — plan (somente leitura +
-/// plan_exit, com template SDD) ou chat (workspace scratch da conversa);
-/// build não emite bloco.
+/// Bloco 3.6: diretiva do modo do agente — plan (leitura livre, execução
+/// via preset, escrita só de planos/SPECs + plan_exit, com template SDD)
+/// ou chat (workspace scratch da conversa); build não emite bloco.
 /// </summary>
 public sealed class AgentModeContributor : ISystemPromptContributor
 {
@@ -673,10 +673,19 @@ public sealed class AgentModeContributor : ISystemPromptContributor
         {
             return Task.FromResult<IReadOnlyList<string>>(
             [
-                "Modo PLAN ativo: você está em modo de planejamento somente-leitura. "
-                    + "NÃO crie, modifique ou apague arquivos, NÃO execute comandos que "
-                    + "alterem o sistema e NÃO chame tools de escrita — apenas leia, "
-                    + "pesquise e analise. "
+                // SPEC-20261030-plan-exec-analysis: o plan deixou de ser
+                // somente-leitura — exec anunciada via preset (build/testes/
+                // git para análise) e escrita restrita a artefatos de
+                // planejamento (SPECs/planos em markdown).
+                "Modo PLAN ativo: você está em modo de planejamento — o foco é "
+                    + "analisar e produzir a SPEC, não implementar. Leitura do "
+                    + "workspace é livre; builds, testes e comandos git "
+                    + "(status/diff/log/clone/commit das SPECs) rodam via "
+                    + "shell_exec mediante aprovação do usuário; a única "
+                    + "escrita permitida é de documentos de planejamento em "
+                    + "markdown (*.md, .openwebui/plans/, .specs/, docs/specs/). "
+                    + "NÃO edite código-fonte nem faça mutações fora desse "
+                    + "escopo. "
                     + PlanSpecTemplate.Prompt
                     + " O usuário decide se executa (modo build) — nunca comece a "
                     + "implementar sem aprovação (Status = Approved).",
