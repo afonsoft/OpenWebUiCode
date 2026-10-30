@@ -326,9 +326,14 @@ public static class ChatRunEndpoints
         return run is null ? Results.Ok() : Results.Ok(ToResponse(run));
     }
 
-    /// <summary>Snapshot de uma run (status + conteúdo parcial).</summary>
+    /// <summary>
+    /// Snapshot de uma run (status + conteúdo parcial + aprovação/pergunta
+    /// pendente — o polling-fallback do cliente usa isso quando o attach
+    /// SSE morre antes do primeiro evento atrás de proxies corporativos).
+    /// </summary>
     private static async Task<IResult> GetRunAsync(
-        string id, string runId, HttpContext http, AppDbContext db, CancellationToken ct)
+        string id, string runId, HttpContext http, AppDbContext db,
+        ChatRunApprovals approvals, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -339,9 +344,16 @@ public static class ChatRunEndpoints
         var run = await db.ChatRuns.AsNoTracking()
             .FirstOrDefaultAsync(
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
-        return run is null
-            ? Results.NotFound(new { detail = "Run não encontrada." })
-            : Results.Ok(ToResponse(run));
+        if (run is null)
+        {
+            return Results.NotFound(new { detail = "Run não encontrada." });
+        }
+        var asked = approvals.PendingAsked(runId);
+        return Results.Ok(ToResponse(run) with
+        {
+            PendingApproval = asked as RunApprovalAskedEvent,
+            PendingQuestion = asked as RunQuestionAskedEvent,
+        });
     }
 
     /// <summary>

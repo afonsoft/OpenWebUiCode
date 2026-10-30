@@ -1772,12 +1772,16 @@ public sealed class ChatRunExecutor(
                 StringComparison.Ordinal) ? "mcp" : "http";
         broadcaster.Publish(run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
+        var asked = new RunApprovalAskedEvent(call.Id, call.Name, kind, argsPreview);
         broadcaster.Publish(run.Id,
-            $"event: approval_asked\ndata: {JsonSerializer.Serialize(new RunApprovalAskedEvent(call.Id, call.Name, kind, argsPreview), JsonOptions)}");
+            $"event: approval_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
         // Pausa por aprovação (RF-001): o advisor revisa enquanto o dono decide.
         await KickAdvisorAsync(run, "pause", builtinContext, ct);
+        // askedPayload: o GET da run devolve a pendência a quem perdeu o
+        // attach SSE (proxies que matam o stream antes do 1º evento).
         var result = await approvals.WaitAsync(run.Id, run.ChatId, call.Id,
-            call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson));
+            call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson),
+            asked);
         var message = string.IsNullOrWhiteSpace(result.Message)
             ? null
             : Scrub(Truncate(result.Message!, PreviewChars));
@@ -1818,10 +1822,12 @@ public sealed class ChatRunExecutor(
         {
             broadcaster.Publish(run.Id,
                 $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
+            var asked = new RunQuestionAskedEvent(call.Id, "Executar este plano?",
+                ["Executar o plano", "Continuar planejando"], false);
             broadcaster.Publish(run.Id,
-                $"event: question_asked\ndata: {JsonSerializer.Serialize(new RunQuestionAskedEvent(call.Id, "Executar este plano?", ["Executar o plano", "Continuar planejando"], false), JsonOptions)}");
+                $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
             var result = await approvals.WaitAsync(
-                run.Id, run.ChatId, call.Id, call.Name, ct);
+                run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked);
 
             if (!result.Approved)
             {
@@ -1944,18 +1950,20 @@ public sealed class ChatRunExecutor(
 
         broadcaster.Publish(run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
+        var asked = new RunQuestionAskedEvent(
+            call.Id,
+            Scrub(Truncate(first.Question, PreviewChars)),
+            first.Options, first.Multiple,
+            single ? null : items.Select(i => i with
+            {
+                Question = Scrub(Truncate(i.Question, PreviewChars))
+            }).ToArray(),
+            "builtin:ask_user");
         broadcaster.Publish(run.Id,
-            $"event: question_asked\ndata: {JsonSerializer.Serialize(new RunQuestionAskedEvent(
-                call.Id,
-                Scrub(Truncate(first.Question, PreviewChars)),
-                first.Options, first.Multiple,
-                single ? null : items.Select(i => i with
-                {
-                    Question = Scrub(Truncate(i.Question, PreviewChars))
-                }).ToArray(),
-                "builtin:ask_user"), JsonOptions)}");
+            $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
 
-        var result = await approvals.WaitAsync(run.Id, run.ChatId, call.Id, call.Name, ct);
+        var result = await approvals.WaitAsync(
+            run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked);
 
         // RF-004: deny/skip devolve recusa — a run segue, o modelo decide.
         if (!result.Approved || string.IsNullOrWhiteSpace(result.Message))

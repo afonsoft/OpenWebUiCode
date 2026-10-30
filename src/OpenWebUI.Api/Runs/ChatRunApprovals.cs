@@ -27,7 +27,8 @@ public sealed class ChatRunApprovals
         string ChatId,
         string ToolName,
         string ArgPattern,
-        TaskCompletionSource<ApprovalResult> Completion);
+        TaskCompletionSource<ApprovalResult> Completion,
+        object? AskedPayload);
 
     private readonly ConcurrentDictionary<string, Pending> _pending = new();
     // chatId → toolName → padrões de args aprovados "sempre nesta sessão".
@@ -62,6 +63,18 @@ public sealed class ChatRunApprovals
             : null);
 
     /// <summary>
+    /// Payload do evento <c>approval_asked</c>/<c>question_asked</c> da call
+    /// pendente nesta run — permite ao GET da run devolver a pendência a
+    /// clientes cujo attach SSE morreu antes do evento (proxies que
+    /// derrubam/bufferizam o stream), para o card de aprovação aparecer
+    /// via polling em vez de exigir F5.
+    /// </summary>
+    public object? PendingAsked(string runId) =>
+        _pending.Where(kv => kv.Key.StartsWith(runId + ":", StringComparison.Ordinal))
+            .Select(kv => kv.Value.AskedPayload)
+            .FirstOrDefault(p => p is not null);
+
+    /// <summary>
     /// Chats com ao menos uma call bloqueada esperando decisão do dono
     /// (aprovação, pergunta ask_user ou plan_exit) — snapshot usado pelo
     /// filtro <c>attention</c> da lista de chats (SPEC-20261009-attention-inbox).
@@ -80,11 +93,13 @@ public sealed class ChatRunApprovals
     /// </param>
     public async Task<ApprovalResult> WaitAsync(
         string runId, string chatId, string callId, string toolName,
-        CancellationToken ct, string argPattern = "*")
+        CancellationToken ct, string argPattern = "*",
+        object? askedPayload = null)
     {
         var pending = new Pending(chatId, toolName, argPattern,
             new TaskCompletionSource<ApprovalResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously));
+                TaskCreationOptions.RunContinuationsAsynchronously),
+            askedPayload);
         if (!_pending.TryAdd(Key(runId, callId), pending))
         {
             return new ApprovalResult(false, null);

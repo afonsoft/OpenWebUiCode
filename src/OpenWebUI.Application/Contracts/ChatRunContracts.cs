@@ -55,7 +55,13 @@ public sealed record ChatRunResponse(
     string? ParentRunId = null,
     /// <summary>Metadados da run (SPEC-20261016-agent-steps-usage):
     /// <c>usage.steps/promptTokens/completionTokens/costUsd/perStep</c>.</summary>
-    JsonElement? Meta = null);
+    JsonElement? Meta = null,
+    /// <summary>Aprovação de tool aguardando decisão do dono (SPEC-20261030
+    /// polling-fallback): preenchido quando a run pausou num gate e o
+    /// cliente perdeu o evento SSE — permite reconstruir o card sem F5.</summary>
+    RunApprovalAskedEvent? PendingApproval = null,
+    /// <summary>Pergunta ask_user/plan_exit aguardando resposta (idem).</summary>
+    RunQuestionAskedEvent? PendingQuestion = null);
 
 /// <summary>
 /// Item da lista consolidada de runs do usuário
