@@ -3172,18 +3172,34 @@
                 // O status check cai na mesma queda de rede que derrubou o
                 // attach — tratar como "run viva" e seguir o backoff em vez
                 // de abortar o resume com erro.
-                string? status;
+                ChatRunResponse? polled = null;
+                var pollFailed = false;
                 try
                 {
-                    status = (await ChatStream.GetRunAsync(chatId, runId, ct))?.Status;
+                    polled = await ChatStream.GetRunAsync(chatId, runId, ct);
                 }
                 catch (Exception ex) when (ClientErrors.IsTransient(ex))
                 {
-                    status = "running";
+                    pollFailed = true;
                 }
+                // Sem resposta: transitório → run viva; mas GET respondido
+                // com null (404) → run sumiu, encerra como antes.
+                var status = polled?.Status ?? (pollFailed ? "running" : null);
                 if (status is null or "completed" or "failed" or "stopped" or "interrupted")
                 {
                     return;
+                }
+                // Polling-fallback (SPEC-20261030): o GET da run devolve
+                // aprovação/pergunta pendente — o attach SSE que o proxy
+                // mata antes do 1º evento não esconde mais o card até o F5.
+                if (polled is not null
+                    && (polled.PendingApproval is not null || polled.PendingQuestion is not null
+                        || _pendingApproval is not null || _pendingQuestion is not null))
+                {
+                    _pendingApproval = polled.PendingApproval;
+                    _pendingQuestion = polled.PendingQuestion;
+                    lastRender = DateTime.UtcNow;
+                    await InvokeAsync(StateHasChanged);
                 }
                 if (emptyAttaches >= HardEmptyAttaches)
                 {
