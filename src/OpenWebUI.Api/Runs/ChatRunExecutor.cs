@@ -2406,6 +2406,11 @@ public sealed class ChatRunExecutor(
         ChatRun run, string content, CancellationToken ct, string? status = null,
         IReadOnlyList<ChatCompletionMessage>? toolMessages = null)
     {
+        // Defesa em profundidade (RF-005 reasoning-tag-sanitization): o
+        // content já passou pelos filtros do ProviderService, mas qualquer
+        // caminho que escape (steer, retry, continuação, tool loop) não
+        // pode persistir marcadores <|…|>/tags de raciocínio na mensagem.
+        content = ReasoningMarkupFilter.Strip(content);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         run.Status = status ?? ChatRunStatus.Completed;
         run.CompletedAt = now;
