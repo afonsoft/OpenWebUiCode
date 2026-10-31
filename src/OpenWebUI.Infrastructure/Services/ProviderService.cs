@@ -681,8 +681,9 @@ public class ProviderService(
             : new ProviderUsage(promptEval ?? 0, eval ?? 0);
     }
 
-    /// <summary>Limpa markup DSML (DeepSeek) de content/reasoning de uma
-    /// message OpenAI-compatível e devolve as calls extraídas.</summary>
+    /// <summary>Limpa markup DSML (DeepSeek) e tags de raciocínio inline /
+    /// special tokens de content/reasoning de uma message OpenAI-compatível
+    /// e devolve as calls extraídas.</summary>
     private (string Content, string? Reasoning, List<ProviderToolCall> DsmlCalls)
         ExtractDsmlFields(JsonNode? message, bool openAi)
     {
@@ -696,6 +697,21 @@ public class ProviderService(
             var (clean, moreCalls) = DsmlToolCallFilter.Extract(rawReasoning);
             rawReasoning = clean.Length > 0 ? clean : null;
             dsmlCalls.AddRange(moreCalls);
+        }
+        // Tags de raciocínio inline (<think>…, <|channel>…) e special
+        // tokens <|…|>: o interno vai ao canal reasoning, os marcadores
+        // somem do content (paridade upstream tag_output_handler).
+        var (cleanContent, lifted) = ReasoningMarkupFilter.Extract(content);
+        content = cleanContent;
+        if (rawReasoning is not null)
+        {
+            var (cleanReasoning, _) = ReasoningMarkupFilter.Extract(
+                rawReasoning, keepInnerText: true);
+            rawReasoning = cleanReasoning.Length > 0 ? cleanReasoning : null;
+        }
+        if (lifted.Length > 0)
+        {
+            rawReasoning = (rawReasoning ?? string.Empty) + lifted;
         }
         if (dsmlCalls.Count > 0)
         {
@@ -840,11 +856,11 @@ public class ProviderService(
 
         var content = new StringBuilder();
         var callBuffers = new SortedDictionary<int, OpenAiToolCallBuffer>();
-        // DSML (DeepSeek): tool calls podem chegar como markup no texto de
-        // content/reasoning — filtrados aqui viram ProviderToolCall e não
-        // vazam na UI.
-        var dsmlContent = new DsmlToolCallFilter();
-        var dsmlReasoning = new DsmlToolCallFilter();
+        // Saneamento do texto do provider: DSML (tool calls markup →
+        // ProviderToolCall) + tags de raciocínio inline / special tokens
+        // <|…|> — markup nunca vaza na UI nem no content persistido.
+        var dsmlContent = new DeltaFilterChain();
+        var dsmlReasoning = new DeltaFilterChain(forReasoning: true);
 
         // Diagnóstico do round: contadores estruturais alimentam o warning de
         // "round vazio" (a run que termina sem resposta nem tool call) e o
@@ -945,6 +961,13 @@ public class ProviderService(
                         await onDelta(visible, ct);
                     }
                 }
+                // Raciocínio extraído de tags inline (<think>…,
+                // <|channel>…) dentro do content sai pelo canal próprio.
+                if (onReasoning is not null
+                    && dsmlContent.Markup.TakeReasoning() is { Length: > 0 } lifted)
+                {
+                    await onReasoning(lifted, ct);
+                }
             }
 
             // Reasoning/thinking de gateways OpenAI-compatíveis (deepseek,
@@ -1005,7 +1028,7 @@ public class ProviderService(
             }
         }
 
-        // [DONE]: solta o que o filtro DSML segurou (texto normal segue;
+        // [DONE]: solta o que os filtros seguraram (texto normal segue;
         // markup truncado já entregou os invokes completos que couberam).
         var tailContent = dsmlContent.Flush();
         if (tailContent.Length > 0)
@@ -1016,7 +1039,7 @@ public class ProviderService(
                 await onDelta(tailContent, ct);
             }
         }
-        var tailReasoning = dsmlReasoning.Flush();
+        var tailReasoning = dsmlReasoning.Flush() + dsmlContent.Markup.TakeReasoning();
         if (tailReasoning.Length > 0 && onReasoning is not null)
         {
             await onReasoning(tailReasoning, ct);
@@ -1295,6 +1318,11 @@ public class ProviderService(
 
         var content = new StringBuilder();
         var callNodes = new List<JsonNode>();
+        // Modelos harmony no Ollama (gpt-oss) também emitem <|…|> inline —
+        // mesma sanitização dos caminhos OpenAI (sem DSML: Ollama nativo
+        // não produz o markup DeepSeek).
+        var markupContent = new ReasoningMarkupFilter();
+        var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         ProviderUsage? usage = null;
         string? doneReason = null;
         while (await reader.ReadLineAsync(ct) is { } line)
@@ -1322,10 +1350,19 @@ public class ProviderService(
             var piece = CoerceText(Prop(message, ContentKey));
             if (!string.IsNullOrEmpty(piece))
             {
-                content.Append(piece);
-                if (onDelta is not null)
+                var visible = markupContent.Feed(piece);
+                if (visible.Length > 0)
                 {
-                    await onDelta(piece, ct);
+                    content.Append(visible);
+                    if (onDelta is not null)
+                    {
+                        await onDelta(visible, ct);
+                    }
+                }
+                if (onReasoning is not null
+                    && markupContent.TakeReasoning() is { Length: > 0 } lifted)
+                {
+                    await onReasoning(lifted, ct);
                 }
             }
 
@@ -1334,7 +1371,11 @@ public class ProviderService(
             if (onReasoning is not null
                 && Str(Prop(message, ThinkingKey)) is { Length: > 0 } thought)
             {
-                await onReasoning(thought, ct);
+                var clean = markupReasoning.Feed(thought);
+                if (clean.Length > 0)
+                {
+                    await onReasoning(clean, ct);
+                }
             }
 
             // Linha final done:true carrega prompt_eval_count/eval_count
@@ -1353,6 +1394,23 @@ public class ProviderService(
             {
                 doneReason = dr;
             }
+        }
+
+        // Fim do NDJSON: solta o que os filtros seguraram.
+        var ollamaTail = markupContent.Flush();
+        if (ollamaTail.Length > 0)
+        {
+            content.Append(ollamaTail);
+            if (onDelta is not null)
+            {
+                await onDelta(ollamaTail, ct);
+            }
+        }
+        var ollamaTailReasoning = markupReasoning.Flush()
+            + markupContent.TakeReasoning();
+        if (ollamaTailReasoning.Length > 0 && onReasoning is not null)
+        {
+            await onReasoning(ollamaTailReasoning, ct);
         }
 
         var callsJson = new JsonArray(callNodes.ToArray());
@@ -1761,8 +1819,14 @@ public class ProviderService(
                     break;
             }
         }
+        // Mesma sanitização dos caminhos OpenAI: markup inline nunca
+        // alcança o Content persistido (defesa para gateways compatíveis).
+        var (cleanText, lifted) = ReasoningMarkupFilter.Extract(content.ToString());
+        var (cleanThinking, _) = ReasoningMarkupFilter.Extract(
+            reasoning.ToString(), keepInnerText: true);
+        reasoning.Clear().Append(cleanThinking).Append(lifted);
         return new ProviderCompletion(
-            content.ToString(), calls, callsJson.ToJsonString(),
+            cleanText, calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
             FinishReason: Str(Prop(json, "stop_reason")));
     }
@@ -1918,6 +1982,10 @@ public class ProviderService(
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
         var openTools = new Dictionary<int, (string Id, string Name, StringBuilder Args)>();
+        // Tags de raciocínio inline / special tokens <|…|>: gateways
+        // Anthropic-compatíveis podem repassar markup de modelos harmony.
+        var markupContent = new ReasoningMarkupFilter();
+        var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         string? stopReason = null;
 
         await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
@@ -1945,10 +2013,19 @@ public class ProviderService(
                     var text = Str(Prop(delta, TextKey));
                     if (!string.IsNullOrEmpty(text))
                     {
-                        content.Append(text);
-                        if (onDelta is not null)
+                        var visible = markupContent.Feed(text);
+                        if (visible.Length > 0)
                         {
-                            await onDelta(text, ct);
+                            content.Append(visible);
+                            if (onDelta is not null)
+                            {
+                                await onDelta(visible, ct);
+                            }
+                        }
+                        if (onReasoning is not null
+                            && markupContent.TakeReasoning() is { Length: > 0 } lifted)
+                        {
+                            await onReasoning(lifted, ct);
                         }
                     }
                 }
@@ -1958,7 +2035,11 @@ public class ProviderService(
                     var thinking = Str(Prop(delta, ThinkingKey));
                     if (!string.IsNullOrEmpty(thinking) && onReasoning is not null)
                     {
-                        await onReasoning(thinking, ct);
+                        var clean = markupReasoning.Feed(thinking);
+                        if (clean.Length > 0)
+                        {
+                            await onReasoning(clean, ct);
+                        }
                     }
                 }
                 else if (deltaType == "input_json_delta"
@@ -1994,6 +2075,23 @@ public class ProviderService(
                 // "max_tokens" sinaliza truncamento para a continuação RF-003.
                 stopReason = sr;
             }
+        }
+
+        // Fim do SSE: solta o que os filtros de markup seguraram.
+        var anthropicTail = markupContent.Flush();
+        if (anthropicTail.Length > 0)
+        {
+            content.Append(anthropicTail);
+            if (onDelta is not null)
+            {
+                await onDelta(anthropicTail, ct);
+            }
+        }
+        var anthropicTailReasoning = markupReasoning.Flush()
+            + markupContent.TakeReasoning();
+        if (anthropicTailReasoning.Length > 0 && onReasoning is not null)
+        {
+            await onReasoning(anthropicTailReasoning, ct);
         }
 
         return new ProviderCompletion(
@@ -2263,8 +2361,14 @@ public class ProviderService(
                 });
             }
         }
+        // Mesma sanitização dos caminhos OpenAI: markup inline nunca
+        // alcança o Content persistido.
+        var (cleanText, lifted) = ReasoningMarkupFilter.Extract(content.ToString());
+        var (cleanThinking, _) = ReasoningMarkupFilter.Extract(
+            reasoning.ToString(), keepInnerText: true);
+        reasoning.Clear().Append(cleanThinking).Append(lifted);
         return new ProviderCompletion(
-            content.ToString(), calls, callsJson.ToJsonString(),
+            cleanText, calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
             FinishReason: Prop(json, CandidatesKey) is JsonArray { Count: > 0 } fc
                 ? Str(Prop(fc[0], "finishReason")) : null);
@@ -2309,6 +2413,11 @@ public class ProviderService(
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
+        // Mesma sanitização dos demais providers: markup harmony <|…|> e
+        // tags de raciocínio inline podem chegar dentro de parts.text.
+        var markupContent = new ReasoningMarkupFilter();
+        var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
+
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
@@ -2326,20 +2435,74 @@ public class ProviderService(
                     continue;
                 }
                 // thought:true = raciocínio do modelo → delta.reasoning.
-                var field = Prop(part, "thought") is JsonValue flag
-                    && flag.TryGetValue<bool>(out var b) && b
-                    ? "reasoning" : "content";
+                var isThought = Prop(part, "thought") is JsonValue flag
+                    && flag.TryGetValue<bool>(out var b) && b;
+                var filtered = isThought
+                    ? markupReasoning.Feed(text)
+                    : markupContent.Feed(text);
+                var reasoning = markupContent.TakeReasoning();
+                var delta = new JsonObject();
+                if (isThought)
+                {
+                    // Thinking + raciocínio extraído do content vão ao
+                    // mesmo canal.
+                    if (filtered.Length + reasoning.Length > 0)
+                    {
+                        delta["reasoning"] = filtered + reasoning;
+                    }
+                }
+                else
+                {
+                    if (filtered.Length > 0)
+                    {
+                        delta["content"] = filtered;
+                    }
+                    if (reasoning.Length > 0)
+                    {
+                        delta["reasoning"] = reasoning;
+                    }
+                }
+                if (delta.Count == 0)
+                {
+                    continue;
+                }
                 var chunk = new JsonObject
                 {
                     ["object"] = "chat.completion.chunk",
                     [ChoicesKey] = new JsonArray(new JsonObject
                     {
                         [IndexKey] = 0,
-                        [DeltaKey] = new JsonObject { [field] = text },
+                        [DeltaKey] = delta,
                     }),
                 };
                 yield return $"data: {chunk.ToJsonString()}";
             }
+        }
+        // Fim do SSE: solta o que os filtros seguraram antes do [DONE].
+        var googleBridgeTail = markupContent.Flush();
+        var googleBridgeReasoning = markupReasoning.Flush()
+            + markupContent.TakeReasoning();
+        if (googleBridgeTail.Length > 0 || googleBridgeReasoning.Length > 0)
+        {
+            var tailDelta = new JsonObject();
+            if (googleBridgeTail.Length > 0)
+            {
+                tailDelta["content"] = googleBridgeTail;
+            }
+            if (googleBridgeReasoning.Length > 0)
+            {
+                tailDelta["reasoning"] = googleBridgeReasoning;
+            }
+            var tailChunk = new JsonObject
+            {
+                ["object"] = "chat.completion.chunk",
+                [ChoicesKey] = new JsonArray(new JsonObject
+                {
+                    [IndexKey] = 0,
+                    [DeltaKey] = tailDelta,
+                }),
+            };
+            yield return $"data: {tailChunk.ToJsonString()}";
         }
         yield return "data: [DONE]";
     }
@@ -2367,6 +2530,10 @@ public class ProviderService(
         var content = new StringBuilder();
         var calls = new List<ProviderToolCall>();
         var callsJson = new JsonArray();
+        // Gateways Gemini-compatíveis (OmniRoute) podem repassar markup
+        // harmony <|…|> e tags de raciocínio inline dentro de parts.text.
+        var markupContent = new ReasoningMarkupFilter();
+        var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         string? finishReason = null;
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
@@ -2397,16 +2564,26 @@ public class ProviderService(
                         && flag.TryGetValue<bool>(out var b) && b;
                     if (isThought)
                     {
-                        if (onReasoning is not null)
+                        var cleanThought = markupReasoning.Feed(text);
+                        if (cleanThought.Length > 0 && onReasoning is not null)
                         {
-                            await onReasoning(text, ct);
+                            await onReasoning(cleanThought, ct);
                         }
                         continue;
                     }
-                    content.Append(text);
-                    if (onDelta is not null)
+                    var visible = markupContent.Feed(text);
+                    if (visible.Length > 0)
                     {
-                        await onDelta(text, ct);
+                        content.Append(visible);
+                        if (onDelta is not null)
+                        {
+                            await onDelta(visible, ct);
+                        }
+                    }
+                    if (onReasoning is not null
+                        && markupContent.TakeReasoning() is { Length: > 0 } lifted)
+                    {
+                        await onReasoning(lifted, ct);
                     }
                 }
                 else if (Prop(part, "functionCall") is JsonObject call)
@@ -2427,6 +2604,23 @@ public class ProviderService(
                     });
                 }
             }
+        }
+
+        // Fim do SSE: solta o que os filtros de markup seguraram.
+        var googleTail = markupContent.Flush();
+        if (googleTail.Length > 0)
+        {
+            content.Append(googleTail);
+            if (onDelta is not null)
+            {
+                await onDelta(googleTail, ct);
+            }
+        }
+        var googleTailReasoning = markupReasoning.Flush()
+            + markupContent.TakeReasoning();
+        if (googleTailReasoning.Length > 0 && onReasoning is not null)
+        {
+            await onReasoning(googleTailReasoning, ct);
         }
 
         return new ProviderCompletion(
@@ -2733,6 +2927,11 @@ public class ProviderService(
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
+        // Mesma sanitização dos caminhos OpenAI: modelos harmony no Ollama
+        // (gpt-oss) emitem <|…|> e tags de raciocínio inline no NDJSON.
+        var markupContent = new ReasoningMarkupFilter();
+        var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
+
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -2761,16 +2960,29 @@ public class ProviderService(
                 && doneValue.TryGetValue<bool>(out var doneFlag)
                 && doneFlag;
             var message = Prop(node, MessageKey);
-            var content = Str(Prop(message, ContentKey));
+            var piece = Str(Prop(message, ContentKey));
+            var visible = piece is null ? string.Empty : markupContent.Feed(piece);
+            // Modelos "think" do Ollama: message.thinking sai separado —
+            // soma o raciocínio extraído de tags inline no content.
+            var reasoningText =
+                (Str(Prop(message, ThinkingKey)) is { Length: > 0 } thinking
+                    ? markupReasoning.Feed(thinking) : string.Empty)
+                + markupContent.TakeReasoning();
+            if (done)
+            {
+                // Linha final: solta o que os filtros seguraram.
+                visible += markupContent.Flush();
+                reasoningText += markupReasoning.Flush()
+                    + markupContent.TakeReasoning();
+            }
             var delta = new JsonObject
             {
                 ["role"] = "assistant",
-                [ContentKey] = content ?? string.Empty,
+                [ContentKey] = visible,
             };
-            // Modelos "think" do Ollama: message.thinking sai separado.
-            if (Str(Prop(message, ThinkingKey)) is { Length: > 0 } thinking)
+            if (reasoningText.Length > 0)
             {
-                delta["reasoning"] = thinking;
+                delta["reasoning"] = reasoningText;
             }
             var chunk = new JsonObject
             {
@@ -2793,6 +3005,37 @@ public class ProviderService(
                 yield return "data: [DONE]";
                 yield break;
             }
+        }
+
+        // Stream truncado sem done:true: solta o que os filtros seguraram
+        // antes do [DONE] — sufixo visível não pode se perder.
+        var truncTail = markupContent.Flush();
+        var truncReasoning = markupReasoning.Flush() + markupContent.TakeReasoning();
+        if (truncTail.Length > 0 || truncReasoning.Length > 0)
+        {
+            var tailDelta = new JsonObject
+            {
+                ["role"] = "assistant",
+                [ContentKey] = truncTail,
+            };
+            if (truncReasoning.Length > 0)
+            {
+                tailDelta["reasoning"] = truncReasoning;
+            }
+            var tailChunk = new JsonObject
+            {
+                ["id"] = $"chatcmpl-{Guid.NewGuid():N}",
+                ["object"] = "chat.completion.chunk",
+                ["created"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ["model"] = request.Model,
+                [ChoicesKey] = new JsonArray(new JsonObject
+                {
+                    [IndexKey] = 0,
+                    [DeltaKey] = tailDelta,
+                    ["finish_reason"] = "stop",
+                }),
+            };
+            yield return $"data: {tailChunk.ToJsonString()}";
         }
 
         yield return "data: [DONE]";
@@ -2832,10 +3075,11 @@ public class ProviderService(
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
-        // DSML (DeepSeek): markup de tool_calls vazando no texto também é
-        // filtrado no caminho sem tools — nunca executa, mas não polui a UI.
-        var dsmlContent = new DsmlToolCallFilter();
-        var dsmlReasoning = new DsmlToolCallFilter();
+        // Saneamento do texto do provider: DSML (tool calls markup) +
+        // tags de raciocínio inline / special tokens <|…|> — no caminho
+        // sem tools nada executa, mas o markup não pode poluir a UI.
+        var dsmlContent = new DeltaFilterChain();
+        var dsmlReasoning = new DeltaFilterChain(forReasoning: true);
         while (await reader.ReadLineAsync(ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -2871,10 +3115,37 @@ public class ProviderService(
         }
     }
 
-    /// <summary>Passa content/reasoning de um chunk OpenAI pelo filtro DSML
-    /// e reemite a linha reescrita; linhas não-delta passam intactas.</summary>
+    /// <summary>
+    /// Cadeia de saneamento de um campo de texto do delta: primeiro o
+    /// filtro DSML (tool calls markup → <see cref="ProviderToolCall"/>),
+    /// depois o <see cref="ReasoningMarkupFilter"/> (tags de raciocínio
+    /// inline → canal reasoning; special tokens <c>&lt;|…|&gt;</c> →
+    /// removidos). Com <paramref name="forReasoning"/> o canal já é de
+    /// thinking — o texto interno das tags permanece na saída.
+    /// </summary>
+    private sealed class DeltaFilterChain
+    {
+        public DeltaFilterChain(bool forReasoning = false) =>
+            Markup = new ReasoningMarkupFilter(keepInnerText: forReasoning);
+
+        public DsmlToolCallFilter Dsml { get; } = new();
+        public ReasoningMarkupFilter Markup { get; }
+
+        /// <summary>Calls DSML extraídas do campo (só faz sentido no path
+        /// com tools — sem tools viram apenas markup removido).</summary>
+        public IReadOnlyList<ProviderToolCall> Calls => Dsml.Calls;
+
+        public string Feed(string piece) => Markup.Feed(Dsml.Feed(piece));
+
+        public string Flush() => Markup.Feed(Dsml.Flush()) + Markup.Flush();
+    }
+
+    /// <summary>Passa content/reasoning de um chunk OpenAI pela cadeia
+    /// DSML→markup e reemite a linha reescrita; raciocínio extraído de
+    /// tags inline no content é promovido a <c>delta.reasoning</c>;
+    /// linhas não-delta passam intactas.</summary>
     private static string FilterOpenAiDeltaLine(
-        string line, DsmlToolCallFilter content, DsmlToolCallFilter reasoning)
+        string line, DeltaFilterChain content, DeltaFilterChain reasoning)
     {
         if (!line.StartsWith("data:", StringComparison.Ordinal))
         {
@@ -2896,10 +3167,12 @@ public class ProviderService(
         {
             return line;
         }
+        var extracted = string.Empty;
         if (delta[ContentKey] is JsonValue c
             && c.TryGetValue<string>(out var s) && s.Length > 0)
         {
             delta[ContentKey] = content.Feed(s);
+            extracted = content.Markup.TakeReasoning();
         }
         // reasoning_details[] é array de segmentos — bloco DSML dividido
         // entre elementos é raro; cobre os campos escalares (deepseek/omniroute).
@@ -2909,17 +3182,25 @@ public class ProviderService(
         {
             delta[field] = reasoning.Feed(delta[field]!.AsValue().GetValue<string>());
         }
+        // Raciocínio extraído de tags inline no content sai pelo canal
+        // próprio — merge com o reasoning já filtrado sem sobrescrever.
+        if (extracted.Length > 0)
+        {
+            var existing = Str(Prop(delta, "reasoning")) ?? string.Empty;
+            delta["reasoning"] = existing + extracted;
+        }
         return $"data: {node.ToJsonString(JsonOptions)}";
     }
 
-    /// <summary>Delta sintético final com o que o filtro segurou no fim do
-    /// stream (texto solto emite; markup truncado vira calls descartadas no
-    /// caminho sem tools).</summary>
+    /// <summary>Delta sintético final com o que os filtros seguraram no
+    /// fim do stream (texto solto emite; raciocínio extraído de tags
+    /// inline no content é promovido a <c>delta.reasoning</c>; markup
+    /// truncado vira calls descartadas no caminho sem tools).</summary>
     private static string? EmitDsmlTail(
-        DsmlToolCallFilter content, DsmlToolCallFilter reasoning)
+        DeltaFilterChain content, DeltaFilterChain reasoning)
     {
         var tail = content.Flush();
-        var tailReasoning = reasoning.Flush();
+        var tailReasoning = reasoning.Flush() + content.Markup.TakeReasoning();
         if (tail.Length == 0 && tailReasoning.Length == 0)
         {
             return null;

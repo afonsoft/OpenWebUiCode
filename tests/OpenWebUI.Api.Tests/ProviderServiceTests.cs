@@ -3172,4 +3172,336 @@ public class ProviderServiceTests
 
         Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.TooManyRequests));
     }
+
+    // ---- Tags de raciocínio inline / special tokens <|…|> ----
+    // Paridade com DEFAULT_REASONING_TAGS do upstream + variante
+    // <|channel>thought\n<channel|> observada em produção (chat 30b15271,
+    // msgs 148/150 — token cru chegou no delta.content via OmniRoute→Gemini).
+
+    [Test]
+    public async Task StreamOpenAi_SemTools_ChannelThoughtNaoVaza()
+    {
+        // AC-01 (RF-001): o marcador real do incidente chega dentro de
+        // delta.content no caminho sem tools — não pode vazar na UI.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"resp\\n\\n<|channel>thought\\n<channel|>segue\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var lines = await DrainAsync(NewService().StreamCompletionAsync(
+            Req("m1", connection: "openai")));
+
+        var all = string.Concat(lines);
+        Assert.Multiple(() =>
+        {
+            Assert.That(all, Does.Not.Contain("<|"));
+            Assert.That(all, Does.Not.Contain("|>"));
+            Assert.That(all, Does.Contain("resp"));
+            Assert.That(all, Does.Contain("segue"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_ThinkInline_VaiPraReasoning()
+    {
+        // AC-02 (RF-001): <think>…</think> inline em content vai para o
+        // canal de reasoning — nunca permanece no texto.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<think>segredo</think>resposta\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => Task.CompletedTask,
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("resposta"));
+            Assert.That(string.Concat(reasoning), Does.Contain("segredo"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_MarcadorQuebradoEntreChunks_NaoVaza()
+    {
+        // AC-03 (RF-003): "<|chan" + "nel|>y" — sufixo segurado até o
+        // próximo chunk resolve o token sem vazar metade dele.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x<|chan\"}}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"nel|>y\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.That(result!.Content, Is.EqualTo("xy"));
+    }
+
+    [Test]
+    public async Task CompleteOpenAi_ThoughtBuffered_VaiPraReasoning()
+    {
+        // AC-04 (RF-004 buffered): resposta não-streamed com <thought>
+        // inline — Content limpo e Reasoning povoado.
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"content\":\"<thought>análise</thought>resposta\"}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsAsync(
+            Req("m1", connection: "openai"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("resposta"));
+            Assert.That(result.Reasoning, Is.EqualTo("análise"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_TokensOrfaos_Removidos()
+    {
+        // RF-002: special tokens harmony/ChatML sem bloco de raciocínio
+        // são removidos onde aparecem.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a<|im_start|>b<|end|>c<|channel|>d<|eot_id|>e\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.That(result!.Content, Is.EqualTo("abcde"));
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_TokenNoReasoning_Limpo()
+    {
+        // RF-002 no canal reasoning: token órfão também some do thinking.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"x<|im_end|>y\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var reasoning = new List<string>();
+        await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null,
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.That(string.Concat(reasoning), Is.EqualTo("xy"));
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_TagNaoFechada_Descartada()
+    {
+        // Edge (RF-001): bloco que o stream abandona no meio é descartado
+        // como markup — o fragmento não vaza no final.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"texto <|channel>thought\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("texto "));
+            Assert.That(result.Content, Does.Not.Contain("<|"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_CaseVariantThought_Detectado()
+    {
+        // RF-001/edge: <Thought> (capitalizado) está na lista upstream.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<Thought>ideia</Thought>b\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null,
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("b"));
+            Assert.That(string.Concat(reasoning), Does.Contain("ideia"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_TagsLegitimas_PassamIntactas()
+    {
+        // AC-05 (RF-002): markup normal sem pipe — <div>/<code>/<custom>
+        // não é special token, passa intacto (sem over-strip).
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"use <div> e <code> ok <custom>\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.That(result!.Content, Is.EqualTo("use <div> e <code> ok <custom>"));
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlETokenJuntos()
+    {
+        // Edge: markup DSML + special token no mesmo chunk — DSML vira
+        // call, token some, texto fica.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a<｜DSML｜tool_calls><｜DSML｜invoke name=\\\"f\\\"></｜DSML｜invoke></｜DSML｜tool_calls><|channel|>b\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.ToolCalls.Select(c => c.Name), Is.EqualTo(new[] { "f" }));
+            Assert.That(result.Content, Is.EqualTo("ab"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_Regressao_PayloadRealChat30b15271()
+    {
+        // RF-006: recorte real persistido na msg 150 do chat 30b15271 —
+        // o delta.content cru do provider carregava o marcador inline.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"e **Stack Tecnológica**.\\n\\n<|channel>thought\\n<channel|>O arquivo foi criado\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; }, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Does.Not.Contain("<|"));
+            Assert.That(result.Content, Does.Not.Contain("|>"));
+            Assert.That(result.Content, Does.Contain("Stack Tecnológica"));
+            Assert.That(result.Content, Does.Contain("O arquivo foi criado"));
+            Assert.That(string.Concat(deltas), Does.Not.Contain("channel"));
+        });
+    }
+
+    [Test]
+    public async Task CompleteOllama_TagNoContentBuffered_Limpo()
+    {
+        // RF-004: Ollama buffered — message.content recebe a mesma
+        // sanitização (gpt-oss no Ollama emite harmony <|…|>).
+        _routes["/api/chat"] = (200,
+            "{\"message\":{\"content\":\"oi<|channel>thought\\n<channel|> lá\"},\"done\":true}", 0);
+        await SetConnectionsAsync([_mockUrl], [], []);
+
+        var result = await NewService().CompleteWithToolsAsync(
+            Req("m1", connection: "ollama"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Does.Not.Contain("<|"));
+            Assert.That(result.Content, Does.Contain("oi"));
+            Assert.That(result.Content, Does.Contain("lá"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOllamaTools_TokenNdjson_NaoVaza()
+    {
+        // RF-004: stream NDJSON do Ollama — token em message.content não
+        // vaza no delta nem no Content final.
+        _routes["/api/chat"] = (200,
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"a<|im_end|>b\"},\"done\":false}\n" +
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"c\"},\"done\":true}\n", 0);
+        await SetConnectionsAsync([_mockUrl], [], []);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "ollama"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; }, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("abc"));
+            Assert.That(string.Concat(deltas), Does.Not.Contain("<|"));
+        });
+    }
+
+    [Test]
+    public async Task ReasoningMarkupFilter_Strip_IdempotenteELimpa()
+    {
+        // RF-005: o Strip one-shot usado antes de persistir remove
+        // marcadores e é seguro em texto já limpo.
+        var sujo = "a<|channel>thought\n<channel|>b<|im_end|>c";
+        var limpo = ReasoningMarkupFilter.Strip(sujo);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(limpo, Is.EqualTo("abc"));
+            Assert.That(ReasoningMarkupFilter.Strip(limpo), Is.EqualTo(limpo));
+            Assert.That(ReasoningMarkupFilter.Strip("texto <code>x</code>"),
+                Is.EqualTo("texto <code>x</code>"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_HarmonyCompleto_RespostaPreservada()
+    {
+        // Harmony padrão: header de channel é controle; o conteúdo após
+        // <|message|> é a resposta visível.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<|channel>analysis<|message|>resposta final\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var reasoning = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"), null,
+            (r, _) => { reasoning.Add(r); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("resposta final"));
+            Assert.That(result.Content, Does.Not.Contain("<|"));
+        });
+    }
+
+    [Test]
+    public async Task Stream_Ollama_TruncadoSemDone_SoltaCaudaFiltrada()
+    {
+        // Stream NDJSON encerrado sem done:true (conexão cortada): o bloco
+        // <|channel> não fechado que o filtro segurou não pode se perder —
+        // o interno drena ao reasoning no delta de cauda antes do [DONE].
+        _routes["/api/chat"] = (200,
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"vis<|channel>reason nunca fecha\"},\"done\":false}\n", 0);
+        await SetConnectionsAsync([_mockUrl], [], []);
+
+        var lines = await DrainAsync(
+            NewService().StreamCompletionAsync(Req("m1", connection: "ollama")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(lines[^1], Is.EqualTo("data: [DONE]"));
+            var all = string.Concat(lines);
+            Assert.That(all, Does.Not.Contain("<|"));
+            Assert.That(all, Does.Not.Contain("channel>"));
+            // Delta de cauda: o interno do bloco não fechado vira reasoning.
+            var tail = JsonNode.Parse(lines[^2]["data: ".Length..])!;
+            Assert.That(
+                tail["choices"]![0]!["delta"]!["reasoning"]!.GetValue<string>(),
+                Does.Contain("reason nunca fecha"));
+            Assert.That(tail["choices"]![0]!["finish_reason"]!.GetValue<string>(),
+                Is.EqualTo("stop"));
+        });
+    }
 }
