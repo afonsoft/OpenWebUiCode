@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/reasoning-tag-sanitization-20261031` |
 | Ticket | `GH#561` |
-| Status | `In implementation` |
+| Status | `Done` |
 | Parent | gap-analysis-20261031 · bug reportado pelo usuário (chat `30b15271-12c9-42b6-8fa6-ca2a8968ab5a` em produção) |
 
 ## 1. User Story
