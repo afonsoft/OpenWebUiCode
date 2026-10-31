@@ -9,7 +9,7 @@
 | Stack | .NET 10 / ASP.NET Core |
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-sidekick-orchestration |
-| Ticket | [A DEFINIR] |
+| Ticket | #575 (Epic #572/E19) |
 | Status | Approved |
 
 ## 1. User Story

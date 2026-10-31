@@ -9,7 +9,7 @@
 | Stack | .NET 10 / ASP.NET Core |
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-plan-mode-v2 |
-| Ticket | [A DEFINIR] |
+| Ticket | #577 (Epic #572/E19) |
 | Status | Approved |
 
 ## 1. User Story

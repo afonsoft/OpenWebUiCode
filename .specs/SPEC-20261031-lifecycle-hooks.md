@@ -9,7 +9,7 @@
 | Stack | .NET 10 / ASP.NET Core / Blazor WASM |
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-lifecycle-hooks |
-| Ticket | [A DEFINIR] |
+| Ticket | #573 (Epic #572/E19) |
 | Status | Approved |
 
 ## 1. User Story

@@ -9,7 +9,7 @@
 | Stack | .NET 10 / ASP.NET Core |
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-smart-permission-llm |
-| Ticket | [A DEFINIR] |
+| Ticket | #574 (Epic #572/E19) |
 | Status | Approved |
 
 ## 1. User Story

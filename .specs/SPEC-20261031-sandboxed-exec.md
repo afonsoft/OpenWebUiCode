@@ -9,7 +9,7 @@
 | Stack | .NET 10 / ASP.NET Core / Linux |
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-sandboxed-exec |
-| Ticket | [A DEFINIR] |
+| Ticket | #578 (Epic #572/E19) |
 | Status | Approved |
 
 ## 1. User Story
