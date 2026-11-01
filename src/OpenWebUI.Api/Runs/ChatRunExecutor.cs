@@ -34,7 +34,8 @@ public sealed record ChatRunToolsDeps(
     IServiceScopeFactory Scopes, PermissionRuleEvaluator Rules,
     ExternalAccessRegistry ExternalAccess, IConfiguration Cfg,
     OpenWebUI.Infrastructure.Context.StallWatchdog StallWatch,
-    OpenWebUI.Infrastructure.Context.ExtendContextBudget ExtendContext);
+    OpenWebUI.Infrastructure.Context.ExtendContextBudget ExtendContext,
+    DeferredToolState Deferred, ToolIndexService ToolIndex);
 
 public sealed record ChatRunLifecycleDeps(
     ChatRunBroadcaster Broadcaster, ChatRunApprovals Approvals,
@@ -44,7 +45,8 @@ public sealed record ChatRunLifecycleDeps(
     OpenWebUI.Infrastructure.Runs.AgentRunEventBus RunBus,
     OpenWebUI.Infrastructure.Runs.RunInterceptorRunner Interceptors,
     PolicyService? Policies, RunUsageLedgerService UsageLedger,
-    BudgetPolicyService Budgets);
+    BudgetPolicyService Budgets, LifecycleHookService Hooks,
+    SmartPermissionClassifier SmartJudge);
 
 public sealed class ChatRunExecutor(
     ChatRunPipelineDeps pipeline,
@@ -70,9 +72,13 @@ public sealed class ChatRunExecutor(
     private readonly ComboService combos = tools.Combos;
     private readonly ContextBoundaryService boundaries = tools.Boundaries;
     private readonly IServiceScopeFactory scopes = tools.Scopes;
+    private readonly DeferredToolState deferred = tools.Deferred;
+    private readonly ToolIndexService toolIndex = tools.ToolIndex;
     private readonly PermissionRuleEvaluator rules = tools.Rules;
+    private readonly LifecycleHookService hooks = lifecycle.Hooks;
     private readonly ExternalAccessRegistry externalAccess = tools.ExternalAccess;
     private readonly IConfiguration cfg = tools.Cfg;
+    private readonly SmartPermissionClassifier smartJudge = lifecycle.SmartJudge;
     private readonly OpenWebUI.Infrastructure.Context.StallWatchdog stallWatch = tools.StallWatch;
     private readonly OpenWebUI.Infrastructure.Context.ExtendContextBudget extendContext = tools.ExtendContext;
     private readonly ChatRunBroadcaster broadcaster = lifecycle.Broadcaster;
@@ -201,14 +207,48 @@ public sealed class ChatRunExecutor(
                     effective.Messages.Count, run.ChatId);
                 if (tools is { Count: > 0 })
                 {
-                    var (outcome, done) = await RunToolLoopPathAsync(
-                        run, user, commandMode, chatMode, effective, tools,
-                        budgetLimits, outletRules, resumeSeed, state, ct);
-                    loopOutcome = outcome;
-                    toolMessages = outcome?.ToolMessages;
-                    if (done)
+                    // Stop (SPEC-20261031-lifecycle-hooks RF-005): quando o
+                    // agente tenta parar, hook com block injeta instrução
+                    // e a run continua — teto de 3 bloqueios.
+                    for (var stopBlocks = 0; ; stopBlocks++)
                     {
-                        return;
+                        var (outcome, done) = await RunToolLoopPathAsync(
+                            run, user, commandMode, chatMode, effective, tools,
+                            budgetLimits, outletRules, resumeSeed, state, ct);
+                        loopOutcome = outcome;
+                        toolMessages = outcome?.ToolMessages;
+                        if (done)
+                        {
+                            return;
+                        }
+                        if (stopBlocks >= 3)
+                        {
+                            break;
+                        }
+                        var stopHook = await hooks.RunAsync("Stop",
+                            await repos.ResolveWorkdirAsync(
+                                run.UserId, run.ChatId, ct),
+                            run, null, new { stop_reason = "end_turn" }, ct);
+                        foreach (var note in stopHook.AdditionalContexts)
+                        {
+                            lock (_contextNotes)
+                            {
+                                _contextNotes.Enqueue(
+                                    new ChatCompletionMessage(RoleSystem, note));
+                            }
+                        }
+                        if (stopHook.Decision is not HookDecision.Block)
+                        {
+                            break;
+                        }
+                        effective = effective with
+                        {
+                            Messages = [..effective.Messages,
+                                new ChatCompletionMessage("user",
+                                    "Instrução de hook de ciclo de vida: "
+                                    + (stopHook.Reason
+                                        ?? "continue trabalhando."))]
+                        };
                     }
                 }
                 else
@@ -239,6 +279,12 @@ public sealed class ChatRunExecutor(
                     comboAttemptsLeft = attemptsLeft;
                     continue;
                 }
+            }
+            finally
+            {
+                // RF-004: estado por-run do deferral não vaza entre runs.
+                deferred.Clear(run.Id, run.ChatId);
+            SmartPermissionClassifier.Clear(run.Id);
             }
 
             return;
@@ -606,7 +652,27 @@ public sealed class ChatRunExecutor(
         {
             logger.LogWarning(ex, "Run {RunId}: sync de .agents/mcp.json falhou — ignorado.", run.Id);
         }
-        return await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct);
+        var loadedTools = await toolExecutor.LoadEnabledAsync(
+            user.Id, request.ToolIds, ct);
+        // SPEC-20261031-tool-search-deferred RF-001/RF-005/RF-006: split
+        // opt-in — tools deferidas saem do spec anunciado mas ficam
+        // permitidas via builtin_tool_search. Auditoria com a estimativa
+        // de tokens economizados (~spec/4 chars).
+        var deferredTools = toolIndex.SplitDeferred(loadedTools);
+        if (deferredTools.Count > 0)
+        {
+            deferred.Set(run.Id, run.ChatId, deferredTools);
+            await runEvents.AppendAsync(run.Id, "tool_search.deferred",
+                new
+                {
+                    toolsCore = loadedTools.Count - deferredTools.Count,
+                    toolsDeferred = deferredTools.Count,
+                    toolsLoaded = 0,
+                    tokensSavedEstimate = deferredTools
+                        .Sum(t => t.SpecJson.Length) / 4,
+                }, ct);
+        }
+        return loadedTools;
     }
 
     /// <summary>Executa o caminho com tools — contexto builtin, advisor,
@@ -622,6 +688,18 @@ public sealed class ChatRunExecutor(
             CancellationToken ct)
     {
         var builtinContext = await BuildToolContextAsync(run, user, ct);
+        // SessionStart (SPEC-20261031-lifecycle-hooks RF-006): contextos
+        // injetados viram notas system do primeiro round.
+        var startHook = await hooks.RunAsync("SessionStart",
+            builtinContext.WorkspacePath, run, null, null, ct);
+        foreach (var note in startHook.AdditionalContexts)
+        {
+            lock (_contextNotes)
+            {
+                _contextNotes.Enqueue(
+                    new ChatCompletionMessage(RoleSystem, note));
+            }
+        }
         // Advisor (SPEC-20261013-run-advisor): a entrada da mensagem
         // do usuário dispara a primeira revisão — em background,
         // com o subset read-only do workspace disponível.
@@ -641,12 +719,21 @@ public sealed class ChatRunExecutor(
         {
             tools.Add(builtins.ToSyntheticTool(planExit));
         }
+        // RF-001: com deferral ativo o loader é sempre core — injeta
+        // tool_search mesmo fora dos ToolIds quando há tools deferidas.
+        if (deferred.IsActive(run.Id)
+            && tools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "tool_search")
+            && builtins.All.FirstOrDefault(t => t.Name == "tool_search") is { } toolSearch)
+        {
+            tools.Add(builtins.ToSyntheticTool(toolSearch));
+        }
         // Spec da primeira rodada já filtrado pelo modo (RF-002) —
         // as próximas passam pelo AnnounceToolsAsync do callback.
         effective = effective with
         {
             Tools = tools
-                .Where(t => PermissionRuleset.ShouldAnnounce(chatMode, t))
+                .Where(t => PermissionRuleset.ShouldAnnounce(chatMode, t)
+                    && !deferred.IsDeferredOnly(run.Id, t))
                 .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
                 .ToList(),
         };
@@ -772,7 +859,8 @@ public sealed class ChatRunExecutor(
                 var mode = await EffectiveModeAsync(
                     run.ChatId, commandMode, t);
                 return tools
-                    .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool))
+                    .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool)
+                        && !deferred.IsDeferredOnly(run.Id, tool))
                     .Select(tool => JsonSerializer.Deserialize<JsonElement>(tool.SpecJson))
                     .ToList();
             },
@@ -834,6 +922,29 @@ public sealed class ChatRunExecutor(
                     while (_recentTools.Count > 8)
                     {
                         _recentTools.Dequeue();
+                    }
+                }
+                // PostToolUse (SPEC-20261031-lifecycle-hooks RF-004):
+                // observação + feedback — o efeito já aconteceu; block/
+                // additionalContext viram nota no próximo round.
+                var postHook = await hooks.RunAsync("PostToolUse",
+                    builtinContext.WorkspacePath, run, call.Name,
+                    new { tool_input = call.ArgumentsJson,
+                          tool_response = output }, t);
+                var hookNotes = postHook.AdditionalContexts.ToList();
+                if (postHook.Decision is HookDecision.Block)
+                {
+                    hookNotes.Add(
+                        $"Feedback de hook ({postHook.DecidedBy}): "
+                        + (postHook.Reason ?? "bloqueado")
+                        + " — o efeito já ocorreu; ajuste o rumo.");
+                }
+                foreach (var note in hookNotes)
+                {
+                    lock (_contextNotes)
+                    {
+                        _contextNotes.Enqueue(
+                            new ChatCompletionMessage(RoleSystem, note));
                     }
                 }
                 // RF-005 stall watch (agent-prompt-pack): mesma tool+args
@@ -1825,6 +1936,26 @@ public sealed class ChatRunExecutor(
         ChatRun run, IReadOnlyList<Tool> tools, ProviderToolCall call,
         BuiltinToolContext builtinContext, CancellationToken ct)
     {
+        // PreToolUse (SPEC-20261031-lifecycle-hooks RF-003): hooks casados
+        // ao tool_name rodam antes do gate — block vira resultado da tool,
+        // updatedInput substitui os args, additionalContext vira nota.
+        var preHook = await hooks.RunAsync("PreToolUse",
+            builtinContext.WorkspacePath, run, call.Name,
+            new { tool_input = call.ArgumentsJson }, ct);
+        foreach (var note in preHook.AdditionalContexts)
+        {
+            lock (_contextNotes)
+            {
+                _contextNotes.Enqueue(
+                    new ChatCompletionMessage(RoleSystem, note));
+            }
+        }
+        if (preHook.Decision is HookDecision.Block or HookDecision.Ask)
+        {
+            return new ToolGateDecision(true, Output:
+                $"Blocked by hook {preHook.DecidedBy}: {preHook.Reason}");
+        }
+        var hookRewritten = preHook.UpdatedInput;
         if (interceptors.HasInterceptors)
         {
             var outcome = await interceptors.RunToolCallAsync(
@@ -1854,7 +1985,11 @@ public sealed class ChatRunExecutor(
                 : gate;
         }
 
-        return await GateToolCallAsync(run, tools, call, builtinContext, ct);
+        var gated = await GateToolCallAsync(
+            run, tools, call, builtinContext, ct);
+        return hookRewritten is not null && gated.Approved
+            ? gated with { RewriteArgsJson = hookRewritten }
+            : gated;
     }
 
     private async Task<ToolGateDecision> GateToolCallAsync(
@@ -1891,6 +2026,16 @@ public sealed class ChatRunExecutor(
         }
 
         var tool = ToolExecutor.FindTool(tools, call.Name);
+
+        // RF-004/invariante: call direta em tool ainda deferida → erro
+        // didático, sem executar nem pedir aprovação.
+        if (tool is not null && deferred.IsDeferredOnly(run.Id, tool))
+        {
+            return new ToolGateDecision(true, Output:
+                $"Erro: a tool '{call.Name}' não está carregada nesta run "
+                + "— chame builtin_tool_search com uma query para carregar "
+                + "o schema antes de usar.");
+        }
 
         if (await PolicyDeniedAsync(run, call, ct) is { } policyDenied)
         {
@@ -1947,7 +2092,38 @@ public sealed class ChatRunExecutor(
             return autoDecision;
         }
 
-        return await AskToolApprovalAsync(run, call, tool, builtinContext, ct);
+        // Juiz LLM do preset smart (SPEC-20261031-smart-permission-llm):
+        // só decide o que a regra determinística não cobriu — fail-safe ask.
+        if (preset == "smart" && tool is not null)
+        {
+            var verdict = await smartJudge.ClassifyAsync(
+                run.Id, run, call.Name, call.ArgumentsJson,
+                projectRules: null,
+                conversationContext: string.Join("\n",
+                    _recentTools.ToArray()), ct);
+            await runEvents.AppendAsync(run.Id,
+                $"permission.smart.{verdict.Decision}", new
+                {
+                    actionHash = verdict.Fingerprint,
+                    tool = call.Name,
+                    decision = verdict.Decision,
+                    reason = verdict.Reason,
+                    model = verdict.Model,
+                    latencyMs = verdict.LatencyMs,
+                    fromCache = verdict.FromCache,
+                }, ct);
+            switch (verdict.Decision)
+            {
+                case "allow":
+                    return ToolGateDecision.Allow;
+                case "deny":
+                    return new ToolGateDecision(true, Output:
+                        $"Negado pelo juiz smart: {verdict.Reason}");
+            }
+            // "ask" → segue para a fila de aprovação do dono.
+        }
+
+        return await AskToolApprovalAsync(run, call, tool!, builtinContext, ct);
     }
 
     /// <summary>SPEC-15: build sem repo vinculado não executa tools de workspace.</summary>
@@ -3017,6 +3193,18 @@ public sealed class ChatRunExecutor(
         // caminho que escape (steer, retry, continuação, tool loop) não
         // pode persistir marcadores <|…|>/tags de raciocínio na mensagem.
         content = ReasoningMarkupFilter.Strip(content);
+        // SessionEnd (SPEC-20261031-lifecycle-hooks RF-006): dispara no
+        // fim da run — contextos de saída são só auditáveis (não há
+        // próximo round); erros nunca falham o encerramento.
+        try
+        {
+            await hooks.RunAsync("SessionEnd",
+                await repos.ResolveWorkdirAsync(
+                    run.UserId, run.ChatId, CancellationToken.None),
+                run, null, new { stop_reason = status ?? "completed" },
+                CancellationToken.None);
+        }
+        catch (Exception) { /* hook de saída nunca derruba a run */ }
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         run.Status = status ?? ChatRunStatus.Completed;
         run.CompletedAt = now;

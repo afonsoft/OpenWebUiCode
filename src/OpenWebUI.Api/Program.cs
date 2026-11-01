@@ -145,6 +145,8 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
     OpenWebUI.Api.Completions.Contributors.AgentDisciplineContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AgentModeContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.DeferredToolIndexContributor>();
 // Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
 // context-management): boundaries + notebook + flag new_context via kv.
 builder.Services.AddScoped<ContextBoundaryService>();
@@ -179,6 +181,17 @@ builder.Services.AddScoped(sp => new RunAdvisorService(
     (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct),
     (tools, name, args, bctx, ct) => sp.GetRequiredService<ToolExecutor>()
         .ExecuteAsync(tools, name, args, bctx, ct)));
+// Hook prompt usa o mesmo delegate de completion do advisor.
+builder.Services.AddScoped(sp => new PromptHookEvaluator(
+    sp.GetRequiredService<ModelRoleResolver>(),
+    sp.GetRequiredService<ConfigService>(),
+    (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct)));
+// Juiz do preset smart (SPEC-20261031): mesmo delegate de completion.
+builder.Services.AddScoped(sp => new SmartPermissionClassifier(
+    sp.GetRequiredService<ModelRoleResolver>(),
+    sp.GetRequiredService<ConfigService>(),
+    (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct),
+    sp.GetService<ILogger<SmartPermissionClassifier>>()));
 
 // Notificações de run (SPEC-20261007-chat-notifications): SignalR para abas
 // conectadas + Web Push quando nenhuma aba está conectada.
@@ -253,6 +266,16 @@ builder.Services.AddScoped<IBuiltinChatTool, SkillBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, GenerateVideoBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, AskUserBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, PlanExitBuiltinTool>();
+// Tool-search-deferred (SPEC-20261031): estado por run + índice + loader.
+builder.Services.AddSingleton<DeferredToolState>();
+builder.Services.AddSingleton<ToolIndexService>();
+builder.Services.AddScoped<IBuiltinChatTool, ToolSearchBuiltinTool>();
+// Plan mode v2 (SPEC-20261031): write_plan + diretório de planos.
+builder.Services.AddSingleton<PlanFileService>();
+// Lifecycle hooks (SPEC-20261031): command runner + evaluator + orquestrador.
+builder.Services.AddSingleton<CommandHookRunner>();
+builder.Services.AddScoped<LifecycleHookService>();
+builder.Services.AddScoped<IBuiltinChatTool, WritePlanBuiltinTool>();
 // Agent teams (SPEC-20261021-harness-seams RF-E2).
 builder.Services.AddScoped<IBuiltinChatTool, TeamTaskBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TeamMessageBuiltinTool>();
@@ -670,6 +693,8 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapCheckpointEndpoints();
     app.MapWorkspaceTestRunEndpoints();
     app.MapRepoSkillEndpoints();
+    app.MapPlanEndpoints();
+    app.MapHookEndpoints();
     app.MapAgentEndpoints();
     app.MapIdeEndpoints();
     app.MapPreviewEndpoints();

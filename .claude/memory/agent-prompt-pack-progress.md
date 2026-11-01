@@ -25,3 +25,29 @@ then #577 plan-mode-v2, #573 lifecycle-hooks, #574 smart-permission-llm,
 #578 sandboxed-exec, then final Sonar verification.
 Per-spec pattern: checkboxes [x] + "Notas de implementação" appended to .specs/SPEC-*.md
 + progress lines in this file + conventional commit + PR (template fetched).
+
+# tool-search-deferred (issue #576) — branch feature/devin-20261031-tool-search-deferred
+DeferredToolState (por run, alias chatId) + ToolIndexService (índice leve ≤60 linhas,
+split BuiltinTools:Deferred/McpDeferThreshold/McpCore) + ToolSearchBuiltinTool
+(substring→schema+load). Executor: split em LoadRunToolsAsync + filtro
+IsDeferredOnly em effective.Tools/AnnounceToolsAsync + gate "not loaded" +
+eventos tool_search.deferred/loaded + Clear no finally. DeferredToolIndexContributor
+Order 84. Testes ToolSearchTests 8/8.
+
+### plan-mode-v2 (#577) — entregue (PR pendente)
+- `PlanFileService` (dir plans/ + fallback home, slug, update-in-place por sessão, Latest registry), `builtin_write_plan` (Read tier), `PlanAllowed` += write_plan, `PlanSpecTemplate` com 5 fases + template de plano, `plan_exit` referencia `planPath`, endpoint `GET /api/v1/workspace/repo/plans`.
+- Build 0/0; 7 testes novos verdes (WritePlanTests).
+
+### lifecycle-hooks (#573) — entregue (PR pendente)
+- HookDefinition/HookConfigLoader (repo+user, compat devin/claude), CommandHookRunner (sh -c, exit2=block, timeout, env OPENWEBUI_*), PromptHookEvaluator (role advisor / hooks.promptModel), LifecycleHookService (cache mtime, matcher, auditoria hook.decision).
+- Integrações: PreToolUse→GateWithInterceptors, PostToolUse→OnResultAsync, SessionStart→builtinContext, Stop→re-loop ≤3, SessionEnd→FinishAsync, UserPromptSubmit→EnqueueMessage; endpoints GET/PUT/test.
+- Build 0/0; 13 testes verdes.
+
+## smart-permission-llm (#574) — 2026-11-01
+- `SmartPermissionClassifier` + prompt embedded nonce-tag + integração no
+  gate (preset `smart`, após regras determinísticas; fail-safe ask).
+- Audit `permission.smart.{decision}`; dedup por fingerprint/sessão;
+  `Clear` no fim do run. Config `smartPermission.timeoutMs` (15s default).
+- Merge com `main` após lifecycle-hooks: `ChatRunLifecycleDeps` terminou
+  `(Budgets, Hooks, SmartJudge)`; DI no Program.cs adicionado ao lado do
+  PromptHookEvaluator. 5 testes novos verdes.
