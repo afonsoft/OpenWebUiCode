@@ -100,28 +100,49 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
                 continue;
             }
 
-            try
+            if (await TryProviderAsync(provider, client, cfg, query, count, attempted, ct)
+                    is { } outcome)
             {
-                var results = await DispatchAsync(provider, client, cfg, query, count, ct);
-                var chain = attempted.Count > 0
-                    ? string.Join("→", attempted.Append(provider))
-                    : null;
-                return new WebSearchOutcome(results, provider, chain);
-            }
-            catch (WebSearchProviderException ex)
-            {
-                SetCooldown(provider, ex.RetryAfter);
-                attempted.Add(provider);
-            }
-            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-            {
-                // Timeout do HttpClient (15s) — cooldown curto e próximo.
-                SetCooldown(provider, null);
-                attempted.Add(provider);
+                return outcome;
             }
         }
 
         // Todos falharam agora ou já estavam em cooldown (RF-004).
+        return AllCoolingOutcome(attempted);
+    }
+
+    /// <summary>Tenta um provider do pool — sucesso retorna o outcome; falha
+    /// marca cooldown, anota a tentativa e devolve null.</summary>
+    private static async Task<WebSearchOutcome?> TryProviderAsync(
+        string provider, HttpClient client, RetrievalConfig cfg,
+        string query, int count, List<string> attempted, CancellationToken ct)
+    {
+        try
+        {
+            var results = await DispatchAsync(provider, client, cfg, query, count, ct);
+            var chain = attempted.Count > 0
+                ? string.Join("→", attempted.Append(provider))
+                : null;
+            return new WebSearchOutcome(results, provider, chain);
+        }
+        catch (WebSearchProviderException ex)
+        {
+            SetCooldown(provider, ex.RetryAfter);
+            attempted.Add(provider);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Timeout do HttpClient (15s) — cooldown curto e próximo.
+            SetCooldown(provider, null);
+            attempted.Add(provider);
+        }
+        return null;
+    }
+
+    /// <summary>Outcome agregado quando todos falham ou já estavam em
+    /// cooldown — erro all-providers-cooling + retry mais próximo.</summary>
+    private static WebSearchOutcome AllCoolingOutcome(List<string> attempted)
+    {
         var next = AutoOrder.Select(CooldownUntil).Where(u => u is not null).Min();
         var retryAfter = next is { } until
             ? Math.Max(1, (int)Math.Ceiling((until - Now()).TotalSeconds))
@@ -241,9 +262,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty(TitleKey, out var t) ? t.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty));
+                    StrProp(item, TitleKey), StrProp(item, "url"), StrProp(item, "content")));
             }
         }
         return results;
@@ -255,25 +274,21 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         var url = $"https://api.duckduckgo.com/?q={Uri.EscapeDataString(query)}&format=json&no_html=1&skip_disambig=1";
         var doc = await GetJsonAsync(client, DuckDuckGoEngine, url, ct);
         var results = new List<WebSearchResult>();
-
-        void AddTopic(JsonElement topic)
+        AddDdgAbstract(doc, query, results);
+        if (doc.TryGetProperty("RelatedTopics", out var topics))
         {
-            if (topic.TryGetProperty("Topics", out var nested))
+            foreach (var topic in topics.EnumerateArray())
             {
-                foreach (var n in nested.EnumerateArray())
-                {
-                    AddTopic(n);
-                }
-                return;
-            }
-            var text = topic.TryGetProperty("Text", out var t) ? t.GetString() : null;
-            var link = topic.TryGetProperty("FirstURL", out var u) ? u.GetString() : null;
-            if (!string.IsNullOrEmpty(link))
-            {
-                results.Add(new WebSearchResult(text ?? link, link, text ?? string.Empty));
+                AddDdgTopic(topic, results);
             }
         }
+        return results.Take(count).ToList();
+    }
 
+    /// <summary>Resposta direta (AbstractText) vira o primeiro resultado.</summary>
+    private static void AddDdgAbstract(
+        JsonElement doc, string query, List<WebSearchResult> results)
+    {
         if (doc.TryGetProperty("AbstractText", out var abs)
             && !string.IsNullOrWhiteSpace(abs.GetString()))
         {
@@ -282,14 +297,25 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
                 doc.TryGetProperty("AbstractURL", out var au) ? au.GetString() ?? string.Empty : string.Empty,
                 abs.GetString()!));
         }
-        if (doc.TryGetProperty("RelatedTopics", out var topics))
+    }
+
+    /// <summary>RelatedTopics aninhados — folhas com FirstURL viram resultados.</summary>
+    private static void AddDdgTopic(JsonElement topic, List<WebSearchResult> results)
+    {
+        if (topic.TryGetProperty("Topics", out var nested))
         {
-            foreach (var topic in topics.EnumerateArray())
+            foreach (var n in nested.EnumerateArray())
             {
-                AddTopic(topic);
+                AddDdgTopic(n, results);
             }
+            return;
         }
-        return results.Take(count).ToList();
+        var text = topic.TryGetProperty("Text", out var t) ? t.GetString() : null;
+        var link = topic.TryGetProperty("FirstURL", out var u) ? u.GetString() : null;
+        if (!string.IsNullOrEmpty(link))
+        {
+            results.Add(new WebSearchResult(text ?? link, link, text ?? string.Empty));
+        }
     }
 
     private static async Task<List<WebSearchResult>> TavilyAsync(
@@ -313,9 +339,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty(TitleKey, out var t) ? t.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty));
+                    StrProp(item, TitleKey), StrProp(item, "url"), StrProp(item, "content")));
             }
         }
         return results;
@@ -341,9 +365,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty(TitleKey, out var t) ? t.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("description", out var d) ? d.GetString() ?? string.Empty : string.Empty));
+                    StrProp(item, TitleKey), StrProp(item, "url"), StrProp(item, "description")));
             }
         }
         return results;
@@ -368,9 +390,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("link", out var l) ? l.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("snippet", out var s) ? s.GetString() ?? string.Empty : string.Empty));
+                    StrProp(item, TitleKey), StrProp(item, "link"), StrProp(item, "snippet")));
             }
         }
         return results;
@@ -395,22 +415,20 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
-                string desc;
-                if (item.TryGetProperty("description", out var d))
-                {
-                    desc = d.GetString() ?? string.Empty;
-                }
-                else
-                {
-                    desc = StrProp(item, "content");
-                }
-                results.Add(new WebSearchResult(
-                    StrProp(item, TitleKey),
-                    StrProp(item, "url"),
-                    desc));
+                results.Add(MapJinaItem(item));
             }
         }
         return results;
+    }
+
+    /// <summary>Mapeia um item Jina — description ausente cai para content.</summary>
+    private static WebSearchResult MapJinaItem(JsonElement item)
+    {
+        var desc = item.TryGetProperty("description", out var d)
+            ? d.GetString() ?? string.Empty
+            : StrProp(item, "content");
+        return new WebSearchResult(
+            StrProp(item, TitleKey), StrProp(item, "url"), desc);
     }
 
     private static async Task<List<WebSearchResult>> ExaAsync(
@@ -433,22 +451,21 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
-                string snippet;
-                if (item.TryGetProperty("text", out var tx))
-                {
-                    snippet = tx.GetString() ?? string.Empty;
-                }
-                else
-                {
-                    snippet = StrProp(item, "summary");
-                }
-                results.Add(new WebSearchResult(
-                    StrProp(item, TitleKey),
-                    StrProp(item, "url"),
-                    snippet.Length > 500 ? snippet[..500] : snippet));
+                results.Add(MapExaItem(item));
             }
         }
         return results;
+    }
+
+    /// <summary>Mapeia um item Exa — text ausente cai para summary, cap 500.</summary>
+    private static WebSearchResult MapExaItem(JsonElement item)
+    {
+        var snippet = item.TryGetProperty("text", out var tx)
+            ? tx.GetString() ?? string.Empty
+            : StrProp(item, "summary");
+        return new WebSearchResult(
+            StrProp(item, TitleKey), StrProp(item, "url"),
+            snippet.Length > 500 ? snippet[..500] : snippet);
     }
 
     private static async Task<List<WebSearchResult>> KagiAsync(
@@ -473,9 +490,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
                          .Where(i => i.TryGetProperty("t", out var t) && t.GetInt32() == 0))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("snippet", out var s) ? s.GetString() ?? string.Empty : string.Empty));
+                    StrProp(item, TitleKey), StrProp(item, "url"), StrProp(item, "snippet")));
             }
         }
         return results.Take(count).ToList();
