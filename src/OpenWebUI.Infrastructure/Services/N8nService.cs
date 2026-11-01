@@ -79,6 +79,13 @@ public sealed class N8nService(IHttpClientFactory httpClientFactory,
                 $"n8n respondeu {(int)response.StatusCode}: {Truncate(body, 300)}");
         }
 
+        var items = ParseWorkflows(body);
+        return items;
+    }
+
+    /// <summary>Parse tolerante: <c>{"data":[…]}</c> ou array raiz.</summary>
+    private static List<N8nWorkflowItem> ParseWorkflows(string body)
+    {
         var items = new List<N8nWorkflowItem>();
         try
         {

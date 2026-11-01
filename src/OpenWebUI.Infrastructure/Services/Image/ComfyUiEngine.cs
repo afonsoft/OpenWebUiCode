@@ -54,29 +54,37 @@ public sealed class ComfyUiEngine(IHttpClientFactory httpClientFactory) : ImageE
                 continue;
             }
 
-            foreach (var node in outputs)
-            {
-                foreach (var image in node.Value?["images"]?.AsArray() ?? [])
-                {
-                    var filename = image!["filename"]?.GetValue<string>();
-                    if (filename is null)
-                    {
-                        continue;
-                    }
-                    var subfolder = image["subfolder"]?.GetValue<string>() ?? "";
-                    var type = image["type"]?.GetValue<string>() ?? "output";
-                    var viewUrl = $"{Base(config)}/view?filename={Uri.EscapeDataString(filename)}" +
-                        $"&subfolder={Uri.EscapeDataString(subfolder)}&type={Uri.EscapeDataString(type)}";
-                    images.Add(await GetBytesAsync(viewUrl, config, ct));
-                    if (images.Count >= n)
-                    {
-                        return images;
-                    }
-                }
-            }
+            await CollectImagesAsync(outputs, config, images, n, ct);
             return images;
         }
         throw new TaskCanceledException("ComfyUI excedeu o tempo limite.");
+    }
+
+    /// <summary>Baixa as imagens dos nós de output até completar <paramref name="n"/>.</summary>
+    private async Task CollectImagesAsync(
+        JsonObject outputs, ImagesConfig config,
+        List<byte[]> images, int n, CancellationToken ct)
+    {
+        foreach (var node in outputs)
+        {
+            foreach (var image in node.Value?["images"]?.AsArray() ?? [])
+            {
+                var filename = image!["filename"]?.GetValue<string>();
+                if (filename is null)
+                {
+                    continue;
+                }
+                var subfolder = image["subfolder"]?.GetValue<string>() ?? "";
+                var type = image["type"]?.GetValue<string>() ?? "output";
+                var viewUrl = $"{Base(config)}/view?filename={Uri.EscapeDataString(filename)}" +
+                    $"&subfolder={Uri.EscapeDataString(subfolder)}&type={Uri.EscapeDataString(type)}";
+                images.Add(await GetBytesAsync(viewUrl, config, ct));
+                if (images.Count >= n)
+                {
+                    return;
+                }
+            }
+        }
     }
 
     /// <inheritdoc />

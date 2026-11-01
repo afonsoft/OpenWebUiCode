@@ -692,33 +692,50 @@ public sealed class CheckpointService(
         var conflicts = new List<string>();
         foreach (var rel in covered)
         {
-            var full = Path.Join(workdir, rel);
-            var current = File.Exists(full) ? HashFile(full) : null;
-            var tipHash = tip?.Files.TryGetValue(rel, out var te) == true ? te.Sha256 : null;
-            if (!force && current != tipHash)
+            switch (RevertOne(root, workdir, manifest, tip, rel, force))
             {
-                conflicts.Add(rel);
-                continue;
-            }
-
-            if (manifest.Files.TryGetValue(rel, out var entry) && entry.Stored is not null)
-            {
-                var source = Path.Join(root, entry.Stored);
-                if (!File.Exists(source))
-                {
+                case RevertOutcome.Reverted:
+                    reverted.Add(rel);
+                    break;
+                case RevertOutcome.Conflict:
                     conflicts.Add(rel);
-                    continue;
-                }
-                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                File.Copy(source, full, overwrite: true);
+                    break;
             }
-            else
-            {
-                TryDelete(full);
-            }
-            reverted.Add(rel);
         }
         return new RevertResult(reverted, conflicts);
+    }
+
+    private enum RevertOutcome { Reverted, Conflict }
+
+    /// <summary>Reverte um arquivo: conflita sem --force quando o conteúdo
+    /// difere do tip; restaura o blob guardado ou remove quando ausente.</summary>
+    private RevertOutcome RevertOne(
+        string root, string workdir, Manifest manifest, Manifest? tip,
+        string rel, bool force)
+    {
+        var full = Path.Join(workdir, rel);
+        var current = File.Exists(full) ? HashFile(full) : null;
+        var tipHash = tip?.Files.TryGetValue(rel, out var te) == true ? te.Sha256 : null;
+        if (!force && current != tipHash)
+        {
+            return RevertOutcome.Conflict;
+        }
+
+        if (manifest.Files.TryGetValue(rel, out var entry) && entry.Stored is not null)
+        {
+            var source = Path.Join(root, entry.Stored);
+            if (!File.Exists(source))
+            {
+                return RevertOutcome.Conflict;
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.Copy(source, full, overwrite: true);
+        }
+        else
+        {
+            TryDelete(full);
+        }
+        return RevertOutcome.Reverted;
     }
 
     private IReadOnlyList<CheckpointSummary> FallbackList(string workdir, int take)

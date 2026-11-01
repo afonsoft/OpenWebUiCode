@@ -199,74 +199,27 @@ public class ProviderCapabilityService(
             DateTimeOffset.UtcNow.ToUnixTimeSeconds()), ct);
 
         // ---- Áudio (TTS + STT) ----
-        if (await config.GetAsync<AudioConfig?>("audio.config", null, ct) is null)
+        if (await ConfigureAudioAsync(url, apiKey, catalog, ct) is { } audioReport)
         {
-            var tts = await PickTtsAsync(url, apiKey, catalog, ct);
-            // STT = modelo que ACEITA áudio: input_modalities contém "audio".
-            var stt = SttCandidates(catalog).FirstOrDefault();
-            if (tts is not null || stt is not null)
-            {
-                await config.SetAsync("audio.config", AudioConfig.Default with
-                {
-                    TtsEngine = tts is not null ? "provider" : "none",
-                    TtsProvider = tts is not null ? url : null,
-                    TtsModel = tts,
-                    TtsVoice = tts is not null ? "alloy" : null,
-                    SttEngine = stt is not null ? "provider" : "none",
-                    SttProvider = stt is not null ? url : null,
-                    SttModel = stt,
-                }, ct);
-                report.Add($"audio(tts={tts ?? "-"},stt={stt ?? "-"})");
-            }
+            report.Add(audioReport);
         }
 
         // ---- Imagens ----
-        if (await config.GetAsync<ImagesConfig?>("images.config", null, ct) is null)
+        if (await ConfigureImageAsync(url, apiKey, catalog, ct) is { } imageReport)
         {
-            var image = await PickImageAsync(url, apiKey, catalog, ct);
-            if (image is not null)
-            {
-                await config.SetAsync("images.config", ImagesConfig.Default with
-                {
-                    Enabled = true,
-                    Engine = "openai",
-                    BaseUrl = url,
-                    ApiKey = apiKey ?? string.Empty,
-                    Model = image,
-                }, ct);
-                report.Add($"images({image})");
-            }
+            report.Add(imageReport);
         }
 
         // ---- Vídeo (Sora-compatible: POST /videos + polling) ----
-        if (await config.GetAsync<VideoConfig?>("video.config", null, ct) is null
-            && await RouteExistsAsync(url, apiKey, "videos", ct))
+        if (await ConfigureVideoAsync(url, apiKey, catalog, ct) is { } videoReport)
         {
-            var video = await PickVideoAsync(url, apiKey, catalog, ct);
-            if (video is not null)
-            {
-                await config.SetAsync("video.config", VideoConfig.Default with
-                {
-                    Enabled = true,
-                    Engine = "openai",
-                    BaseUrl = url,
-                    ApiKey = apiKey ?? string.Empty,
-                    Model = video,
-                }, ct);
-                report.Add($"video({video})");
-            }
+            report.Add(videoReport);
         }
 
         // ---- Embeddings (RAG) ----
-        if (Environment.GetEnvironmentVariable("RAG_EMBEDDING_MODEL_OPENAI") is null
-            && await config.GetAsync<string?>("rag.embedding.model", null, ct) is null)
+        if (await ConfigureEmbeddingAsync(url, apiKey, catalog, ct) is { } embedReport)
         {
-            var embed = await PickEmbeddingAsync(url, apiKey, catalog, ct);
-            if (embed is not null)
-            {
-                await config.SetAsync("rag.embedding.model", embed, ct);
-                report.Add($"embed({embed})");
-            }
+            report.Add(embedReport);
         }
 
         if (report.Count > 0)
@@ -274,6 +227,101 @@ public class ProviderCapabilityService(
             logger.LogInformation(
                 "Auto-config de capacidades em {BaseUrl}: {Applied}", url, string.Join(", ", report));
         }
+    }
+
+    /// <summary>Seed de <c>audio.config</c> quando ausente; devolve a linha do report.</summary>
+    private async Task<string?> ConfigureAudioAsync(
+        string url, string? apiKey, List<CatalogEntry> catalog, CancellationToken ct)
+    {
+        if (await config.GetAsync<AudioConfig?>("audio.config", null, ct) is not null)
+        {
+            return null;
+        }
+        var tts = await PickTtsAsync(url, apiKey, catalog, ct);
+        // STT = modelo que ACEITA áudio: input_modalities contém "audio".
+        var stt = SttCandidates(catalog).FirstOrDefault();
+        if (tts is null && stt is null)
+        {
+            return null;
+        }
+        await config.SetAsync("audio.config", AudioConfig.Default with
+        {
+            TtsEngine = tts is not null ? "provider" : "none",
+            TtsProvider = tts is not null ? url : null,
+            TtsModel = tts,
+            TtsVoice = tts is not null ? "alloy" : null,
+            SttEngine = stt is not null ? "provider" : "none",
+            SttProvider = stt is not null ? url : null,
+            SttModel = stt,
+        }, ct);
+        return $"audio(tts={tts ?? "-"},stt={stt ?? "-"})";
+    }
+
+    /// <summary>Seed de <c>images.config</c> quando ausente; devolve a linha do report.</summary>
+    private async Task<string?> ConfigureImageAsync(
+        string url, string? apiKey, List<CatalogEntry> catalog, CancellationToken ct)
+    {
+        if (await config.GetAsync<ImagesConfig?>("images.config", null, ct) is not null)
+        {
+            return null;
+        }
+        var image = await PickImageAsync(url, apiKey, catalog, ct);
+        if (image is null)
+        {
+            return null;
+        }
+        await config.SetAsync("images.config", ImagesConfig.Default with
+        {
+            Enabled = true,
+            Engine = "openai",
+            BaseUrl = url,
+            ApiKey = apiKey ?? string.Empty,
+            Model = image,
+        }, ct);
+        return $"images({image})";
+    }
+
+    /// <summary>Seed de <c>video.config</c> quando ausente e a rota existe.</summary>
+    private async Task<string?> ConfigureVideoAsync(
+        string url, string? apiKey, List<CatalogEntry> catalog, CancellationToken ct)
+    {
+        if (await config.GetAsync<VideoConfig?>("video.config", null, ct) is not null
+            || !await RouteExistsAsync(url, apiKey, "videos", ct))
+        {
+            return null;
+        }
+        var video = await PickVideoAsync(url, apiKey, catalog, ct);
+        if (video is null)
+        {
+            return null;
+        }
+        await config.SetAsync("video.config", VideoConfig.Default with
+        {
+            Enabled = true,
+            Engine = "openai",
+            BaseUrl = url,
+            ApiKey = apiKey ?? string.Empty,
+            Model = video,
+        }, ct);
+        return $"video({video})";
+    }
+
+    /// <summary>Seed de <c>rag.embedding.model</c> quando ausente (env vence).</summary>
+    private async Task<string?> ConfigureEmbeddingAsync(
+        string url, string? apiKey, List<CatalogEntry> catalog, CancellationToken ct)
+    {
+        if (Environment.GetEnvironmentVariable("RAG_EMBEDDING_MODEL_OPENAI") is not null
+            || await config.GetAsync<string?>("rag.embedding.model", null, ct) is not null)
+        {
+            return null;
+        }
+        var embed = await PickEmbeddingAsync(url, apiKey, catalog, ct);
+        if (embed is null)
+        {
+            return null;
+        }
+        await config.SetAsync("rag.embedding.model", embed, ct);
+        return $"embed({embed})";
     }
 
     // ---------------- Catálogo ----------------
