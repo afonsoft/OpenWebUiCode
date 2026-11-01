@@ -1783,6 +1783,33 @@ public class ApiService(HttpClient http, AuthService auth)
         return response.IsSuccessStatusCode;
     }
 
+    // ---------- Permissions-v2 (SPEC-20261018-permissions-v2) ----------
+
+    /// <summary>Regras de permissão ordenadas do usuário.</summary>
+    public Task<List<PermissionRuleResponse>?> GetPermissionRulesAsync() =>
+        SendAsync<List<PermissionRuleResponse>>(
+            HttpMethod.Get, "/api/v1/permissions/rules");
+
+    /// <summary>Cria regra {action, resource(glob), effect}.</summary>
+    public Task<PermissionRuleResponse?> CreatePermissionRuleAsync(
+        string action, string resource, string effect, int? position = null) =>
+        SendAsync<PermissionRuleResponse>(HttpMethod.Post,
+            "/api/v1/permissions/rules",
+            new { action, resource, effect, position });
+
+    /// <summary>Remove regra pelo id (revogação individual).</summary>
+    public Task<bool> DeletePermissionRuleAsync(string id) =>
+        SendStatusAsync(HttpMethod.Delete, $"/api/v1/permissions/rules/{id}");
+
+    /// <summary>Aprovações duráveis ("sempre") por workdir.</summary>
+    public Task<List<SavedApprovalResponse>?> GetSavedApprovalsAsync() =>
+        SendAsync<List<SavedApprovalResponse>>(
+            HttpMethod.Get, "/api/v1/permissions/approvals");
+
+    /// <summary>Revoga uma aprovação durável pelo id.</summary>
+    public Task<bool> DeleteSavedApprovalAsync(string id) =>
+        SendStatusAsync(HttpMethod.Delete, $"/api/v1/permissions/approvals/{id}");
+
     private async Task<T?> SendAsync<T>(HttpMethod method, string uri, object? body = null)
     {
         using var request = auth.CreateRequest(method, uri);
@@ -2282,3 +2309,13 @@ public sealed record AdminPolicyDenialResponse(
 /// <summary>Resultado do dry-run de policy.</summary>
 public sealed record AdminPolicySimulateResponse(
     bool Denied, AdminPolicyStatementResponse? Matched);
+
+/// <summary>Regra de permissão do usuário (SPEC permissions-v2).</summary>
+public sealed record PermissionRuleResponse(
+    string Id, string Action, string Resource, string Effect,
+    int Position, long CreatedAt);
+
+/// <summary>Aprovação durável por workdir (SPEC permissions-v2).</summary>
+public sealed record SavedApprovalResponse(
+    string Id, string Workdir, string Tool, string ArgPattern,
+    string Decision, long CreatedAt);

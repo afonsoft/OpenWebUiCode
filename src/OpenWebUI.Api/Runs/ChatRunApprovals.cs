@@ -63,6 +63,17 @@ public sealed class ChatRunApprovals
             : null);
 
     /// <summary>
+    /// Tool + padrão de argumentos da call pendente — usado para gravar a
+    /// <c>SavedApproval</c> durável quando o dono decide com "sempre"
+    /// (SPEC-20261018-permissions-v2 RF-002).
+    /// </summary>
+    public Task<(string ToolName, string ArgPattern)?> PendingInfoAsync(
+        string runId, string callId) =>
+        Task.FromResult(_pending.TryGetValue(Key(runId, callId), out var p)
+            ? (p.ToolName, p.ArgPattern)
+            : ((string, string)?)null);
+
+    /// <summary>
     /// Payload do evento <c>approval_asked</c>/<c>question_asked</c> da call
     /// pendente nesta run — permite ao GET da run devolver a pendência a
     /// clientes cujo attach SSE morreu antes do evento (proxies que

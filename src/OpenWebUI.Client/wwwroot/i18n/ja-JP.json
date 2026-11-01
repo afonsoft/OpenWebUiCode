@@ -1264,5 +1264,16 @@
   "settings.ref_hidden_hint": "Hidden refs do not show in the @ menu but still resolve directly.",
   "settings.ref_refresh": "refresh",
   "settings.ref_alias_hint": "Use @alias in the composer to attach; the agent reads via ref://alias/path.",
-  "settings.ref_save_failed": "Save failed (duplicate alias or invalid source)."
+  "settings.ref_save_failed": "Save failed (duplicate alias or invalid source).",
+  "common.revoke": "りす",
+  "settings.permissions": "",
+  "settings.perm_rules_title": "ルール",
+  "settings.perm_rules_hint": "きルール {アクション, リソース glob, }：にしたものが。ポリシーの、リスクプリセットのに。",
+  "settings.perm_resource_ph": "リソース glob（: shell_exec:rm *, /etc/**, *）",
+  "settings.perm_rules_empty": "ルールなし — リスクプリセットがします。",
+  "settings.perm_approvals_title": "された",
+  "settings.perm_approvals_hint": "「に」でしたは workdir ごとにここへされ、にりせます。",
+  "settings.perm_approvals_empty": "されたはありません。",
+  "settings.perm_load_error": "のみみにしました。",
+  "settings.perm_save_error": "のにしました。"
 }

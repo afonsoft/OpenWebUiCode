@@ -26,6 +26,7 @@
                     <button class="modal-tab @(_tab == "models" ? "active" : "")" role="tab" aria-selected="@(_tab == "models")" @onclick='() => SelectTab("models")'>@L["settings.models"]</button>
                     <button class="modal-tab @(_tab == "combos" ? "active" : "")" role="tab" aria-selected="@(_tab == "combos")" @onclick='() => SelectTab("combos")'>@L["settings.combos"]</button>
                     <button class="modal-tab @(_tab == "tools" ? "active" : "")" role="tab" aria-selected="@(_tab == "tools")" @onclick='() => SelectTab("tools")'>@L["settings.tools"]</button>
+                    <button class="modal-tab @(_tab == "permissions" ? "active" : "")" role="tab" aria-selected="@(_tab == "permissions")" @onclick='() => SelectTab("permissions")'>@L["settings.permissions"]</button>
                     <button class="modal-tab @(_tab == "agents" ? "active" : "")" role="tab" aria-selected="@(_tab == "agents")" @onclick='() => SelectTab("agents")'>@L["settings.agents"]</button>
                     @if (Auth.CurrentUser?.Role == "admin")
                     {
@@ -969,6 +970,88 @@
                         }
                     </SettingsSection>
                 }
+                else if (_tab == "permissions")
+                {
+                    <SettingsSection Title="@L["settings.perm_rules_title"]" Description="@L["settings.perm_rules_hint"]">
+                        @if (_permMessage is not null)
+                        {
+                            <div class="field-note">@_permMessage</div>
+                        }
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <select class="input" style="max-width: 11rem" aria-label="action"
+                                    @bind="_permAction">
+                                <option value="read">read</option>
+                                <option value="edit">edit</option>
+                                <option value="glob">glob</option>
+                                <option value="grep">grep</option>
+                                <option value="shell">shell</option>
+                                <option value="subagent">subagent</option>
+                                <option value="skill">skill</option>
+                                <option value="question">question</option>
+                                <option value="webfetch">webfetch</option>
+                                <option value="websearch">websearch</option>
+                                <option value="external_directory">external_directory</option>
+                                <option value="mcp">mcp</option>
+                            </select>
+                            <input class="input flex-1" style="min-width: 10rem" placeholder="@L["settings.perm_resource_ph"]"
+                                   aria-label="resource" @bind="_permResource" />
+                            <select class="input" style="max-width: 7rem" aria-label="effect"
+                                    @bind="_permEffect">
+                                <option value="allow">allow</option>
+                                <option value="ask">ask</option>
+                                <option value="deny">deny</option>
+                            </select>
+                            <button class="primary-btn" disabled="@_permBusy"
+                                    @onclick="AddPermissionRuleAsync">@L["common.add"]</button>
+                        </div>
+                        @if (_permRules is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else if (_permRules.Count == 0)
+                        {
+                            <div class="field-note">@L["settings.perm_rules_empty"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var rule in _permRules)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate font-mono">@rule.Action: @rule.Resource</div>
+                                        <div class="text-xs text-gray-400">@rule.Effect · #@rule.Position</div>
+                                    </div>
+                                    <button class="button-sm danger-btn" disabled="@_permBusy"
+                                            @onclick="() => DeletePermissionRuleAsync(rule.Id)">@L["common.delete"]</button>
+                                </div>
+                            }
+                        }
+                    </SettingsSection>
+                    <SettingsSection Title="@L["settings.perm_approvals_title"]" Description="@L["settings.perm_approvals_hint"]">
+                        @if (_savedApprovals is null)
+                        {
+                            <div>@L["common.loading"]</div>
+                        }
+                        else if (_savedApprovals.Count == 0)
+                        {
+                            <div class="field-note">@L["settings.perm_approvals_empty"]</div>
+                        }
+                        else
+                        {
+                            @foreach (var saved in _savedApprovals)
+                            {
+                                <div class="flex items-center justify-between gap-2 min-h-11">
+                                    <div class="min-w-0">
+                                        <div class="text-sm truncate font-mono">@saved.Tool: @saved.ArgPattern</div>
+                                        <div class="text-xs text-gray-400 truncate">@saved.Decision · @saved.Workdir</div>
+                                    </div>
+                                    <button class="button-sm danger-btn" disabled="@_permBusy"
+                                            @onclick="() => DeleteSavedApprovalAsync(saved.Id)">@L["common.revoke"]</button>
+                                </div>
+                            }
+                        }
+                    </SettingsSection>
+                }
                 else if (_tab == "agents")
                 {
                     <SettingsSection Title="@L["settings.sec_agent_catalog"]" Description="@L["settings.agents_hint"]">
@@ -1555,6 +1638,7 @@
             "maintenance" => LoadMaintenanceTabAsync(),
             "models" => LoadModelsTabAsync(),
             "tools" => LoadToolApprovalsAsync(),
+            "permissions" => LoadPermissionsAsync(),
             "admin" => LoadAdminConfigLayersAsync(),
             "notifications" => LoadNotificationsTabAsync(),
             "references" => LoadReferencesTabAsync(),
@@ -1789,6 +1873,99 @@
     private List<ToolApprovalEntry>? _toolApprovals;
     private string? _toolsMessage;
     private bool _toolsSaving;
+    private List<PermissionRuleResponse>? _permRules;
+    private List<SavedApprovalResponse>? _savedApprovals;
+    private string? _permMessage;
+    private bool _permBusy;
+    private string _permAction = "shell";
+    private string _permResource = "*";
+    private string _permEffect = "ask";
+
+    /// <summary>Carrega regras + aprovações salvas (aba Permissions).</summary>
+    private async Task LoadPermissionsAsync()
+    {
+        _permMessage = null;
+        try
+        {
+            var rulesTask = Api.GetPermissionRulesAsync();
+            var savedTask = Api.GetSavedApprovalsAsync();
+            await Task.WhenAll(rulesTask, savedTask);
+            _permRules = await rulesTask;
+            _savedApprovals = await savedTask;
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            _permRules = [];
+            _savedApprovals = [];
+            _permMessage = L["settings.perm_load_error"];
+        }
+    }
+
+    /// <summary>Cria regra ordenada {action, resource glob, effect}.</summary>
+    private async Task AddPermissionRuleAsync()
+    {
+        _permBusy = true;
+        try
+        {
+            var created = await Api.CreatePermissionRuleAsync(
+                _permAction, _permResource, _permEffect);
+            if (created is not null)
+            {
+                (_permRules ??= []).Add(created);
+                _permMessage = null;
+            }
+            else
+            {
+                _permMessage = L["settings.perm_save_error"];
+            }
+        }
+        finally
+        {
+            _permBusy = false;
+        }
+    }
+
+    /// <summary>Revoga uma regra ordenada.</summary>
+    private async Task DeletePermissionRuleAsync(string id)
+    {
+        _permBusy = true;
+        try
+        {
+            if (await Api.DeletePermissionRuleAsync(id))
+            {
+                _permRules?.RemoveAll(r => r.Id == id);
+            }
+            else
+            {
+                _permMessage = L["settings.perm_save_error"];
+            }
+        }
+        finally
+        {
+            _permBusy = false;
+        }
+    }
+
+    /// <summary>Revoga uma aprovação durável ("sempre").</summary>
+    private async Task DeleteSavedApprovalAsync(string id)
+    {
+        _permBusy = true;
+        try
+        {
+            if (await Api.DeleteSavedApprovalAsync(id))
+            {
+                _savedApprovals?.RemoveAll(s => s.Id == id);
+            }
+            else
+            {
+                _permMessage = L["settings.perm_save_error"];
+            }
+        }
+        finally
+        {
+            _permBusy = false;
+        }
+    }
 
     /// <summary>Carrega o catálogo de tools + overrides do usuário.</summary>
     private async Task LoadToolApprovalsAsync()

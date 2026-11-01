@@ -806,6 +806,39 @@ public static class ChatRunEndpoints
                     { [PermissionRuleset.BuiltinName(pendingTool)] = "allow" }, ct);
             }
         }
+        // "Sempre" (SPEC-20261018-permissions-v2 RF-002): grava a
+        // SavedApproval durável por (userId, workdir, tool, argPattern) —
+        // approve → allow, deny → deny (rejeição durável revogável).
+        if (request.Remember)
+        {
+            var pending = await deps.Approvals.PendingInfoAsync(run.Id, callId);
+            if (pending is { } info)
+            {
+                var workdir = await deps.Repos.ResolveWorkdirAsync(
+                    user.Id, run.ChatId, ct);
+                var existing = await deps.Db.SavedApprovals
+                    .FirstOrDefaultAsync(s => s.UserId == user.Id
+                        && s.Workdir == workdir && s.Tool == info.ToolName
+                        && s.ArgPattern == info.ArgPattern, ct);
+                if (existing is null)
+                {
+                    deps.Db.SavedApprovals.Add(new SavedApproval
+                    {
+                        UserId = user.Id,
+                        Workdir = workdir,
+                        Tool = info.ToolName,
+                        ArgPattern = info.ArgPattern,
+                        Decision = approved ? "allow" : "deny",
+                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    });
+                }
+                else
+                {
+                    existing.Decision = approved ? "allow" : "deny";
+                }
+                await deps.Db.SaveChangesAsync(ct);
+            }
+        }
         // A mensagem vai mesmo em approve: no ask_user a resposta do dono
         // é justamente decision=approve + message (RF-005); numa aprovação
         // comum, message em approve é ignorada pelo gate.
@@ -923,7 +956,8 @@ public static class ChatRunEndpoints
     /// <summary>Bundle DI da decisão de aprovação (S107).</summary>
     internal sealed record ApprovalDeps(
         AppDbContext Db, ChatRunApprovals Approvals,
-        ToolApprovalOverrideService ToolOverrides);
+        ToolApprovalOverrideService ToolOverrides,
+        WorkspaceRepoService Repos);
 
     /// <summary>Bundle DI do diff da run (S107).</summary>
     internal sealed record RunDiffDeps(

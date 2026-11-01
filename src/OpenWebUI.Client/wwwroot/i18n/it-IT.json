@@ -1264,5 +1264,16 @@
   "settings.ref_hidden_hint": "Le nascoste non appaiono nel menu @ ma si risolvono direttamente.",
   "settings.ref_refresh": "aggiorna",
   "settings.ref_alias_hint": "Usa @alias nel composer per allegare; l’agente legge via ref://alias/percorso.",
-  "settings.ref_save_failed": "Salvataggio fallito (alias duplicato o origine non valida)."
+  "settings.ref_save_failed": "Salvataggio fallito (alias duplicato o origine non valida).",
+  "common.revoke": "Revoca",
+  "settings.permissions": "Permessi",
+  "settings.perm_rules_title": "Regole di permesso",
+  "settings.perm_rules_hint": "Regole ordinate {azione, glob risorsa, effetto}: vince l'ultima corrispondente. Valutate dopo le policy admin e prima del preset di rischio.",
+  "settings.perm_resource_ph": "glob risorsa (es.: shell_exec:rm *, /etc/**, *)",
+  "settings.perm_rules_empty": "Nessuna regola — decide il preset di rischio.",
+  "settings.perm_approvals_title": "Approvazioni salvate",
+  "settings.perm_approvals_hint": "Le decisioni con \"Sempre\" persistono qui per workdir e si revocano singolarmente.",
+  "settings.perm_approvals_empty": "Nessuna approvazione salvata.",
+  "settings.perm_load_error": "Caricamento permessi non riuscito.",
+  "settings.perm_save_error": "Salvataggio del permesso non riuscito."
 }

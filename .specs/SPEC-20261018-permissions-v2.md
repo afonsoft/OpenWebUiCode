@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-permissions-v2` |
-| Status | `Approved` |
+| Status | `In Progress` |
 | Parent | `docs/analise-opencode-v2.md` (P1.2); depends on SPEC-20261018-policies-admin |
 
 ## 1. User Story
@@ -74,3 +74,12 @@ tests/OpenWebUI.Api.Tests/ExternalDirectoryTests.cs            # NOVO
 - `file_read /etc/passwd` fora do workdir dispara ask; `allow external_directory` libera.
 - Rules order testado: `allow shell:*` seguido de `deny shell:rm *` → `rm` bloqueado, resto livre.
 - UI lista/revoga approvals; testes NUnit cobrem ordem, glob, persistência.
+
+## Implementation notes (2026-11-01)
+
+- `PermissionRuleEvaluator` (Infrastructure/Services): `ActionOf` tool→action + `EvaluateAsync` last-match-wins sobre `UserPermissionRule` (glob via `WorkspaceFiles.GlobToRegex`) + `SavedDecisionAsync` sobre `SavedApproval` (workdir resolvido por `repos.ResolveWorkdirAsync`).
+- Gate (`ChatRunExecutor.GateToolCallAsync`): `ApplyPermissionRulesAsync` entra depois de admin policies + `PermissionRuleset` deny e antes de `ApplyUserOverrideAsync`. `effect=ask` vira `forcePrompt` — preset ainda decide o tier do prompt; deny de regra vence aprovação salva (avaliada antes dela).
+- RF-003 `external_directory`: `ExternalAccessRegistry` (singleton, por runId) + `WorkspaceFiles.ResolveInsideOrExternal` nas tools file_* (list/read/grep/glob/write/edit). Gate detecta path externo (args `path`/`dir` + headers do `apply_patch`, symlinks resolvidos) → regra `external_directory` do usuário (default ask; aprovado registra na run). **Desvio da spec:** `shell_exec` continua governado pelo `CommandRiskClassifier` (já classifica workspace-escape) — o boundary novo não duplica o classificador existente.
+- RF-002: "Sempre" (`request.Remember`) grava `SavedApproval` (allow/deny por workdir) no endpoint de aprovação; revogação via `DELETE /api/v1/permissions/approvals/{id}`.
+- API: `PermissionEndpoints` CRUD `/api/v1/permissions/rules` + list/delete `/approvals`. UI: aba `permissions` no `SettingsModal` (spec pedia `SettingsPermissions.razor`; consolidado na aba do modal existente, mesmo padrão das outras).
+- Migration `PermissionsV2` (tabelas `UserPermissionRules`, `SavedApprovals`); testes `PermissionRuleEvaluatorTests` + `ExternalDirectoryTests`.
