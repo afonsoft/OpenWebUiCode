@@ -77,9 +77,10 @@ public sealed class ContextSaveBuiltinTool(
         {
             var model = await ContextSnapshotTools.SummaryModelAsync(roles, context, ct);
             var (compactedItems, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-                items!, strategy, limits.ThresholdTokens, summarizer, model,
-                context.UserId, chatId,
-                TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds), ct);
+                new ContextSnapshotCompactor.BudgetRequest(
+                    items!, strategy, limits.ThresholdTokens, summarizer, model,
+                    context.UserId, chatId,
+                    TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds)), ct);
             items = compactedItems;
             compacted = true;
             pruned = stats.DroppedCount + stats.ElidedCount;
@@ -159,9 +160,10 @@ public sealed class ContextRecoveryBuiltinTool(
 
         var items = ContextSnapshotService.DeserializeItems(snap.PayloadJson);
         var (fitted, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-            items, "elision", budget, summarizer: null, model: null,
-            userId: null, chatId,
-            TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds), ct);
+            new ContextSnapshotCompactor.BudgetRequest(
+                items, "elision", budget, Summarizer: null, Model: null,
+                UserId: null, chatId,
+                TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds)), ct);
 
         var payload = new
         {
@@ -272,8 +274,9 @@ public sealed class ContextCompactBuiltinTool(
 
         var model = await ContextSnapshotTools.SummaryModelAsync(roles, context, ct);
         var (compacted, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-            items, strategy, budget, summarizer, model, context.UserId,
-            chatId, TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds), ct);
+            new ContextSnapshotCompactor.BudgetRequest(
+                items, strategy, budget, summarizer, model, context.UserId,
+                chatId, TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds)), ct);
 
         int? savedVersion = null;
         if (args.TryGetProperty("save", out var saveEl) && saveEl.ValueKind == JsonValueKind.True)

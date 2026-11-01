@@ -121,14 +121,14 @@ public static class AuthEndpoints
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
         if (user is null)
         {
-            return await TryLdapSignInAsync(request, email, db, config, tokens, limits, lockKey, rateConfig, ct);
+            return await TryLdapSignInAsync(request, email, new LdapDeps(db, config, tokens, limits), lockKey, rateConfig, ct);
         }
 
         var result = new PasswordHasher<User>().VerifyHashedPassword(user, user.PasswordHash, request.Password);
         if (result == PasswordVerificationResult.Failed)
         {
             // RF-002: fallback LDAP quando habilitado — falha de bind retorna erro genérico.
-            return await TryLdapSignInAsync(request, email, db, config, tokens, limits, lockKey, rateConfig, ct);
+            return await TryLdapSignInAsync(request, email, new LdapDeps(db, config, tokens, limits), lockKey, rateConfig, ct);
         }
 
         if (user.Role == UserRoles.Pending)
@@ -145,25 +145,23 @@ public static class AuthEndpoints
     private static IResult SignOutAsync() => Results.Ok(new StatusResponse(true));
 
     private static async Task<IResult> TryLdapSignInAsync(
-        SignInRequest request, string email, AppDbContext db,
-        ConfigService config, JwtTokenService tokens,
-        RateLimitService limits, string lockKey, RateLimitConfig rateConfig,
-        CancellationToken ct)
+        SignInRequest request, string email, LdapDeps deps,
+        string lockKey, RateLimitConfig rateConfig, CancellationToken ct)
     {
         var identity = await LdapService.TryBindAsync(request.Email, request.Password, ct);
         if (identity is null)
         {
-            limits.RecordLoginFailure(lockKey, rateConfig, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            deps.Limits.RecordLoginFailure(lockKey, rateConfig, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
             return Results.BadRequest(new { detail = "Credenciais inválidas.", error_code = "invalid_credentials" });
         }
 
         // Sem e-mail do diretório não dá para identificar a conta local.
         var ldapEmail = (identity.Email ?? email).Trim().ToLowerInvariant();
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == ldapEmail, ct);
+        var user = await deps.Db.Users.FirstOrDefaultAsync(u => u.Email == ldapEmail, ct);
         if (user is null)
         {
-            var adminConfig = await config.GetAdminConfigAsync(ct);
-            var anyUser = await db.Users.AnyAsync(ct);
+            var adminConfig = await deps.Config.GetAdminConfigAsync(ct);
+            var anyUser = await deps.Db.Users.AnyAsync(ct);
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             user = new User
             {
@@ -175,8 +173,8 @@ public static class AuthEndpoints
                 CreatedAt = now,
                 UpdatedAt = now,
             };
-            db.Users.Add(user);
-            await db.SaveChangesAsync(ct);
+            deps.Db.Users.Add(user);
+            await deps.Db.SaveChangesAsync(ct);
         }
 
         if (user.Role == UserRoles.Pending)
@@ -184,8 +182,8 @@ public static class AuthEndpoints
             return Results.BadRequest(new { detail = "Conta aguardando aprovação do administrador.", error_code = "pending_approval" });
         }
 
-        limits.ResetLogin(lockKey);
-        return await IssueAuthResponseAsync(user, tokens, config, ct);
+        deps.Limits.ResetLogin(lockKey);
+        return await IssueAuthResponseAsync(user, deps.Tokens, deps.Config, ct);
     }
 
     private static async Task<IResult> GetCurrentUserAsync(
@@ -494,3 +492,8 @@ public static class AuthEndpoints
         await db.SaveChangesAsync(ct);
     }
 }
+
+/// <summary>Bundle DI do fluxo LDAP (S107).</summary>
+internal sealed record LdapDeps(
+    AppDbContext Db, ConfigService Config,
+    JwtTokenService Tokens, RateLimitService Limits);

@@ -36,14 +36,10 @@ public static class RpcEndpoints
     }
 
     private static async Task<IResult> HandleAsync(
-        HttpContext http, AppDbContext db, ChatRunDispatcher dispatcher,
-        ContextBoundaryService boundaries, BranchService branches,
-        WorkspaceRepoService repos, RepoCommandService commands,
-        AgentDefinitionService agentDefs, ConfigService config,
-        BudgetPolicyService budgets,
+        HttpContext http, [AsParameters] ChatRunEndpoints.EnqueueRunDeps deps,
         CancellationToken ct)
     {
-        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var user = await AuthEndpoints.FindUserAsync(http, deps.Db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
@@ -84,14 +80,11 @@ public static class RpcEndpoints
                 return method switch
                 {
                     "ping" => RpcResult(id, "pong"),
-                    "chats.list" => await ChatsListAsync(db, user, parms, id, ct),
+                    "chats.list" => await ChatsListAsync(deps.Db, user, parms, id, ct),
                     "chats.create" => await ChatsCreateAsync(
-                        db, user, parms, id, ct),
-                    "runs.start" => await RunsStartAsync(
-                        http, db, dispatcher, boundaries, branches, repos,
-                        commands, agentDefs, config, budgets,
-                        user, parms, id, ct),
-                    "runs.get" => await RunsGetAsync(db, user, parms, id, ct),
+                        deps.Db, user, parms, id, ct),
+                    "runs.start" => await RunsStartAsync(http, deps, user, parms, id, ct),
+                    "runs.get" => await RunsGetAsync(deps.Db, user, parms, id, ct),
                     _ => RpcError(id, MethodNotFound,
                         $"Method not found: {method}"),
                 };
@@ -147,11 +140,7 @@ public static class RpcEndpoints
     }
 
     private static async Task<IResult> RunsStartAsync(
-        HttpContext http, AppDbContext db, ChatRunDispatcher dispatcher,
-        ContextBoundaryService boundaries, BranchService branches,
-        WorkspaceRepoService repos, RepoCommandService commands,
-        AgentDefinitionService agentDefs, ConfigService config,
-        BudgetPolicyService budgets,
+        HttpContext http, ChatRunEndpoints.EnqueueRunDeps deps,
         User user, JsonElement? p, JsonElement? id, CancellationToken ct)
     {
         var chatId = Str(p, "chatId")
@@ -163,8 +152,7 @@ public static class RpcEndpoints
 
         var request = new EnqueueChatRunRequest(prompt, model);
         var result = await ChatRunEndpoints.EnqueueMessageAsync(
-            chatId, request, http, db, dispatcher, boundaries, branches,
-            repos, commands, agentDefs, config, budgets, ct);
+            chatId, request, http, deps, ct);
 
         // Converte o IResult HTTP em valor JSON-RPC: 2xx → result com o
         // corpo; erro → -32000 com data.detail.

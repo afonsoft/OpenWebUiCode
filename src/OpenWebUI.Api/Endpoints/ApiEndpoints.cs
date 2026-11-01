@@ -338,8 +338,10 @@ public static class ApiEndpoints
             ? request.Model["arena:".Length..]
             : request.Model;
         if (await ChatPipeline.TryRunArenaAsync(
-            request, arenaModel, user, db, config, rag, providers, webSearch,
-            repos, EmitAsync, ct, promptContributors))
+            request, arenaModel, user,
+            new ChatPipeline.ArenaDeps(db, config, rag, providers, webSearch,
+                repos, promptContributors),
+            EmitAsync, ct))
         {
             return;
         }
@@ -348,8 +350,9 @@ public static class ApiEndpoints
         try
         {
             effective = await ChatPipeline.EnrichRequestAsync(
-                request, user, db, config, rag, webSearch, repos,
-                promptContributors, ct);
+                request, user,
+                new ChatPipeline.EnrichDeps(db, config, rag, webSearch, repos,
+                    promptContributors), ct);
         }
         catch (ModelVariantException ex)
         {
@@ -390,11 +393,12 @@ public static class ApiEndpoints
                     AttachedRefs: effective.AttachedRefs);
                 var outcome = await ChatPipeline.RunToolLoopAsync(
                     effective, tools, toolExecutor, providers, ct,
-                    builtinContext: builtinContext, userId: user.Id,
-                    maxSteps: await config.GetAsync<int?>(
-                        $"u:{user.Id}:agentLoop.maxRounds", null, ct)
-                        ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct),
-                    maxParallelTools: toolExecutor.MaxParallel);
+                    new ChatPipeline.ToolLoopOptions(
+                        BuiltinContext: builtinContext, UserId: user.Id,
+                        MaxSteps: await config.GetAsync<int?>(
+                            $"u:{user.Id}:agentLoop.maxRounds", null, ct)
+                            ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct),
+                        MaxParallelTools: toolExecutor.MaxParallel));
                 if (outcome?.FinalContent is { } finished)
                 {
                     foreach (var (regex, replacement) in outletRules)

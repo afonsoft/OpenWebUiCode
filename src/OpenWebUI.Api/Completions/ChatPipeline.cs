@@ -88,15 +88,15 @@ public static class ChatPipeline
     internal const string DefaultSystemPrompt =
         IdentityPrompt + TrackingPrompt + AutonomyPrompt + UntrustedInputPrompt;
     /// <summary>Aplica modelo personalizado, contexto de arquivos e memórias à requisição.</summary>
+    public sealed record EnrichDeps(
+        AppDbContext Db, ConfigService Config, RagService Rag,
+        WebSearchService WebSearch, WorkspaceRepoService Repos,
+        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> PromptContributors);
+
     public static async Task<ChatCompletionRequest> EnrichRequestAsync(
         ChatCompletionRequest request,
         User user,
-        AppDbContext db,
-        ConfigService config,
-        RagService rag,
-        WebSearchService webSearch,
-        WorkspaceRepoService repos,
-        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors,
+        EnrichDeps deps,
         CancellationToken ct,
         string? agentMode = null,
         string? chatId = null,
@@ -125,10 +125,10 @@ public static class ChatPipeline
             Model = model,
             Parameters = parameters,
             BindingFactory = async t =>
-                (await repos.ResolveBindingAsync(user.Id, chatId, t)).Binding,
-            WorkdirFactory = t => repos.ResolveWorkdirAsync(user.Id, chatId, t),
+                (await deps.Repos.ResolveBindingAsync(user.Id, chatId, t)).Binding,
+            WorkdirFactory = t => deps.Repos.ResolveWorkdirAsync(user.Id, chatId, t),
         };
-        var orderedContributors = promptContributors.OrderBy(c => c.Order).ToList();
+        var orderedContributors = deps.PromptContributors.OrderBy(c => c.Order).ToList();
         if (orderedContributors.Count == 0)
         {
             // Sem DI (host headless mínimo/teste avulso): pelo menos o
@@ -195,7 +195,7 @@ public static class ChatPipeline
         }
         if (imageIds.Count > 0)
         {
-            var entries = await db.Files.AsNoTracking()
+            var entries = await deps.Db.Files.AsNoTracking()
                 .Where(f => imageIds.Contains(f.Id) && f.UserId == user.Id)
                 .ToListAsync(ct);
             if (entries.Count > 0)
@@ -455,20 +455,30 @@ public static class ChatPipeline
     /// resultado (runs desacopladas emitem no SSE; o endpoint legado passa
     /// null — tools invisíveis lá).
     /// </summary>
+    public sealed record ToolLoopOptions(
+        ToolLoopCallbacks? Callbacks = null,
+        BuiltinToolContext? BuiltinContext = null,
+        string? UserId = null,
+        Microsoft.Extensions.Logging.ILogger? Log = null,
+        int? MaxSteps = null,
+        int MaxParallelTools = 4,
+        RunLoopCheckpoint? Resume = null);
+
     public static async Task<ToolLoopOutcome?> RunToolLoopAsync(
         ChatCompletionRequest effective,
         IReadOnlyList<Tool> tools,
         ToolExecutor toolExecutor,
         ProviderService providers,
         CancellationToken ct,
-        ToolLoopCallbacks? callbacks = null,
-        BuiltinToolContext? builtinContext = null,
-        string? userId = null,
-        Microsoft.Extensions.Logging.ILogger? log = null,
-        int? maxSteps = null,
-        int maxParallelTools = 4,
-        RunLoopCheckpoint? resume = null)
+        ToolLoopOptions? options = null)
     {
+        var callbacks = options?.Callbacks;
+        var builtinContext = options?.BuiltinContext;
+        var userId = options?.UserId;
+        var log = options?.Log;
+        var maxSteps = options?.MaxSteps;
+        var maxParallelTools = options?.MaxParallelTools ?? 4;
+        var resume = options?.Resume;
         // Teto global default do tool loop: efetivamente ilimitado — a
         // run só para por decisão do modelo, por `steps:` explícito do
         // agent ou por agentLoop.maxRounds configurado. O default alto
@@ -1187,20 +1197,24 @@ public static class ChatPipeline
     /// <paramref name="emitLineAsync"/> (linha SSE `data: ...` pronta).
     /// Retorna true quando tratou a requisição (mesmo em erro já emitido).
     /// </summary>
+    public sealed record ArenaDeps(
+        AppDbContext Db, ConfigService Config, RagService Rag,
+        ProviderService Providers, WebSearchService WebSearch,
+        WorkspaceRepoService Repos,
+        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor>? PromptContributors = null);
+
     public static async Task<bool> TryRunArenaAsync(
         ChatCompletionRequest request,
         string modelKey,
         User user,
-        AppDbContext db,
-        ConfigService config,
-        RagService rag,
-        ProviderService providers,
-        WebSearchService webSearch,
-        WorkspaceRepoService repos,
+        ArenaDeps deps,
         Func<string, Task> emitLineAsync,
-        CancellationToken ct,
-        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor>? promptContributors = null)
+        CancellationToken ct)
     {
+        var db = deps.Db; var config = deps.Config; var rag = deps.Rag;
+        var providers = deps.Providers; var webSearch = deps.WebSearch;
+        var repos = deps.Repos;
+        var promptContributors = deps.PromptContributors;
         var arenaEntry = await db.ModelEntries.AsNoTracking()
             .FirstOrDefaultAsync(
                 m => m.IsActive && (m.Id == modelKey || m.Name == modelKey)
@@ -1233,8 +1247,8 @@ public static class ChatPipeline
             {
                 var effective = await EnrichRequestAsync(
                     request with { Model = competitor, Stream = false },
-                    user, db, config, rag, webSearch, repos,
-                    promptContributors ?? [], ct);
+                    user, new EnrichDeps(db, config, rag, webSearch, repos,
+                        promptContributors ?? []), ct);
                 responses.Add(await providers.CompleteAsync(effective, user.Id, ct));
             }
         }

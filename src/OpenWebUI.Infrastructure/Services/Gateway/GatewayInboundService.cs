@@ -70,15 +70,13 @@ public sealed class GatewayInboundService(
         }
         if (!adapter.VerifySignature(channel, signatureHeader, rawBody))
         {
-            await AuditAsync(channel.Id, null, "in", "rejected",
-                null, null, null, "assinatura inválida", ct);
+            await AuditAsync(new AuditInfo(channel.Id, null, "in", "rejected", null, null, null, "assinatura inválida"), ct);
             return new GatewayInboundResult(401, "assinatura inválida");
         }
         var inbound = adapter.ParseInbound(rawBody);
         if (inbound is null)
         {
-            await AuditAsync(channel.Id, null, "in", "filtered",
-                null, null, null, null, ct);
+            await AuditAsync(new AuditInfo(channel.Id, null, "in", "filtered", null, null, null, null), ct);
             return GatewayInboundResult.Ok;
         }
 
@@ -108,8 +106,7 @@ public sealed class GatewayInboundService(
 
         if (peer.Blocked)
         {
-            await AuditAsync(channel.Id, peer.Id, "in", "blocked",
-                inbound.MessageId, null, Excerpt(inbound.Text), null, ct);
+            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "blocked", inbound.MessageId, null, Excerpt(inbound.Text), null), ct);
             return GatewayInboundResult.Ok;
         }
 
@@ -128,8 +125,7 @@ public sealed class GatewayInboundService(
                     botToken, ct);
                 sendError = send.Ok ? null : send.Error;
             }
-            await AuditAsync(channel.Id, peer.Id, "in", "pairing",
-                inbound.MessageId, null, Excerpt(inbound.Text), sendError, ct);
+            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "pairing", inbound.MessageId, null, Excerpt(inbound.Text), sendError), ct);
             return GatewayInboundResult.Ok;
         }
 
@@ -212,9 +208,7 @@ public sealed class GatewayInboundService(
         var model = channel.DefaultModelId ?? FirstModel(chat.ModelsJson);
         if (model is null)
         {
-            await AuditAsync(channel.Id, peer.Id, "in", "failed",
-                inbound.MessageId, null, Excerpt(inbound.Text),
-                "sem modelo: configure defaultModelId no canal", ct);
+            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "failed", inbound.MessageId, null, Excerpt(inbound.Text), "sem modelo: configure defaultModelId no canal"), ct);
             if (botToken is not null)
             {
                 await adapter.SendReplyAsync(channel, peer,
@@ -259,8 +253,7 @@ public sealed class GatewayInboundService(
         };
         db.ChatRuns.Add(run);
         await db.SaveChangesAsync(ct);
-        await AuditAsync(channel.Id, peer.Id, "in", "accepted",
-            inbound.MessageId, run.Id, Excerpt(inbound.Text), null, ct);
+        await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "accepted", inbound.MessageId, run.Id, Excerpt(inbound.Text), null), ct);
 
         dispatcher.Enqueue(run.Id);
         return GatewayInboundResult.Ok;
@@ -280,22 +273,24 @@ public sealed class GatewayInboundService(
             ? s.Value : null;
     }
 
+    /// <summary>Dados de auditoria de entrega inbound (S107).</summary>
+    public sealed record AuditInfo(
+        string ChannelId, string? PeerId, string Direction, string Status,
+        string? MessageId, string? RunId, string? Excerpt, string? Error);
+
     /// <summary>Persiste auditoria de entrega inbound (excerpt truncado).</summary>
-    public async Task AuditAsync(
-        string channelId, string? peerId, string direction, string status,
-        string? messageId, string? runId, string? excerpt, string? error,
-        CancellationToken ct)
+    public async Task AuditAsync(AuditInfo a, CancellationToken ct)
     {
         db.GatewayDeliveries.Add(new GatewayDelivery
         {
-            ChannelId = channelId,
-            PeerId = peerId,
-            Direction = direction,
-            Status = status,
-            MessageId = messageId,
-            RunId = runId,
-            Excerpt = excerpt,
-            Error = error is { Length: > 500 } ? error[..500] : error,
+            ChannelId = a.ChannelId,
+            PeerId = a.PeerId,
+            Direction = a.Direction,
+            Status = a.Status,
+            MessageId = a.MessageId,
+            RunId = a.RunId,
+            Excerpt = a.Excerpt,
+            Error = a.Error is { Length: > 500 } ? a.Error[..500] : a.Error,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });
         await db.SaveChangesAsync(ct);

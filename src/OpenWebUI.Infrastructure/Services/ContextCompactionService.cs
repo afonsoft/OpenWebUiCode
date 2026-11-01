@@ -158,16 +158,22 @@ public sealed class LlmContextSummarizer(ProviderService providers) : IContextSu
 /// são ordenados por Position (o cutoff é contagem de mensagens desde o início).
 /// Best-effort: falha no summarizer nunca bloqueia a run.
 /// </summary>
+public sealed record CompactionDeps(
+    INativeContextCompactor? Native = null,
+    ProviderService? Providers = null,
+    ModelCapabilityResolver? Caps = null);
+
 public sealed class ContextCompactionService(
     AppDbContext db,
     ConfigService config,
     IContextSummarizer summarizer,
     ModelRoleResolver roles,
     ILogger<ContextCompactionService> logger,
-    INativeContextCompactor? native = null,
-    ProviderService? providers = null,
-    ModelCapabilityResolver? caps = null)
+    CompactionDeps? extras = null)
 {
+    private readonly INativeContextCompactor? native = extras?.Native;
+    private readonly ProviderService? providers = extras?.Providers;
+    private readonly ModelCapabilityResolver? caps = extras?.Caps;
     /// <summary>Resultado de uma compactação manual (RF-004).</summary>
     public sealed record CompactResult(
         bool Compacted, bool Native, string? Warning);

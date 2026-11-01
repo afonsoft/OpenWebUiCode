@@ -53,8 +53,7 @@ public static class OAuthEndpoints
 
     private static async Task<IResult> CallbackAsync(
         string provider, string? code, string? state,
-        HttpContext http, AppDbContext db, OAuthService oauth,
-        ConfigService config, JwtTokenService tokens, IHttpClientFactory httpFactory,
+        HttpContext http, [AsParameters] OAuthCallbackDeps deps,
         CancellationToken ct)
     {
         var providerConfig = OAuthProviderCatalog.Resolve(provider);
@@ -63,21 +62,21 @@ public static class OAuthEndpoints
             return Results.NotFound();
         }
 
-        if (!ValidateState(state, JwtSecret(db)))
+        if (!ValidateState(state, JwtSecret(deps.Db)))
         {
             return Results.BadRequest(new { detail = "State OAuth inválido." });
         }
 
         var redirectUri = CallbackUri(http, providerConfig.Name);
         var tokenResponse = await ExchangeCodeAsync(
-            providerConfig, code, redirectUri, httpFactory, ct);
+            providerConfig, code, redirectUri, deps.HttpFactory, ct);
         if (tokenResponse is null)
         {
             return Results.BadRequest(new { detail = "Falha na autenticação com o provedor." });
         }
 
         var userInfo = await FetchUserInfoAsync(
-            providerConfig, tokenResponse.Value, httpFactory, ct);
+            providerConfig, tokenResponse.Value, deps.HttpFactory, ct);
         if (userInfo is null)
         {
             return Results.BadRequest(new { detail = "Falha ao obter dados do usuário." });
@@ -89,16 +88,16 @@ public static class OAuthEndpoints
             return Results.BadRequest(new { detail = "Provedor não retornou e-mail verificado." });
         }
 
-        var link = await oauth.LinkOrCreateAsync(
+        var link = await deps.OAuth.LinkOrCreateAsync(
             providerConfig.Name, subject, email, name, ct);
 
-        var user = await db.Users.FindAsync([link.UserId], ct);
+        var user = await deps.Db.Users.FindAsync([link.UserId], ct);
         if (user is null || user.Role == UserRoles.Pending)
         {
             return Results.Redirect("/?oauth_error=pending");
         }
 
-        var token = await tokens.CreateTokenAsync(user, ct);
+        var token = await deps.Tokens.CreateTokenAsync(user, ct);
         return Results.Redirect($"/?oauth_token={Uri.EscapeDataString(token.Token)}");
     }
 
@@ -235,3 +234,8 @@ public static class OAuthEndpoints
             ? value.GetString()
             : null;
 }
+
+/// <summary>Bundle DI do callback OAuth (S107).</summary>
+internal sealed record OAuthCallbackDeps(
+    AppDbContext Db, OAuthService OAuth,
+    JwtTokenService Tokens, IHttpClientFactory HttpFactory);

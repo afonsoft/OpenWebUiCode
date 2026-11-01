@@ -48,10 +48,8 @@ public class RunUsageLedgerTests
         await using var db = CreateContext();
         var ledger = Ledger(db);
 
-        await ledger.RecordAsync("run-1", "chat-1", "user-1", null,
-            "model-a", 3, 100, 50, 10, 0.01, CancellationToken.None);
-        await ledger.RecordAsync("run-1", "chat-1", "user-1", null,
-            "model-a", 3, 100, 50, 10, 0.01, CancellationToken.None);
+        await ledger.RecordAsync(new RunUsageLedgerService.UsageEntry("run-1", "chat-1", "user-1", null, "model-a", 3, 100, 50, 10, 0.01), CancellationToken.None);
+        await ledger.RecordAsync(new RunUsageLedgerService.UsageEntry("run-1", "chat-1", "user-1", null, "model-a", 3, 100, 50, 10, 0.01), CancellationToken.None);
 
         Assert.That(await db.RunUsageRecords.CountAsync(
             r => r.RunId == "run-1"), Is.EqualTo(1));
@@ -63,8 +61,7 @@ public class RunUsageLedgerTests
     public async Task RecordAsync_NoUsage_StoresNullCost()
     {
         await using var db = CreateContext();
-        await Ledger(db).RecordAsync("run-2", "chat-1", "user-1", null,
-            "local-model", 0, 0, 0, 0, null, CancellationToken.None);
+        await Ledger(db).RecordAsync(new RunUsageLedgerService.UsageEntry("run-2", "chat-1", "user-1", null, "local-model", 0, 0, 0, 0, null), CancellationToken.None);
 
         var row = await db.RunUsageRecords.SingleAsync(
             r => r.RunId == "run-2");

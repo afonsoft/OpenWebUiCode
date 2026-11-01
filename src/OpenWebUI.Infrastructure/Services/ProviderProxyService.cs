@@ -38,10 +38,16 @@ public class ProviderProxyService(IHttpClientFactory httpClientFactory, ConfigSe
     /// <param name="body">Corpo da requisição recebida (pode ser null).</param>
     /// <param name="contentType">Content-Type do corpo recebido.</param>
     /// <param name="ct">Token de cancelamento.</param>
+    public sealed record ForwardRequest(
+        HttpMethod Method, string Provider, string Path, int? Index,
+        byte[]? Body, string? ContentType, string? QueryString);
+
     public async Task<ProxiedResponse> ForwardAsync(
-        HttpMethod method, string provider, string path, int? index,
-        byte[]? body, string? contentType, string? queryString, CancellationToken ct)
+        ForwardRequest r, CancellationToken ct)
     {
+        var method = r.Method; var provider = r.Provider; var path = r.Path;
+        var index = r.Index; var body = r.Body; var contentType = r.ContentType;
+        var queryString = r.QueryString;
         var allowed = provider == "ollama" ? OllamaAllowed : OpenAiAllowed;
         var key = $"{path}:{method.Method}";
         var ok = allowed.Contains(key) || allowed.Any(entry =>

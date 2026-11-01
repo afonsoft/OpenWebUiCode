@@ -349,9 +349,8 @@ public static class LspEndpoints
     /// <summary>Tooltip do editor — hover do servidor (texto ou null).</summary>
     private static Task<IResult> HoverAsync(
         string? path, int? line, int? col, string? chatId,
-        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        LspService lsp, CancellationToken ct) =>
-        WithWorkdirAsync(http, db, repos, chatId, ct, async (uid, workdir) =>
+        HttpContext http, [AsParameters] LspDeps deps, CancellationToken ct) =>
+        WithWorkdirAsync(http, deps.Db, deps.Repos, chatId, ct, async (uid, workdir) =>
         {
             var full = WorkspaceFiles.ResolveInside(workdir, path, out var error);
             if (full is null)
@@ -359,14 +358,14 @@ public static class LspEndpoints
                 return Results.BadRequest(new { detail = error });
             }
 
-            var language = lsp.LanguageFor(full);
+            var language = deps.Lsp.LanguageFor(full);
             if (language is null)
             {
                 return Results.Ok(new LspHoverResponse(null));
             }
             try
             {
-                var client = await lsp.GetClientAsync(workdir, language, ct);
+                var client = await deps.Lsp.GetClientAsync(workdir, language, ct);
                 var result = await client.RequestAsync("textDocument/hover", new
                 {
                     textDocument = new { uri = LspClient.UriForPath(full) },
@@ -518,26 +517,29 @@ public static class LspEndpoints
     /// dentro do jail).</summary>
     private static Task<IResult> DefinitionAsync(
         string? path, int? line, int? col, string? chatId, HttpContext http,
-        AppDbContext db, WorkspaceRepoService repos, LspService lsp,
-        CancellationToken ct) =>
-        LocationsAsync(path, line, col, "textDocument/definition",
-            http, db, repos, lsp, ct, chatId);
+        [AsParameters] LspDeps deps, CancellationToken ct) =>
+        LocationsAsync(new LocationQuery(path, line, col, chatId, false),
+            "textDocument/definition", http, deps, ct);
 
     private static Task<IResult> ReferencesAsync(
         string? path, int? line, int? col, string? chatId, HttpContext http,
-        AppDbContext db, WorkspaceRepoService repos, LspService lsp,
-        CancellationToken ct) =>
-        LocationsAsync(path, line, col, "textDocument/references",
-            http, db, repos, lsp, ct, chatId, includeDecl: true);
+        [AsParameters] LspDeps deps, CancellationToken ct) =>
+        LocationsAsync(new LocationQuery(path, line, col, chatId, true),
+            "textDocument/references", http, deps, ct);
+
+    private sealed record LocationQuery(
+        string? Path, int? Line, int? Col, string? ChatId, bool IncludeDecl);
+
+    /// <summary>Bundle DI dos endpoints LSP (S107).</summary>
+    internal sealed record LspDeps(
+        AppDbContext Db, WorkspaceRepoService Repos, LspService Lsp);
 
     private static Task<IResult> LocationsAsync(
-        string? path, int? line, int? col, string method,
-        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        LspService lsp, CancellationToken ct, string? chatId,
-        bool includeDecl = false) =>
-        WithWorkdirAsync(http, db, repos, chatId, ct, async (uid, workdir) =>
+        LocationQuery q, string method, HttpContext http, LspDeps deps,
+        CancellationToken ct) =>
+        WithWorkdirAsync(http, deps.Db, deps.Repos, q.ChatId, ct, async (uid, workdir) =>
         {
-            var ready = LspReady(lsp, workdir, path, out var early);
+            var ready = LspReady(deps.Lsp, workdir, q.Path, out var early);
             if (early is not null)
             {
                 return early;
@@ -548,16 +550,16 @@ public static class LspEndpoints
             }
             try
             {
-                var p = PosParams(ready.Value.Full, line ?? 0, col ?? 0);
+                var p = PosParams(ready.Value.Full, q.Line ?? 0, q.Col ?? 0);
                 var @params = method == "textDocument/references"
                     ? new
                     {
                         textDocument = p.textDocument,
                         position = p.position,
-                        context = new { includeDeclaration = includeDecl },
+                        context = new { includeDeclaration = q.IncludeDecl },
                     }
                     : (object)p;
-                var res = await lsp.RequestAsync(workdir, ready.Value.Full, method, @params, ct);
+                var res = await deps.Lsp.RequestAsync(workdir, ready.Value.Full, method, @params, ct);
                 var list = new List<LspFileLocation>();
                 foreach (var loc in EnumerateLocations(res))
                 {

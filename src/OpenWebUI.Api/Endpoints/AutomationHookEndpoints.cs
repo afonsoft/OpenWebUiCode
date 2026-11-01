@@ -201,10 +201,14 @@ public static class AutomationHookEndpoints
     /// secret seguem aceitos (legado) com warning na delivery.
     /// </summary>
     private static async Task<IResult> FireAsync(
-        HttpContext http, AppDbContext db, IChatRunDispatcher dispatcher,
-        ConfigService config, RateLimitService limits,
-        WorkspaceRepoService repos, string token, CancellationToken ct)
+        HttpContext http, [AsParameters] HookFireDeps deps,
+        string token, CancellationToken ct)
     {
+        var db = deps.Db;
+        var dispatcher = deps.Dispatcher;
+        var config = deps.Config;
+        var limits = deps.Limits;
+        var repos = deps.Repos;
         var rateConfig = await config.GetAsync("ratelimit", RateLimitConfig.Default, ct);
         if (rateConfig.Enabled)
         {
@@ -273,8 +277,7 @@ public static class AutomationHookEndpoints
             var sig = http.Request.Headers["X-Hub-Signature-256"].ToString();
             if (!WebhookSignature.Verify(secret, raw, sig))
             {
-                await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
-                    "rejected", null, "assinatura ausente/inválida", null, ct);
+                await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "rejected", null, "assinatura ausente/inválida", null), ct);
                 return Results.Json(
                     new { detail = "assinatura inválida." }, statusCode: 401);
             }
@@ -290,8 +293,7 @@ public static class AutomationHookEndpoints
         if (filter.Count > 0 && eventType is not null
             && !filter.Contains(eventType, StringComparer.OrdinalIgnoreCase))
         {
-            await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
-                "filtered", null, null, securityWarning, ct);
+            await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "filtered", null, null, securityWarning), ct);
             return Results.Ok(new { status = "filtered", eventType });
         }
 
@@ -317,8 +319,7 @@ public static class AutomationHookEndpoints
             }
             catch (WebhookTemplateException tex)
             {
-                await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
-                    "rejected", null, tex.Message, securityWarning, ct);
+                await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "rejected", null, tex.Message, securityWarning), ct);
                 return Results.UnprocessableEntity(
                     new { detail = $"template: {tex.Message}" });
             }
@@ -366,8 +367,7 @@ public static class AutomationHookEndpoints
                 $"https://github.com/{slug}.git", null, ct);
             if (bindError is not null)
             {
-                await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
-                    "failed", null, $"repo: {bindError}", securityWarning, ct);
+                await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "failed", null, $"repo: {bindError}", securityWarning), ct);
                 return Results.UnprocessableEntity(
                     new { detail = $"repo: {bindError}" });
             }
@@ -439,8 +439,7 @@ public static class AutomationHookEndpoints
         hook.Chat.UpdatedAt = now;
         hook.LastFiredAt = now;
         await db.SaveChangesAsync(ct);
-        await RecordDeliveryAsync(db, hook, deliveryKey, eventType,
-            "accepted", run.Id, null, securityWarning, ct);
+        await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "accepted", run.Id, null, securityWarning), ct);
 
         dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: new AutomationHookFireResponse(
@@ -448,21 +447,23 @@ public static class AutomationHookEndpoints
     }
 
     /// <summary>Persiste a linha de auditoria da entrega (RF-D2).</summary>
+    private sealed record DeliveryInfo(
+        AutomationHook Hook, string? DeliveryKey, string? EventType,
+        string Status, string? RunId, string? Error, string? SecurityWarning);
+
     private static async Task RecordDeliveryAsync(
-        AppDbContext db, AutomationHook hook, string? deliveryKey,
-        string? eventType, string status, string? runId, string? error,
-        string? securityWarning, CancellationToken ct)
+        AppDbContext db, DeliveryInfo d, CancellationToken ct)
     {
         db.AutomationHookDeliveries.Add(new AutomationHookDelivery
         {
-            HookId = hook.Id,
-            DeliveryKey = deliveryKey,
-            EventType = eventType,
+            HookId = d.Hook.Id,
+            DeliveryKey = d.DeliveryKey,
+            EventType = d.EventType,
             ReceivedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            Status = status,
-            RunId = runId,
-            Error = error is { Length: > 500 } ? error[..500] : error,
-            SecurityWarning = securityWarning,
+            Status = d.Status,
+            RunId = d.RunId,
+            Error = d.Error is { Length: > 500 } ? d.Error[..500] : d.Error,
+            SecurityWarning = d.SecurityWarning,
         });
         await db.SaveChangesAsync(ct);
     }
@@ -561,4 +562,10 @@ public static class AutomationHookEndpoints
     private static Task<User?> CurrentUserAsync(
         HttpContext http, AppDbContext db, CancellationToken ct) =>
         AuthEndpoints.FindUserAsync(http, db, ct);
+
+    /// <summary>Bundle DI do disparo de hook (S107).</summary>
+    internal sealed record HookFireDeps(
+        AppDbContext Db, IChatRunDispatcher Dispatcher,
+        ConfigService Config, RateLimitService Limits,
+        WorkspaceRepoService Repos);
 }

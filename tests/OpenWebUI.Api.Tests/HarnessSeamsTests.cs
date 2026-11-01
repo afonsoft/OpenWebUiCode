@@ -339,7 +339,9 @@ public class HarnessSeamsTests
         using var db = NewDb();
         var contributors = OpenWebUI.Api.Completions.Contributors
             .SystemPromptContributors.Default(
-                db, null!, null!, null!, null!, null!, null!);
+                new OpenWebUI.Api.Completions.Contributors
+                    .SystemPromptContributors.ContributorDeps(
+                        db, null!, null!, null!, null!, null!, null!));
         var user = new User { Id = "u1", Name = "U", Email = "u@c.local" };
         var ctx = new PromptContext
         {

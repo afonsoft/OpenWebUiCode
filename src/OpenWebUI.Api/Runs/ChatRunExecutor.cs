@@ -19,38 +19,65 @@ namespace OpenWebUI.Api.Runs;
 /// em <see cref="ChatRun.PartialContent"/>. Ao final grava a mensagem do
 /// assistant no chat — a persistência deixa de depender do cliente.
 /// </summary>
+public sealed record ChatRunPipelineDeps(
+    AppDbContext Db, ConfigService Config, ProviderService Providers,
+    RagService Rag, ToolExecutor ToolExecutor, PipelineClientService Pipelines,
+    WebSearchService WebSearch, WorkspaceRepoService Repos,
+    IWebHostEnvironment Env,
+    IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> PromptContributors);
+
+public sealed record ChatRunToolsDeps(
+    WorktreeService Worktrees, BuiltinToolRegistry Builtins,
+    ToolApprovalOverrideService ToolOverrides, McpClientService Mcp,
+    ComboService Combos, ContextBoundaryService Boundaries,
+    IServiceScopeFactory Scopes);
+
+public sealed record ChatRunLifecycleDeps(
+    ChatRunBroadcaster Broadcaster, ChatRunApprovals Approvals,
+    ChatRunPauses Pauses, CheckpointService Checkpoints,
+    ContextCompactionService Compaction, RunAdvisorService Advisor,
+    RunEventWriter RunEvents,
+    OpenWebUI.Infrastructure.Runs.AgentRunEventBus RunBus,
+    OpenWebUI.Infrastructure.Runs.RunInterceptorRunner Interceptors,
+    PolicyService? Policies, RunUsageLedgerService UsageLedger,
+    BudgetPolicyService Budgets);
+
 public sealed class ChatRunExecutor(
-    AppDbContext db,
-    ConfigService config,
-    ProviderService providers,
-    RagService rag,
-    ToolExecutor toolExecutor,
-    PipelineClientService pipelines,
-    WebSearchService webSearch,
-    WorkspaceRepoService repos,
-    WorktreeService worktrees,
-    BuiltinToolRegistry builtins,
-    ToolApprovalOverrideService toolOverrides,
-    ChatRunBroadcaster broadcaster,
-    ChatRunApprovals approvals,
-    ChatRunPauses pauses,
-    CheckpointService checkpoints,
-    ContextCompactionService compaction,
-    ContextBoundaryService boundaries,
-    RunAdvisorService advisor,
-    McpClientService mcp,
-    ComboService combos,
-    RunEventWriter runEvents,
-    OpenWebUI.Infrastructure.Runs.AgentRunEventBus runBus,
-    OpenWebUI.Infrastructure.Runs.RunInterceptorRunner interceptors,
-    IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors,
-    PolicyService? policies,
-    RunUsageLedgerService usageLedger,
-    BudgetPolicyService budgets,
-    IServiceScopeFactory scopes,
-    IWebHostEnvironment env,
+    ChatRunPipelineDeps pipeline,
+    ChatRunToolsDeps tools,
+    ChatRunLifecycleDeps lifecycle,
     ILogger<ChatRunExecutor> logger)
 {
+    private readonly AppDbContext db = pipeline.Db;
+    private readonly ConfigService config = pipeline.Config;
+    private readonly ProviderService providers = pipeline.Providers;
+    private readonly RagService rag = pipeline.Rag;
+    private readonly ToolExecutor toolExecutor = pipeline.ToolExecutor;
+    private readonly PipelineClientService pipelines = pipeline.Pipelines;
+    private readonly WebSearchService webSearch = pipeline.WebSearch;
+    private readonly WorkspaceRepoService repos = pipeline.Repos;
+    private readonly IWebHostEnvironment env = pipeline.Env;
+    private readonly IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors
+        = pipeline.PromptContributors;
+    private readonly WorktreeService worktrees = tools.Worktrees;
+    private readonly BuiltinToolRegistry builtins = tools.Builtins;
+    private readonly ToolApprovalOverrideService toolOverrides = tools.ToolOverrides;
+    private readonly McpClientService mcp = tools.Mcp;
+    private readonly ComboService combos = tools.Combos;
+    private readonly ContextBoundaryService boundaries = tools.Boundaries;
+    private readonly IServiceScopeFactory scopes = tools.Scopes;
+    private readonly ChatRunBroadcaster broadcaster = lifecycle.Broadcaster;
+    private readonly ChatRunApprovals approvals = lifecycle.Approvals;
+    private readonly ChatRunPauses pauses = lifecycle.Pauses;
+    private readonly CheckpointService checkpoints = lifecycle.Checkpoints;
+    private readonly ContextCompactionService compaction = lifecycle.Compaction;
+    private readonly RunAdvisorService advisor = lifecycle.Advisor;
+    private readonly RunEventWriter runEvents = lifecycle.RunEvents;
+    private readonly OpenWebUI.Infrastructure.Runs.AgentRunEventBus runBus = lifecycle.RunBus;
+    private readonly OpenWebUI.Infrastructure.Runs.RunInterceptorRunner interceptors = lifecycle.Interceptors;
+    private readonly PolicyService? policies = lifecycle.Policies;
+    private readonly RunUsageLedgerService usageLedger = lifecycle.UsageLedger;
+    private readonly BudgetPolicyService budgets = lifecycle.Budgets;
     /// <summary>Bytes de delta acumulados antes de gravar um checkpoint.</summary>
     private const int CheckpointBytes = 2048;
 
@@ -272,7 +299,9 @@ public sealed class ChatRunExecutor(
                 ? request.Model["arena:".Length..]
                 : request.Model;
             if (await ChatPipeline.TryRunArenaAsync(
-                request, arenaModel, user, db, config, rag, providers, webSearch, repos,
+                request, arenaModel, user,
+                new ChatPipeline.ArenaDeps(db, config, rag, providers, webSearch,
+                    repos, promptContributors),
                 line =>
                 {
                     // O [DONE] do arena é retido: sai depois do FinishAsync.
@@ -340,8 +369,9 @@ public sealed class ChatRunExecutor(
             }
 
             var effective = await ChatPipeline.EnrichRequestAsync(
-                request, user, db, config, rag, webSearch, repos,
-                promptContributors, ct, chatMode, run.ChatId, logger);
+                request, user,
+                new ChatPipeline.EnrichDeps(db, config, rag, webSearch, repos,
+                    promptContributors), ct, chatMode, run.ChatId, logger);
 
             // Notebook persistente do chat (SPEC-20261013-agent-context-
             // management RF-003): injetado como system na entrada de toda
@@ -711,9 +741,10 @@ public sealed class ChatRunExecutor(
                         broadcaster.Publish(run.Id, $"data: {chunk}");
                     });
                 var outcome = await ChatPipeline.RunToolLoopAsync(
-                    effective, tools, toolExecutor, providers, ct, callbacks,
-                    builtinContext, run.UserId, logger, maxSteps,
-                    toolExecutor.MaxParallel, resumeSeed);
+                    effective, tools, toolExecutor, providers, ct,
+                    new ChatPipeline.ToolLoopOptions(
+                        callbacks, builtinContext, run.UserId, logger, maxSteps,
+                        toolExecutor.MaxParallel, resumeSeed));
                 loopOutcome = outcome;
                 toolMessages = outcome?.ToolMessages;
                 if (outcome is not null)
@@ -806,8 +837,9 @@ public sealed class ChatRunExecutor(
             if (loopOutcome is null)
             {
                 await usageLedger.RecordAsync(
-                    run.Id, run.ChatId, run.UserId, run.ParentRunId,
-                    run.Model, 0, 0, 0, 0, null, ct);
+                    new RunUsageLedgerService.UsageEntry(
+                        run.Id, run.ChatId, run.UserId, run.ParentRunId,
+                        run.Model, 0, 0, 0, 0, null), ct);
             }
             // [DONE] depois do FinishAsync: o cliente recarrega o chat ao ver o
             // marcador — a mensagem precisa já estar persistida.
@@ -2248,9 +2280,10 @@ public sealed class ChatRunExecutor(
                 (int)Math.Min(int.MaxValue, completionSum), ct)
             : null;
         await usageLedger.RecordAsync(
-            run.Id, run.ChatId, run.UserId, run.ParentRunId, run.Model,
-            outcome.TotalSteps, promptSum, completionSum, reasoningSum,
-            costUsd, ct);
+            new RunUsageLedgerService.UsageEntry(
+                run.Id, run.ChatId, run.UserId, run.ParentRunId, run.Model,
+                outcome.TotalSteps, promptSum, completionSum, reasoningSum,
+                costUsd), ct);
 
         if (outcome.TotalSteps <= 0)
         {

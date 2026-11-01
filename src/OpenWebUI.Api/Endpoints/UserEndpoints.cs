@@ -38,10 +38,11 @@ public static class UserEndpoints
 
     private static async Task<IResult> ListUsersAsync(
         HttpContext http, AppDbContext db, CancellationToken ct,
-        string? query = null, string? filter = null,
-        string? order_by = null, string? direction = null,
-        int page = 1, int per_page = 50)
+        [AsParameters] UserListQuery q)
     {
+        var (query, filter, order_by, direction, page, per_page) =
+            (q.Query, q.Filter, q.Order_By, q.Direction,
+             q.Page ?? 1, q.Per_Page ?? 50);
         if (!http.User.IsInRole(UserRoles.Admin))
         {
             return Results.Forbid();
@@ -462,4 +463,16 @@ public static class UserEndpoints
         await db.SaveChangesAsync(ct);
         return Results.Ok(new StatusResponse(true));
     }
+}
+
+/// <summary>Query params da listagem de usuários — mesmos nomes do
+/// contrato HTTP (S107).</summary>
+internal sealed record UserListQuery
+{
+    public string? Query { get; init; }
+    public string? Filter { get; init; }
+    public string? Order_By { get; init; }
+    public string? Direction { get; init; }
+    public int? Page { get; init; }
+    public int? Per_Page { get; init; }
 }

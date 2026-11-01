@@ -41,14 +41,21 @@ internal static class ContextSnapshotCompactor
     /// <param name="userId">Dono do chat (BYOK do provider).</param>
     /// <param name="chatId">Chat dono — compõe o pointer history:// do stub.</param>
     /// <param name="summaryTimeout">Timeout da sumarização (KV clampada).</param>
+    public sealed record BudgetRequest(
+        IReadOnlyList<ContextSnapshotService.SnapshotItem> Items,
+        string Strategy, int TokenBudget,
+        IContextSummarizer? Summarizer, string? Model, string? UserId,
+        string ChatId, TimeSpan SummaryTimeout);
+
     public static async Task<(
         List<ContextSnapshotService.SnapshotItem> Items,
         CompactionStats Stats)> ApplyBudgetAsync(
-        IReadOnlyList<ContextSnapshotService.SnapshotItem> items,
-        string strategy, int tokenBudget,
-        IContextSummarizer? summarizer, string? model, string? userId,
-        string chatId, TimeSpan summaryTimeout, CancellationToken ct)
+        BudgetRequest b, CancellationToken ct)
     {
+        var items = b.Items; var strategy = b.Strategy;
+        var tokenBudget = b.TokenBudget; var summarizer = b.Summarizer;
+        var model = b.Model; var userId = b.UserId; var chatId = b.ChatId;
+        var summaryTimeout = b.SummaryTimeout;
         var work = items.ToList();
         var tokensBefore = ContextSnapshotService.EstimateTokens(work);
         var elided = 0;

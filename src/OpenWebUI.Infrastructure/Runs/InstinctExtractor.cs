@@ -97,7 +97,8 @@ public sealed class InstinctExtractor(
             }
 
             await ExtractAsync(scope.ServiceProvider, db,
-                e.UserId, e.ChatId, e.RunId, repoSlug, instincts, ct);
+                new ExtractTarget(e.UserId, e.ChatId, e.RunId, repoSlug),
+                instincts, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -149,9 +150,11 @@ public sealed class InstinctExtractor(
     }
 
     /// <summary>Destila o transcript em candidatos e grava via upsert.</summary>
+    private sealed record ExtractTarget(
+        string UserId, string ChatId, string RunId, string? RepoSlug);
+
     private async Task ExtractAsync(
-        IServiceProvider sp, AppDbContext db,
-        string userId, string chatId, string runId, string? repoSlug,
+        IServiceProvider sp, AppDbContext db, ExtractTarget t,
         InstinctService instincts, CancellationToken ct)
     {
         var roles = sp.GetRequiredService<ModelRoleResolver>();
@@ -159,7 +162,7 @@ public sealed class InstinctExtractor(
 
         var chat = await db.Chats.AsNoTracking()
             .Include(c => c.Messages)
-            .FirstOrDefaultAsync(c => c.Id == chatId, ct);
+            .FirstOrDefaultAsync(c => c.Id == t.ChatId, ct);
         if (chat is null)
         {
             return;
@@ -171,7 +174,7 @@ public sealed class InstinctExtractor(
         }
 
         var model = await roles.ResolveAsync(
-            "memory", userId, FirstModel(chat.ModelsJson) ?? string.Empty, ct);
+            "memory", t.UserId, FirstModel(chat.ModelsJson) ?? string.Empty, ct);
         if (string.IsNullOrWhiteSpace(model))
         {
             return;
@@ -185,23 +188,24 @@ public sealed class InstinctExtractor(
                     model,
                     [new ChatCompletionMessage("user", ExtractPrompt + transcript)],
                     Stream: false),
-                userId, ct);
+                t.UserId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogDebug(ex,
-                "instincts: provider falhou na extração do chat {ChatId}", chatId);
+                "instincts: provider falhou na extração do chat {ChatId}", t.ChatId);
             return;
         }
 
-        var scope = repoSlug is not null
+        var scope = t.RepoSlug is not null
             ? InstinctService.ScopeWorkspace
             : InstinctService.ScopeUser;
         foreach (var c in ParseCandidates(reply))
         {
             await instincts.UpsertCandidateAsync(
-                userId, scope, repoSlug, c.Domain, c.Trigger, c.Body,
-                runId, ct);
+                new InstinctService.InstinctCandidate(
+                    t.UserId, scope, t.RepoSlug, c.Domain, c.Trigger,
+                    c.Body, t.RunId), ct);
         }
     }
 

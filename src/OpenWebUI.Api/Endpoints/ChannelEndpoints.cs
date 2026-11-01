@@ -512,10 +512,9 @@ public static class ChannelEndpoints
 
     private static async Task<IResult> ToggleReactionAsync(
         string id, string mid, string emoji, bool add,
-        HttpContext http, AppDbContext db,
-        IHubContext<ChatHub> hub, CancellationToken ct)
+        HttpContext http, ChannelReactionDeps deps, CancellationToken ct)
     {
-        var (user, channel) = await LoadMembershipAsync(http, id, db, ct);
+        var (user, channel) = await LoadMembershipAsync(http, id, deps.Db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
@@ -529,18 +528,18 @@ public static class ChannelEndpoints
             return Results.BadRequest(new { detail = "Emoji inválido." });
         }
 
-        var messageExists = await db.ChannelMessages
+        var messageExists = await deps.Db.ChannelMessages
             .AnyAsync(m => m.Id == mid && m.ChannelId == id, ct);
         if (!messageExists)
         {
             return Results.NotFound(new { detail = "Mensagem não encontrada." });
         }
 
-        var existing = await db.ChannelMessageReactions.FirstOrDefaultAsync(
+        var existing = await deps.Db.ChannelMessageReactions.FirstOrDefaultAsync(
             r => r.ChannelMessageId == mid && r.UserId == user.Id && r.Emoji == emoji, ct);
         if (add && existing is null)
         {
-            db.ChannelMessageReactions.Add(new ChannelMessageReaction
+            deps.Db.ChannelMessageReactions.Add(new ChannelMessageReaction
             {
                 ChannelMessageId = mid,
                 UserId = user.Id,
@@ -550,13 +549,13 @@ public static class ChannelEndpoints
         }
         else if (!add && existing is not null)
         {
-            db.ChannelMessageReactions.Remove(existing);
+            deps.Db.ChannelMessageReactions.Remove(existing);
         }
-        await db.SaveChangesAsync(ct);
+        await deps.Db.SaveChangesAsync(ct);
 
-        var reactions = await LoadReactionsAsync(db, [mid], ct);
+        var reactions = await LoadReactionsAsync(deps.Db, [mid], ct);
         var aggregate = reactions.GetValueOrDefault(mid, []);
-        await hub.Clients.Group(ChatHub.GroupName(id))
+        await deps.Hub.Clients.Group(ChatHub.GroupName(id))
             .SendAsync("reaction", new { channel_id = id, message_id = mid, reactions = aggregate }, ct);
         return Results.Ok(aggregate);
     }
@@ -564,12 +563,12 @@ public static class ChannelEndpoints
     private static Task<IResult> AddReactionAsync(
         string id, string mid, string emoji,
         HttpContext http, AppDbContext db, IHubContext<ChatHub> hub, CancellationToken ct) =>
-        ToggleReactionAsync(id, mid, emoji, true, http, db, hub, ct);
+        ToggleReactionAsync(id, mid, emoji, true, http, new ChannelReactionDeps(db, hub), ct);
 
     private static Task<IResult> RemoveReactionAsync(
         string id, string mid, string emoji,
         HttpContext http, AppDbContext db, IHubContext<ChatHub> hub, CancellationToken ct) =>
-        ToggleReactionAsync(id, mid, emoji, false, http, db, hub, ct);
+        ToggleReactionAsync(id, mid, emoji, false, http, new ChannelReactionDeps(db, hub), ct);
 
     private static async Task<IResult> SetPinnedAsync(
         string id, string mid, bool pinned,
@@ -866,3 +865,7 @@ public static class ChannelEndpoints
         HttpContext http, AppDbContext db, CancellationToken ct) =>
         await AuthEndpoints.FindUserAsync(http, db, ct);
 }
+
+/// <summary>Bundle DI do toggle de reação (S107).</summary>
+internal sealed record ChannelReactionDeps(
+    AppDbContext Db, IHubContext<ChatHub> Hub);

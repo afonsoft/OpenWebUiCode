@@ -1883,10 +1883,7 @@ public class ProviderServiceTests
                     [new ChatCompletionMessage("system", "nota")]);
             });
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, callbacks, userId: "u1", log: NullLogger.Instance,
-            maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         Assert.Multiple(() =>
         {
@@ -1914,9 +1911,7 @@ public class ProviderServiceTests
             OnRoundBoundaryAsync: (idle, _) => Task.FromResult<IReadOnlyList<ChatCompletionMessage>>(
                 idle && queuedCalls++ == 0 ? [new ChatCompletionMessage("user", "queued")] : []));
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, callbacks, userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2052,12 +2047,8 @@ public class ProviderServiceTests
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
         var deltas = new List<string>();
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default,
-            new ChatPipeline.ToolLoopCallbacks(
-                OnDeltaAsync: (d, _) => { deltas.Add(d); return Task.CompletedTask; }),
-            userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(
+                OnDeltaAsync: (d, _) => { deltas.Add(d); return Task.CompletedTask; }), UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2086,9 +2077,7 @@ public class ProviderServiceTests
             "data: [DONE]\n\n", 0);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2117,9 +2106,7 @@ public class ProviderServiceTests
             "data: [DONE]\n\n", 0));
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, userId: "u1", log: NullLogger.Instance, maxSteps: 2);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(UserId: "u1", Log: NullLogger.Instance, MaxSteps: 2));
 
         var bodies = _requests.Where(r => r.Path == "/chat/completions")
             .Select(r => r.Body).ToList();
@@ -2152,9 +2139,7 @@ public class ProviderServiceTests
             "data: [DONE]\n\n", 0));
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         Assert.Multiple(() =>
         {
@@ -2176,9 +2161,7 @@ public class ProviderServiceTests
             "data: [DONE]\n\n", 0);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         Assert.Multiple(() =>
         {
@@ -2220,10 +2203,7 @@ public class ProviderServiceTests
                     [new ChatCompletionMessage("user", "steer")]);
             });
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, callbacks, userId: "u1", log: NullLogger.Instance,
-            maxSteps: 2);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance, MaxSteps: 2));
 
         Assert.Multiple(() =>
         {
@@ -2385,9 +2365,7 @@ public class ProviderServiceTests
                 return Task.CompletedTask; // sem dormir — delay fica registrado
             });
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, callbacks, userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2418,9 +2396,7 @@ public class ProviderServiceTests
             });
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ChatPipeline.RunToolLoopAsync(
-                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-                default, callbacks, userId: "u1", log: NullLogger.Instance));
+            ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance)));
 
         Assert.Multiple(() =>
         {
@@ -2447,9 +2423,7 @@ public class ProviderServiceTests
                 return Task.CompletedTask;
             });
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, callbacks, userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2465,10 +2439,7 @@ public class ProviderServiceTests
             [(200, Sse("parte1", "length"), 0), (200, Sse("parte2"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, new ChatPipeline.ToolLoopCallbacks(),
-            userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2493,10 +2464,7 @@ public class ProviderServiceTests
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ChatPipeline.RunToolLoopAsync(
-                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-                default, new ChatPipeline.ToolLoopCallbacks(),
-                userId: "u1", log: NullLogger.Instance));
+            ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), UserId: "u1", Log: NullLogger.Instance)));
 
         Assert.Multiple(() =>
         {
@@ -2527,9 +2495,7 @@ public class ProviderServiceTests
                     [new ChatCompletionMessage("user", "janela reduzida")]);
             });
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-            default, callbacks, userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2551,9 +2517,7 @@ public class ProviderServiceTests
                 Task.FromResult<IReadOnlyList<ChatCompletionMessage>?>(null));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ChatPipeline.RunToolLoopAsync(
-                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-                default, callbacks, userId: "u1", log: NullLogger.Instance));
+            ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance)));
 
         Assert.That(ex!.Message, Does.Contain("context-overflow"));
     }
@@ -2574,9 +2538,7 @@ public class ProviderServiceTests
             });
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ChatPipeline.RunToolLoopAsync(
-                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-                default, callbacks, userId: "u1", log: NullLogger.Instance));
+            ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance)));
 
         Assert.Multiple(() =>
         {
@@ -2606,9 +2568,7 @@ public class ProviderServiceTests
             });
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ChatPipeline.RunToolLoopAsync(
-                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-                default, callbacks, userId: "u1", log: NullLogger.Instance));
+            ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance)));
 
         Assert.Multiple(() =>
         {
@@ -2637,9 +2597,7 @@ public class ProviderServiceTests
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await Assert.ThatAsync(
-            () => ChatPipeline.RunToolLoopAsync(
-                ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(),
-                cts.Token, callbacks, userId: "u1", log: NullLogger.Instance),
+            () => ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), NewService(), cts.Token, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance)),
             Throws.InstanceOf<OperationCanceledException>());
         Assert.That(sw.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)));
     }
@@ -2676,9 +2634,7 @@ public class ProviderServiceTests
                 return Task.CompletedTask;
             });
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), [NewTool("minha_tool")], NewExecutor(), service,
-            default, callbacks, userId: "u1", log: NullLogger.Instance);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), [NewTool("minha_tool")], NewExecutor(), service, default, new ChatPipeline.ToolLoopOptions(callbacks, UserId: "u1", Log: NullLogger.Instance));
 
         Assert.Multiple(() =>
         {
@@ -2786,10 +2742,7 @@ public class ProviderServiceTests
              (200, Sse("fim"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
-            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         Assert.Multiple(() =>
         {
@@ -2825,10 +2778,7 @@ public class ProviderServiceTests
              (200, Sse("fim"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
-            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         Assert.Multiple(() =>
         {
@@ -2865,10 +2815,7 @@ public class ProviderServiceTests
                 call.Name == "builtin_t2"
                     ? ToolGateDecision.Deny : ToolGateDecision.Allow));
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            callbacks, TestCtx(), userId: "u1", log: NullLogger.Instance,
-            maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         var results = outcome!.ToolMessages.Where(m => m.Role == "tool")
             .Select(m => m.Content).ToArray();
@@ -2894,11 +2841,7 @@ public class ProviderServiceTests
              (200, Sse("fim"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
-            userId: "u1", log: NullLogger.Instance, maxSteps: 5,
-            maxParallelTools: 2);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5, MaxParallelTools: 2));
 
         Assert.Multiple(() =>
         {
@@ -2933,10 +2876,7 @@ public class ProviderServiceTests
              (200, Sse("fim"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
-            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         var results = outcome!.ToolMessages.Where(m => m.Role == "tool")
             .Select(m => m.Content).ToArray();
@@ -2986,10 +2926,7 @@ public class ProviderServiceTests
             [(200, SseCalls("builtin_flaky"), 0), (200, Sse("fim"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
-            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         Assert.Multiple(() =>
         {
@@ -3011,10 +2948,7 @@ public class ProviderServiceTests
             [(200, SseCalls("builtin_flaky"), 0), (200, Sse("fim"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            new ChatPipeline.ToolLoopCallbacks(), TestCtx(),
-            userId: "u1", log: NullLogger.Instance, maxSteps: 5);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(new ChatPipeline.ToolLoopCallbacks(), TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
 
         var toolText = outcome!.ToolMessages.Single(m => m.Role == "tool").Content;
         Assert.Multiple(() =>
@@ -3052,10 +2986,7 @@ public class ProviderServiceTests
              (200, Sse("Tudo feito."), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            callbacks, TestCtx(), userId: "u1", log: NullLogger.Instance,
-            maxSteps: 10);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 10));
 
         Assert.Multiple(() =>
         {
@@ -3090,10 +3021,7 @@ public class ProviderServiceTests
              (200, Sse("final"), 0)]);
         await SetConnectionsAsync([], [_mockUrl], ["k"]);
 
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            ToolReq(), tools, executor, NewService(), default,
-            callbacks, TestCtx(), userId: "u1", log: NullLogger.Instance,
-            maxSteps: 10);
+        var outcome = await ChatPipeline.RunToolLoopAsync(ToolReq(), tools, executor, NewService(), default, new ChatPipeline.ToolLoopOptions(callbacks, TestCtx(), UserId: "u1", Log: NullLogger.Instance, MaxSteps: 10));
 
         Assert.Multiple(() =>
         {

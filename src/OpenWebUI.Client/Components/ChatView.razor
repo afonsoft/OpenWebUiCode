@@ -2971,13 +2971,14 @@
         {
             var run = await ChatStream.EnqueueRunAsync(
                 _loadedChatId!, runContent, _model!,
-                fileIds.Count > 0 ? fileIds : null,
-                _toolIds.Count > 0 ? _toolIds.ToList() : null,
-                _webSearch ? true : null,
-                mentionPaths,
-                command: pendingCommand?.Name,
-                commandArgs: pendingCommand?.Args,
-                ct: _cts.Token);
+                new ChatStreamService.EnqueueOptions(
+                    fileIds.Count > 0 ? fileIds : null,
+                    _toolIds.Count > 0 ? _toolIds.ToList() : null,
+                    _webSearch ? true : null,
+                    mentionPaths,
+                    Command: pendingCommand?.Name,
+                    CommandArgs: pendingCommand?.Args),
+                _cts.Token);
             _activeRunId = run.Id;
 
             await ConsumeRunEventsAsync(

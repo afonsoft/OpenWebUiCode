@@ -144,7 +144,7 @@ public class UserSecretsTests
             var env = new Dictionary<string, string> { ["SONAR_TOKEN"] = "sqp_secreto" };
             var outcome = await ChatProcessRunner.RunAsync(
                 "echo tok=$SONAR_TOKEN", dir, TimeSpan.FromSeconds(10),
-                env: env, secretsToScrub: env.Values.ToList());
+                new ChatProcessRunner.RunOptions(Env: env, SecretsToScrub: env.Values.ToList()));
 
             Assert.That(outcome.ExitCode, Is.EqualTo(0));
             Assert.That(outcome.Output, Does.Contain($"tok={SecretScrubber.Redacted}"));

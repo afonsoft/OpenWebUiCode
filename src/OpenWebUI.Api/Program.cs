@@ -84,7 +84,11 @@ builder.Services.AddSingleton<ChatRunDispatcher>();
 builder.Services.AddSingleton<IChatRunDispatcher>(
     sp => sp.GetRequiredService<ChatRunDispatcher>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ChatRunDispatcher>());
+builder.Services.AddScoped<ChatRunPipelineDeps>();
+builder.Services.AddScoped<ChatRunToolsDeps>();
+builder.Services.AddScoped<ChatRunLifecycleDeps>();
 builder.Services.AddScoped<ChatRunExecutor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.Services.CompactionDeps>();
 builder.Services.AddScoped<ContextCompactionService>();
 builder.Services.AddScoped<RunEventWriter>();
 // Seams internos de run (SPEC-20261021-harness-seams RF-A1/A2/A3):

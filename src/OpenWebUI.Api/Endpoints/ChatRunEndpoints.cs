@@ -48,18 +48,10 @@ public static class ChatRunEndpoints
         string id,
         EnqueueChatRunRequest request,
         HttpContext http,
-        AppDbContext db,
-        ChatRunDispatcher dispatcher,
-        ContextBoundaryService boundaries,
-        BranchService branches,
-        WorkspaceRepoService repos,
-        RepoCommandService commands,
-        AgentDefinitionService agentDefs,
-        ConfigService config,
-        BudgetPolicyService budgets,
+        [AsParameters] EnqueueRunDeps deps,
         CancellationToken ct)
     {
-        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var user = await AuthEndpoints.FindUserAsync(http, deps.Db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
@@ -69,7 +61,7 @@ public static class ChatRunEndpoints
             return Results.BadRequest(new { detail = "model é obrigatório." });
         }
 
-        var chat = await db.Chats.Include(c => c.Messages)
+        var chat = await deps.Db.Chats.Include(c => c.Messages)
             .FirstOrDefaultAsync(c => c.Id == id && c.UserId == user.Id, ct);
         if (chat is null)
         {
@@ -85,8 +77,8 @@ public static class ChatRunEndpoints
         var commandSubagent = false;
         if (!string.IsNullOrWhiteSpace(request.Command))
         {
-            var workdir = await repos.ResolveWorkdirAsync(user.Id, chat.Id, ct);
-            var (expanded, cmdError) = await commands.ExpandAsync(
+            var workdir = await deps.Repos.ResolveWorkdirAsync(user.Id, chat.Id, ct);
+            var (expanded, cmdError) = await deps.Commands.ExpandAsync(
                 user.Id, workdir, request.Command, request.CommandArgs, ct);
             if (expanded is null)
             {
@@ -102,7 +94,7 @@ public static class ChatRunEndpoints
 
             if (expanded.Agent is { } agentName)
             {
-                commandAgentDef = await agentDefs.FindAsync(
+                commandAgentDef = await deps.AgentDefs.FindAsync(
                     user.Id, workdir, agentName, ct);
             }
             request = request with
@@ -117,7 +109,7 @@ public static class ChatRunEndpoints
         // Ramificação atômica (RF-004): ativa o alvo como leaf — resumindo o
         // ramo abandonado — antes de pendurar a nova mensagem nele.
         if (request.ForkFromMessageId is not null
-            && !await branches.ActivateLeafAsync(
+            && !await deps.Branches.ActivateLeafAsync(
                 chat, request.ForkFromMessageId, request.Model, ct))
         {
             return Results.NotFound(new { detail = "Mensagem de origem não encontrada." });
@@ -130,7 +122,7 @@ public static class ChatRunEndpoints
         List<ChatMessageFileModel>? attached = null;
         if (request.FileIds is { Count: > 0 })
         {
-            var owned = await db.Files.AsNoTracking()
+            var owned = await deps.Db.Files.AsNoTracking()
                 .Where(f => request.FileIds.Contains(f.Id) && f.UserId == user.Id)
                 .ToListAsync(ct);
             var byId = owned.ToDictionary(f => f.Id);
@@ -186,7 +178,7 @@ public static class ChatRunEndpoints
         // FileIds por mensagem (do FilesJson) alimentam a resolução
         // preguiçosa de imagens na pipeline (RF-006 media-attachments).
         var path = BranchService.WalkPath(chat);
-        var visible = await boundaries.FilterAsync(chat.Id, path, ct);
+        var visible = await deps.Boundaries.FilterAsync(chat.Id, path, ct);
         var history = visible
             .Select(m => new ChatCompletionMessage(
                 m.Role, m.Content, m.ToolCallId, m.ToolCallsJson,
@@ -226,7 +218,7 @@ public static class ChatRunEndpoints
         // estourado ou modelo fora do tier → 429 com error_code, antes de
         // criar a run (o executor repete o check — defesa em profundidade
         // para os demais caminhos de enqueue).
-        var gate = await budgets.CheckStartAsync(user.Id, request.Model, ct);
+        var gate = await deps.Budgets.CheckStartAsync(user.Id, request.Model, ct);
         if (!gate.Allowed)
         {
             return Results.Json(
@@ -242,23 +234,23 @@ public static class ChatRunEndpoints
             RequestJson = JsonSerializer.Serialize(completionRequest, JsonOptions),
             CreatedAt = now,
         };
-        db.ChatRuns.Add(run);
-        await db.SaveChangesAsync(ct);
+        deps.Db.ChatRuns.Add(run);
+        await deps.Db.SaveChangesAsync(ct);
 
         // Constraints de delegação/steps do agente do command — mesmo
         // contrato kv que delegate_task usa para sub-runs.
         if (commandAgentDef is { } cad)
         {
-            await config.SetAsync(
+            await deps.Config.SetAsync(
                 $"r:{run.Id}:agent.spawns", string.Join(",", cad.Spawns), ct);
-            await config.SetAsync($"r:{run.Id}:agent.depth", cad.MaxDepth, ct);
+            await deps.Config.SetAsync($"r:{run.Id}:agent.depth", cad.MaxDepth, ct);
             if (cad.Steps is { } steps)
             {
-                await config.SetAsync($"r:{run.Id}:agent.steps", steps, ct);
+                await deps.Config.SetAsync($"r:{run.Id}:agent.steps", steps, ct);
             }
         }
 
-        dispatcher.Enqueue(run.Id);
+        deps.Dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: ToResponse(run));
     }
 
@@ -672,19 +664,16 @@ public static class ChatRunEndpoints
         string id,
         string runId,
         HttpContext http,
-        AppDbContext db,
-        ChatRunDispatcher dispatcher,
-        ChatRunPauses pauses,
-        ChatRunBroadcaster broadcaster,
+        [AsParameters] ResumeRunDeps deps,
         CancellationToken ct)
     {
-        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var user = await AuthEndpoints.FindUserAsync(http, deps.Db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
         }
 
-        var run = await db.ChatRuns
+        var run = await deps.Db.ChatRuns
             .FirstOrDefaultAsync(
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
@@ -699,7 +688,7 @@ public static class ChatRunEndpoints
 
         var wasQueued = run.StartedAt is null;
         var next = wasQueued ? ChatRunStatus.Queued : ChatRunStatus.Running;
-        var flipped = await db.ChatRuns
+        var flipped = await deps.Db.ChatRuns
             .Where(r => r.Id == run.Id && r.Status == ChatRunStatus.Paused)
             .ExecuteUpdateAsync(
                 s => s.SetProperty(r => r.Status, next), ct);
@@ -712,12 +701,12 @@ public static class ChatRunEndpoints
         run.Status = next;
         if (wasQueued)
         {
-            dispatcher.Enqueue(run.Id);
+            deps.Dispatcher.Enqueue(run.Id);
         }
         else
         {
-            pauses.Resume(run.Id);
-            broadcaster.Publish(run.Id,
+            deps.Pauses.Resume(run.Id);
+            deps.Broadcaster.Publish(run.Id,
                 $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("resumed", null), JsonOptions)}");
         }
         return Results.Ok(ToResponse(run));
@@ -735,12 +724,10 @@ public static class ChatRunEndpoints
         string callId,
         RunApprovalDecisionRequest request,
         HttpContext http,
-        AppDbContext db,
-        ChatRunApprovals approvals,
-        ToolApprovalOverrideService toolOverrides,
+        [AsParameters] ApprovalDeps deps,
         CancellationToken ct)
     {
-        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var user = await AuthEndpoints.FindUserAsync(http, deps.Db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
@@ -750,7 +737,7 @@ public static class ChatRunEndpoints
             return Results.BadRequest(new { detail = "decision deve ser approve|deny." });
         }
 
-        var run = await db.ChatRuns.AsNoTracking()
+        var run = await deps.Db.ChatRuns.AsNoTracking()
             .FirstOrDefaultAsync(
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
@@ -776,10 +763,10 @@ public static class ChatRunEndpoints
         // remember da sessão resolvido abaixo.
         if (approved && request.RememberPersist)
         {
-            var pendingTool = await approvals.PendingToolNameAsync(run.Id, callId);
+            var pendingTool = await deps.Approvals.PendingToolNameAsync(run.Id, callId);
             if (pendingTool is not null)
             {
-                await toolOverrides.MergeAsync(user.Id,
+                await deps.ToolOverrides.MergeAsync(user.Id,
                     new Dictionary<string, string?>
                     { [PermissionRuleset.BuiltinName(pendingTool)] = "allow" }, ct);
             }
@@ -787,7 +774,7 @@ public static class ChatRunEndpoints
         // A mensagem vai mesmo em approve: no ask_user a resposta do dono
         // é justamente decision=approve + message (RF-005); numa aprovação
         // comum, message em approve é ignorada pelo gate.
-        return approvals.Resolve(
+        return deps.Approvals.Resolve(
             run.Id, run.ChatId, callId, approved, request.Remember,
             request.Message)
             ? Results.Ok(new StatusResponse(true))
@@ -805,19 +792,16 @@ public static class ChatRunEndpoints
         string id,
         string runId,
         HttpContext http,
-        AppDbContext db,
-        WorkspaceRepoService repos,
-        WorkspaceGitService git,
-        WorktreeService worktrees,
+        [AsParameters] RunDiffDeps deps,
         CancellationToken ct)
     {
-        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        var user = await AuthEndpoints.FindUserAsync(http, deps.Db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
         }
 
-        var exists = await db.ChatRuns.AsNoTracking()
+        var exists = await deps.Db.ChatRuns.AsNoTracking()
             .AnyAsync(r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (!exists)
         {
@@ -828,12 +812,12 @@ public static class ChatRunEndpoints
         // isolada (Workspace:RunIsolation=worktree, E16 S9) sai do worktree.
         // A base do diff é a branch do binding (origin/{branch}) — cobre
         // commits do agente + working tree (SPEC-20261017 RF-001).
-        var (binding, _) = await repos.ResolveBindingAsync(user.Id, id, ct);
+        var (binding, _) = await deps.Repos.ResolveBindingAsync(user.Id, id, ct);
         var baseRef = binding is not null ? $"origin/{binding.Branch}" : null;
-        var mainWorkdir = await repos.ResolveWorkdirAsync(user.Id, id, ct);
-        var isolated = worktrees.ResolveIsolated(user.Id, runId);
+        var mainWorkdir = await deps.Repos.ResolveWorkdirAsync(user.Id, id, ct);
+        var isolated = deps.Worktrees.ResolveIsolated(user.Id, runId);
         var workdir = isolated ?? mainWorkdir;
-        var info = await git.GetInfoAsync(workdir, ct, baseRef);
+        var info = await deps.Git.GetInfoAsync(workdir, ct, baseRef);
         return Results.Ok(new WorkspaceGitResponse(
             info.IsRepo, info.Branch, info.Added, info.Removed,
             info.Files.Select(f => new WorkspaceGitFileResponse(
@@ -886,4 +870,28 @@ public static class ChatRunEndpoints
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>Bundle DI do enqueue de run — compartilhado com o JSON-RPC
+    /// <c>runs.start</c> (S107).</summary>
+    internal sealed record EnqueueRunDeps(
+        AppDbContext Db, ChatRunDispatcher Dispatcher,
+        ContextBoundaryService Boundaries, BranchService Branches,
+        WorkspaceRepoService Repos, RepoCommandService Commands,
+        AgentDefinitionService AgentDefs, ConfigService Config,
+        BudgetPolicyService Budgets);
+
+    /// <summary>Bundle DI do resume de run (S107).</summary>
+    internal sealed record ResumeRunDeps(
+        AppDbContext Db, ChatRunDispatcher Dispatcher,
+        ChatRunPauses Pauses, ChatRunBroadcaster Broadcaster);
+
+    /// <summary>Bundle DI da decisão de aprovação (S107).</summary>
+    internal sealed record ApprovalDeps(
+        AppDbContext Db, ChatRunApprovals Approvals,
+        ToolApprovalOverrideService ToolOverrides);
+
+    /// <summary>Bundle DI do diff da run (S107).</summary>
+    internal sealed record RunDiffDeps(
+        AppDbContext Db, WorkspaceRepoService Repos,
+        WorkspaceGitService Git, WorktreeService Worktrees);
 }

@@ -192,7 +192,7 @@ public class BuiltinToolsTests
         Assert.That(lento.TimedOut, Is.True);
 
         var grande = await ChatProcessRunner.RunAsync(
-            "seq 1 100000", _workspace, TimeSpan.FromSeconds(15), maxOutputChars: 1000);
+            "seq 1 100000", _workspace, TimeSpan.FromSeconds(15), new ChatProcessRunner.RunOptions(MaxOutputChars: 1000));
         Assert.Multiple(() =>
         {
             Assert.That(grande.Truncated, Is.True);
