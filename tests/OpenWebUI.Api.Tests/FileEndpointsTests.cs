@@ -178,6 +178,22 @@ public class FileEndpointsTests
     }
 
     [Test]
+    public async Task Upload_AcimaDoCap_Rejeitado()
+    {
+        // S5693 (SPEC-20261031-sonar-vuln-code): request body acima do cap
+        // é rejeitado — 413 da camada de transporte (Kestrel/feature) ou
+        // 400 do check de tamanho; nunca persiste.
+        var user = await SignUpAsync("Big", "big@files.local", "senha123");
+        UseToken(user.Token);
+
+        var big = new byte[101 * 1024 * 1024];
+        var response = await UploadAsync("big.bin", big, "application/octet-stream");
+
+        Assert.That((int)response.StatusCode,
+            Is.EqualTo(400).Or.EqualTo(413));
+    }
+
+    [Test]
     public async Task Upload_Binario_NaoExtraiTextoEServidoComoArquivo()
     {
         var user = await SignUpAsync("Bin", "bin@files.local", "senha123");

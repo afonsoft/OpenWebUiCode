@@ -160,8 +160,20 @@ public class AuthService(
     public HttpRequestMessage CreateRequest(HttpMethod method, string uri)
     {
         ArgumentException.ThrowIfNullOrEmpty(uri);
-        var path = uri.Split('?', '#')[0];
+        // S7044: decodifica antes de validar — %2e%2e/%2e./.%2e viram ".."
+        // no Uri resolver; backslash (incl. %5c) vira separador em vários
+        // stacks HTTP. Sem isso o check cru de segmentos é bypassável.
+        string path;
+        try
+        {
+            path = Uri.UnescapeDataString(uri.Split('?', '#')[0]);
+        }
+        catch (UriFormatException)
+        {
+            throw new ArgumentException("URI deve ser um path relativo de mesma origem.", nameof(uri));
+        }
         if (!uri.StartsWith('/') || uri.StartsWith("//", StringComparison.Ordinal)
+            || path.IndexOf('\\') >= 0
             || path.Split('/').Any(static s => s is ".."))
         {
             throw new ArgumentException("URI deve ser um path relativo de mesma origem.", nameof(uri));
