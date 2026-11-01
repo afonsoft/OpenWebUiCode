@@ -25,3 +25,11 @@ then #577 plan-mode-v2, #573 lifecycle-hooks, #574 smart-permission-llm,
 #578 sandboxed-exec, then final Sonar verification.
 Per-spec pattern: checkboxes [x] + "Notas de implementação" appended to .specs/SPEC-*.md
 + progress lines in this file + conventional commit + PR (template fetched).
+
+# tool-search-deferred (issue #576) — branch feature/devin-20261031-tool-search-deferred
+DeferredToolState (por run, alias chatId) + ToolIndexService (índice leve ≤60 linhas,
+split BuiltinTools:Deferred/McpDeferThreshold/McpCore) + ToolSearchBuiltinTool
+(substring→schema+load). Executor: split em LoadRunToolsAsync + filtro
+IsDeferredOnly em effective.Tools/AnnounceToolsAsync + gate "not loaded" +
+eventos tool_search.deferred/loaded + Clear no finally. DeferredToolIndexContributor
+Order 84. Testes ToolSearchTests 8/8.

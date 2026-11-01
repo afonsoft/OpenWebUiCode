@@ -99,11 +99,11 @@ Sem API nova. `tool_search` é builtin tool (`builtin_tool_search`).
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** 20 tools deferred, **when** a run inicia, **then** o request só leva schemas core + o índice leve.
-- [ ] **Given** `tool_search("browser")`, **when** há `browser_preview` deferred, **then** seu schema é retornado e a tool fica chamável na próxima iteração.
-- [ ] **Given** tool deferred chamada diretamente, **when** o modelo tenta, **then** recebe erro "not loaded — use tool_search".
-- [ ] **Given** tool já carregada, **when** `tool_search` repete a query, **then** ela não aparece no resultado.
-- [ ] **Given** `BuiltinTools:Deferred` vazio, **when** config desabilita, **then** comportamento atual (todas no request).
+- [x] **Given** 20 tools deferred, **when** a run inicia, **then** o request só leva schemas core + o índice leve.
+- [x] **Given** `tool_search("browser")`, **when** há `browser_preview` deferred, **then** seu schema é retornado e a tool fica chamável na próxima iteração.
+- [x] **Given** tool deferred chamada diretamente, **when** o modelo tenta, **then** recebe erro "not loaded — use tool_search".
+- [x] **Given** tool já carregada, **when** `tool_search` repete a query, **then** ela não aparece no resultado.
+- [x] **Given** `BuiltinTools:Deferred` vazio, **when** config desabilita, **then** comportamento atual (todas no request).
 
 **Edge cases:**
 
@@ -116,14 +116,14 @@ Sem API nova. `tool_search` é builtin tool (`builtin_tool_search`).
 
 ## 7. Task Plan
 
-- [ ] **T1 — Discovery:** ler `BuiltinToolRegistry`, `ChatPipeline` (construção de tools), `SystemPromptContributors`.
-- [ ] **T2 — Tiers+índice:** `ToolIndexService` + tier no registry + bloco no system prompt.
-- [ ] **T3 — `tool_search`:** `ToolSearchBuiltinTool` com match + retorno de schema + mark-as-loaded.
-- [ ] **T4 — Merge no loop:** `ChatPipeline`/`ChatRunExecutor` adicionam loaded tools por iteração.
-- [ ] **T5 — MCP deferred:** regra por volume + allowlist.
-- [ ] **T6 — Auditoria:** métricas + evento.
-- [ ] **T7 — Testes:** unitários (match, tiers, merge, deferred-call-error) + integração (loop com search).
-- [ ] **T8 — Done + PR.**
+- [x] **T1 — Discovery:** ler `BuiltinToolRegistry`, `ChatPipeline` (construção de tools), `SystemPromptContributors`.
+- [x] **T2 — Tiers+índice:** `ToolIndexService` + tier no registry + bloco no system prompt.
+- [x] **T3 — `tool_search`:** `ToolSearchBuiltinTool` com match + retorno de schema + mark-as-loaded.
+- [x] **T4 — Merge no loop:** `ChatPipeline`/`ChatRunExecutor` adicionam loaded tools por iteração.
+- [x] **T5 — MCP deferred:** regra por volume + allowlist.
+- [x] **T6 — Auditoria:** métricas + evento.
+- [x] **T7 — Testes:** unitários (match, tiers, merge, deferred-call-error) + integração (loop com search).
+- [x] **T8 — Done + PR.**
 
 **7.1 Validation strategy**
 
@@ -140,11 +140,40 @@ Sem API nova. `tool_search` é builtin tool (`builtin_tool_search`).
 
 ## 9. Definition of Done
 
-- [ ] RFs implementados; aceite coberto por testes.
-- [ ] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
-- [ ] Guardrails respeitados; métricas de economia visíveis no stream.
+- [x] RFs implementados; aceite coberto por testes.
+- [x] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
+- [x] Guardrails respeitados; métricas de economia visíveis no stream.
 
 ## Open Questions / Pending Ambiguity
 
 - Deferred default ligado ou opt-in? (recomendo opt-in via `BuiltinTools:Deferred` explícito — não quebrar comportamento atual).
 - O índice leve vai no system prompt ou numa mensagem de contexto? (recomendo system prompt, bloco fixo).
+
+## Notas de implementação
+
+- **RF-001 (tiers):** `ToolIndexService.SplitDeferred` — csv `BuiltinTools:Deferred`
+  aceita `name`, `builtin:name` e `builtin_name`; never-defer =
+  `tool_search`/`plan_exit`/`run_result`/`approval` (loader/modo/resultado sempre
+  core). Loader injetado sinteticamente quando há deferral e `tool_search` não
+  está nos ToolIds (mesmo padrão do plan_exit).
+- **RF-002 (índice):** `DeferredToolIndexContributor` (Order 84) emite
+  "## Available on demand" com `name: desc [keywords]` por tool, cap de 60
+  linhas + "…and N more". Inativo → prompt idêntico (opt-in total).
+- **RF-003 (loader):** `ToolSearchBuiltinTool` — substring match sobre
+  nome+descrição+keywords (name-match rankeia primeiro), limit default 5
+  (clamp 1-20), devolve schemas completos, já-carregadas excluídas
+  (movidas deferred→loaded). `SafeInParallel`, `Tier.Read`.
+- **RF-004 (merge):** `DeferredToolState` por run (alias chatId p/ prompt);
+  `effective.Tools` e `AnnounceToolsAsync` filtram `IsDeferredOnly`; estado
+  liberado no `finally` da run (sem unload — loaded fica até o fim).
+- **RF-005 (MCP):** > `BuiltinTools:McpDeferThreshold` (default 3) servidores
+  visíveis → tools `mcp://` deferidas, exceto servidores em
+  `BuiltinTools:McpCore`.
+- **RF-006 (auditoria):** evento `tool_search.deferred` no split
+  `{toolsCore, toolsDeferred, toolsLoaded, tokensSavedEstimate≈spec/4}` +
+  `tool_search.loaded` por chamada do loader.
+- **Invariante:** call direta em tool deferida → ToolGateDecision com erro
+  "não está carregada — chame builtin_tool_search", antes de policy/aprovação.
+- Testes: `ToolSearchTests` 8/8 — split opt-in, csv/never-defer, MCP
+  threshold+core, índice cap/"and N more", loader match/no-match/inativo,
+  gate state por-run + alias chatId.
