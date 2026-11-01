@@ -111,34 +111,33 @@ window.openwebui = {
 			if (!fileId) return null;
 			if (this._cache[fileId]) return this._cache[fileId];
 			if (this._pending[fileId]) return this._pending[fileId];
-			var self = this;
-			this._pending[fileId] = (async function () {
+			this._pending[fileId] = (async () => {
 				try {
-					var res = await fetch('/api/v1/files/' + encodeURIComponent(fileId) + '/content', {
-						headers: { 'Authorization': 'Bearer ' + self._token() }
+					const res = await fetch('/api/v1/files/' + encodeURIComponent(fileId) + '/content', {
+						headers: { 'Authorization': 'Bearer ' + this._token() }
 					});
 					if (!res.ok) return null;
-					var blob = await res.blob();
-					var url = URL.createObjectURL(blob);
-					self._cache[fileId] = url;
+					const blob = await res.blob();
+					const url = URL.createObjectURL(blob);
+					this._cache[fileId] = url;
 					return url;
 				} catch (e) {
-					return null;
+					return null; // falha de fetch → sem conteúdo (contrato do cache)
 				} finally {
-					delete self._pending[fileId];
+					delete this._pending[fileId];
 				}
 			})();
 			return this._pending[fileId];
 		},
 		revoke: function (fileId) {
-			var url = this._cache[fileId];
+			const url = this._cache[fileId];
 			if (url) {
 				URL.revokeObjectURL(url);
 				delete this._cache[fileId];
 			}
 		},
 		revokeAll: function () {
-			for (var id in this._cache) {
+			for (const id in this._cache) {
 				URL.revokeObjectURL(this._cache[id]);
 			}
 			this._cache = {};
@@ -213,7 +212,7 @@ window.openwebui = {
 	panelResize: function (handle, panel) {
 		if (!handle || !panel || handle._openwebuiRs) return;
 		handle._openwebuiRs = true;
-		const saved = parseInt(localStorage.getItem('openwebui.panelWidth') || '', 10);
+		const saved = Number.parseInt(localStorage.getItem('openwebui.panelWidth') || '', 10);
 		if (saved >= 240 && saved <= 720) panel.style.width = saved + 'px';
 		handle.addEventListener('pointerdown', function (e) {
 			e.preventDefault();
@@ -239,9 +238,9 @@ window.openwebui = {
 	autoResize: function (element) {
 		if (!element) return;
 		element.style.height = 'auto';
-		const max = parseFloat(window.getComputedStyle(element).maxHeight);
+		const max = Number.parseFloat(window.getComputedStyle(element).maxHeight);
 		const target = element.scrollHeight;
-		element.style.height = (isFinite(max) ? Math.min(target, max) : target) + 'px';
+		element.style.height = (Number.isFinite(max) ? Math.min(target, max) : target) + 'px';
 	},
 	// Protocolo upstream: abre https://openwebui.com/post?type=<type> em nova aba e
 	// posta o item serializado quando a página sinaliza 'loaded'.
@@ -289,7 +288,7 @@ window.openwebui = {
 		if (first) first.focus();
 	},
 	releaseFocus: function (element) {
-		if (element && element._openwebuiTrap) {
+		if (element?._openwebuiTrap) {
 			element.removeEventListener('keydown', element._openwebuiTrap);
 			element._openwebuiTrap = null;
 		}
@@ -349,7 +348,7 @@ window.openwebui.notify = {
 			}
 			return await Notification.requestPermission();
 		} catch (e) {
-			return 'denied';
+			return 'denied'; // Notification API indisponível/negada → denied
 		}
 	},
 
@@ -359,7 +358,7 @@ window.openwebui.notify = {
 			if (!('Notification' in window) || Notification.permission !== 'granted') {
 				return false;
 			}
-			var n = new Notification(title, { body: body || '', tag: tag || 'openwebui' });
+			const n = new Notification(title, { body: body || '', tag: tag || 'openwebui' });
 			n.onclick = function () {
 				try {
 					window.focus();
@@ -371,18 +370,18 @@ window.openwebui.notify = {
 			};
 			return true;
 		} catch (e) {
-			return false;
+			return false; // notificação não exibida (permissão/API)
 		}
 	},
 
 	// ---- Web Push (entrega com a aba totalmente fechada) ----
 
 	_vapidB64ToBytes: function (b64) {
-		var pad = '='.repeat((4 - (b64.length % 4)) % 4);
-		var raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
-		var out = new Uint8Array(raw.length);
-		for (var i = 0; i < raw.length; i++) {
-			out[i] = raw.charCodeAt(i);
+		const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+		const raw = atob((b64 + pad).replaceAll('-', '+').replaceAll('_', '/'));
+		const out = new Uint8Array(raw.length);
+		for (let i = 0; i < raw.length; i++) {
+			out[i] = raw.codePointAt(i);
 		}
 		return out;
 	},
@@ -395,14 +394,14 @@ window.openwebui.notify = {
 		try {
 			return await navigator.serviceWorker.ready;
 		} catch (e) {
-			return null;
+			return null; // SW indisponível → sem subscription
 		}
 	},
 
 	isPushSubscribed: async function () {
 		try {
-			var reg = await this._swRegistration();
-			var sub = reg ? await reg.pushManager.getSubscription() : null;
+			const reg = await this._swRegistration();
+			const sub = reg ? await reg.pushManager.getSubscription() : null;
 			return sub ? sub.endpoint : null;
 		} catch (e) {
 			return null;
@@ -413,21 +412,21 @@ window.openwebui.notify = {
 	// Retorna { subscribed: true, endpoint } | { error }.
 	subscribePush: async function (vapidPublicKey, apiUrl) {
 		try {
-			var permission = await this.ensurePermission();
+			const permission = await this.ensurePermission();
 			if (permission !== 'granted') {
 				return { error: 'permission ' + permission };
 			}
-			var reg = await this._swRegistration();
+			const reg = await this._swRegistration();
 			if (!reg) {
 				return { error: 'service worker unsupported' };
 			}
-			var sub = await reg.pushManager.subscribe({
+			const sub = await reg.pushManager.subscribe({
 				userVisibleOnly: true,
 				applicationServerKey: this._vapidB64ToBytes(vapidPublicKey)
 			});
-			var json = sub.toJSON();
+			const json = sub.toJSON();
 			json.userAgent = navigator.userAgent;
-			var res = await fetch(apiUrl, {
+			const res = await fetch(apiUrl, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				credentials: 'same-origin',
@@ -445,8 +444,8 @@ window.openwebui.notify = {
 	// Remove a subscription no navegador e no servidor.
 	unsubscribePush: async function (apiUrl) {
 		try {
-			var reg = await this._swRegistration();
-			var sub = reg ? await reg.pushManager.getSubscription() : null;
+			const reg = await this._swRegistration();
+			const sub = reg ? await reg.pushManager.getSubscription() : null;
 			if (sub) {
 				await fetch(apiUrl + '?endpoint=' + encodeURIComponent(sub.endpoint), {
 					method: 'DELETE',

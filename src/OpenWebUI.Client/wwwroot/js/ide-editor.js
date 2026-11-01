@@ -21,7 +21,7 @@
     }
     async function call(name, args) {
         await ensureBundle();
-        return window.owuiIdeEditor[name].apply(window.owuiIdeEditor, args);
+        return window.owuiIdeEditor[name](...args);
     }
     // ---------- LSP marker layer (SPEC-20261009-lsp-diagnostics, S8) ----------
     // O bundle CM vendored não traz @codemirror/lint — squiggles/hover viram
@@ -38,8 +38,8 @@
     function st(elId) {
         return lsp[elId] || (lsp[elId] = { diags: [], overlay: null, tooltip: null, dotnet: null });
     }
-    function cmRoot(el) { return el && el.querySelector(".cm-editor"); }
-    function cmContent(el) { return el && el.querySelector(".cm-content"); }
+    function cmRoot(el) { return el?.querySelector(".cm-editor"); }
+    function cmContent(el) { return el?.querySelector(".cm-content"); }
     // Mapeia elemento .cm-line → doc line (0-based) via gutter de números;
     // fallback: índice na ordem renderizada (docs pequenos renderizam tudo).
     function lineMap(el) {
@@ -48,8 +48,8 @@
         const map = new Map();
         if (nums.length === lines.length && nums.length > 0) {
             lines.forEach((l, i) => {
-                const n = parseInt(nums[i].textContent, 10);
-                if (!isNaN(n)) map.set(n - 1, l);
+                const n = Number.parseInt(nums[i].textContent, 10);
+                if (!Number.isNaN(n)) map.set(n - 1, l);
             });
             return map;
         }
@@ -104,24 +104,27 @@
                 range.setEnd(to ? to.node : from.node, to ? to.offset : from.node.data.length);
             } catch { continue; }
             const color = SQUIGGLE_COLORS[d.severity] || SQUIGGLE_COLORS[3];
-            for (const r of range.getClientRects()) {
-                if (r.width === 0) continue;
-                const m = document.createElement("div");
-                m.className = "owui-lsp-squiggle";
-                m.style.cssText = "position:absolute;pointer-events:none;height:4px;" +
-                    "left:" + (r.left - ovRect.left) + "px;top:" + (r.bottom - ovRect.top - 2) +
-                    "px;width:" + r.width + "px;background-repeat:repeat-x;background-image:" +
-                    wave(color);
-                m.dataset.msg = d.message;
-                ov.appendChild(m);
-            }
+            appendSquiggles(ov, ovRect, range, color, d.message);
+        }
+    }
+    function appendSquiggles(ov, ovRect, range, color, msg) {
+        for (const r of range.getClientRects()) {
+            if (r.width === 0) continue;
+            const m = document.createElement("div");
+            m.className = "owui-lsp-squiggle";
+            m.style.cssText = "position:absolute;pointer-events:none;height:4px;" +
+                "left:" + (r.left - ovRect.left) + "px;top:" + (r.bottom - ovRect.top - 2) +
+                "px;width:" + r.width + "px;background-repeat:repeat-x;background-image:" +
+                wave(color);
+            m.dataset.msg = msg;
+            ov.appendChild(m);
         }
     }
     function attachScrollOnce(elId) {
         const s = st(elId);
         if (s.scrollBound) return;
         const el = document.getElementById(elId);
-        const scroller = el && el.querySelector(".cm-scroller");
+        const scroller = el?.querySelector(".cm-scroller");
         if (scroller) {
             scroller.addEventListener("scroll", () => renderDiags(elId), { passive: true });
             s.scrollBound = true;
@@ -153,7 +156,7 @@
                 return p && { startContainer: p.offsetNode, startOffset: p.offset }; })();
         if (!caret) return null;
         const content = cmContent(el);
-        if (!content || !content.contains(caret.startContainer)) return null;
+        if (!content?.contains(caret.startContainer)) return null;
         // Acha a .cm-line que contém o caret e o offset de char dentro dela.
         let lineEl = caret.startContainer.nodeType === 1
             ? caret.startContainer : caret.startContainer.parentElement;

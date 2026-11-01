@@ -19,7 +19,7 @@ window.openwebui.codeBlocks = (function () {
 		const opts = options || {};
 		const labels = {};
 		for (const k in DEFAULT_LABELS) {
-			labels[k] = (opts.labels && opts.labels[k]) || DEFAULT_LABELS[k];
+			labels[k] = opts.labels?.[k] || DEFAULT_LABELS[k];
 		}
 		root.querySelectorAll('pre > code').forEach(function (codeEl) {
 			const pre = codeEl.parentElement;
@@ -38,11 +38,15 @@ window.openwebui.codeBlocks = (function () {
 			codeEl.classList.add('codeblock-inline');
 			codeEl.title = labels.copy;
 			codeEl.addEventListener('click', function () {
-				copyText(codeEl.textContent || '', function (ok) {
-					codeEl.title = ok ? labels.copied : labels.copy;
-					setTimeout(function () { codeEl.title = labels.copy; }, 1500);
-				});
+				copyWithTitleFeedback(codeEl, labels);
 			});
+		});
+	}
+
+	function copyWithTitleFeedback(codeEl, labels) {
+		copyText(codeEl.textContent || '', function (ok) {
+			codeEl.title = ok ? labels.copied : labels.copy;
+			setTimeout(function () { codeEl.title = labels.copy; }, 1500);
 		});
 	}
 
@@ -128,6 +132,7 @@ window.openwebui.codeBlocks = (function () {
 			btn.textContent = minified ? labels.format : labels.minify;
 			btn.setAttribute('aria-label', btn.textContent);
 		} catch (e) {
+			// JSON inválido → feedback no botão, sem alterar o bloco.
 			const prev = btn.textContent;
 			btn.textContent = labels.invalidJson;
 			btn.setAttribute('aria-label', labels.invalidJson);
@@ -148,24 +153,26 @@ window.openwebui.codeBlocks = (function () {
 				document.body.appendChild(ta);
 				ta.select();
 				const ok = document.execCommand('copy');
-				document.body.removeChild(ta);
+				ta.remove();
 				done(ok);
 			} catch (e) {
-				done(false);
+				done(false); // execCommand falhou → cópia indisponível
 			}
 		};
 		try {
-			const p = window.openwebui.copyText
-				? window.openwebui.copyText(text)
-				: (navigator.clipboard
-					? navigator.clipboard.writeText(text) : null);
+			let p;
+			if (window.openwebui.copyText) {
+				p = window.openwebui.copyText(text);
+			} else if (navigator.clipboard) {
+				p = navigator.clipboard.writeText(text);
+			}
 			if (p && typeof p.then === 'function') {
 				p.then(function () { done(true); }, fallback);
 			} else {
 				fallback();
 			}
 		} catch (e) {
-			fallback();
+			fallback(); // clipboard API lançou → execCommand
 		}
 	}
 

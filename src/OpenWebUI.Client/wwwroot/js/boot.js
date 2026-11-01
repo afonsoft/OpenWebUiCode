@@ -89,7 +89,7 @@
         }
         var candidates = [];
         if (stored) candidates.push(stored);
-        if (navigator.languages) candidates.push.apply(candidates, navigator.languages);
+        if (navigator.languages) candidates.push(...navigator.languages);
         if (navigator.language) candidates.push(navigator.language);
         for (const cand of candidates) {
             if (BOOT_STRINGS[cand]) {
@@ -113,7 +113,7 @@
         if (!ui) {
             return;
         }
-        if (ui.firstChild && ui.firstChild.nodeType === Node.TEXT_NODE) {
+        if (ui.firstChild?.nodeType === Node.TEXT_NODE) {
             ui.firstChild.textContent = " " + strings.error + " ";
         }
         var reload = ui.querySelector(".reload");
@@ -144,7 +144,7 @@
     }
 
     // Falhas transitórias (rede/offline/storage) nunca devem derrubar a UI.
-    var transientRe = /failed to fetch|network ?error|err_(internet|connection|network|name|timed|address|empty_response|aborted)|aborterror|\babort(ed)?\b|timed? ?out|service ?worker|jsdisconnected|quotaexceeded|securityerror|notallowederror|offline/i;
+    var transientRe = /failed to fetch|network ?error|err_(internet|connection|network|name|timed|address|empty_response|aborted)|abort|timed? ?out|service ?worker|jsdisconnected|quotaexceeded|securityerror|notallowederror|offline/i;
     var lastTransientAt = 0;
 
     function recordError(value) {
@@ -358,13 +358,12 @@
             //
             // _internal só é populado depois que o runtime WASM inicia — pode
             // chegar DEPOIS deste .then. Faz polling até a função existir.
-            var transientRe = /failed to fetch|network ?error|err_(internet|connection|network|name|timed|address|empty_response|aborted)|aborterror|\babort(ed)?\b|timed? ?out|service ?worker|jsdisconnected|quotaexceeded|securityerror|notallowederror|offline/i;
             var attempts = 0;
             var wrap = function () {
-                var internal = window.Blazor && window.Blazor._internal;
-                var original = internal && internal.dotNetCriticalError;
+                var internal = window.Blazor?._internal;
+                var original = internal?.dotNetCriticalError;
                 if (typeof original !== "function" || internal.__critGuarded) {
-                    if (!internal || !internal.__critGuarded) {
+                    if (!internal?.__critGuarded) {
                         if (++attempts < 100) setTimeout(wrap, 100);
                     }
                     return;
@@ -385,6 +384,7 @@
                         return original.call(this, error);
                     };
                 } catch (e) {
+                    // guard falhou → tenta de novo até _internal estabilizar
                     if (++attempts < 100) setTimeout(wrap, 100);
                 }
             };

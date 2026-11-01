@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-js-20261031` |
 | Ticket | `GH#570` |
-| Status | `Approved` |
+| Status | `PR aberto (#588)` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -132,3 +132,17 @@ N/A.
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` `ide-editor.bundle.js` é artefato gerado? Confirmar em T1 (fonte `tools/ide-bundle`) — se sim, suas issues são resolvidas na fonte e o bundle regenerado; considerar `sonar.exclusions` para o bundle.
+
+**Execução — won't-fix justificados:**
+
+| Regra | Site | Justificativa |
+| --- | --- | --- |
+| S1874 | `app.js` `mq.addListener` | fallback Safari<14 — já feature-detected (`addEventListener` preferido). |
+| S1874 | `codeblocks.js` `execCommand` | fallback de cópia quando `navigator.clipboard` indisponível (contexto inseguro). |
+| S1874 | `ide-editor.js` `caretRangeFromPoint` | API WebKit; `caretPositionFromPoint` já é o branch preferido — detection intencional. |
+| S7785 | `index.html` SW register | script clássico inline — `type=module`/top-level await mudaria ordem de boot (caminho crítico). |
+| json:S2068 | `pt-BR.json` ×3 | labels/placeholders i18n ("password" como texto de UI), não credenciais. |
+| S8786 | `audio.js` link regex | bounded quantifiers `{0,1000}`/`{0,8000}` eliminam super-linear mantendo cobertura prática total. |
+| S3776 | `ide-editor.js` `renderDiags` | resolvido via extração de `appendSquiggles` (2 níveis de nesting removidos). |
+
+**Evidências:** `node --check` OK nos 11 arquivos; semântica preservada (arrow `this` no `resolve` de app.js, clones antes de `await` no SW, `InvokeAsync<bool>` tolera async nos callers de audio).

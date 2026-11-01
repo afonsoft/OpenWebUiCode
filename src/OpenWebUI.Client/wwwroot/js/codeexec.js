@@ -28,7 +28,7 @@ window.openwebui.codeExec = (function () {
 		}
 		run(codeEl.innerText, lang, button, pre).catch(function (err) {
 			outputPanel(pre).textContent =
-				'Erro: ' + (err && err.message ? err.message : String(err));
+				'Erro: ' + (err?.message ? err.message : String(err));
 		});
 	}
 
@@ -67,7 +67,7 @@ window.openwebui.codeExec = (function () {
 			const elapsed = ((performance.now() - started) / 1000).toFixed(1);
 			renderResult(panel, result, elapsed);
 		} catch (err) {
-			panel.textContent = 'Erro: ' + (err && err.message ? err.message : String(err));
+			panel.textContent = 'Erro: ' + (err?.message ? err.message : String(err));
 		} finally {
 			button.disabled = false;
 			button.classList.remove('opacity-50');
@@ -109,9 +109,9 @@ window.openwebui.codeExec = (function () {
 				'["warn","error"].forEach(m=>{console[m]=(...a)=>stderr.push(a.map(String).join(" "));});' +
 				'onmessage=function(e){try{const r=eval(e.data);' +
 				'if(r!==undefined)stdout.push(String(r));' +
-				'postMessage({stdout:stdout.join("\\n"),stderr:stderr.join("\\n")});' +
+				String.raw`postMessage({stdout:stdout.join("\n"),stderr:stderr.join("\n")});` +
 				'}catch(err){stderr.push(String(err));' +
-				'postMessage({stdout:stdout.join("\\n"),stderr:stderr.join("\\n")});}};';
+				String.raw`postMessage({stdout:stdout.join("\n"),stderr:stderr.join("\n")});}};`;
 
 			const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })));
 			const timer = setTimeout(function () {
@@ -176,7 +176,7 @@ window.openwebui.codeExec = (function () {
 			} catch (err) {
 				// Kernel indisponível: cai para Pyodide como antes.
 				panel.textContent =
-					'Jupyter indisponível (' + (err && err.message ? err.message : err) + ') — usando Pyodide…';
+					'Jupyter indisponível (' + (err?.message ? err.message : err) + ') — usando Pyodide…';
 			}
 		}
 		const worker = await ensurePyWorker();
@@ -205,13 +205,13 @@ window.openwebui.codeExec = (function () {
 	// Admin habilita "jupyter" em code_execution e cadastra o servidor em
 	// /api/v1/terminals/config; o proxy injeta a key do servidor no upstream.
 
-	let _jupyter = undefined; // undefined = ainda não consultado
+	let _jupyter; // undefined = ainda não consultado
 
 	function authToken() {
 		try {
 			return JSON.parse(localStorage.getItem('webui.token') || 'null');
 		} catch (e) {
-			return null;
+			return null; // token ausente/corrompido → sem auth
 		}
 	}
 
@@ -221,20 +221,22 @@ window.openwebui.codeExec = (function () {
 		}
 		const token = authToken();
 		if (!token) {
-			return (_jupyter = null);
+			_jupyter = null;
+			return null;
 		}
 		const headers = { Authorization: 'Bearer ' + token };
 		try {
 			const cfg = await fetch('/api/v1/configs/code_execution', { headers: headers })
 				.then(function (r) { return r.ok ? r.json() : null; });
-			if (!cfg || (cfg.engines || []).indexOf('jupyter') === -1) {
-				return (_jupyter = null);
+			if (!cfg || !(cfg.engines || []).includes('jupyter')) {
+				_jupyter = null;
+				return null;
 			}
 			const servers = await fetch('/api/v1/terminals/', { headers: headers })
 				.then(function (r) { return r.ok ? r.json() : []; });
-			_jupyter = servers && servers.length ? servers[0] : null;
+			_jupyter = servers?.length ? servers[0] : null;
 		} catch (e) {
-			_jupyter = null;
+			_jupyter = null; // config indisponível → Jupyter desabilitado
 		}
 		return _jupyter;
 	}
@@ -301,10 +303,10 @@ window.openwebui.codeExec = (function () {
 			};
 			ws.onmessage = function (e) {
 				let msg;
-				try { msg = JSON.parse(e.data); } catch (err) { return; }
-				const parent = (msg.parent_header || {}).msg_id;
+				try { msg = JSON.parse(e.data); } catch (err) { return; } // frame não-JSON → ignora
+				const parent = msg.parent_header?.msg_id;
 				if (parent !== msgId) { return; }
-				const type = (msg.header || {}).msg_type;
+				const type = msg.header?.msg_type;
 				const content = msg.content || {};
 				if (type === 'stream') {
 					if (content.name === 'stderr') { out.stderr += content.text; }
@@ -312,7 +314,7 @@ window.openwebui.codeExec = (function () {
 				} else if (type === 'error') {
 					out.stderr += (content.traceback || [content.evalue]).join('\n');
 				} else if (type === 'execute_result' || type === 'display_data') {
-					const text = (content.data || {})['text/plain'];
+					const text = content.data?.['text/plain'];
 					if (text) { out.stdout += (Array.isArray(text) ? text.join('') : text) + '\n'; }
 				} else if (type === 'status' && content.execution_state === 'idle') {
 					clearTimeout(timer);
