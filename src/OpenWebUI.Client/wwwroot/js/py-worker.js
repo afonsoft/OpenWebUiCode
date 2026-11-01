@@ -10,7 +10,7 @@ onmessage = async function (e) {
 			pyodide = await loadPyodide({ indexURL: msg.indexURL });
 			postMessage({ type: 'ready' });
 		} catch (err) {
-			postMessage({ type: 'load-error', error: String(err && err.message ? err.message : err) });
+			postMessage({ type: 'load-error', error: String(err?.message ? err.message : err) });
 		}
 		return;
 	}
@@ -27,7 +27,7 @@ onmessage = async function (e) {
 					stdout.push(String(result));
 				}
 			} catch (err) {
-				stderr.push(String(err && err.message ? err.message : err));
+				stderr.push(String(err?.message ? err.message : err));
 			}
 			postMessage({
 				type: 'result',

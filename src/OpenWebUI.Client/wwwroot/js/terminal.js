@@ -42,7 +42,7 @@ window.owuiTerminal = (() => {
     }
 
     function send(ws, payload) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
+        if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(payload));
         }
     }
@@ -178,7 +178,7 @@ window.owuiTerminal = (() => {
     let mux = null; // { ws, ready, pending: Map<sid, {elementId, dotNetRef}> }
 
     function muxSend(payload) {
-        if (mux && mux.ws.readyState === WebSocket.OPEN) {
+        if (mux?.ws.readyState === WebSocket.OPEN) {
             mux.ws.send(JSON.stringify(payload));
         }
     }
@@ -201,7 +201,7 @@ window.owuiTerminal = (() => {
             }
             const sid = msg.sid;
             if (!sid) { return; }
-            for (const [elementId, entry] of terms) {
+            for (const entry of terms.values()) {
                 if (entry.sid !== sid) { continue; }
                 if (msg.type === 'output') {
                     entry.term.write(msg.data || '');

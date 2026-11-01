@@ -74,8 +74,8 @@
         if (!target) return;
         e.preventDefault();
         const axis = sash.dataset.ideAxis || "x";
-        const min = parseInt(sash.dataset.ideMin || "0", 10);
-        const max = parseInt(sash.dataset.ideMax || "2000", 10);
+        const min = Number.parseInt(sash.dataset.ideMin || "0", 10);
+        const max = Number.parseInt(sash.dataset.ideMax || "2000", 10);
         const start = axis === "x" ? target.offsetWidth : target.offsetHeight;
         const origin = axis === "x" ? e.clientX : e.clientY;
         const grow = sash.dataset.ideGrow !== "reverse" ? 1 : -1;

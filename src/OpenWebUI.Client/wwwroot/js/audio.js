@@ -22,7 +22,7 @@
 			.replace(/```[\s\S]*?```/g, ' ')
 			.replace(/`([^`]*)`/g, '$1')
 			.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
-			.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+			.replace(/\[([^\]]{0,1000})\]\([^)]{0,8000}\)/g, '$1')
 			.replace(/[#>*_~|]/g, ' ')
 			.replace(/\s+/g, ' ')
 			.trim();
@@ -179,8 +179,8 @@
 		refreshCaps: () => { caps = null; },
 
 		// Inicia o ditado; callbacks no ref: OnSttResult(text), OnSttEnded(), OnSttError(name).
-		startStt: (ref, lang) => {
-			if (useServerStt()) return startServerStt(ref);
+		startStt: async (ref, lang) => {
+			if (useServerStt()) return await startServerStt(ref);
 			if (!SR) return false;
 			window.openwebui.audio.stopStt();
 			sttRef = ref;
@@ -199,7 +199,10 @@
 						interim += r[0].transcript;
 					}
 				}
-				const full = accFinal + (interim ? (accFinal ? ' ' : '') + interim : '');
+				let full = accFinal;
+				if (interim) {
+					full += (full ? ' ' : '') + interim;
+				}
 				sttRef?.invokeMethodAsync('OnSttResult', full);
 			};
 			recog.onerror = (e) => sttRef?.invokeMethodAsync('OnSttError', e.error || 'error');
@@ -230,8 +233,8 @@
 		},
 
 		// Fala o texto; ref opcional recebe OnTtsEnded() ao terminar.
-		speak: (text, ref) => {
-			if (useServerTts()) return speakServer(text, ref);
+		speak: async (text, ref) => {
+			if (useServerTts()) return await speakServer(text, ref);
 			if (!('speechSynthesis' in window)) return false;
 			speechSynthesis.cancel();
 			ttsRef = ref || null;
