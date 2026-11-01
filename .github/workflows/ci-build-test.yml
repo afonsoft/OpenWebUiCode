@@ -309,7 +309,9 @@ jobs:
       - name: Install Tailwind CLI (standalone)
         run: |
           # Versão pinada — output de `latest` diverge do artefato commitado.
-          [ -x /tmp/tailwindcss ] || curl -sSL --proto-redir =https -o /tmp/tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-x64
+          # S6506: --proto =https também no request inicial (antes só no
+          # redirect), --tlsv1.2 mínimo.
+          [ -x /tmp/tailwindcss ] || curl -sSL --proto "=https" --tlsv1.2 --proto-redir =https -o /tmp/tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-x64
           chmod +x /tmp/tailwindcss
           /tmp/tailwindcss --help | head -1
 
@@ -487,10 +489,12 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           status() {
-            case "$1" in
+            # S7679: parâmetro posicional em variável local nomeada.
+            local st="$1"
+            case "$st" in
               success) echo "🟢 PASS" ;; failure) echo "🔴 FAIL" ;;
               cancelled) echo "⚫ CANCELLED" ;; skipped) echo "⚪ SKIPPED" ;;
-              *) echo "🟡 $1" ;;
+              *) echo "🟡 $st" ;;
             esac
           }
           {
