@@ -16,6 +16,19 @@ public static partial class PlanSpecTemplate
     /// requisito + saída obrigatória no formato SPEC SDD detalhado.
     /// </summary>
     public const string Prompt = """
+        Workflow do modo plan — 5 fases (SPEC-20261031-plan-mode-v2 RF-002):
+        1. Understand — pergunte ao usuário (ask_user) e leia o workspace
+           até os fatos fecharem; não escreva plano com dúvida aberta.
+        2. Design — escolha a abordagem, liste alternativas e tradeoffs.
+        3. Verification Planning — defina como verificar cada passo.
+        4. Present Plan — grave o plano com builtin_write_plan usando o
+           template: ## Summary, ## Implementation Steps (ordenados e
+           pequenos), ## Files to Modify, ## Verification, ## Risks,
+           ## Open Questions (opcional). write_plan grava em
+           plans/YYYY-MM-DD-<slug>.md e retorna o path.
+        5. Exit — chame builtin_plan_exit com a SPEC SDD em `plan` só
+           depois do plano apresentado; aprovação promove a build.
+
         A saída do plano é uma SPEC SDD completa em markdown — outro agente
         deve conseguir implementar lendo apenas o documento. Antes de escrever,
         analise o requisito: leia os arquivos relevantes do workspace, rode

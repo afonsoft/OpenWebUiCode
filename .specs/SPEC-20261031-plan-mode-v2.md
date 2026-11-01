@@ -100,11 +100,11 @@ tests/OpenWebUI.Api.Tests/WritePlanTests.cs                             (novo)
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** modo plan, **when** o modelo chama `write_plan` com o plano, **then** um arquivo `.md` é criado em `plans/` e o path é retornado.
-- [ ] **Given** segunda chamada de `write_plan` na mesma sessão, **when** executada, **then** o mesmo arquivo é atualizado.
-- [ ] **Given** `write_plan` fora de plan, **when** chamada, **then** funciona também (planos podem ser escritos em code mode como artefato).
-- [ ] **Given** `plan_exit` com plano em arquivo, **when** aprovado, **then** o path do plano aparece na confirmação e segue como contexto do build.
-- [ ] **Given** `GET /api/v1/workspace/repo/plans`, **when** chamado, **then** lista os `.md` do diretório ordenados.
+- [x] **Given** modo plan, **when** o modelo chama `write_plan` com o plano, **then** um arquivo `.md` é criado em `plans/` e o path é retornado.
+- [x] **Given** segunda chamada de `write_plan` na mesma sessão, **when** executada, **then** o mesmo arquivo é atualizado.
+- [x] **Given** `write_plan` fora de plan, **when** chamada, **then** funciona também (planos podem ser escritos em code mode como artefato).
+- [x] **Given** `plan_exit` com plano em arquivo, **when** aprovado, **then** o path do plano aparece na confirmação e segue como contexto do build.
+- [x] **Given** `GET /api/v1/workspace/repo/plans`, **when** chamado, **then** lista os `.md` do diretório ordenados.
 
 **Edge cases:**
 
@@ -117,13 +117,13 @@ tests/OpenWebUI.Api.Tests/WritePlanTests.cs                             (novo)
 
 ## 7. Task Plan
 
-- [ ] **T1 — Discovery:** ler `PermissionRuleset`/`PlanExit`/`PlanSpecTemplate`/contributors.
-- [ ] **T2 — `write_plan`:** `WritePlanBuiltinTool` (slug, plansDir, persistência por sessão).
-- [ ] **T3 — Template+prompt:** `PlanSpecTemplate` com 5 fases + seções; contributor do modo plan.
-- [ ] **T4 — `plan_exit`:** referência ao arquivo + contexto pro build.
-- [ ] **T5 — Endpoint:** `PlanEndpoints` GET list.
-- [ ] **T6 — Testes:** unitários (slug, template validation, fallback dir) + integração (plan→exit→build com arquivo).
-- [ ] **T7 — Done + PR.**
+- [x] **T1 — Discovery:** ler `PermissionRuleset`/`PlanExit`/`PlanSpecTemplate`/contributors.
+- [x] **T2 — `write_plan`:** `WritePlanBuiltinTool` (slug, plansDir, persistência por sessão).
+- [x] **T3 — Template+prompt:** `PlanSpecTemplate` com 5 fases + seções; contributor do modo plan.
+- [x] **T4 — `plan_exit`:** referência ao arquivo + contexto pro build.
+- [x] **T5 — Endpoint:** `PlanEndpoints` GET list.
+- [x] **T6 — Testes:** unitários (slug, template validation, fallback dir) + integração (plan→exit→build com arquivo).
+- [x] **T7 — Done + PR.**
 
 **7.1 Validation strategy**
 
@@ -140,11 +140,21 @@ tests/OpenWebUI.Api.Tests/WritePlanTests.cs                             (novo)
 
 ## 9. Definition of Done
 
-- [ ] RFs implementados; aceite coberto por testes.
-- [ ] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
-- [ ] Guardrails respeitados; logs sem PII.
+- [x] RFs implementados; aceite coberto por testes.
+- [x] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
+- [x] Guardrails respeitados; logs sem PII.
 
 ## Open Questions / Pending Ambiguity
 
 - `write_plan` também disponível em code mode? (recomendo sim — planos como artefato).
 - O plano deve aparecer como attachment/mensagem especial no frontend? (recomendo fase 2).
+
+## Notas de implementação
+
+- `PlanFileService` (Infrastructure/ChatTools): diretório `{workdir}/plans` com fallback `~/.openwebui/plans` (HomeResolver injetável), slug kebab-case ≤60 do título/`# ` heading, sessão → arquivo único (update in-place), sufixo `-N` para slugs concorrentes, registry `Latest` runId→path para plan_exit.
+- `builtin_write_plan` (Tier.Read, sem aprovação): grava/actualiza o `.md` da sessão, retorna `{path, bytes, missingSections}`; seções exigidas (Summary/Implementation Steps/Files to Modify/Verification/Risks) geram **aviso** no texto, não bloqueio.
+- `PermissionRuleset.PlanAllowed` inclui `write_plan`; demais writers seguem o gate `PlanWritePaths` (.md/.specs/plans) já existente.
+- `PlanSpecTemplate.Prompt` ganhou o préâmbulo das 5 fases (Understand→Design→Verification Planning→Present Plan→Exit) + instrução de `builtin_write_plan`.
+- `plan_exit` anexa `planPath` (último arquivo via write_plan) na confirmação — build recebe a referência.
+- Endpoint `GET /api/v1/workspace/repo/plans` (`PlanEndpoints`): `[{name,path,title,modifiedAt}]` desc, requer auth + chat próprio, só repo vinculado.
+- Testes: `WritePlanTests` — 7 casos (create+path, update-in-place, sufixo concorrente, aviso de seções, fallback home, listagem ordenada, plan_exit referencia).

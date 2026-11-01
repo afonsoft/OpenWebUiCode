@@ -33,3 +33,7 @@ split BuiltinTools:Deferred/McpDeferThreshold/McpCore) + ToolSearchBuiltinTool
 IsDeferredOnly em effective.Tools/AnnounceToolsAsync + gate "not loaded" +
 eventos tool_search.deferred/loaded + Clear no finally. DeferredToolIndexContributor
 Order 84. Testes ToolSearchTests 8/8.
+
+### plan-mode-v2 (#577) — entregue (PR pendente)
+- `PlanFileService` (dir plans/ + fallback home, slug, update-in-place por sessão, Latest registry), `builtin_write_plan` (Read tier), `PlanAllowed` += write_plan, `PlanSpecTemplate` com 5 fases + template de plano, `plan_exit` referencia `planPath`, endpoint `GET /api/v1/workspace/repo/plans`.
+- Build 0/0; 7 testes novos verdes (WritePlanTests).

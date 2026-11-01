@@ -90,9 +90,15 @@ public sealed class PlanExitBuiltinTool : IBuiltinChatTool
                 : $"# {title ?? "Plano"}\n\n{plan}")
             + $"\n\n---\n_Run `{context.RunId}` — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC_\n";
         File.WriteAllText(full, doc);
+        // RF-004: quando a sessão já gravou um plano via write_plan, o
+        // path segue na confirmação/contexto do build.
+        var latest = PlanFileService.LatestOf(context.RunId);
+        var suffix = latest is null
+            ? string.Empty
+            : $" Plano da sessão em `{latest}`.";
         return Task.FromResult(new BuiltinToolResult(
-            $"Plano gravado em `{relative}`.",
-            Result: new { path = relative }));
+            $"Plano gravado em `{relative}`.{suffix}",
+            Result: new { path = relative, planPath = latest }));
     }
 
     /// <summary>Nome de arquivo seguro a partir do id da run.</summary>
