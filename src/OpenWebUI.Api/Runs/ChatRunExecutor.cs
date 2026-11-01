@@ -45,7 +45,7 @@ public sealed record ChatRunLifecycleDeps(
     OpenWebUI.Infrastructure.Runs.AgentRunEventBus RunBus,
     OpenWebUI.Infrastructure.Runs.RunInterceptorRunner Interceptors,
     PolicyService? Policies, RunUsageLedgerService UsageLedger,
-    BudgetPolicyService Budgets);
+    BudgetPolicyService Budgets, LifecycleHookService Hooks);
 
 public sealed class ChatRunExecutor(
     ChatRunPipelineDeps pipeline,
@@ -74,6 +74,7 @@ public sealed class ChatRunExecutor(
     private readonly DeferredToolState deferred = tools.Deferred;
     private readonly ToolIndexService toolIndex = tools.ToolIndex;
     private readonly PermissionRuleEvaluator rules = tools.Rules;
+    private readonly LifecycleHookService hooks = lifecycle.Hooks;
     private readonly ExternalAccessRegistry externalAccess = tools.ExternalAccess;
     private readonly IConfiguration cfg = tools.Cfg;
     private readonly OpenWebUI.Infrastructure.Context.StallWatchdog stallWatch = tools.StallWatch;
@@ -204,14 +205,48 @@ public sealed class ChatRunExecutor(
                     effective.Messages.Count, run.ChatId);
                 if (tools is { Count: > 0 })
                 {
-                    var (outcome, done) = await RunToolLoopPathAsync(
-                        run, user, commandMode, chatMode, effective, tools,
-                        budgetLimits, outletRules, resumeSeed, state, ct);
-                    loopOutcome = outcome;
-                    toolMessages = outcome?.ToolMessages;
-                    if (done)
+                    // Stop (SPEC-20261031-lifecycle-hooks RF-005): quando o
+                    // agente tenta parar, hook com block injeta instrução
+                    // e a run continua — teto de 3 bloqueios.
+                    for (var stopBlocks = 0; ; stopBlocks++)
                     {
-                        return;
+                        var (outcome, done) = await RunToolLoopPathAsync(
+                            run, user, commandMode, chatMode, effective, tools,
+                            budgetLimits, outletRules, resumeSeed, state, ct);
+                        loopOutcome = outcome;
+                        toolMessages = outcome?.ToolMessages;
+                        if (done)
+                        {
+                            return;
+                        }
+                        if (stopBlocks >= 3)
+                        {
+                            break;
+                        }
+                        var stopHook = await hooks.RunAsync("Stop",
+                            await repos.ResolveWorkdirAsync(
+                                run.UserId, run.ChatId, ct),
+                            run, null, new { stop_reason = "end_turn" }, ct);
+                        foreach (var note in stopHook.AdditionalContexts)
+                        {
+                            lock (_contextNotes)
+                            {
+                                _contextNotes.Enqueue(
+                                    new ChatCompletionMessage(RoleSystem, note));
+                            }
+                        }
+                        if (stopHook.Decision is not HookDecision.Block)
+                        {
+                            break;
+                        }
+                        effective = effective with
+                        {
+                            Messages = [..effective.Messages,
+                                new ChatCompletionMessage("user",
+                                    "Instrução de hook de ciclo de vida: "
+                                    + (stopHook.Reason
+                                        ?? "continue trabalhando."))]
+                        };
                     }
                 }
                 else
@@ -650,6 +685,18 @@ public sealed class ChatRunExecutor(
             CancellationToken ct)
     {
         var builtinContext = await BuildToolContextAsync(run, user, ct);
+        // SessionStart (SPEC-20261031-lifecycle-hooks RF-006): contextos
+        // injetados viram notas system do primeiro round.
+        var startHook = await hooks.RunAsync("SessionStart",
+            builtinContext.WorkspacePath, run, null, null, ct);
+        foreach (var note in startHook.AdditionalContexts)
+        {
+            lock (_contextNotes)
+            {
+                _contextNotes.Enqueue(
+                    new ChatCompletionMessage(RoleSystem, note));
+            }
+        }
         // Advisor (SPEC-20261013-run-advisor): a entrada da mensagem
         // do usuário dispara a primeira revisão — em background,
         // com o subset read-only do workspace disponível.
@@ -872,6 +919,29 @@ public sealed class ChatRunExecutor(
                     while (_recentTools.Count > 8)
                     {
                         _recentTools.Dequeue();
+                    }
+                }
+                // PostToolUse (SPEC-20261031-lifecycle-hooks RF-004):
+                // observação + feedback — o efeito já aconteceu; block/
+                // additionalContext viram nota no próximo round.
+                var postHook = await hooks.RunAsync("PostToolUse",
+                    builtinContext.WorkspacePath, run, call.Name,
+                    new { tool_input = call.ArgumentsJson,
+                          tool_response = output }, t);
+                var hookNotes = postHook.AdditionalContexts.ToList();
+                if (postHook.Decision is HookDecision.Block)
+                {
+                    hookNotes.Add(
+                        $"Feedback de hook ({postHook.DecidedBy}): "
+                        + (postHook.Reason ?? "bloqueado")
+                        + " — o efeito já ocorreu; ajuste o rumo.");
+                }
+                foreach (var note in hookNotes)
+                {
+                    lock (_contextNotes)
+                    {
+                        _contextNotes.Enqueue(
+                            new ChatCompletionMessage(RoleSystem, note));
                     }
                 }
                 // RF-005 stall watch (agent-prompt-pack): mesma tool+args
@@ -1863,6 +1933,26 @@ public sealed class ChatRunExecutor(
         ChatRun run, IReadOnlyList<Tool> tools, ProviderToolCall call,
         BuiltinToolContext builtinContext, CancellationToken ct)
     {
+        // PreToolUse (SPEC-20261031-lifecycle-hooks RF-003): hooks casados
+        // ao tool_name rodam antes do gate — block vira resultado da tool,
+        // updatedInput substitui os args, additionalContext vira nota.
+        var preHook = await hooks.RunAsync("PreToolUse",
+            builtinContext.WorkspacePath, run, call.Name,
+            new { tool_input = call.ArgumentsJson }, ct);
+        foreach (var note in preHook.AdditionalContexts)
+        {
+            lock (_contextNotes)
+            {
+                _contextNotes.Enqueue(
+                    new ChatCompletionMessage(RoleSystem, note));
+            }
+        }
+        if (preHook.Decision is HookDecision.Block or HookDecision.Ask)
+        {
+            return new ToolGateDecision(true, Output:
+                $"Blocked by hook {preHook.DecidedBy}: {preHook.Reason}");
+        }
+        var hookRewritten = preHook.UpdatedInput;
         if (interceptors.HasInterceptors)
         {
             var outcome = await interceptors.RunToolCallAsync(
@@ -1892,7 +1982,11 @@ public sealed class ChatRunExecutor(
                 : gate;
         }
 
-        return await GateToolCallAsync(run, tools, call, builtinContext, ct);
+        var gated = await GateToolCallAsync(
+            run, tools, call, builtinContext, ct);
+        return hookRewritten is not null && gated.Approved
+            ? gated with { RewriteArgsJson = hookRewritten }
+            : gated;
     }
 
     private async Task<ToolGateDecision> GateToolCallAsync(
@@ -3065,6 +3159,18 @@ public sealed class ChatRunExecutor(
         // caminho que escape (steer, retry, continuação, tool loop) não
         // pode persistir marcadores <|…|>/tags de raciocínio na mensagem.
         content = ReasoningMarkupFilter.Strip(content);
+        // SessionEnd (SPEC-20261031-lifecycle-hooks RF-006): dispara no
+        // fim da run — contextos de saída são só auditáveis (não há
+        // próximo round); erros nunca falham o encerramento.
+        try
+        {
+            await hooks.RunAsync("SessionEnd",
+                await repos.ResolveWorkdirAsync(
+                    run.UserId, run.ChatId, CancellationToken.None),
+                run, null, new { stop_reason = status ?? "completed" },
+                CancellationToken.None);
+        }
+        catch (Exception) { /* hook de saída nunca derruba a run */ }
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         run.Status = status ?? ChatRunStatus.Completed;
         run.CompletedAt = now;

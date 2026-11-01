@@ -113,12 +113,12 @@ tests/OpenWebUI.Api.Tests/LifecycleHookTests.cs                     (novo)
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** hook `PreToolUse` com matcher `shell_exec` retornando `{"decision":"block","reason":"no rm"}`, **when** o modelo chama `shell_exec`, **then** a tool devolve `"Blocked by hook <name>: no rm"` e a run continua.
-- [ ] **Given** `PreToolUse` com `hookSpecificOutput.updatedInput`, **when** a tool roda, **then** executa com os args substituídos.
-- [ ] **Given** hook com exit `2`, **when** executado, **then** é tratado como block com stderr como reason.
-- [ ] **Given** `UserPromptSubmit` block, **when** o usuário envia mensagem, **then** ela é rejeitada com a reason visível.
-- [ ] **Given** `Stop` block, **when** o agente emite resposta final, **then** recebe instrução de continuação e a run segue.
-- [ ] **Given** `.devin/hooks.v1.json` válido no repo, **when** a run inicia, **then** os hooks são carregados com a mesma semântica.
+- [x] **Given** hook `PreToolUse` com matcher `shell_exec` retornando `{"decision":"block","reason":"no rm"}`, **when** o modelo chama `shell_exec`, **then** a tool devolve `"Blocked by hook <name>: no rm"` e a run continua.
+- [x] **Given** `PreToolUse` com `hookSpecificOutput.updatedInput`, **when** a tool roda, **then** executa com os args substituídos.
+- [x] **Given** hook com exit `2`, **when** executado, **then** é tratado como block com stderr como reason.
+- [x] **Given** `UserPromptSubmit` block, **when** o usuário envia mensagem, **then** ela é rejeitada com a reason visível.
+- [x] **Given** `Stop` block, **when** o agente emite resposta final, **then** recebe instrução de continuação e a run segue.
+- [x] **Given** `.devin/hooks.v1.json` válido no repo, **when** a run inicia, **then** os hooks são carregados com a mesma semântica.
 
 **Edge cases:**
 
@@ -132,13 +132,13 @@ tests/OpenWebUI.Api.Tests/LifecycleHookTests.cs                     (novo)
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** ler `ChatRunExecutor`/`PermissionRuleset`/`BuiltinToolRegistry` e os pontos de lifecycle; estudar `.claude/settings` loader existente.
-- [ ] **T2 — Modelo+loader:** `HookDefinition`, `HookConfigLoader` (nativo + compat devin/claude), precedência repo>user.
-- [ ] **T3 — Runners:** `CommandHookRunner` (stdin/stdout/exit/timeout/env) e `PromptHookEvaluator` (modelo advisor, parse de decisão).
-- [ ] **T4 — Integração:** chamadas nos pontos PreToolUse/PostToolUse/UserPromptSubmit/Stop/SessionStart/SessionEnd do `ChatRunExecutor` + `additionalContext`/`updatedInput`.
-- [ ] **T5 — Endpoints:** `HookEndpoints` GET/PUT/teste + auditoria.
-- [ ] **T6 — Testes:** unitários do runner/loader/decisão + integração end-to-end com hook de arquivo.
-- [ ] **T7 — Done + PR.**
+- [x] **T1 — Discovery:** ler `ChatRunExecutor`/`PermissionRuleset`/`BuiltinToolRegistry` e os pontos de lifecycle; estudar `.claude/settings` loader existente.
+- [x] **T2 — Modelo+loader:** `HookDefinition`, `HookConfigLoader` (nativo + compat devin/claude), precedência repo>user.
+- [x] **T3 — Runners:** `CommandHookRunner` (stdin/stdout/exit/timeout/env) e `PromptHookEvaluator` (modelo advisor, parse de decisão).
+- [x] **T4 — Integração:** chamadas nos pontos PreToolUse/PostToolUse/UserPromptSubmit/Stop/SessionStart/SessionEnd do `ChatRunExecutor` + `additionalContext`/`updatedInput`.
+- [x] **T5 — Endpoints:** `HookEndpoints` GET/PUT/teste + auditoria.
+- [x] **T6 — Testes:** unitários do runner/loader/decisão + integração end-to-end com hook de arquivo.
+- [x] **T7 — Done + PR.**
 
 **7.1 Validation strategy**
 
@@ -155,14 +155,28 @@ tests/OpenWebUI.Api.Tests/LifecycleHookTests.cs                     (novo)
 
 ## 9. Definition of Done
 
-- [ ] Todos os RFs implementados.
-- [ ] Todos os critérios de aceite cobertos por testes.
-- [ ] Edge cases tratados.
-- [ ] `dotnet build` + `dotnet test` passam; `python3 tools/check-spec-status.py` ok.
-- [ ] Guardrails respeitados; logs sem PII.
-- [ ] `docs/DEVIN-CLI-REA-ANALYSIS.md` atualizado com status.
+- [x] Todos os RFs implementados.
+- [x] Todos os critérios de aceite cobertos por testes.
+- [x] Edge cases tratados.
+- [x] `dotnet build` + `dotnet test` passam; `python3 tools/check-spec-status.py` ok.
+- [x] Guardrails respeitados; logs sem PII.
+- [x] `docs/DEVIN-CLI-REA-ANALYSIS.md` atualizado com status.
 
 ## Open Questions / Pending Ambiguity
 
 - `PermissionRequest`/`PostCompaction` entram no MVP ou fase 2? (depende dos pontos de integração — recomendo fase 2).
 - Hooks `prompt` usam o modelo `advisor` ou role dedicada? (recomendo `advisor`, configurável via `hooks.promptModel`).
+
+## Notas de implementação
+
+- `HookDefinition`/`HookOutcome`/`HookDecision` (ChatTools): modelo + decisão; `HookOutcome.ApproveNone` singleton.
+- `HookConfigLoader` (static): `.openwebui/hooks.json` nativo + `.devin/hooks.v1.json` + chave `hooks` de `.devin/config.json` e `.claude/settings{,.local}.json` + `~/.config/openwebui/hooks.json`; ordem repo→usuário; matcher regex inválido/chave desconhecida = warning não fatal.
+- `CommandHookRunner` (singleton): `/bin/sh -c`, payload JSON no stdin, `ArgumentList` (sem quoting), env mínimo `OPENWEBUI_*`; exit 2 = block/stderr, exit 0 + JSON = decisão + `hookSpecificOutput{updatedInput,additionalContext}`; timeout mata o processo; stdin broken-pipe tolerado.
+- `PromptHookEvaluator` (scoped): modelo `hooks.promptModel` ou role `advisor`; parse `approve|block|ask`, `true/false`, `{"pass":bool}` — não-parseável = approve.
+- `LifecycleHookService` (scoped): resolve+cache por workdir com invalidação por mtime, matcher case-insensitive, execução em ordem (primeiro block/ask vence), auditoria `hook.decision` via RunEventWriter.
+- Integração `ChatRunExecutor`: PreToolUse no topo de `GateWithInterceptorsAsync` (block → Output `"Blocked by hook <src>: <reason>"`; updatedInput → `RewriteArgsJson`; contextos → `_contextNotes`); PostToolUse no `OnResultAsync` (feedback + contextos → notas); SessionStart após `BuildToolContextAsync`; Stop: block injeta instrução user e re-entra no tool loop (teto 3); SessionEnd no `FinishAsync` (nunca falha o encerramento).
+- `UserPromptSubmit` no `EnqueueMessageAsync` (block → 400 com reason; additionalContext → sufixo da mensagem).
+- `HookEndpoints` GET/PUT `/api/v1/workspace/repo/hooks` (PUT admin grava `.openwebui/hooks.json`) + `POST /hooks/test` dry-run.
+- `PermissionRequest`/`PostCompaction`: schema aceito, sem ponto de integração ainda (fase 2 — conforme spec).
+- Desvio documentado: `Stop` re-invoca o tool loop inteiro com mensagem de instrução em vez de apenas um step; `PostToolUse` block não altera o tool_result já publicado — feedback chega via nota system.
+- Testes: `LifecycleHookTests` — 13 casos (loader nativo/devin/claude/regex inválido/precedência, runner exit0/exit2/JSON inválido/updatedInput+contexto, payload, matcher, primeiro block, parse prompt).

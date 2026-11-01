@@ -181,6 +181,11 @@ builder.Services.AddScoped(sp => new RunAdvisorService(
     (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct),
     (tools, name, args, bctx, ct) => sp.GetRequiredService<ToolExecutor>()
         .ExecuteAsync(tools, name, args, bctx, ct)));
+// Hook prompt usa o mesmo delegate de completion do advisor.
+builder.Services.AddScoped(sp => new PromptHookEvaluator(
+    sp.GetRequiredService<ModelRoleResolver>(),
+    sp.GetRequiredService<ConfigService>(),
+    (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct)));
 
 // Notificações de run (SPEC-20261007-chat-notifications): SignalR para abas
 // conectadas + Web Push quando nenhuma aba está conectada.
@@ -261,6 +266,9 @@ builder.Services.AddSingleton<ToolIndexService>();
 builder.Services.AddScoped<IBuiltinChatTool, ToolSearchBuiltinTool>();
 // Plan mode v2 (SPEC-20261031): write_plan + diretório de planos.
 builder.Services.AddSingleton<PlanFileService>();
+// Lifecycle hooks (SPEC-20261031): command runner + evaluator + orquestrador.
+builder.Services.AddSingleton<CommandHookRunner>();
+builder.Services.AddScoped<LifecycleHookService>();
 builder.Services.AddScoped<IBuiltinChatTool, WritePlanBuiltinTool>();
 // Agent teams (SPEC-20261021-harness-seams RF-E2).
 builder.Services.AddScoped<IBuiltinChatTool, TeamTaskBuiltinTool>();
@@ -680,6 +688,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapWorkspaceTestRunEndpoints();
     app.MapRepoSkillEndpoints();
     app.MapPlanEndpoints();
+    app.MapHookEndpoints();
     app.MapAgentEndpoints();
     app.MapIdeEndpoints();
     app.MapPreviewEndpoints();

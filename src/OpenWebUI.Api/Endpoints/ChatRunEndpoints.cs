@@ -77,6 +77,33 @@ public static class ChatRunEndpoints
             return Results.NotFound(new { detail = "Chat não encontrado." });
         }
 
+        // UserPromptSubmit (SPEC-20261031-lifecycle-hooks RF-005): hooks
+        // do repo vinculado rodam antes da mensagem entrar na fila —
+        // block rejeita com a reason; additionalContext injeta nota.
+        var promptWorkdir = await deps.Repos.ResolveWorkdirAsync(
+            user.Id, chat.Id, ct);
+        var promptRun = new ChatRun { Id = chat.Id, ChatId = chat.Id,
+            UserId = user.Id, Model = request.Model };
+        var promptHook = await deps.Hooks.RunAsync("UserPromptSubmit",
+            promptWorkdir, promptRun, null,
+            new { prompt = request.Content }, ct);
+        if (promptHook.Decision is HookDecision.Block)
+        {
+            return Results.BadRequest(new
+            {
+                detail = promptHook.Reason ?? "Mensagem bloqueada por hook.",
+            });
+        }
+        if (promptHook.AdditionalContexts.Count > 0
+            && !string.IsNullOrWhiteSpace(request.Content))
+        {
+            request = request with
+            {
+                Content = request.Content + "\n\n"
+                    + string.Join("\n", promptHook.AdditionalContexts),
+            };
+        }
+
         // SPEC-20261016-commands-v2 RF-003/RF-004: submit via command — o
         // servidor expande o template (a mensagem persistida mostra o texto
         // final) e aplica overrides de agent/mode/model declarados no
@@ -994,7 +1021,7 @@ public static class ChatRunEndpoints
         ContextBoundaryService Boundaries, BranchService Branches,
         WorkspaceRepoService Repos, RepoCommandService Commands,
         AgentDefinitionService AgentDefs, ConfigService Config,
-        BudgetPolicyService Budgets);
+        BudgetPolicyService Budgets, LifecycleHookService Hooks);
 
     /// <summary>Bundle DI do resume de run (S107).</summary>
     internal sealed record ResumeRunDeps(
