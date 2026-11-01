@@ -88,7 +88,7 @@ public static class ToolEndpoints
         }
         if (!string.IsNullOrWhiteSpace(request.Url) &&
             (!Uri.TryCreate(request.Url, UriKind.Absolute, out _) ||
-             request.Url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) is false &&
+             !request.Url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
              !request.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
         {
             return Results.BadRequest(new { detail = "URL de execução inválida (deve ser http(s))." });

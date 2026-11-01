@@ -234,7 +234,7 @@ public static class ChatPipeline
                         }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                         {
-                            log?.LogDebug(
+                            log?.LogDebug(ex,
                                 "Anexo {FileId} ilegível — imagem omitida da mensagem.", fid);
                         }
                     }
@@ -535,7 +535,8 @@ public static class ChatPipeline
             string? uid)
         {
             var timeouts = 0;
-            for (var attempt = 0; ; attempt++)
+            var attempt = 0;
+            while (true)
             {
                 try
                 {
@@ -561,10 +562,12 @@ public static class ChatPipeline
                         messages.Clear();
                         messages.AddRange(compacted);
                         log?.LogWarning(
+                            ex,
                             "Context-overflow do provider: janela compactada para "
                             + "~{Tail}% do tail ({Attempt}/3) e retentando.",
                             (int)(OverflowTargets[overflowRetries - 1] * 100),
                             overflowRetries);
+                        attempt++;
                         continue;
                     }
 
@@ -589,7 +592,7 @@ public static class ChatPipeline
                         }
                         throw;
                     }
-                    log?.LogWarning(
+                    log?.LogWarning(ex,
                         "Completion falhou ({Reason}, tentativa {Attempt}/{Max}) — retry em {Delay}ms.",
                         decision.Reason, attempt + 1, providers.RetryOptions.MaxAttempts,
                         (int)decision.Delay.TotalMilliseconds);
@@ -602,11 +605,13 @@ public static class ChatPipeline
                     {
                         await Task.Delay(decision.Delay, ct);
                     }
+                    attempt++;
                 }
             }
         }
 
-        for (var round = resume?.Round ?? 0; round < maxRounds; round++)
+        var round = resume?.Round ?? 0;
+        while (round < maxRounds)
         {
             if (callbacks?.OnRoundBoundaryAsync is not null)
             {
@@ -615,7 +620,7 @@ public static class ChatPipeline
                 {
                     messages.AddRange(steered);
                     // Steer zera o teto: o turno recomeça do input novo.
-                    round = -1;
+                    round = 0;
                     lengthContinuations = 0;
                     continue;
                 }
@@ -727,6 +732,7 @@ public static class ChatPipeline
                         [truncatedAssistant, continuePrompt],
                         [truncatedAssistant], ct);
                 }
+                round++;
                 continue;
             }
             if (step.ToolCalls.Count == 0)
@@ -756,7 +762,7 @@ public static class ChatPipeline
                                 interimQueued is null ? []
                                     : [interimQueued], ct);
                         }
-                        round = -1;
+                        round = 0;
                         continue;
                     }
                 }
@@ -791,6 +797,7 @@ public static class ChatPipeline
                             interim is null ? [nudge] : [interim, nudge],
                             interim is null ? [] : [interim], ct);
                     }
+                    round++;
                     continue;
                 }
                 if (string.IsNullOrWhiteSpace(step.Content) && emptyRounds < maxEmptyRounds)
@@ -825,6 +832,7 @@ public static class ChatPipeline
                     {
                         await callbacks.OnMessagesAddedAsync([nudge], [], ct);
                     }
+                    round++;
                     continue;
                 }
                 // lastStep = último round toolless (MaxStepsPrompt): a
@@ -1030,6 +1038,7 @@ public static class ChatPipeline
                 await PublishCallResultAsync(call, gate, outcome, callSw.Elapsed);
                 k = Math.Max(k + 1, end);
             }
+            round++;
         }
 
         // Teto de iterações atingido: o último round já rodou sem tools e

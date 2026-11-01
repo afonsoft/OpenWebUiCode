@@ -81,7 +81,7 @@ public sealed class BrowserActBuiltinTool(
         try
         {
             var page = await Sessions.GetPageAsync(chatKey, ct);
-            var acted = await TryActAsync(page, args, action, context, ct);
+            var acted = await TryActAsync(page, args, action, ct);
             if (acted is not null)
             {
                 return acted;
@@ -109,7 +109,7 @@ public sealed class BrowserActBuiltinTool(
     /// (candidatos rankeados) ou null quando executou com sucesso.
     /// </summary>
     private async Task<BuiltinToolResult?> TryActAsync(
-        IPage page, JsonElement args, string action, BuiltinToolContext context, CancellationToken ct)
+        IPage page, JsonElement args, string action, CancellationToken ct)
     {
         var index = Num(args, "index");
         var selector = Str(args, "selector");
@@ -149,7 +149,7 @@ public sealed class BrowserActBuiltinTool(
             targetDesc = selector;
         }
 
-        if (locator is not null && await RunOnLocatorAsync(locator, page, action, args))
+        if (locator is not null && await RunOnLocatorAsync(locator, action, args))
         {
             return null; // sucesso
         }
@@ -158,7 +158,7 @@ public sealed class BrowserActBuiltinTool(
         if (!string.IsNullOrWhiteSpace(text))
         {
             var byText = page.GetByText(text, new PageGetByTextOptions { Exact = false }).First;
-            if (await RunOnLocatorAsync(byText, page, action, args))
+            if (await RunOnLocatorAsync(byText, action, args))
             {
                 return null;
             }
@@ -217,7 +217,7 @@ public sealed class BrowserActBuiltinTool(
 
     /// <summary>Executa a ação no locator; false quando o alvo não existe.</summary>
     private static async Task<bool> RunOnLocatorAsync(
-        ILocator locator, IPage page, string action, JsonElement args)
+        ILocator locator, string action, JsonElement args)
     {
         try
         {

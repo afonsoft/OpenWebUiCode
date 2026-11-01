@@ -55,7 +55,7 @@ public static class SamlEndpoints
         }
 
         var entityId = SpEntityId(http, settings);
-        var xml = saml.BuildMetadata(settings, entityId, AcsUrl(http));
+        var xml = SamlService.BuildMetadata(settings, entityId, AcsUrl(http));
         return Results.Text(xml, "application/samlmetadata+xml");
     }
 
@@ -69,7 +69,7 @@ public static class SamlEndpoints
         }
 
         return Results.Redirect(
-            saml.BuildLoginRedirect(settings, SpEntityId(http, settings), AcsUrl(http)));
+            SamlService.BuildLoginRedirect(settings, SpEntityId(http, settings), AcsUrl(http)));
     }
 
     private static async Task<IResult> AcsAsync(
@@ -94,7 +94,7 @@ public static class SamlEndpoints
             return Results.BadRequest(new { detail = "SAMLResponse ausente." });
         }
 
-        var assertion = saml.ValidateResponse(
+        var assertion = SamlService.ValidateResponse(
             samlResponse, settings, AcsUrl(http));
         if (assertion is null)
         {
@@ -112,7 +112,7 @@ public static class SamlEndpoints
         // Role mapping: atributo configurado pode promover a admin/user.
         if (assertion.Role is "admin" or "user" && user.Role != assertion.Role)
         {
-            user.Role = assertion.Role!;
+            user.Role = assertion.Role;
             user.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             await db.SaveChangesAsync(ct);
         }

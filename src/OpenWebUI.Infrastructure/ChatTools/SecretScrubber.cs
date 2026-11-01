@@ -32,21 +32,6 @@ public static partial class SecretScrubber
     }
 
     /// <summary>
-    /// Se o texto contém algum padrão de segredo conhecido
-    /// (SPEC-20261020-context-snapshots RF-004) — detecção sem alocar a
-    /// versão mascarada; o conteúdo nunca é logado.
-    /// </summary>
-    public static bool ContainsSecret(string? text) =>
-        !string.IsNullOrEmpty(text)
-        && (GitHubTokenRegex().IsMatch(text)
-            || GitHubPatRegex().IsMatch(text)
-            || ApiKeyRegex().IsMatch(text)
-            || AwsKeyRegex().IsMatch(text)
-            || BearerTokenRegex().IsMatch(text)
-            || PrivateKeyRegex().IsMatch(text)
-            || AftTokenRegex().IsMatch(text));
-
-    /// <summary>
     /// <see cref="Scrub(string?)"/> + scrub <b>literal</b> dos valores
     /// resolvidos de secrets (SPEC-20261017-agent-secrets-env RF-007):
     /// tokens arbitrários (ex.: <c>sqp_*</c>) não casam nos regexes — cada
@@ -68,6 +53,21 @@ public static partial class SecretScrubber
         }
         return result;
     }
+
+    /// <summary>
+    /// Se o texto contém algum padrão de segredo conhecido
+    /// (SPEC-20261020-context-snapshots RF-004) — detecção sem alocar a
+    /// versão mascarada; o conteúdo nunca é logado.
+    /// </summary>
+    public static bool ContainsSecret(string? text) =>
+        !string.IsNullOrEmpty(text)
+        && (GitHubTokenRegex().IsMatch(text)
+            || GitHubPatRegex().IsMatch(text)
+            || ApiKeyRegex().IsMatch(text)
+            || AwsKeyRegex().IsMatch(text)
+            || BearerTokenRegex().IsMatch(text)
+            || PrivateKeyRegex().IsMatch(text)
+            || AftTokenRegex().IsMatch(text));
 
     // ghp_/gho_/ghu_/ghs_/ghr_ tokens pessoais + OAuth.
     [GeneratedRegex(@"gh[pousr]_[A-Za-z0-9_]{36,}", RegexOptions.Compiled)]

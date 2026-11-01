@@ -154,7 +154,7 @@ public sealed class JsonRpcPeer : IAsyncDisposable
         }
         catch (JsonException ex)
         {
-            _logger?.LogWarning("LSP: mensagem não-JSON descartada ({Message})", ex.Message);
+            _logger?.LogWarning(ex, "LSP: mensagem não-JSON descartada");
             return;
         }
 

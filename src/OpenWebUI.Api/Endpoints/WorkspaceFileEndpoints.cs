@@ -45,7 +45,7 @@ public static class WorkspaceFileEndpoints
     /// (diff da IDE, SPEC-20261011-ide-bundle). 404 fora do jail / sem HEAD.</summary>
     private static async Task<IResult> FileHeadAsync(
         string? path, string? chatId, HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, WorkspaceGitService git, CancellationToken ct)
+        WorkspaceRepoService repos, CancellationToken ct)
     {
         var (_, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
         if (reject is not null)
@@ -59,7 +59,7 @@ public static class WorkspaceFileEndpoints
             return Results.BadRequest(new { detail = error });
         }
         var rel = Path.GetRelativePath(workdir, full).Replace('\\', '/');
-        var text = await git.ShowHeadAsync(workdir, rel, ct);
+        var text = await WorkspaceGitService.ShowHeadAsync(workdir, rel, ct);
         if (text is null)
         {
             return Results.NotFound(new { detail = "Sem conteúdo no HEAD." });
@@ -127,7 +127,7 @@ public static class WorkspaceFileEndpoints
         }
         var workdir = w!;
 
-        var info = await deps.Git.GetInfoAsync(workdir, ct);
+        var info = await WorkspaceGitService.GetInfoAsync(workdir, ct);
         var gitWrite = await GitWriteEnabledAsync(
             deps.Config, deps.Configuration, ct);
         return Results.Ok(new WorkspaceGitResponse(
@@ -156,7 +156,7 @@ public static class WorkspaceFileEndpoints
         string? path, int? depth, string? cursor, string? chatId,
         HttpContext http, [AsParameters] WorkspaceFileDeps deps, CancellationToken ct)
     {
-        var (uid, w, reject) = await BoundWorkdirAsync(
+        var (_, w, reject) = await BoundWorkdirAsync(
             http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
@@ -255,7 +255,7 @@ public static class WorkspaceFileEndpoints
         string? path, int? startLine, int? maxLines, string? chatId,
         HttpContext http, [AsParameters] WorkspaceFileDeps deps, CancellationToken ct)
     {
-        var (uid, w, reject) = await BoundWorkdirAsync(
+        var (_, w, reject) = await BoundWorkdirAsync(
             http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
@@ -656,7 +656,7 @@ public static class WorkspaceFileEndpoints
                 new WorkspaceCommitResponse(false, null, "Mensagem de commit vazia."));
         }
 
-        var head = await deps.Git.CommitAsync(w!, message, ct);
+        var head = await WorkspaceGitService.CommitAsync(w!, message, ct);
         if (head is null)
         {
             return Results.Ok(new WorkspaceCommitResponse(
@@ -669,7 +669,7 @@ public static class WorkspaceFileEndpoints
     /// <summary>Bundle DI dos endpoints de workspace-file — mantém as
     /// assinaturas dentro do limite de parâmetros (S107).</summary>
     internal sealed record WorkspaceFileDeps(
-        AppDbContext Db, WorkspaceRepoService Repos, WorkspaceGitService Git,
+        AppDbContext Db, WorkspaceRepoService Repos,
         ConfigService Config, IConfiguration Configuration,
         Infrastructure.Lsp.LspService Lsp, ILogger<Program> Logger);
 }

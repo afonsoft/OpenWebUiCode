@@ -817,7 +817,7 @@ public static class ChatRunEndpoints
         var mainWorkdir = await deps.Repos.ResolveWorkdirAsync(user.Id, id, ct);
         var isolated = deps.Worktrees.ResolveIsolated(user.Id, runId);
         var workdir = isolated ?? mainWorkdir;
-        var info = await deps.Git.GetInfoAsync(workdir, ct, baseRef);
+        var info = await WorkspaceGitService.GetInfoAsync(workdir, ct, baseRef);
         return Results.Ok(new WorkspaceGitResponse(
             info.IsRepo, info.Branch, info.Added, info.Removed,
             info.Files.Select(f => new WorkspaceGitFileResponse(
@@ -893,5 +893,5 @@ public static class ChatRunEndpoints
     /// <summary>Bundle DI do diff da run (S107).</summary>
     internal sealed record RunDiffDeps(
         AppDbContext Db, WorkspaceRepoService Repos,
-        WorkspaceGitService Git, WorktreeService Worktrees);
+        WorktreeService Worktrees);
 }

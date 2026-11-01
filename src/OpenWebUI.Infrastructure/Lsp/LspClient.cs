@@ -462,7 +462,7 @@ public sealed class LspClient : IAsyncDisposable
         && pos.TryGetProperty(field, out var v)
         && v.TryGetInt32(out var n) ? n : 0;
 
-    private void KillQuietly(Process? process)
+    private static void KillQuietly(Process? process)
     {
         if (process is null)
         {

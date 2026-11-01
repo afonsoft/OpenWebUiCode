@@ -99,15 +99,11 @@ public static class ContextPruner
     private static List<CallRef> CollectCalls(IReadOnlyList<ChatCompletionMessage> messages)
     {
         var calls = new List<CallRef>();
-        foreach (var m in messages)
+        foreach (var m in messages.Where(m => m.ToolCallsJson is not null))
         {
-            if (m.ToolCallsJson is null)
-            {
-                continue;
-            }
             try
             {
-                foreach (var el in JsonDocument.Parse(m.ToolCallsJson).RootElement.EnumerateArray())
+                foreach (var el in JsonDocument.Parse(m.ToolCallsJson!).RootElement.EnumerateArray())
                 {
                     var id = el.TryGetProperty("id", out var i) ? i.GetString() : null;
                     var fn = el.TryGetProperty("function", out var f) ? f : default;

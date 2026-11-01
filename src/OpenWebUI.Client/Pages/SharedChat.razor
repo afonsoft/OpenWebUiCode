@@ -1,7 +1,6 @@
 @page "/s/{ShareId}"
 @layout EmptyLayout
 @inject ApiService Api
-@inject MarkdownService Markdown
 @inject LocalizationService L
 @inject IJSRuntime JS
 
@@ -44,7 +43,7 @@
                             <div class="message-content">
                                 @if (message.Role == "assistant")
                                 {
-                                    @((MarkupString)Markdown.ToHtml(message.Content))
+                                    @((MarkupString)MarkdownService.ToHtml(message.Content))
                                 }
                                 else
                                 {

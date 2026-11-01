@@ -145,7 +145,7 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
     }
 
     /// <summary>Busca uma entrada por nome (skill primeiro, depois command).</summary>
-    public RepoEntry? Find(RepoScanResult scan, string name) =>
+    public static RepoEntry? Find(RepoScanResult scan, string name) =>
         scan.Skills.FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
         ?? scan.Commands.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 
@@ -310,7 +310,7 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
     /// Projeto sobrescreve global por id. Arquivo malformado → warning,
     /// nunca exceção.
     /// </summary>
-    public AgentsMcpConfig LoadMcpServers(string? workdir, string? home = null)
+    public static AgentsMcpConfig LoadMcpServers(string? workdir, string? home = null)
     {
         var servers = new Dictionary<string, AgentsMcpServer>(StringComparer.OrdinalIgnoreCase);
         var warnings = new List<string>();
@@ -425,22 +425,19 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
             var current = pending.Pop();
             try
             {
-                foreach (var f in Directory.EnumerateFiles(current, pattern))
-                {
-                    visited++;
-                    found.Add(f);
-                }
+                var files = Directory.EnumerateFiles(current, pattern).ToList();
+                visited += files.Count;
+                found.AddRange(files);
 
-                foreach (var sub in Directory.EnumerateDirectories(current))
+                foreach (var sub in Directory.EnumerateDirectories(current)
+                    .Where(d => !IsReparsePoint(d)
+                        && !SkipDirs.Contains(Path.GetFileName(d))))
                 {
-                    if (!IsReparsePoint(sub) && !SkipDirs.Contains(Path.GetFileName(sub)))
-                    {
-                        pending.Push(sub);
-                    }
+                    pending.Push(sub);
                 }
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            catch (IOException) { /* ignora dir ilegível */ }
+            catch (UnauthorizedAccessException) { /* ignora dir sem acesso */ }
         }
 
         return found;

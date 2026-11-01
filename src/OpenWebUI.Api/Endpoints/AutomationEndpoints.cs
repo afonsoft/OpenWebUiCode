@@ -55,7 +55,7 @@ public static class AutomationEndpoints
             r.RunAt is null or <= 0 && (r.InMinutes ?? 0) < 1)
             return "Once exige RunAt (epoch futuro) ou InMinutes >= 1.";
         if (r.ScheduleKind is "daily" or "weekly" &&
-            !TimeOnly.TryParseExact(r.TimeOfDay, "HH:mm", out _))
+            !TimeOnly.TryParseExact(r.TimeOfDay, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
             return "TimeOfDay deve estar no formato HH:mm.";
         if (r.ScheduleKind == "weekly" && r.Weekday is null or < 0 or > 6)
             return "Weekday deve ser 0-6.";
@@ -121,7 +121,7 @@ public static class AutomationEndpoints
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var automation = new Automation { UserId = user.Id, CreatedAt = now, Enabled = true };
         Apply(automation, request);
-        service.Reschedule(automation);
+        AutomationService.Reschedule(automation);
         db.Automations.Add(automation);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToResponse(automation));
@@ -140,7 +140,7 @@ public static class AutomationEndpoints
         if (error is not null) return Results.BadRequest(new { detail = error });
 
         Apply(automation, request);
-        service.Reschedule(automation);
+        AutomationService.Reschedule(automation);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToResponse(automation));
     }
@@ -200,7 +200,7 @@ public static class AutomationEndpoints
         if (automation is null) return Results.NotFound();
 
         var run = await service.RunNowAsync(automation, ct);
-        service.Reschedule(automation);
+        AutomationService.Reschedule(automation);
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToRunResponse(run, automation.Name));
     }

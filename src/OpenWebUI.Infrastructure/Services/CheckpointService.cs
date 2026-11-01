@@ -146,7 +146,7 @@ public sealed class CheckpointService(
         {
             if (!IsGitWorkdir(workdir))
             {
-                return await FallbackPatchAsync(workdir, hash, ct);
+                return FallbackPatch(workdir, hash);
             }
             var gitdir = GitDirFor(workdir);
             await EnsureGitRepoAsync(workdir, gitdir, ct);
@@ -205,7 +205,7 @@ public sealed class CheckpointService(
         {
             return IsGitWorkdir(workdir)
                 ? await GitRevertAsync(workdir, hash, force, ct)
-                : await FallbackRevertAsync(workdir, hash, force, ct);
+                : await FallbackRevertAsync(workdir, hash, force);
         }
         finally
         {
@@ -329,7 +329,7 @@ public sealed class CheckpointService(
         Path.Join(DataRoot, "repo", HashPath(workdir));
 
     /// <summary>
-    /// Remove TODO o estado de checkpoint do workdir — gitdir de snapshots
+    /// Remove todo o estado de checkpoint do workdir — gitdir de snapshots
     /// em <c>checkpoints/repo/{hash}</c> e manifests em
     /// <c>checkpoints/files/{hash}</c>. Chamado quando o workspace dono
     /// some (delete de chat / release de worktree) — libera o disco que
@@ -349,7 +349,7 @@ public sealed class CheckpointService(
     /// index separado, object store do repo original via alternates e uma
     /// cópia do index original como seed (reuso de hashes — opencode).
     /// </summary>
-    private async Task EnsureGitRepoAsync(string workdir, string gitdir, CancellationToken ct)
+    private static async Task EnsureGitRepoAsync(string workdir, string gitdir, CancellationToken ct)
     {
         if (Directory.Exists(Path.Join(gitdir, ObjectsPath)))
         {
@@ -417,7 +417,7 @@ public sealed class CheckpointService(
     /// <c>--exclude-standard</c> honra .gitignore. <c>add --all</c> também
     /// registra deleções. Nunca toca o index do repo do usuário.
     /// </summary>
-    private async Task GitAddAsync(string workdir, string gitdir, CancellationToken ct)
+    private static async Task GitAddAsync(string workdir, string gitdir, CancellationToken ct)
     {
         var diff = await RunGitAsync(workdir, gitdir, ct,
             "-c", "core.quotepath=false",
@@ -653,14 +653,13 @@ public sealed class CheckpointService(
             turn, manifest.CreatedAt);
     }
 
-    private Task<IReadOnlyList<string>> FallbackPatchAsync(
-        string workdir, string hash, CancellationToken ct)
+    private IReadOnlyList<string> FallbackPatch(string workdir, string hash)
     {
         var root = FallbackRootFor(workdir);
         var manifest = ReadManifest(root, hash);
         if (manifest is null)
         {
-            return Task.FromResult<IReadOnlyList<string>>([]);
+            return [];
         }
         var diff = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -674,11 +673,11 @@ public sealed class CheckpointService(
             }
         }
         diff.AddRange(manifest.Files.Keys.Where(k => !seen.Contains(k)));
-        return Task.FromResult<IReadOnlyList<string>>(diff);
+        return diff;
     }
 
     private async Task<RevertResult> FallbackRevertAsync(
-        string workdir, string hash, bool force, CancellationToken ct)
+        string workdir, string hash, bool force)
     {
         var root = FallbackRootFor(workdir);
         var manifest = ReadManifest(root, hash);
@@ -688,7 +687,7 @@ public sealed class CheckpointService(
             return new RevertResult([], []);
         }
 
-        var covered = await FallbackPatchAsync(workdir, hash, ct);
+        var covered = FallbackPatch(workdir, hash);
         var reverted = new List<string>();
         var conflicts = new List<string>();
         foreach (var rel in covered)
@@ -729,13 +728,20 @@ public sealed class CheckpointService(
         {
             return [];
         }
-        return Directory.EnumerateDirectories(root)
-            .Select(d => (id: Path.GetFileName(d), m: ReadManifest(root, Path.GetFileName(d))))
-            .Where(x => x.m is not null)
-            .OrderByDescending(x => x.m!.CreatedAt)
-            .ThenByDescending(x => SeqOf(x.id))
+        var entries = new List<(string Id, Manifest M)>();
+        foreach (var d in Directory.EnumerateDirectories(root))
+        {
+            if (ReadManifest(root, Path.GetFileName(d)) is { } m
+                && Path.GetFileName(d) is { } id)
+            {
+                entries.Add((id, m));
+            }
+        }
+        return entries
+            .OrderByDescending(x => x.M.CreatedAt)
+            .ThenByDescending(x => SeqOf(x.Id))
             .Take(take)
-            .Select(x => new CheckpointSummary(x.id!, x.m!.Turn, x.m.CreatedAt))
+            .Select(x => new CheckpointSummary(x.Id, x.M.Turn, x.M.CreatedAt))
             .ToList();
     }
 
@@ -762,7 +768,7 @@ public sealed class CheckpointService(
         var latest = LatestId(root);
         while (remaining.Count > 1 && DirSize(root) > MaxBytes)
         {
-            var oldest = remaining.First();
+            var oldest = remaining[0];
             if (Path.GetFileName(oldest.dir) == latest)
             {
                 break;
@@ -969,11 +975,7 @@ public sealed class CheckpointService(
             await process.WaitForExitAsync(ct).WaitAsync(GitTimeout, ct);
             return process.ExitCode == 0 ? await stdout : null;
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Win32Exception) { return null; }
+        catch (Win32Exception) { return null; } // falha de spawn/exec do git → null por contrato
         catch (ObjectDisposedException) { return null; }
         catch (InvalidOperationException) { return null; }
         catch (IOException) { return null; }
@@ -1014,11 +1016,7 @@ public sealed class CheckpointService(
             await process.WaitForExitAsync(ct).WaitAsync(GitTimeout, ct);
             return process.ExitCode == 0 ? await stdout : null;
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Win32Exception) { return null; }
+        catch (Win32Exception) { return null; } // falha de spawn/exec do git → null por contrato
         catch (ObjectDisposedException) { return null; }
         catch (InvalidOperationException) { return null; }
         catch (IOException) { return null; }

@@ -42,7 +42,7 @@ public static class HeadlessRunner
 
         if (string.IsNullOrWhiteSpace(prompt))
         {
-            Console.Error.WriteLine(
+            await Console.Error.WriteLineAsync(
                 "headless: --prompt é obrigatório "
                 + "(uso: --headless --user-email x --prompt '...' [--model m] [--chat-id c])");
             return 2;
@@ -65,7 +65,7 @@ public static class HeadlessRunner
         }
         if (user is null)
         {
-            Console.Error.WriteLine(
+            await Console.Error.WriteLineAsync(
                 $"headless: usuário '{email}' não encontrado.");
             return 2;
         }
@@ -77,7 +77,7 @@ public static class HeadlessRunner
                 .FirstOrDefaultAsync(c => c.Id == chatId && c.UserId == user.Id, ct);
         if (chatId is not null && chat is null)
         {
-            Console.Error.WriteLine(
+            await Console.Error.WriteLineAsync(
                 $"headless: chat '{chatId}' não encontrado para o usuário.");
             return 2;
         }
@@ -85,7 +85,7 @@ public static class HeadlessRunner
         model ??= FirstModel(chat?.ModelsJson);
         if (model is null)
         {
-            Console.Error.WriteLine(
+            await Console.Error.WriteLineAsync(
                 "headless: sem modelo — passe --model ou use --chat-id de um chat com modelo.");
             return 2;
         }
@@ -134,7 +134,7 @@ public static class HeadlessRunner
         db.ChatRuns.Add(run);
         await db.SaveChangesAsync(ct);
 
-        Console.Out.WriteLine(JsonSerializer.Serialize(new
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new
         {
             type = "run.created",
             runId = run.Id,
@@ -150,7 +150,7 @@ public static class HeadlessRunner
             .Where(r => r.Id == run.Id)
             .Select(r => new { r.Id, r.Status })
             .FirstAsync(ct);
-        Console.Out.WriteLine(JsonSerializer.Serialize(new
+        await Console.Out.WriteLineAsync(JsonSerializer.Serialize(new
         {
             type = "result",
             runId = final.Id,

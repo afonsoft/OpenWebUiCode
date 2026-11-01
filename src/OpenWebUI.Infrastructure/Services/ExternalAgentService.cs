@@ -201,7 +201,7 @@ public sealed class ExternalAgentService(ConfigService config)
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* processo já encerrado */ }
                 return new ExternalRunResult(
                     false, $"Agente '{def.Id}' excedeu o timeout de 5min.");
             }
@@ -229,7 +229,7 @@ public sealed class ExternalAgentService(ConfigService config)
         Path.Join(home, def.SkillsDir, "openwebui-cli", "SKILL.md");
 
     /// <summary>Instala a skill ponte (RF-004) — sem segredos embutidos.</summary>
-    private void InstallBridgeSkill(ExternalAgentDef def)
+    private static void InstallBridgeSkill(ExternalAgentDef def)
     {
         var path = SkillPath(HomeResolver(), def);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -237,7 +237,7 @@ public sealed class ExternalAgentService(ConfigService config)
     }
 
     /// <summary>Remove a skill ponte ao desselecionar.</summary>
-    private void RemoveBridgeSkill(ExternalAgentDef def)
+    private static void RemoveBridgeSkill(ExternalAgentDef def)
     {
         var dir = Path.GetDirectoryName(SkillPath(HomeResolver(), def));
         try

@@ -43,14 +43,14 @@ else
         {
             <div class="field-note">@L["common.loading"]</div>
         }
-        else if (Filtered.Count == 0)
+        else if (Filtered().Count == 0)
         {
             <div class="field-note">@L["chat.repo_search_empty"]</div>
         }
         else
         {
             <div class="card-list max-h-56 overflow-y-auto">
-                @foreach (var repo in Filtered)
+                @foreach (var repo in Filtered())
                 {
                     <button type="button"
                             class="card-row w-full text-left @(repo.FullName == _slug ? "ring-2 ring-gray-300/60 dark:ring-gray-600" : "")"
@@ -153,21 +153,18 @@ else
     private string _branch = "main";
     private string? _message;
 
-    private List<GitHubRepoResponse> Filtered
+    private List<GitHubRepoResponse> Filtered()
     {
-        get
+        if (_repos is null)
         {
-            if (_repos is null)
-            {
-                return [];
-            }
-            if (string.IsNullOrWhiteSpace(_filter))
-            {
-                return _repos;
-            }
-            return _repos.Where(r =>
-                r.FullName.Contains(_filter, StringComparison.OrdinalIgnoreCase)).ToList();
+            return [];
         }
+        if (string.IsNullOrWhiteSpace(_filter))
+        {
+            return _repos;
+        }
+        return _repos.Where(r =>
+            r.FullName.Contains(_filter, StringComparison.OrdinalIgnoreCase)).ToList();
     }
 
     protected override async Task OnInitializedAsync()

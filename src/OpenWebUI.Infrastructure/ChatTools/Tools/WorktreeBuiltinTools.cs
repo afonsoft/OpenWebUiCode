@@ -80,14 +80,14 @@ public sealed class WorktreeDiffBuiltinTool(AppDbContext db, WorktreeService wor
 
         var statOnly = args.TryGetProperty("stat_only", out var so)
             && so.ValueKind == JsonValueKind.True;
-        var status = await worktrees.StatusPorcelainAsync(worktree, ct);
-        var stat = await worktrees.DiffAsync(worktree, ct, stat: true);
+        var status = await WorktreeService.StatusPorcelainAsync(worktree, ct);
+        var stat = await WorktreeService.DiffAsync(worktree, ct, stat: true);
         var text = string.IsNullOrWhiteSpace(status)
             ? "Worktree sem mudanças pendentes."
             : $"Mudanças pendentes:\n{status.Trim()}\n\n{stat?.Trim() ?? "(sem diff)"}";
         if (!statOnly && !string.IsNullOrWhiteSpace(status))
         {
-            var patch = await worktrees.DiffAsync(worktree, ct);
+            var patch = await WorktreeService.DiffAsync(worktree, ct);
             if (!string.IsNullOrWhiteSpace(patch))
             {
                 text += $"\n\n```diff\n{Truncate(patch, MaxPatchChars)}\n```";

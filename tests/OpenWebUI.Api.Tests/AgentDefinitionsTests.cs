@@ -86,7 +86,7 @@ public class AgentDefinitionsTests
         db.SaveChanges();
         // O cache do catálogo é estático (60s TTL): sem invalidar, o
         // catálogo de outro teste/fixture vaza pela chave "u1|".
-        _provider.GetRequiredService<AgentDefinitionService>().Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
     }
 
     [TearDown]
@@ -111,7 +111,7 @@ public class AgentDefinitionsTests
         Directory.CreateDirectory(layerDir);
         File.WriteAllText(Path.Join(layerDir, fileName), content);
         // O catálogo é cacheado por 60s — cada escrita invalida o cache.
-        _provider.GetRequiredService<AgentDefinitionService>().Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
     }
 
     // ---------------- Parse (RF-001) ----------------
@@ -221,7 +221,7 @@ public class AgentDefinitionsTests
             ---
             prompt usuário
             """);
-        svc.Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
         var catalog = await svc.ListAsync("u1", null, default);
         Assert.Multiple(() =>
         {
@@ -251,7 +251,7 @@ public class AgentDefinitionsTests
 
         // Com opt-in: aparece com source workspace.
         await Config().SetAsync("u:u1:agents.workspace.enabled", true, default);
-        svc.Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
         var after = await svc.ListAsync("u1", workdir, default);
         Assert.Multiple(() =>
         {
@@ -310,7 +310,7 @@ public class AgentDefinitionsTests
             prompt projeto
             """);
         await Config().SetAsync("u:u1:agents.workspace.enabled", true, default);
-        svc.Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
 
         var catalog = await svc.ListAsync("u1", workdir, default);
         Assert.Multiple(() =>
@@ -347,7 +347,7 @@ public class AgentDefinitionsTests
         Assert.That(catalog.ContainsKey("plan"), Is.False);
 
         await Config().SetAsync("u:u1:agents.workspace.enabled", true, default);
-        svc.Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
         var after = await svc.ListAsync("u1", workdir, default);
         Assert.That(after["plan"].Source, Is.EqualTo("workspace"));
     }
@@ -422,7 +422,7 @@ public class AgentDefinitionsTests
             ---
             corpo
             """);
-        _provider.GetRequiredService<AgentDefinitionService>().Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
         var tool = _provider.GetServices<IBuiltinChatTool>()
             .OfType<AgentCatalogBuiltinTool>().Single();
         var ctx = new BuiltinToolContext("u1", null, null, _root, _root);
@@ -708,7 +708,7 @@ public class AgentDefinitionsTests
             ---
             corpo
             """);
-        _provider.GetRequiredService<AgentDefinitionService>().Invalidate("u1");
+        AgentDefinitionService.Invalidate("u1");
         var (parentRun, tool) = await SeedParentRunAsync();
         var ctx = new BuiltinToolContext("u1", parentRun.ChatId, parentRun.Id, _root, _root);
         var args = System.Text.Json.JsonDocument.Parse(

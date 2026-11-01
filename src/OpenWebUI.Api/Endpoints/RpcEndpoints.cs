@@ -239,6 +239,6 @@ public static class RpcEndpoints
         });
 
     /// <summary>Erro de validação de params → -32602.</summary>
-    private sealed class RpcParamsException(string message)
+    public sealed class RpcParamsException(string message)
         : Exception(message);
 }

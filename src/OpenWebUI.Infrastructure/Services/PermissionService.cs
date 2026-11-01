@@ -62,8 +62,7 @@ public class PermissionService(AppDbContext db)
 
         var effective = groups
             .Select(json => ExplicitValue(json, permission, invalidAsFalse: true))
-            .Where(v => v.HasValue)
-            .LastOrDefault();
+            .LastOrDefault(v => v.HasValue);
 
         // Override por usuário (definido pelo admin) vence qualquer grupo.
         var userValue = ExplicitValue(user.PermissionsJson, permission, invalidAsFalse: false);

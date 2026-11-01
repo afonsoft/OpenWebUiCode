@@ -98,7 +98,7 @@ public static class ApiEndpoints
     }
 
     private static async Task<IResult> GetAppConfigAsync(
-        HttpContext http, ConfigService config, ImageGenerationService images,
+        ConfigService config, ImageGenerationService images,
         VideoGenerationService videos, AudioService audio, CancellationToken ct)
     {
         var adminConfig = await config.GetAdminConfigAsync(ct);
@@ -670,7 +670,7 @@ public static class ApiEndpoints
     }
 
     private static async Task<IResult> ExportConfigAsync(
-        HttpContext http, ConfigService config, AppDbContext db, CancellationToken ct)
+        HttpContext http, AppDbContext db, CancellationToken ct)
     {
         if (!IsAdmin(http))
         {

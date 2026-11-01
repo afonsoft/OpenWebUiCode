@@ -95,12 +95,6 @@ public class ToolExecutor(
         url[McpClientService.VirtualUrlPrefix.Length..]
             .Split('/', 2)[0];
 
-    /// <summary>Atalho sem contexto built-in (tools do banco/HTTP/MCP apenas).</summary>
-    public Task<ToolExecutionOutcome> ExecuteAsync(
-        IReadOnlyList<Tool> tools, string functionName, string argumentsJson,
-        CancellationToken ct) =>
-        ExecuteAsync(tools, functionName, argumentsJson, null, ct);
-
     /// <summary>
     /// Localiza a tool pelo nome da função do spec. Além do match exato,
     /// built-ins (<c>builtin://{name}</c>) casam por qualquer forma do nome
@@ -235,6 +229,12 @@ public class ToolExecutor(
             return new($"Erro ao executar tool '{functionName}': {ex.Message}");
         }
     }
+
+    /// <summary>Atalho sem contexto built-in (tools do banco/HTTP/MCP apenas).</summary>
+    public Task<ToolExecutionOutcome> ExecuteAsync(
+        IReadOnlyList<Tool> tools, string functionName, string argumentsJson,
+        CancellationToken ct) =>
+        ExecuteAsync(tools, functionName, argumentsJson, null, ct);
 
     /// <summary>
     /// Se a tool é mutável para o gate de aprovação

@@ -501,7 +501,7 @@ public static class EvalEndpoints
             .Select(r => r.ChatRunId!).ToList();
         var costUsd = await db.RunUsageRecords.AsNoTracking()
             .Where(u => chatRunIds.Contains(u.RunId) && u.CostUsd != null)
-            .SumAsync(u => (double?)u.CostUsd, ct) ?? 0d;
+            .SumAsync(u => u.CostUsd, ct) ?? 0d;
         return new
         {
             run.Id, run.DatasetId, run.ModelId, run.AgentName, run.K,

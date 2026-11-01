@@ -2656,7 +2656,7 @@ public class ProviderService(
     /// <c>text</c> + <c>image_url</c> (data-url). Mensagem sem imagens
     /// mantém <c>content</c> string (compat).
     /// </summary>
-    private JsonObject BuildPayload(ChatCompletionRequest request, bool stream, string provider)
+    private static JsonObject BuildPayload(ChatCompletionRequest request, bool stream, string provider)
     {
         var payload = new JsonObject
         {

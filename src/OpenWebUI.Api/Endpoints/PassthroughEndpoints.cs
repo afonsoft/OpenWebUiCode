@@ -195,7 +195,7 @@ public static class PassthroughEndpoints
     }
 
     /// <summary>Falha do forward — carrega status/erro/resposta para replay sem cache.</summary>
-    private sealed class ProxyFailureException(int statusCode, string? error, HttpResponseMessage? response = null) : Exception
+    public sealed class ProxyFailureException(int statusCode, string? error, HttpResponseMessage? response = null) : Exception
     {
         public int StatusCode { get; } = statusCode;
         public string? Error { get; } = error;
@@ -208,11 +208,11 @@ public static class PassthroughEndpoints
     /// <summary>Result que replay uma resposta bufferizada do cache.</summary>
     private sealed class CachedResult(CachedProxyResponse cached) : IResult
     {
-        public async Task ExecuteAsync(HttpContext context)
+        public async Task ExecuteAsync(HttpContext httpContext)
         {
-            context.Response.StatusCode = cached.Status;
-            context.Response.ContentType = cached.ContentType ?? "application/octet-stream";
-            await context.Response.Body.WriteAsync(cached.Body, context.RequestAborted);
+            httpContext.Response.StatusCode = cached.Status;
+            httpContext.Response.ContentType = cached.ContentType ?? "application/octet-stream";
+            await httpContext.Response.Body.WriteAsync(cached.Body, httpContext.RequestAborted);
         }
     }
 
@@ -226,22 +226,22 @@ public static class PassthroughEndpoints
     /// <summary>Result que copia status, headers e corpo (streaming) do upstream.</summary>
     private sealed class ProxiedResult(HttpResponseMessage response) : IResult
     {
-        public async Task ExecuteAsync(HttpContext context)
+        public async Task ExecuteAsync(HttpContext httpContext)
         {
             using (response)
             {
-                context.Response.StatusCode = (int)response.StatusCode;
+                httpContext.Response.StatusCode = (int)response.StatusCode;
                 foreach (var header in response.Headers.Concat(response.Content.Headers)
                              .Where(h => !HopByHop.Contains(h.Key)))
                 {
-                    context.Response.Headers[header.Key] = header.Value.ToArray();
+                    httpContext.Response.Headers[header.Key] = header.Value.ToArray();
                 }
 
-                context.Response.Headers.Remove("transfer-encoding");
+                httpContext.Response.Headers.Remove("transfer-encoding");
                 // Respostas SSE upstream (api/chat, api/pull) precisam passar
                 // sem buffering no proxy reverso.
-                context.Response.Headers["X-Accel-Buffering"] = "no";
-                await response.Content.CopyToAsync(context.Response.Body, context.RequestAborted);
+                httpContext.Response.Headers["X-Accel-Buffering"] = "no";
+                await response.Content.CopyToAsync(httpContext.Response.Body, httpContext.RequestAborted);
             }
         }
     }

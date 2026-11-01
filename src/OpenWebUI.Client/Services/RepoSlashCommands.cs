@@ -73,14 +73,15 @@ public static class RepoSlashCommands
     {
         var tokens = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var sb = new StringBuilder(template.Length + args.Length);
-        for (var i = 0; i < template.Length; i++)
+        var i = 0;
+        while (i < template.Length)
         {
             if (template[i] == '$')
             {
                 if (template.AsSpan(i).StartsWith("$ARGUMENTS", StringComparison.Ordinal))
                 {
                     sb.Append(args);
-                    i += "$ARGUMENTS".Length - 1;
+                    i += "$ARGUMENTS".Length;
                     continue;
                 }
 
@@ -95,12 +96,13 @@ public static class RepoSlashCommands
                     && n >= 1)
                 {
                     sb.Append(n <= tokens.Length ? tokens[n - 1] : string.Empty);
-                    i = j - 1;
+                    i = j;
                     continue;
                 }
             }
 
             sb.Append(template[i]);
+            i++;
         }
 
         return sb.ToString();

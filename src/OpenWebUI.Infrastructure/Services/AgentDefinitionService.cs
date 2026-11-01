@@ -190,7 +190,7 @@ public sealed class AgentDefinitionService(
         && WorkspaceAgentDirs.Any(rel => Directory.Exists(Path.Join(workdir, rel)));
 
     /// <summary>Invalida o cache de um usuário (mudança de opt-in/workdir).</summary>
-    public void Invalidate(string userId)
+    public static void Invalidate(string userId)
     {
         foreach (var key in Cache.Keys.Where(k => k.StartsWith(userId + "|", StringComparison.Ordinal)))
         {
@@ -357,12 +357,14 @@ public sealed class AgentDefinitionService(
         }
 
         var fmLines = raw[(firstNl + 1)..end].Split('\n');
-        for (var i = 0; i < fmLines.Length; i++)
+        var i = 0;
+        while (i < fmLines.Length)
         {
             var line = fmLines[i];
             var colon = line.IndexOf(':');
             if (colon <= 0)
             {
+                i++;
                 continue;
             }
 
@@ -399,6 +401,7 @@ public sealed class AgentDefinitionService(
             {
                 map[key] = value;
             }
+            i++;
         }
 
         var rest = raw[(end + 4)..];

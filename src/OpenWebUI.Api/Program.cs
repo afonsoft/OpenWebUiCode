@@ -263,7 +263,6 @@ builder.Services.AddSingleton<BrowserSessionService>();
 builder.Services.AddSingleton<IBrowserSessions>(
     sp => sp.GetRequiredService<BrowserSessionService>());
 builder.Services.AddSingleton<TesseractOcr>();
-builder.Services.AddSingleton<WorkspaceGitService>();
 builder.Services.AddScoped<WorkspaceRepoService>();
 builder.Services.AddScoped<WorkspacePublishService>();
 builder.Services.AddSingleton<WorktreeService>();

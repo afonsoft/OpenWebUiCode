@@ -78,7 +78,7 @@ public sealed class RunResultBuiltinTool(AppDbContext db, WorktreeService worktr
         var worktree = worktrees.ResolveIsolated(context.UserId, run.Id);
         var hasChanges = worktree is not null
             && !string.IsNullOrWhiteSpace(
-                await worktrees.StatusPorcelainAsync(worktree, ct));
+                await WorktreeService.StatusPorcelainAsync(worktree, ct));
         var reviewHint = hasChanges
             ? "\n\n[worktree isolado com mudanças pendentes — revise com "
                 + "builtin_worktree_diff run_id=" + run.Id + " e mergeie com "

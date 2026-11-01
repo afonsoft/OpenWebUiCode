@@ -318,20 +318,18 @@ public static class ModelFilterService
                              .Where(s => s["content"] is JsonValue c
                                          && c.TryGetValue<string>(out _)))
                 {
+                    var content = (JsonValue)segment["content"]!;
+                    content.TryGetValue<string>(out var text);
+                    // O Where acima garante TryGetValue — text é não-nulo aqui.
+                    var redacted = text!;
+                    foreach (var (regex, replacement) in rules)
                     {
-                        var content = (JsonValue)segment["content"]!;
-                        content.TryGetValue<string>(out var text);
-                        // O Where acima garante TryGetValue — text é não-nulo aqui.
-                        var redacted = text!;
-                        foreach (var (regex, replacement) in rules)
-                        {
-                            redacted = regex.Replace(redacted, replacement);
-                        }
-                        if (redacted != text)
-                        {
-                            segment["content"] = redacted;
-                            changed = true;
-                        }
+                        redacted = regex.Replace(redacted, replacement);
+                    }
+                    if (redacted != text)
+                    {
+                        segment["content"] = redacted;
+                        changed = true;
                     }
                 }
             }

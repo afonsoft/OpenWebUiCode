@@ -53,7 +53,7 @@ public abstract class LspBuiltinToolBase(LspService lsp, WorkspaceRepoService re
     }
 
     /// <summary>Resolve path relativo jailed; erro pronto quando falha.</summary>
-    protected string? ResolvePath(JsonElement args, BuiltinToolContext context, out string? error)
+    protected static string? ResolvePath(JsonElement args, BuiltinToolContext context, out string? error)
     {
         var path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
         var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out error);
@@ -73,7 +73,7 @@ public abstract class LspBuiltinToolBase(LspService lsp, WorkspaceRepoService re
     protected async Task<(LspClient? Client, string? Error)> ClientForAsync(
         BuiltinToolContext context, string absolutePath, CancellationToken ct)
     {
-        var language = Lsp.LanguageFor(absolutePath);
+        var language = LspService.LanguageFor(absolutePath);
         if (language is null)
         {
             return (null,

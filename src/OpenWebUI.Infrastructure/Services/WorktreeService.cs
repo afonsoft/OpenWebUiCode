@@ -296,7 +296,7 @@ public sealed class WorktreeService(
     /// <c>git status --porcelain</c> do worktree (SPEC-20261010-worktree-review):
     /// não-vazio = há mudanças (tracked ou untracked) a revisar.
     /// </summary>
-    public async Task<string?> StatusPorcelainAsync(string worktreePath, CancellationToken ct) =>
+    public static async Task<string?> StatusPorcelainAsync(string worktreePath, CancellationToken ct) =>
         await RunGitAsync(worktreePath, ct, "status", "--porcelain");
 
     /// <summary>
@@ -305,7 +305,7 @@ public sealed class WorktreeService(
     /// intent-to-add faz o diff cobrir também arquivos untracked; o índice é
     /// restaurado com <c>reset</c> no fim.
     /// </summary>
-    public async Task<string?> DiffAsync(
+    public static async Task<string?> DiffAsync(
         string worktreePath, CancellationToken ct, bool stat = false)
     {
         _ = await RunGitAsync(worktreePath, ct, "add", "--intent-to-add", "--all");
@@ -316,14 +316,14 @@ public sealed class WorktreeService(
         return output;
     }
 
-    private async Task<string?> RunGitAsync(string workdir, CancellationToken ct, params string[] args)
+    private static async Task<string?> RunGitAsync(string workdir, CancellationToken ct, params string[] args)
     {
         var (code, stdout, _) = await RunGitInputAsync(workdir, null, ct, args);
         return code == 0 ? stdout : null;
     }
 
     /// <summary>git -C workdir args; devolve a 1ª linha do erro ou null em sucesso.</summary>
-    private async Task<string?> RunGitLoggedAsync(
+    private static async Task<string?> RunGitLoggedAsync(
         string workdir, CancellationToken ct, params string[] args)
     {
         var (code, _, stderr) = await RunGitInputAsync(workdir, null, ct, args);

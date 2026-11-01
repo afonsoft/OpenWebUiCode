@@ -54,7 +54,7 @@ public static class LspEndpoints
             {
                 return Results.BadRequest(new { detail = error });
             }
-            var language = lsp.LanguageFor(full);
+            var language = LspService.LanguageFor(full);
             if (language is null
                 || lsp.StateOf(workdir, language.ServerKey) != LspServerState.Running)
             {
@@ -141,7 +141,7 @@ public static class LspEndpoints
             {
                 return Results.NotFound(new { detail = "Arquivo não existe." });
             }
-            var language = lsp.LanguageFor(full);
+            var language = LspService.LanguageFor(full);
             if (language is null
                 || lsp.StateOf(workdir, language.ServerKey) != LspServerState.Running)
             {
@@ -216,7 +216,7 @@ public static class LspEndpoints
         LspService lsp, CancellationToken ct) =>
         WithWorkdirAsync(http, db, repos, chatId, ct, (uid, workdir) =>
         {
-            var language = lsp.LanguageFor(path);
+            var language = LspService.LanguageFor(path);
             if (language is null)
             {
                 return Task.FromResult(Results.Ok(
@@ -276,8 +276,8 @@ public static class LspEndpoints
                             return Results.BadRequest(new { detail = "'text' é obrigatório." });
                         }
                         await lsp.ChangeDocumentAsync(workdir, full, request.Text, ct);
-                        synced = lsp.LanguageFor(full) is not null
-                            && lsp.StateOf(workdir, lsp.LanguageFor(full)!.ServerKey)
+                        synced = LspService.LanguageFor(full) is not null
+                            && lsp.StateOf(workdir, LspService.LanguageFor(full)!.ServerKey)
                                 == LspServerState.Running;
                         break;
                     case "close":
@@ -320,7 +320,7 @@ public static class LspEndpoints
 
             // Se o doc ainda não foi publicado, espera o primeiro push (cap 8s)
             // — cobre o fluxo open→diagnostics do editor sem poling.
-            var language = lsp.LanguageFor(full);
+            var language = LspService.LanguageFor(full);
             if (full is not null && language is not null
                 && lsp.StateOf(workdir, language.ServerKey) == LspServerState.Running)
             {
@@ -358,7 +358,7 @@ public static class LspEndpoints
                 return Results.BadRequest(new { detail = error });
             }
 
-            var language = deps.Lsp.LanguageFor(full);
+            var language = LspService.LanguageFor(full);
             if (language is null)
             {
                 return Results.Ok(new LspHoverResponse(null));
@@ -398,7 +398,7 @@ public static class LspEndpoints
             early = Results.BadRequest(new { detail = error });
             return null;
         }
-        var language = lsp.LanguageFor(full);
+        var language = LspService.LanguageFor(full);
         if (language is null
             || lsp.StateOf(workdir, language.ServerKey) != LspServerState.Running)
         {

@@ -103,12 +103,35 @@ N/A.
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** agrupar issues por regra no board; ordenar por arquivo×regra; separar "fix direto" de "precisa triage".
-- [ ] **T2 — Bloco hot:** ChatRunExecutor (13), Ide.razor (12), CheckpointService+ComboService (16), WebSearch+OAuthCatalog (14).
-- [ ] **T3 — Regras de massa:** S2325 (37), S8969 (25), S1172 (25), S1135 (20), S1075 (17), S4487 (14), S3267 (12).
-- [ ] **T4 — Cauda + triage:** restantes ~100 issues + S2925 em testes + avaliação css.
-- [ ] **T5 — Validation por bloco:** `dotnet test`; `tailwindcss` regen se css tocado.
+- [x] **T1 — Discovery:** agrupar issues por regra no board; ordenar por arquivo×regra; separar "fix direto" de "precisa triage".
+- [x] **T2 — Bloco hot:** ChatRunExecutor (13), Ide.razor (12), CheckpointService+ComboService (16), WebSearch+OAuthCatalog (14).
+- [x] **T3 — Regras de massa:** S2325 (37), S8969 (25), S1172 (25), S1135 (20), S1075 (17), S4487 (14), S3267 (12).
+- [x] **T4 — Cauda + triage:** restantes ~100 issues + S2925 em testes + avaliação css.
+- [x] **T5 — Validation por bloco:** `dotnet test`; `tailwindcss` regen se css tocado.
 - [ ] **T6 — Done + PRs por bloco.**
+
+**7.2 Execução — won't-fix justificados (dump stale, re-verificado por item):**
+
+| Regra | Itens | Justificativa |
+| --- | --- | --- |
+| S1135 (20) | todos | FP: "todo" dentro de palavras pt-BR ("todo caminho", "Filtra todo") e nome de tool `todo_write` em XML docs — sem TODO real. |
+| S1075 (17) | todos | URIs upstream fixas (OAuth providers, search engines, `api.github.com`) e defaults `http://localhost:8080` configuráveis por env — constantes de integração, não config drift. |
+| S4487 (14) | Ide.razor ×10, `_settingsOpen` | FP Blazor: campos lidos no markup gerado (`Jobs="_jobs"`, `IsOpen="_settingsOpen"`) — o analyzer não vê o BuildRenderTree. `_lifetime`/`_activeLeafId` removidos (write-only reais). |
+| S5332 (1) | PreviewEndpoints | `http://127.0.0.1:{port}` — proxy loopback por design (preview de servidores locais do usuário). |
+| S4036 (1) | ReferenceService | já resolvido — `GitExePath` resolve path absoluto (comentário S4036 no código). |
+| S7039 (1) | Program.cs CSP | já tratado na SPEC #563 — `'unsafe-inline'` documentado (scripts inline exigem; nonce refactor fora do escopo). |
+| S1118 (1) | Program.cs | `Program` gerado por top-level statements — não pode ser `static`. |
+| S5693 (1) | ChatView upload | limite de payload é responsabilidade do servidor/proxy, não do cliente. |
+| S2223 (2) | ModelWarmer.Tick/InitialDelay | seam de teste deliberado (mutáveis por design — comentário no código). |
+| S2325 (2) | `SafeInParallel` | membro de `IBuiltinChatTool` — contrato de interface exige instância. |
+| S3267 (3) | razor `@foreach` / loop com `await` | iteração de renderização e loop async não são LINQ-áveis. |
+| S1854 (1) | Ide.razor `_ =` | discard-assignment é o supressor canônico de CS4014 (fire-and-forget intencional). |
+| S1172 (2) | BrowserActBuiltinTool | stale — `context`/`page` já removidos na leva S1172. |
+| S6607/S1905 | ComboService | já resolvidos no bloco hot (Where antes de OrderBy; casts removidos). |
+| S5034 (2) | ChatRunEndpoints | já resolvido — `ValueTask.AsTask()` materializado antes do `WhenAny`. |
+| S2737 (3) | catches `return null` | contrato deliberado (git/LSP indisponível → null) — comentários de justificativa adicionados. |
+| S1125 (1) | DialogHost ternário | `? _input : true` retorna `object` (string|bool) — literal não é redundante. |
+| S4201→aplicado | `is not null` em PermissionMode | removido (contrato non-nullable). |
 
 **7.1 Validation strategy**
 

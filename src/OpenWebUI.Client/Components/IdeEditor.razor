@@ -590,7 +590,7 @@
             return false;
         }
         var r = await Api.FormatLspDocumentAsync(_active.Path, ChatId);
-        if (r?.Text is null || r.Changed == false)
+        if (r?.Text is null || !r.Changed)
         {
             return false;
         }
@@ -601,7 +601,7 @@
     }
 
     /// <summary>Pin uma aba preview (dblclick).</summary>
-    private void PinTab(IdeTab tab)
+    private static void PinTab(IdeTab tab)
     {
         tab.Preview = false;
     }

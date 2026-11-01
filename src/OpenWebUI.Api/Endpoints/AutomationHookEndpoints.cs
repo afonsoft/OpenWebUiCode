@@ -125,19 +125,19 @@ public static class AutomationHookEndpoints
             Name = name,
             CreatedAt = now,
             Secret = string.IsNullOrWhiteSpace(request?.Secret)
-                ? null : request!.Secret.Trim(),
+                ? null : request.Secret.Trim(),
             Provider = provider,
             EventsJson = request?.Events is { Length: > 0 } events
                 ? JsonSerializer.Serialize(events, JsonOptions)
                 : null,
             PromptTemplate = string.IsNullOrWhiteSpace(request?.PromptTemplate)
-                ? null : request!.PromptTemplate,
+                ? null : request.PromptTemplate,
             RepoSlug = string.IsNullOrWhiteSpace(request?.RepoSlug)
-                ? null : request!.RepoSlug.Trim(),
+                ? null : request.RepoSlug.Trim(),
             PersonaId = string.IsNullOrWhiteSpace(request?.PersonaId)
-                ? null : request!.PersonaId.Trim(),
+                ? null : request.PersonaId.Trim(),
             AgentMode = string.IsNullOrWhiteSpace(request?.AgentMode)
-                ? null : request!.AgentMode.Trim().ToLowerInvariant(),
+                ? null : request.AgentMode.Trim().ToLowerInvariant(),
         };
         db.AutomationHooks.Add(hook);
         await db.SaveChangesAsync(ct);
@@ -362,7 +362,7 @@ public static class AutomationHookEndpoints
         if (hook.RepoSlug is { Length: > 0 } slug
             && await repos.GetChatBindingAsync(hook.ChatId, ct) is null)
         {
-            var (binding, bindError) = await repos.OpenChatAsync(
+            var (_, bindError) = await repos.OpenChatAsync(
                 hook.UserId, hook.ChatId, slug, "main",
                 $"https://github.com/{slug}.git", null, ct);
             if (bindError is not null)

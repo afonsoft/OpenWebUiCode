@@ -304,8 +304,7 @@ public class CoverageRound2Tests
         await GitAsync(dir, "mv", "velho.txt", "novo.txt");
         await CommitAllAsync(dir, "rename");
 
-        var info = await new WorkspaceGitService()
-            .GetInfoAsync(dir, default, baseRef: baseBranch);
+        var info = await WorkspaceGitService.GetInfoAsync(dir, default, baseRef: baseBranch);
 
         var renamed = info.Files.FirstOrDefault(f => f.Path == "novo.txt");
         Assert.That(renamed, Is.Not.Null);
@@ -324,8 +323,7 @@ public class CoverageRound2Tests
         await CommitAllAsync(dir, "base");
         File.WriteAllText(Path.Join(dir, "x.txt"), "1\n2\n");
 
-        var svc = new WorkspaceGitService();
-        var sha = await svc.CommitAsync(dir, "commit via servico", default);
+        var sha = await WorkspaceGitService.CommitAsync(dir, "commit via servico", default);
         Assert.That(sha, Has.Length.GreaterThanOrEqualTo(7));
 
         var lpsi = new ProcessStartInfo("git")
@@ -348,7 +346,7 @@ public class CoverageRound2Tests
     {
         var dir = Path.Join(_tmp, "nao-repo");
         Directory.CreateDirectory(dir);
-        var info = await new WorkspaceGitService().GetInfoAsync(dir, default);
+        var info = await WorkspaceGitService.GetInfoAsync(dir, default);
         Assert.That(info.IsRepo, Is.False);
     }
 
@@ -620,8 +618,7 @@ public class CoverageRound2Tests
         await GitAsync(dir, "checkout", "-b", "run-del");
         File.Delete(Path.Join(dir, "vai.txt"));
 
-        var svc = new WorkspaceGitService();
-        var info = await svc.GetInfoAsync(dir, default);
+        var info = await WorkspaceGitService.GetInfoAsync(dir, default);
         Assert.That(info.Files.Any(f => f.Status == "D" && f.Path == "vai.txt"),
             Is.True, "arquivo deletado deve aparecer como D");
         Assert.That(info.Diff, Does.Contain("deleted file"));

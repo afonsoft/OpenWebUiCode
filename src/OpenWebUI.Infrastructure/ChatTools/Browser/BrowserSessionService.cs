@@ -162,7 +162,7 @@ public sealed class BrowserSessionService(
                         "Chromium do Playwright não instalado e BrowserTools:AutoInstall está off — "
                         + "rode `playwright install chromium` no host/container.", ex);
                 }
-                logger.LogInformation("browser session: Chromium ausente — instalando via Playwright CLI");
+                logger.LogInformation(ex, "browser session: Chromium ausente — instalando via Playwright CLI");
                 var code = await Task.Run(
                     () => Microsoft.Playwright.Program.Main(["install", "chromium"]), ct);
                 if (code != 0)

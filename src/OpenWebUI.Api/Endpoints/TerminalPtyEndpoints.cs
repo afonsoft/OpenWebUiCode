@@ -32,19 +32,19 @@ public static class TerminalPtyEndpoints
             ConfigGetAsync(http, config, configuration, ct));
         group.MapPut("/config", (HttpContext http, ConfigService config,
             AppDbContext db, CancellationToken ct) =>
-            ConfigPutAsync(http, config, db, ct));
+            ConfigPutAsync(http, config, ct));
 
         group.MapPost("/sessions", (HttpContext http,
             [AsParameters] TerminalDeps deps, CancellationToken ct) =>
             CreateSessionAsync(http, deps, ct));
         group.MapGet("/sessions", (HttpContext http, TerminalSessionManager terminals,
-            AppDbContext db, ConfigService config, IConfiguration configuration,
+            ConfigService config, IConfiguration configuration,
             string? chatId, CancellationToken ct) =>
-            ListSessionsAsync(http, terminals, db, config, configuration, chatId, ct));
+            ListSessionsAsync(http, terminals, config, configuration, chatId, ct));
         group.MapDelete("/sessions/{id}", (HttpContext http, string id,
-            TerminalSessionManager terminals, AppDbContext db, ConfigService config,
+            TerminalSessionManager terminals, ConfigService config,
             IConfiguration configuration, CancellationToken ct) =>
-            DeleteSessionAsync(http, id, terminals, db, config, configuration, ct));
+            DeleteSessionAsync(http, id, terminals, config, configuration, ct));
 
         return group;
     }
@@ -52,9 +52,9 @@ public static class TerminalPtyEndpoints
     /// <summary>Mapeia o WebSocket multiplexador <c>/ws/terminal/{id}</c>.</summary>
     public static IEndpointConventionBuilder MapTerminalWebSocket(this IEndpointRouteBuilder app) =>
         app.Map("/ws/terminal/{id}", (HttpContext http, string id,
-            TerminalSessionManager terminals, AppDbContext db, ConfigService config,
+            TerminalSessionManager terminals, ConfigService config,
             IConfiguration configuration, CancellationToken ct) =>
-            TerminalWsAsync(http, id, terminals, db, config, configuration, ct))
+            TerminalWsAsync(http, id, terminals, config, configuration, ct))
         .RequireAuthorization();
 
     /// <summary>
@@ -70,41 +70,21 @@ public static class TerminalPtyEndpoints
             TerminalMuxWsAsync(http, deps, ct))
         .RequireAuthorization();
 
-    private static async Task<IResult> ConfigGetAsync(
+    private static Task<IResult> ConfigGetAsync(
         HttpContext http, ConfigService config, IConfiguration configuration,
-        CancellationToken ct)
-    {
-        var user = await CurrentUserAsync(http, ct);
-        return user is null
-            ? Results.Unauthorized()
-            : Results.Ok(new { enabled = await IsEnabledAsync(config, configuration, ct) });
-    }
+        CancellationToken ct) =>
+        FeatureFlagEndpoints.GetAsync(
+            http, config, configuration, FeatureFlagEndpoints.Terminal, ct);
 
-    private static async Task<IResult> ConfigPutAsync(
-        HttpContext http, ConfigService config, AppDbContext db, CancellationToken ct)
-    {
-        var user = await CurrentUserAsync(http, ct);
-        if (user is null)
-        {
-            return Results.Unauthorized();
-        }
-
-        if (user.Role != UserRoles.Admin)
-        {
-            return Results.Forbid();
-        }
-
-        var request = await JsonSerializer.DeserializeAsync<TerminalConfigRequest>(
-            http.Request.Body, JsonOptions, ct);
-        await config.SetAsync("terminal.enabled", request?.Enabled == true, ct);
-        return Results.Ok(new { enabled = request?.Enabled == true });
-    }
+    private static Task<IResult> ConfigPutAsync(
+        HttpContext http, ConfigService config, CancellationToken ct) =>
+        FeatureFlagEndpoints.PutAsync(http, config, FeatureFlagEndpoints.Terminal, ct);
 
     private static async Task<IResult> CreateSessionAsync(
         HttpContext http, TerminalDeps deps, CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(
-            http, deps.Db, deps.Config, deps.Configuration, ct);
+            http, deps.Config, deps.Configuration, ct);
         if (error is not null)
         {
             return error;
@@ -182,11 +162,11 @@ public static class TerminalPtyEndpoints
     }
 
     private static async Task<IResult> ListSessionsAsync(
-        HttpContext http, TerminalSessionManager terminals, AppDbContext db,
+        HttpContext http, TerminalSessionManager terminals,
         ConfigService config, IConfiguration configuration,
         string? chatId, CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(http, config, configuration, ct);
         if (error is not null)
         {
             return error;
@@ -201,10 +181,10 @@ public static class TerminalPtyEndpoints
 
     private static async Task<IResult> DeleteSessionAsync(
         HttpContext http, string id, TerminalSessionManager terminals,
-        AppDbContext db, ConfigService config, IConfiguration configuration,
+        ConfigService config, IConfiguration configuration,
         CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(http, config, configuration, ct);
         if (error is not null)
         {
             return error;
@@ -217,10 +197,10 @@ public static class TerminalPtyEndpoints
 
     private static async Task<IResult> TerminalWsAsync(
         HttpContext http, string id, TerminalSessionManager terminals,
-        AppDbContext db, ConfigService config, IConfiguration configuration,
+        ConfigService config, IConfiguration configuration,
         CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(http, config, configuration, ct);
         if (error is not null)
         {
             return error;
@@ -312,7 +292,7 @@ public static class TerminalPtyEndpoints
         HttpContext http, TerminalDeps deps, CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(
-            http, deps.Db, deps.Config, deps.Configuration, ct);
+            http, deps.Config, deps.Configuration, ct);
         if (error is not null)
         {
             return error;
@@ -563,16 +543,16 @@ public static class TerminalPtyEndpoints
     }
 
     private static async Task<(User? User, IResult? Error)> AuthorizedAsync(
-        HttpContext http, AppDbContext db, ConfigService config,
+        HttpContext http, ConfigService config,
         IConfiguration configuration, CancellationToken ct)
     {
-        var user = await CurrentUserAsync(http, ct);
+        var user = await FeatureFlagEndpoints.CurrentUserAsync(http, ct);
         if (user is null)
         {
             return (null, Results.Unauthorized());
         }
 
-        return await IsEnabledAsync(config, configuration, ct)
+        return await FeatureFlagEndpoints.IsEnabledAsync(config, configuration, FeatureFlagEndpoints.Terminal, ct)
             ? (user, null)
             : (null, Results.Json(
                 new { detail = "Terminal desativado pelo administrador." },
@@ -584,30 +564,9 @@ public static class TerminalPtyEndpoints
     /// <c>Terminal:Enabled</c>/<c>TERMINAL_ENABLED</c> (override booleano) →
     /// <c>terminal.enabled</c> persistido → default <c>true</c>.
     /// </summary>
-    private static async Task<bool> IsEnabledAsync(
-        ConfigService config, IConfiguration configuration, CancellationToken ct)
-    {
-        if (bool.TryParse(configuration["Terminal:Enabled"], out var fromConfig)
-            || bool.TryParse(Environment.GetEnvironmentVariable("TERMINAL_ENABLED"),
-                out fromConfig))
-        {
-            return fromConfig;
-        }
-
-        // bool? null = nunca configurado → default ligado.
-        return await config.GetAsync<bool?>("terminal.enabled", null, ct) ?? true;
-    }
-
-    private static Task<User?> CurrentUserAsync(HttpContext http, CancellationToken ct)
-    {
-        var db = http.RequestServices.GetRequiredService<AppDbContext>();
-        return AuthEndpoints.FindUserAsync(http, db, ct);
-    }
-
     private sealed record TerminalSessionRequest(
         int? Cols, int? Rows, string? ChatId, string? RunId,
         string? Workdir);
-    private sealed record TerminalConfigRequest(bool Enabled);
 
     /// <summary>Bundle DI dos endpoints de terminal — mantém as
     /// assinaturas dentro do limite de parâmetros (S107).</summary>

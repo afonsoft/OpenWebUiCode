@@ -3,7 +3,6 @@
 @inject ApiService Api
 @inject AuthService Auth
 @inject RealtimeService Realtime
-@inject MarkdownService Markdown
 @inject NavigationManager Nav
 @inject LocalizationService L
 @inject IJSRuntime JS
@@ -107,7 +106,7 @@
                                         </span>
                                     </div>
                                     <div class="markdown-body mt-0.5 text-sm text-gray-800 dark:text-gray-200">
-                                        @((MarkupString)Markdown.ToHtml(msg.Content))
+                                        @((MarkupString)MarkdownService.ToHtml(msg.Content))
                                     </div>
                                     @if (msg.Reactions.Count > 0)
                                     {
@@ -177,7 +176,7 @@
             <div class="border-b border-gray-100 px-3 py-2 dark:border-gray-850">
                 <div class="text-xs font-semibold text-gray-700 dark:text-gray-300">@_thread.AuthorName</div>
                 <div class="markdown-body mt-0.5 text-sm text-gray-800 dark:text-gray-200">
-                    @((MarkupString)Markdown.ToHtml(_thread.Content))
+                    @((MarkupString)MarkdownService.ToHtml(_thread.Content))
                 </div>
             </div>
             <div class="flex-1 overflow-y-auto scrollbar-hidden px-3 py-2">
@@ -186,7 +185,7 @@
                     <div class="mb-3">
                         <div class="text-xs font-semibold text-gray-700 dark:text-gray-300">@reply.AuthorName</div>
                         <div class="markdown-body mt-0.5 text-sm text-gray-800 dark:text-gray-200">
-                            @((MarkupString)Markdown.ToHtml(reply.Content))
+                            @((MarkupString)MarkdownService.ToHtml(reply.Content))
                         </div>
                     </div>
                 }

@@ -169,7 +169,7 @@ public sealed class RoutineBuiltinTool(AppDbContext db, AutomationService automa
             return new BuiltinToolResult(error);
         }
 
-        automations.Reschedule(automation);
+        AutomationService.Reschedule(automation);
         db.Automations.Add(automation);
         await db.SaveChangesAsync(ct);
         return new BuiltinToolResult(
@@ -216,7 +216,7 @@ public sealed class RoutineBuiltinTool(AppDbContext db, AutomationService automa
         }
 
         automation.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        automations.Reschedule(automation);
+        AutomationService.Reschedule(automation);
         await db.SaveChangesAsync(ct);
         return new BuiltinToolResult($"Rotina `{automation.Id}` atualizada.");
     }
@@ -246,7 +246,7 @@ public sealed class RoutineBuiltinTool(AppDbContext db, AutomationService automa
 
         automation.Enabled = enabled;
         automation.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        automations.Reschedule(automation);
+        AutomationService.Reschedule(automation);
         await db.SaveChangesAsync(ct);
         return new BuiltinToolResult(
             $"Rotina `{automation.Id}` {(enabled ? "habilitada" : "desabilitada")}.");
@@ -333,7 +333,7 @@ public sealed class RoutineBuiltinTool(AppDbContext db, AutomationService automa
     {
         if (ReadString(args, "time_of_day") is { } tod)
         {
-            if (!TimeOnly.TryParseExact(tod, "HH:mm", out _))
+            if (!TimeOnly.TryParseExact(tod, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
             {
                 return "'time_of_day' deve estar no formato HH:mm (UTC).";
             }

@@ -62,12 +62,9 @@ public sealed class UserSecretsService(ConfigService config)
                 ? $"{name} é gerenciado pela integração GitHub (PAT em Integrations)."
                 : $"{name} é um nome reservado do ambiente do processo.";
         }
-        foreach (var prefix in ReservedPrefixes)
+        if (ReservedPrefixes.FirstOrDefault(p => name.StartsWith(p, StringComparison.Ordinal)) is { } hitPrefix)
         {
-            if (name.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                return $"Nomes com prefixo {prefix} são reservados.";
-            }
+            return $"Nomes com prefixo {hitPrefix} são reservados.";
         }
         return null;
     }

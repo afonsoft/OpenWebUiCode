@@ -60,7 +60,7 @@ public class WorkspaceGitTests
     {
         var dir = Path.Join(Path.GetTempPath(), $"owui-git-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
-        var info = await new WorkspaceGitService().GetInfoAsync(dir, CancellationToken.None);
+        var info = await WorkspaceGitService.GetInfoAsync(dir, CancellationToken.None);
         Assert.That(info.IsRepo, Is.False);
     }
 
@@ -81,8 +81,7 @@ public class WorkspaceGitTests
             File.WriteAllText(Path.Join(dir, "a.txt"), "linha1\nlinha2\n");
             File.WriteAllText(Path.Join(dir, "novo.txt"), "n1\nn2\nn3\n");
 
-            var info = await new WorkspaceGitService()
-                .GetInfoAsync(dir, CancellationToken.None);
+            var info = await WorkspaceGitService.GetInfoAsync(dir, CancellationToken.None);
 
             Assert.That(info.IsRepo, Is.True);
             Assert.That(info.Branch, Is.Not.Null.And.Not.Empty);
@@ -131,8 +130,7 @@ public class WorkspaceGitTests
 
             File.WriteAllText(Path.Join(dir, "novo.spec.md"), "s1\ns2\ns3\n");
 
-            var info = await new WorkspaceGitService()
-                .GetInfoAsync(dir, CancellationToken.None, baseRef: baseBranch);
+            var info = await WorkspaceGitService.GetInfoAsync(dir, CancellationToken.None, baseRef: baseBranch);
 
             Assert.That(info.IsRepo, Is.True);
             var paths = info.Files.Select(f => f.Path).ToList();
@@ -177,8 +175,7 @@ public class WorkspaceGitTests
             CommitAll(dir, "agente commita");
             File.WriteAllText(Path.Join(dir, "sujo.txt"), "x\n");
 
-            var info = await new WorkspaceGitService()
-                .GetInfoAsync(dir, CancellationToken.None, baseRef: "nao-existe");
+            var info = await WorkspaceGitService.GetInfoAsync(dir, CancellationToken.None, baseRef: "nao-existe");
 
             Assert.That(info.IsRepo, Is.True);
             Assert.That(info.BaseSha, Is.EqualTo("HEAD"));
@@ -210,8 +207,7 @@ public class WorkspaceGitTests
             Git(dir, "add", "staged.txt");          // index sujo ANTES do snapshot
             File.WriteAllText(Path.Join(dir, "novo.txt"), "n\n"); // untracked
 
-            _ = await new WorkspaceGitService()
-                .GetInfoAsync(dir, CancellationToken.None, baseRef: baseBranch);
+            _ = await WorkspaceGitService.GetInfoAsync(dir, CancellationToken.None, baseRef: baseBranch);
 
             var stillStaged = GitOut(dir, "diff", "--cached", "--name-only");
             Assert.That(stillStaged, Does.Contain("staged.txt"),

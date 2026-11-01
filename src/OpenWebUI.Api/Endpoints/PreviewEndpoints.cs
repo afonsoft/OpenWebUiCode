@@ -59,34 +59,15 @@ public static class PreviewEndpoints
             .RequireAuthorization();
     }
 
-    private static async Task<IResult> ConfigGetAsync(
+    private static Task<IResult> ConfigGetAsync(
         HttpContext http, ConfigService config, IConfiguration configuration,
-        CancellationToken ct)
-    {
-        var user = await CurrentUserAsync(http, ct);
-        return user is null
-            ? Results.Unauthorized()
-            : Results.Ok(new { enabled = await IsEnabledAsync(config, configuration, ct) });
-    }
+        CancellationToken ct) =>
+        FeatureFlagEndpoints.GetAsync(
+            http, config, configuration, FeatureFlagEndpoints.Preview, ct);
 
-    private static async Task<IResult> ConfigPutAsync(
-        HttpContext http, ConfigService config, AppDbContext db, CancellationToken ct)
-    {
-        var user = await CurrentUserAsync(http, ct);
-        if (user is null)
-        {
-            return Results.Unauthorized();
-        }
-        if (user.Role != UserRoles.Admin)
-        {
-            return Results.Forbid();
-        }
-
-        var request = await JsonSerializer.DeserializeAsync<PreviewConfigRequest>(
-            http.Request.Body, JsonOptions, ct);
-        await config.SetAsync("preview.enabled", request?.Enabled == true, ct);
-        return Results.Ok(new { enabled = request?.Enabled == true });
-    }
+    private static Task<IResult> ConfigPutAsync(
+        HttpContext http, ConfigService config, CancellationToken ct) =>
+        FeatureFlagEndpoints.PutAsync(http, config, FeatureFlagEndpoints.Preview, ct);
 
     /// <summary>
     /// Encaminha a request a <c>http://127.0.0.1:{port}</c> preservando
@@ -97,7 +78,7 @@ public static class PreviewEndpoints
         HttpContext http, int port, IHttpClientFactory httpFactory,
         ConfigService config, IConfiguration configuration, CancellationToken ct)
     {
-        if (!await IsEnabledAsync(config, configuration, ct))
+        if (!await FeatureFlagEndpoints.IsEnabledAsync(config, configuration, FeatureFlagEndpoints.Preview, ct))
         {
             return Results.NotFound(new { detail = "Preview de portas desativado." });
         }
@@ -207,18 +188,6 @@ public static class PreviewEndpoints
     /// <c>Preview:Enabled</c>/<c>PREVIEW_ENABLED</c> → kv
     /// <c>preview.enabled</c> → default <c>true</c>.
     /// </summary>
-    private static async Task<bool> IsEnabledAsync(
-        ConfigService config, IConfiguration configuration, CancellationToken ct)
-    {
-        if (bool.TryParse(configuration["Preview:Enabled"], out var fromConfig)
-            || bool.TryParse(Environment.GetEnvironmentVariable("PREVIEW_ENABLED"),
-                out fromConfig))
-        {
-            return fromConfig;
-        }
-
-        return await config.GetAsync<bool?>("preview.enabled", null, ct) ?? true;
-    }
 
     /// <summary>Página amigável de erro do preview (RF-001) — renderizada no iframe.</summary>
     private static IResult PreviewError(HttpStatusCode status, int port, string message) =>
@@ -240,11 +209,6 @@ public static class PreviewEndpoints
         "proxy-authenticate", "proxy-authorization", "upgrade",
     };
 
-    private static Task<User?> CurrentUserAsync(HttpContext http, CancellationToken ct)
-    {
-        var db = http.RequestServices.GetRequiredService<AppDbContext>();
-        return AuthEndpoints.FindUserAsync(http, db, ct);
-    }
 
     /// <summary>
     /// Result que copia status, headers e corpo (streaming) do upstream.
@@ -353,5 +317,4 @@ public static class PreviewEndpoints
         }
     }
 
-    private sealed record PreviewConfigRequest(bool Enabled);
 }

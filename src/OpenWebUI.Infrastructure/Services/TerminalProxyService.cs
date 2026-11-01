@@ -65,12 +65,9 @@ public class TerminalProxyService(
             return null;
         }
 
-        foreach (var segment in normalized.Split('/'))
+        if (normalized.Split('/').Any(segment => segment is ".." || segment.Contains('%')))
         {
-            if (segment is ".." || segment.Contains('%'))
-            {
-                return null;
-            }
+            return null;
         }
 
         return normalized;
@@ -120,7 +117,7 @@ public class TerminalProxyService(
     /// <param name="subProtocol">Sub-protocolo negociado com o cliente (opcional).</param>
     /// <param name="idleTimeout">Tempo sem tráfego que fecha o túnel.</param>
     /// <param name="ct">Token de cancelamento.</param>
-    public async Task TunnelAsync(
+    public static async Task TunnelAsync(
         WebSocket client, TerminalServerConfig server, string path, string? queryString,
         string? subProtocol, TimeSpan idleTimeout, CancellationToken ct)
     {

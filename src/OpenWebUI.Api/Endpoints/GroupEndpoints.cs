@@ -164,12 +164,16 @@ public static class GroupEndpoints
         {
             return error;
         }
+        if (group is null)
+        {
+            return Results.NotFound();
+        }
 
         var role = request.Role is AdminRole ? AdminRole : "member";
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var userId in request.UserIds.Distinct())
         {
-            if (group!.Members.Any(m => m.UserId == userId))
+            if (group.Members.Any(m => m.UserId == userId))
             {
                 continue;
             }
@@ -181,7 +185,7 @@ public static class GroupEndpoints
 
             db.GroupMembers.Add(new GroupMember
             {
-                GroupId = group!.Id,
+                GroupId = group.Id,
                 UserId = userId,
                 Role = role,
                 CreatedAt = now,

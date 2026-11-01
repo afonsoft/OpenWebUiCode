@@ -5,7 +5,7 @@ using Markdig;
 namespace OpenWebUI.Client.Services;
 
 /// <summary>Renderiza Markdown em HTML sanitizado, seguro para exibição.</summary>
-public partial class MarkdownService
+public static partial class MarkdownService
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
@@ -16,7 +16,7 @@ public partial class MarkdownService
     /// <summary>Converte Markdown em HTML sanitizado.</summary>
     /// <param name="markdown">Texto em Markdown.</param>
     /// <returns>HTML seguro para injeção via MarkupString.</returns>
-    public string ToHtml(string? markdown)
+    public static string ToHtml(string? markdown)
     {
         if (string.IsNullOrWhiteSpace(markdown))
         {
