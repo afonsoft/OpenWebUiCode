@@ -128,62 +128,74 @@ public sealed class ContextSnapshotService(
         foreach (var e in el.EnumerateArray())
         {
             idx++;
-            if (e.ValueKind != JsonValueKind.Object)
+            var (item, error) = ParseItem(e, idx);
+            if (error is not null)
             {
-                return (null, new SnapshotError(InvalidPayloadCode, $"item {idx} não é objeto."));
+                return (null, error);
             }
-            var unknownField = e.EnumerateObject()
-                .Select(p => p.Name)
-                .FirstOrDefault(n => !s_itemFields.Contains(n));
-            if (unknownField is not null)
-            {
-                return (null, new SnapshotError(InvalidPayloadCode,
-                        $"item {idx}: campo desconhecido '{unknownField}'."));
-            }
-
-            var kind = e.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String
-                ? k.GetString() : null;
-            if (kind is null || !ItemKinds.Contains(kind))
-            {
-                return (null, new SnapshotError(InvalidPayloadCode,
-                    $"item {idx}: kind inválido."));
-            }
-
-            if (!e.TryGetProperty("content", out var c) || c.ValueKind != JsonValueKind.String)
-            {
-                return (null, new SnapshotError(InvalidPayloadCode,
-                    $"item {idx}: 'content' é obrigatório."));
-            }
-
-            string? title = null;
-            if (e.TryGetProperty("title", out var t))
-            {
-                if (t.ValueKind != JsonValueKind.String && t.ValueKind != JsonValueKind.Null)
-                {
-                    return (null, new SnapshotError(InvalidPayloadCode,
-                        $"item {idx}: 'title' deve ser string."));
-                }
-                title = t.ValueKind == JsonValueKind.String ? t.GetString() : null;
-            }
-
-            double? score = null;
-            if (e.TryGetProperty("score", out var s) && s.ValueKind != JsonValueKind.Null)
-            {
-                if (s.ValueKind != JsonValueKind.Number || !s.TryGetDouble(out var d))
-                {
-                    return (null, new SnapshotError(InvalidPayloadCode,
-                        $"item {idx}: 'score' deve ser número."));
-                }
-                score = d;
-            }
-
-            var elided = e.TryGetProperty("elided", out var g)
-                && g.ValueKind == JsonValueKind.True;
-
-            items.Add(new SnapshotItem(kind, title, c.GetString() ?? string.Empty, score, elided));
+            items.Add(item!);
         }
 
         return (items, null);
+    }
+
+    /// <summary>Parse de um item (RF-004): kind no conjunto, content string, campos conhecidos.</summary>
+    private static (SnapshotItem? Item, SnapshotError? Error) ParseItem(
+        JsonElement e, int idx)
+    {
+        if (e.ValueKind != JsonValueKind.Object)
+        {
+            return (null, new SnapshotError(InvalidPayloadCode, $"item {idx} não é objeto."));
+        }
+        var unknownField = e.EnumerateObject()
+            .Select(p => p.Name)
+            .FirstOrDefault(n => !s_itemFields.Contains(n));
+        if (unknownField is not null)
+        {
+            return (null, new SnapshotError(InvalidPayloadCode,
+                    $"item {idx}: campo desconhecido '{unknownField}'."));
+        }
+
+        var kind = e.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String
+            ? k.GetString() : null;
+        if (kind is null || !ItemKinds.Contains(kind))
+        {
+            return (null, new SnapshotError(InvalidPayloadCode,
+                $"item {idx}: kind inválido."));
+        }
+
+        if (!e.TryGetProperty("content", out var c) || c.ValueKind != JsonValueKind.String)
+        {
+            return (null, new SnapshotError(InvalidPayloadCode,
+                $"item {idx}: 'content' é obrigatório."));
+        }
+
+        string? title = null;
+        if (e.TryGetProperty("title", out var t))
+        {
+            if (t.ValueKind != JsonValueKind.String && t.ValueKind != JsonValueKind.Null)
+            {
+                return (null, new SnapshotError(InvalidPayloadCode,
+                    $"item {idx}: 'title' deve ser string."));
+            }
+            title = t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+        }
+
+        double? score = null;
+        if (e.TryGetProperty("score", out var s) && s.ValueKind != JsonValueKind.Null)
+        {
+            if (s.ValueKind != JsonValueKind.Number || !s.TryGetDouble(out var d))
+            {
+                return (null, new SnapshotError(InvalidPayloadCode,
+                    $"item {idx}: 'score' deve ser número."));
+            }
+            score = d;
+        }
+
+        var elided = e.TryGetProperty("elided", out var g)
+            && g.ValueKind == JsonValueKind.True;
+
+        return (new SnapshotItem(kind, title, c.GetString() ?? string.Empty, score, elided), null);
     }
 
     /// <summary>

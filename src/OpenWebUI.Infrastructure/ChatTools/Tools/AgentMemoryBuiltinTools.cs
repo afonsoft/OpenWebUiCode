@@ -318,16 +318,7 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
         }
         var ctx = ReadStringField(args, "context", MaxContextChars)?.Trim();
         var tags = ReadTags(args);
-
-        // Título determinístico: mesmo (contexto, lesson) → mesma chave →
-        // update em vez de duplicar (RF-003, similaridade simples).
-        var ctxSlug = Slug(ctx ?? "general");
-        var hash = Convert.ToHexString(
-                System.Security.Cryptography.SHA256.HashData(
-                    System.Text.Encoding.UTF8.GetBytes(
-                        ctxSlug + "\n" + lesson.Trim())))
-            .ToLowerInvariant()[..8];
-        var title = $"learn:{ctxSlug}:{hash}";
+        var title = ComputeTitle(ctx, lesson);
 
         var content = lesson.Trim();
         if (tags.Count > 0)
@@ -335,8 +326,34 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
             content += "\n\ntags: " + string.Join(", ", tags);
         }
 
+        var (memory, updated) = await UpsertAsync(context.UserId, title, content, ct);
+
+        return new BuiltinToolResult(
+            (updated ? "Lição atualizada: " : "Lição registrada: ")
+                + $"'{title}'"
+                + (tags.Count > 0 ? $" [tags: {string.Join(", ", tags)}]" : string.Empty),
+            new { memoryId = memory.Id, title, updated });
+    }
+
+    /// <summary>Título determinístico: mesmo (contexto, lesson) → mesma chave →
+    /// update em vez de duplicar (RF-003, similaridade simples).</summary>
+    private static string ComputeTitle(string? ctx, string lesson)
+    {
+        var ctxSlug = Slug(ctx ?? "general");
+        var hash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(
+                        ctxSlug + "\n" + lesson.Trim())))
+            .ToLowerInvariant()[..8];
+        return $"learn:{ctxSlug}:{hash}";
+    }
+
+    /// <summary>Insert-or-update da lição global do usuário.</summary>
+    private async Task<(AgentMemory Memory, bool Updated)> UpsertAsync(
+        string userId, string title, string content, CancellationToken ct)
+    {
         var existing = await db.AgentMemories
-            .FirstOrDefaultAsync(m => m.UserId == context.UserId
+            .FirstOrDefaultAsync(m => m.UserId == userId
                 && m.Scope == MemoryToolScopes.Global && m.Title == title, ct);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var updated = existing is not null;
@@ -344,7 +361,7 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
         {
             existing = new AgentMemory
             {
-                UserId = context.UserId,
+                UserId = userId,
                 Scope = MemoryToolScopes.Global,
                 Title = title,
                 CreatedAt = now,
@@ -354,12 +371,7 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
         existing.Content = content;
         existing.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
-
-        return new BuiltinToolResult(
-            (updated ? "Lição atualizada: " : "Lição registrada: ")
-                + $"'{title}'"
-                + (tags.Count > 0 ? $" [tags: {string.Join(", ", tags)}]" : string.Empty),
-            new { memoryId = existing.Id, title, updated });
+        return (existing, updated);
     }
 
     private static string? ReadStringField(JsonElement args, string field, int max)

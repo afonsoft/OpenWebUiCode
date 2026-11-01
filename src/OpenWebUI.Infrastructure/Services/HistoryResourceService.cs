@@ -72,44 +72,48 @@ public sealed class HistoryResourceService(AppDbContext db)
         };
         var activePath = BranchService.WalkPath(materialized);
 
-        List<ChatMessage> messages;
+        var (messages, error) = Select(selector, activePath, all, chatId);
+        if (error is not null)
+        {
+            return (null, error);
+        }
+
+        return (Format(messages!), null);
+    }
+
+    /// <summary>Aplica o seletor do URI sobre o caminho ativo / o conjunto todo.</summary>
+    private static (List<ChatMessage>? Messages, string? Error) Select(
+        string? selector, List<ChatMessage> activePath,
+        List<ChatMessage> all, string chatId)
+    {
         if (selector is null)
         {
-            messages = activePath;
+            return (activePath, null);
         }
-        else if (selector.StartsWith("tail:", StringComparison.OrdinalIgnoreCase)
+        if (selector.StartsWith("tail:", StringComparison.OrdinalIgnoreCase)
             && int.TryParse(selector[5..], out var n) && n > 0)
         {
             var skip = Math.Max(0, activePath.Count - Math.Min(n, 500));
-            messages = activePath.Skip(skip).ToList();
+            return (activePath.Skip(skip).ToList(), null);
         }
-        else if (selector.StartsWith("msg:", StringComparison.OrdinalIgnoreCase))
+        if (selector.StartsWith("msg:", StringComparison.OrdinalIgnoreCase))
         {
             var id = selector[4..];
             var msg = all.FirstOrDefault(m => m.Id == id);
-            messages = msg is null ? [] : [msg];
-            if (msg is null)
-            {
-                return (null, $"Mensagem '{id}' não existe no histórico de '{chatId}'.");
-            }
+            return msg is null
+                ? (null, $"Mensagem '{id}' não existe no histórico de '{chatId}'.")
+                : ([msg], null);
         }
-        else if (selector.StartsWith("call:", StringComparison.OrdinalIgnoreCase))
+        if (selector.StartsWith("call:", StringComparison.OrdinalIgnoreCase))
         {
             var callId = selector[5..];
             var msg = all.FirstOrDefault(m => m.ToolCallId == callId);
-            messages = msg is null ? [] : [msg];
-            if (msg is null)
-            {
-                return (null, $"Nenhum tool result com call id '{callId}' em '{chatId}'.");
-            }
+            return msg is null
+                ? (null, $"Nenhum tool result com call id '{callId}' em '{chatId}'.")
+                : ([msg], null);
         }
-        else
-        {
-            return (null,
-                $"Seletor '{selector}' inválido — use tail:{{n}}, msg:{{id}} ou call:{{id}}.");
-        }
-
-        return (Format(messages), null);
+        return (null,
+            $"Seletor '{selector}' inválido — use tail:{{n}}, msg:{{id}} ou call:{{id}}.");
     }
 
     /// <summary>

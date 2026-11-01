@@ -276,57 +276,61 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
             var pumpOut = PumpAsync(process.StandardOutput, writer, secretsToScrub);
             var pumpErr = PumpAsync(process.StandardError, writer, secretsToScrub);
 
-            using var timeout = new CancellationTokenSource(MaxRuntime);
-            var timedOut = false;
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                timedOut = true;
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch (InvalidOperationException) { /* Já morreu. */ }
-                catch (Win32Exception) { /* Já morreu. */ }
-                catch (NotSupportedException) { /* Já morreu. */ }
-            }
-
+            var timedOut = await WaitOrKillAsync(process);
             await Task.WhenAll(pumpOut, pumpErr);
             var exitCode = process.HasExited ? process.ExitCode : -1;
             process.Dispose();
 
-            await using var scope2 = scopeFactory.CreateAsyncScope();
-            var db2 = scope2.ServiceProvider.GetRequiredService<AppDbContext>();
-            var job = await db2.ChatJobs.FindAsync(jobId);
-            if (job is not null && job.Status == ChatJobStatus.Running)
-            {
-                if (timedOut)
-                {
-                    job.Status = ChatJobStatus.Failed;
-                }
-                else
-                {
-                    job.Status = exitCode == 0
-                        ? ChatJobStatus.Completed
-                        : ChatJobStatus.Failed;
-                }
-                job.ExitCode = timedOut ? -1 : exitCode;
-                if (timedOut)
-                {
-                    job.Error = $"Timeout de {MaxRuntime.TotalMinutes}min — processo morto.";
-                }
-
-                job.FinishedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                await db2.SaveChangesAsync();
-            }
+            await FinalizeJobAsync(jobId, timedOut, exitCode);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Watcher do job {JobId} falhou", jobId);
         }
+    }
+
+    /// <summary>Espera até <see cref="MaxRuntime"/>; ao estourar mata a árvore.</summary>
+    private static async Task<bool> WaitOrKillAsync(Process process)
+    {
+        using var timeout = new CancellationTokenSource(MaxRuntime);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { /* Já morreu. */ }
+            catch (Win32Exception) { /* Já morreu. */ }
+            catch (NotSupportedException) { /* Já morreu. */ }
+            return true;
+        }
+    }
+
+    /// <summary>Grava status/exit-code final do job (se ainda Running).</summary>
+    private async Task FinalizeJobAsync(string jobId, bool timedOut, int exitCode)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var job = await db.ChatJobs.FindAsync(jobId);
+        if (job is null || job.Status != ChatJobStatus.Running)
+        {
+            return;
+        }
+        job.Status = timedOut || exitCode != 0
+            ? ChatJobStatus.Failed
+            : ChatJobStatus.Completed;
+        job.ExitCode = timedOut ? -1 : exitCode;
+        if (timedOut)
+        {
+            job.Error = $"Timeout de {MaxRuntime.TotalMinutes}min — processo morto.";
+        }
+        job.FinishedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await db.SaveChangesAsync();
     }
 
     private static async Task PumpAsync(
