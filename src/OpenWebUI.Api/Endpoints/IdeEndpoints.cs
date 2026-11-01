@@ -26,58 +26,19 @@ public static class IdeEndpoints
         return group;
     }
 
-    private static async Task<IResult> ConfigGetAsync(
+    private static Task<IResult> ConfigGetAsync(
         HttpContext http, ConfigService config, IConfiguration configuration,
-        CancellationToken ct)
-    {
-        var user = await CurrentUserAsync(http, ct);
-        return user is null
-            ? Results.Unauthorized()
-            : Results.Ok(new { enabled = await IsEnabledAsync(config, configuration, ct) });
-    }
+        CancellationToken ct) =>
+        FeatureFlagEndpoints.GetAsync(
+            http, config, configuration, FeatureFlagEndpoints.Ide, ct);
 
-    private static async Task<IResult> ConfigPutAsync(
-        HttpContext http, ConfigService config, CancellationToken ct)
-    {
-        var user = await CurrentUserAsync(http, ct);
-        if (user is null)
-        {
-            return Results.Unauthorized();
-        }
-        if (user.Role != UserRoles.Admin)
-        {
-            return Results.Forbid();
-        }
-
-        var request = await JsonSerializer.DeserializeAsync<IdeConfigRequest>(
-            http.Request.Body, JsonOptions, ct);
-        await config.SetAsync("ide.enabled", request?.Enabled == true, ct);
-        return Results.Ok(new { enabled = request?.Enabled == true });
-    }
+    private static Task<IResult> ConfigPutAsync(
+        HttpContext http, ConfigService config, CancellationToken ct) =>
+        FeatureFlagEndpoints.PutAsync(http, config, FeatureFlagEndpoints.Ide, ct);
 
     /// <summary>
     /// Flag: ligada por padrão (rollout aberto — S7 decide se vira opt-in).
     /// Precedência: <c>Ide:Enabled</c>/<c>IDE_ENABLED</c> → kv
     /// <c>ide.enabled</c> → default <c>true</c>.
     /// </summary>
-    private static async Task<bool> IsEnabledAsync(
-        ConfigService config, IConfiguration configuration, CancellationToken ct)
-    {
-        if (bool.TryParse(configuration["Ide:Enabled"], out var fromConfig)
-            || bool.TryParse(Environment.GetEnvironmentVariable("IDE_ENABLED"),
-                out fromConfig))
-        {
-            return fromConfig;
-        }
-
-        return await config.GetAsync<bool?>("ide.enabled", null, ct) ?? true;
-    }
-
-    private static Task<User?> CurrentUserAsync(HttpContext http, CancellationToken ct)
-    {
-        var db = http.RequestServices.GetRequiredService<AppDbContext>();
-        return AuthEndpoints.FindUserAsync(http, db, ct);
-    }
-
-    private sealed record IdeConfigRequest(bool Enabled);
 }
