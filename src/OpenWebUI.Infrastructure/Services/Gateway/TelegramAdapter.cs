@@ -62,34 +62,13 @@ public sealed class TelegramAdapter(IHttpClientFactory httpFactory) : IGatewayAd
             {
                 return null;
             }
-            var chatId = msg.TryGetProperty("chat", out var chat)
-                && chat.TryGetProperty("id", out var cid)
-                    ? cid.ToString() : null;
-            var userId = msg.TryGetProperty("from", out var from)
-                && from.TryGetProperty("id", out var uid)
-                    ? uid.ToString() : null;
+            var chatId = ReadNestedId(msg, "chat");
+            var userId = ReadNestedId(msg, "from");
             if (chatId is null || userId is null)
             {
                 return null;
             }
-            string? name = null;
-            if (msg.TryGetProperty("from", out var fromEl))
-            {
-                if (fromEl.TryGetProperty("username", out var un)
-                    && un.ValueKind == JsonValueKind.String)
-                {
-                    name = un.GetString();
-                }
-                else if (fromEl.TryGetProperty("first_name", out var fn)
-                    && fn.ValueKind == JsonValueKind.String)
-                {
-                    name = fn.GetString();
-                }
-                else
-                {
-                    name = null;
-                }
-            }
+            var name = ReadSenderName(msg);
             var messageId = msg.TryGetProperty("message_id", out var mid)
                 ? mid.ToString() : null;
             return new GatewayInboundMessage(
@@ -99,6 +78,27 @@ public sealed class TelegramAdapter(IHttpClientFactory httpFactory) : IGatewayAd
         {
             return null;
         }
+    }
+
+    private static string? ReadNestedId(JsonElement msg, string prop) =>
+        msg.TryGetProperty(prop, out var el)
+        && el.TryGetProperty("id", out var id)
+            ? id.ToString() : null;
+
+    private static string? ReadSenderName(JsonElement msg)
+    {
+        if (!msg.TryGetProperty("from", out var from))
+        {
+            return null;
+        }
+        if (from.TryGetProperty("username", out var un)
+            && un.ValueKind == JsonValueKind.String)
+        {
+            return un.GetString();
+        }
+        return from.TryGetProperty("first_name", out var fn)
+            && fn.ValueKind == JsonValueKind.String
+            ? fn.GetString() : null;
     }
 
     /// <inheritdoc />

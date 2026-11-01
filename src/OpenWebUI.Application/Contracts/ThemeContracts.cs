@@ -288,34 +288,10 @@ public static partial class ThemeCssBuilder
         }
         else
         {
-            // Sem âncoras completas, aplica tokens diretamente nas posições-chave.
-            if (TryGetColor(palette, "bg", out var b))
-            {
-                foreach (var step in dark ? new[] { "900", "950" } : new[] { "50" })
-                {
-                    WriteVar(css, $"--color-gray-{step}", b);
-                }
-            }
-
-            if (TryGetColor(palette, "text", out var t))
-            {
-                foreach (var step in dark ? new[] { "100", "200" } : new[] { "800", "900" })
-                {
-                    WriteVar(css, $"--color-gray-{step}", t);
-                }
-            }
+            WriteKeyPositions(css, palette, dark);
         }
 
-        if (dark && TryGetColor(palette, "bg", out var deepBg))
-        {
-            WriteVar(css, "--color-white", deepBg); // text-white em botões escuros
-            WriteVar(css, "--color-gray-925", deepBg);
-        }
-
-        if (!dark && TryGetColor(palette, "bg", out var lightBg))
-        {
-            WriteVar(css, "--color-white", lightBg); // bg-white = fundo da página
-        }
+        WriteWhiteVar(css, palette, dark);
 
         if (TryGetColor(palette, "accent", out var accent))
         {
@@ -345,6 +321,42 @@ public static partial class ThemeCssBuilder
         }
 
         css.Append("}\n");
+    }
+
+    // Sem âncoras completas, aplica tokens diretamente nas posições-chave.
+    private static void WriteKeyPositions(
+        StringBuilder css, IReadOnlyDictionary<string, string> palette, bool dark)
+    {
+        if (TryGetColor(palette, "bg", out var b))
+        {
+            foreach (var step in dark ? new[] { "900", "950" } : new[] { "50" })
+            {
+                WriteVar(css, $"--color-gray-{step}", b);
+            }
+        }
+
+        if (TryGetColor(palette, "text", out var t))
+        {
+            foreach (var step in dark ? new[] { "100", "200" } : new[] { "800", "900" })
+            {
+                WriteVar(css, $"--color-gray-{step}", t);
+            }
+        }
+    }
+
+    private static void WriteWhiteVar(
+        StringBuilder css, IReadOnlyDictionary<string, string> palette, bool dark)
+    {
+        if (dark && TryGetColor(palette, "bg", out var deepBg))
+        {
+            WriteVar(css, "--color-white", deepBg); // text-white em botões escuros
+            WriteVar(css, "--color-gray-925", deepBg);
+        }
+
+        if (!dark && TryGetColor(palette, "bg", out var lightBg))
+        {
+            WriteVar(css, "--color-white", lightBg); // bg-white = fundo da página
+        }
     }
 
     private static void WriteRamp(StringBuilder css, Rgb bg, Rgb surface, Rgb text, bool dark)
