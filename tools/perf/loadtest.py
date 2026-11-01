@@ -107,7 +107,6 @@ class Api:
         path: str,
         token: str | None = None,
         json_body: Any = None,
-        expected: tuple[int, ...] = (200,),
     ) -> tuple[int, Any]:
         url = self.base + path
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -160,13 +159,16 @@ class Api:
             return token
         # signup retornou pending (token vazio) ou email_taken: busca o id
         # na lista de pendentes e aprova via admin
-        status, users = await self.req(
+        _, users = await self.req(
             session, "user_list", "GET",
-            f"/api/v1/users/?filter=pending&per_page=100", admin_token,
+            "/api/v1/users/?filter=pending&per_page=100", admin_token,
         )
-        user_id = None
-        rows = users.get("users", []) if isinstance(users, dict) else (
-            users if isinstance(users, list) else [])
+        if isinstance(users, dict):
+            rows = users.get("users", [])
+        elif isinstance(users, list):
+            rows = users
+        else:
+            rows = []
         user_id = next(
             (u.get("id") for u in rows if u.get("email") == email), None)
         if not user_id:
@@ -239,6 +241,48 @@ class Api:
         return data if status == 200 and isinstance(data, list) else []
 
 
+async def _drain_sse_events(
+    api: Api,
+    session: aiohttp.ClientSession,
+    token: str,
+    chat_id: str,
+    run_id: str,
+    resp: aiohttp.ClientResponse,
+    metrics: Metrics,
+    t0: float,
+    timeout_s: float,
+) -> str | None:
+    """Consume o corpo SSE e despacha eventos. Retorna 'timeout' ou None."""
+    event = None
+    data_lines: list[str] = []
+    async for raw in resp.content:
+        line = raw.decode("utf-8", "replace").rstrip("\n")
+        if line == "":
+            if event and data_lines:
+                await handle_sse_event(
+                    api, session, token, chat_id, run_id,
+                    event, "\n".join(data_lines), metrics,
+                )
+            event = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].strip())
+        if time.perf_counter() - t0 > timeout_s:
+            return "timeout"
+    # flush pending event
+    if event and data_lines:
+        await handle_sse_event(
+            api, session, token, chat_id, run_id,
+            event, "\n".join(data_lines), metrics,
+        )
+    return None
+
+
 async def stream_run(
     api: Api,
     session: aiohttp.ClientSession,
@@ -253,7 +297,6 @@ async def stream_run(
     url = f"{api.base}/api/v1/chats/{chat_id}/runs/{run_id}/stream?lastSeq=0"
     headers = {"Authorization": f"Bearer {token}"}
     t0 = time.perf_counter()
-    final_status = "unknown"
     try:
         async with session.get(
             url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout_s)
@@ -261,36 +304,14 @@ async def stream_run(
             metrics.add("sse_attach", resp.status, (time.perf_counter() - t0) * 1000)
             if resp.status != 200:
                 return f"sse_{resp.status}"
-            event = None
-            data_lines: list[str] = []
-            async for raw in resp.content:
-                line = raw.decode("utf-8", "replace").rstrip("\n")
-                if line == "":
-                    if event and data_lines:
-                        await handle_sse_event(
-                            api, session, token, chat_id, run_id,
-                            event, "\n".join(data_lines), metrics,
-                        )
-                    event = None
-                    data_lines = []
-                    continue
-                if line.startswith(":"):
-                    continue
-                if line.startswith("event:"):
-                    event = line[6:].strip()
-                elif line.startswith("data:"):
-                    data_lines.append(line[5:].strip())
-                if time.perf_counter() - t0 > timeout_s:
-                    return "timeout"
-            # flush pending event
-            if event and data_lines:
-                await handle_sse_event(
-                    api, session, token, chat_id, run_id,
-                    event, "\n".join(data_lines), metrics,
-                )
+            outcome = await _drain_sse_events(
+                api, session, token, chat_id, run_id, resp,
+                metrics, t0, timeout_s,
+            )
+            if outcome:
+                return outcome
             run = await api.get_run(session, token, chat_id, run_id)
-            final_status = (run or {}).get("status", "unknown")
-            return final_status
+            return (run or {}).get("status", "unknown")
     except asyncio.TimeoutError:
         return "timeout"
     except Exception as exc:  # noqa: BLE001
@@ -321,6 +342,78 @@ async def handle_sse_event(
         metrics.bump("approvals")
 
 
+async def _rps_dispatch(
+    api: Api,
+    session: aiohttp.ClientSession,
+    token: str,
+    kind: str,
+    cid: str,
+    counter: int,
+    model: str,
+    pool: list[str],
+) -> None:
+    if kind == "list_chats":
+        await api.req(session, "list_chats", "GET", "/api/v1/chats", token)
+    elif kind == "get_chat":
+        await api.req(session, "get_chat", "GET", f"/api/v1/chats/{cid}", token)
+    elif kind == "models":
+        await api.req(session, "models", "GET", "/api/models", token)
+    elif kind == "mcp_servers":
+        # HybridCache: lista de servidores MCP (60s, tag "mcp").
+        await api.req(
+            session, "mcp_servers", "GET", "/api/v1/mcp/servers", token)
+    elif kind == "config_admin":
+        # ConfigService via HybridCache (10s, tag "config").
+        await api.req(
+            session, "config_admin", "GET",
+            "/api/v1/auths/admin/config", token)
+    elif kind == "runs_list":
+        await api.req(session, "runs_list", "GET", "/api/v1/chats/runs", token)
+    elif kind == "runs_active":
+        await api.req(
+            session, "runs_active", "GET",
+            f"/api/v1/chats/{cid}/runs/active", token)
+    elif kind == "chat_create":
+        new_id = await api.create_chat(session, token, f"perf-rps-extra-{counter}")
+        if new_id:
+            pool.append(new_id)
+    elif kind == "enqueue":
+        await api.enqueue(
+            session, token, cid, f"ping {counter} __words__8", model)
+
+
+async def _queue_monitor(
+    api: Api,
+    session: aiohttp.ClientSession,
+    token: str,
+    metrics: Metrics,
+    duration: float,
+) -> None:
+    """Amostra a fila a cada 2s até o Event de deadline disparar."""
+    seen_completed = 0
+    max_pending = 0
+    stop = asyncio.Event()
+    timer = asyncio.get_running_loop().call_later(duration, stop.set)
+    try:
+        while not stop.is_set():
+            runs = await api.list_all_runs(session, token)
+            pending = sum(
+                1 for r in runs
+                if r.get("status") in ("queued", "running", "paused"))
+            completed = sum(1 for r in runs if r.get("status") == "completed")
+            seen_completed = max(seen_completed, completed)
+            max_pending = max(max_pending, pending)
+            metrics.bump("queue_samples")
+            try:
+                await asyncio.wait_for(stop.wait(), 2.0)
+            except TimeoutError:
+                pass
+    finally:
+        timer.cancel()
+    metrics.bump("queue_max_pending", max_pending)
+    metrics.bump("queue_completed_in_window", seen_completed)
+
+
 async def scenario_rps(
     api: Api, args: argparse.Namespace, session: aiohttp.ClientSession,
     token: str, metrics: Metrics,
@@ -343,58 +436,17 @@ async def scenario_rps(
     deadline = time.time() + args.duration
     counter = 0
 
-    async def queue_monitor() -> None:
-        seen_completed = 0
-        max_pending = 0
-        while time.time() < deadline:
-            runs = await api.list_all_runs(session, token)
-            pending = sum(
-                1 for r in runs
-                if r.get("status") in ("queued", "running", "paused"))
-            completed = sum(1 for r in runs if r.get("status") == "completed")
-            seen_completed = max(seen_completed, completed)
-            max_pending = max(max_pending, pending)
-            metrics.bump("queue_samples")
-            await asyncio.sleep(2.0)
-        metrics.bump("queue_max_pending", max_pending)
-        metrics.bump("queue_completed_in_window", seen_completed)
-
-    monitor = asyncio.create_task(queue_monitor())
+    monitor = asyncio.create_task(
+        _queue_monitor(api, session, token, metrics, args.duration))
 
     async def worker() -> None:
         nonlocal counter
         while time.time() < deadline:
             counter += 1
-            kind = _sysrand.choices(names, probs)[0]
-            cid = _sysrand.choice(pool)
-            if kind == "list_chats":
-                await api.req(session, "list_chats", "GET", "/api/v1/chats", token)
-            elif kind == "get_chat":
-                await api.req(session, "get_chat", "GET", f"/api/v1/chats/{cid}", token)
-            elif kind == "models":
-                await api.req(session, "models", "GET", "/api/models", token)
-            elif kind == "mcp_servers":
-                # HybridCache: lista de servidores MCP (60s, tag "mcp").
-                await api.req(
-                    session, "mcp_servers", "GET", "/api/v1/mcp/servers", token)
-            elif kind == "config_admin":
-                # ConfigService via HybridCache (10s, tag "config").
-                await api.req(
-                    session, "config_admin", "GET",
-                    "/api/v1/auths/admin/config", token)
-            elif kind == "runs_list":
-                await api.req(session, "runs_list", "GET", "/api/v1/chats/runs", token)
-            elif kind == "runs_active":
-                await api.req(
-                    session, "runs_active", "GET",
-                    f"/api/v1/chats/{cid}/runs/active", token)
-            elif kind == "chat_create":
-                new_id = await api.create_chat(session, token, f"perf-rps-extra-{counter}")
-                if new_id:
-                    pool.append(new_id)
-            elif kind == "enqueue":
-                await api.enqueue(
-                    session, token, cid, f"ping {counter} __words__8", args.model)
+            await _rps_dispatch(
+                api, session, token,
+                _sysrand.choices(names, probs)[0], _sysrand.choice(pool),
+                counter, args.model, pool)
 
     workers = [asyncio.create_task(worker()) for _ in range(args.workers)]
     await asyncio.gather(*workers)
@@ -430,7 +482,7 @@ async def chat_session_loop(
 
 
 async def scenario_sessions(
-    api: Api, args: argparse.Namespace, session: aiohttp.ClientSession,
+    api: Api, session: aiohttp.ClientSession,
     admin_token: str, metrics: Metrics, model: str,
     users: int, chats_per_user: int, rounds: int,
 ) -> None:
@@ -452,6 +504,52 @@ async def scenario_sessions(
                     chat_session_loop(
                         api, session, tok, cid, model, rounds, metrics))
     await asyncio.gather(*tasks)
+
+
+async def _subagent_one(
+    api: Api,
+    session: aiohttp.ClientSession,
+    token: str,
+    cid: str,
+    w: int,
+    args: argparse.Namespace,
+    metrics: Metrics,
+) -> None:
+    t0 = time.perf_counter()
+    run_id = await api.enqueue(
+        session, token, cid,
+        f"wave {w}: delegate __delegate_{args.delegates_per_chat}__",
+        args.model, tool_ids=["builtin:delegate_task"])
+    if not run_id:
+        metrics.bump("subagent_failed_enqueue")
+        return
+    status = await stream_run(
+        api, session, token, cid, run_id, metrics,
+        timeout_s=args.subagent_timeout)
+    ms = (time.perf_counter() - t0) * 1000
+    metrics.add("subagent_parent", 200 if status == "completed" else 500,
+                ms, err=None if status == "completed" else f"status={status}")
+    metrics.bump(f"subagent_parent_status:{status}")
+
+
+async def _settle_children(
+    api: Api,
+    session: aiohttp.ClientSession,
+    token: str,
+    timeout_s: float,
+) -> list[dict]:
+    """Espera os runs-filho (parentRunId) drenarem; retorna a lista final."""
+    settle_deadline = time.time() + timeout_s
+    children: list[dict] = []
+    while time.time() < settle_deadline:
+        runs = await api.list_all_runs(session, token)
+        children = [r for r in runs if r.get("parentRunId")]
+        pending = [r for r in children
+                   if r.get("status") in ("queued", "running", "paused")]
+        if not pending and children:
+            break
+        await asyncio.sleep(1.0)
+    return children
 
 
 async def scenario_subagents(
@@ -482,43 +580,17 @@ async def scenario_subagents(
             session, "chat_patch", "PATCH", f"/api/v1/chats/{cid}", token,
             json_body={"mode": "build", "approvalPreset": "always-allow"})
 
-    async def wave(w: int) -> None:
-        async def one(cid: str) -> None:
-            t0 = time.perf_counter()
-            run_id = await api.enqueue(
-                session, token, cid,
-                f"wave {w}: delegate __delegate_{args.delegates_per_chat}__",
-                args.model, tool_ids=["builtin:delegate_task"])
-            if not run_id:
-                metrics.bump("subagent_failed_enqueue")
-                return
-            status = await stream_run(
-                api, session, token, cid, run_id, metrics,
-                timeout_s=args.subagent_timeout)
-            ms = (time.perf_counter() - t0) * 1000
-            metrics.add("subagent_parent", 200 if status == "completed" else 500,
-                        ms, err=None if status == "completed" else f"status={status}")
-            metrics.bump(f"subagent_parent_status:{status}")
-
-        await asyncio.gather(*(one(c) for c in chats))
-
     t_wave = time.perf_counter()
     for w in range(args.waves):
-        await wave(w)
+        await asyncio.gather(
+            *(_subagent_one(api, session, token, c, w, args, metrics)
+              for c in chats))
     wave_ms = (time.perf_counter() - t_wave) * 1000
     metrics.bump("subagent_wave_ms_total", int(wave_ms))
 
     # settle: wait for all child runs to finish
-    settle_deadline = time.time() + args.subagent_timeout
-    children: list[dict] = []
-    while time.time() < settle_deadline:
-        runs = await api.list_all_runs(session, token)
-        children = [r for r in runs if r.get("parentRunId")]
-        pending = [r for r in children
-                   if r.get("status") in ("queued", "running", "paused")]
-        if not pending and children:
-            break
-        await asyncio.sleep(1.0)
+    children = await _settle_children(
+        api, session, token, args.subagent_timeout)
     done = sum(1 for r in children if r.get("status") == "completed")
     failed = sum(1 for r in children if r.get("status") not in ("completed",))
     metrics.bump("subagent_children_spawned", len(children))
@@ -579,7 +651,7 @@ def render_report(args: argparse.Namespace, metrics: Metrics,
 
 async def settle_queue(
     api: Api, session: aiohttp.ClientSession, token: str,
-    metrics: Metrics, timeout_s: float = 90.0,
+    timeout_s: float = 90.0,
 ) -> int:
     """Espera a fila do dispatcher drenar entre cenários."""
     deadline = time.time() + timeout_s
@@ -619,11 +691,11 @@ async def run(args: argparse.Namespace) -> Metrics:
             metrics.windows["rps"] = (t0, time.time())
             done.append("rps")
             metrics.bump("leftover_queue_after_rps",
-                         await settle_queue(api, session, token, metrics))
+                         await settle_queue(api, session, token))
         if "sessions" in scenarios:
             t0 = time.time()
             await scenario_sessions(
-                api, args, session, token, metrics, args.model,
+                api, session, token, metrics, args.model,
                 users=args.users, chats_per_user=args.chats_per_user,
                 rounds=args.rounds)
             metrics.windows["sessions"] = (t0, time.time())
@@ -636,7 +708,7 @@ async def run(args: argparse.Namespace) -> Metrics:
         if "real" in scenarios and args.real_model:
             t0 = time.time()
             await scenario_sessions(
-                api, args, session, token, metrics, args.real_model,
+                api, session, token, metrics, args.real_model,
                 users=args.real_users, chats_per_user=args.real_chats_per_user,
                 rounds=args.real_rounds)
             metrics.windows["real"] = (t0, time.time())

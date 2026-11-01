@@ -25,7 +25,7 @@ tests=$(grep -cE '^tests/.*\.cs$' /tmp/pr-files.txt || true)
   echo ""
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
-if [ "$prod" -gt 0 ] && [ "$tests" -eq 0 ]; then
+if [[ "$prod" -gt 0 && "$tests" -eq 0 ]]; then
   {
     echo "**FAIL**: production code changed without any test change."
     echo ""
@@ -37,23 +37,23 @@ if [ "$prod" -gt 0 ] && [ "$tests" -eq 0 ]; then
   exit 1
 fi
 
-if [ "$prod" -eq 0 ] && [ "$razor" -gt 0 ] && [ "$tests" -eq 0 ]; then
+if [[ "$prod" -eq 0 && "$razor" -gt 0 && "$tests" -eq 0 ]]; then
   echo "::notice::PR changes $razor .razor file(s) without tests — ok for visual-only changes, consider a Client.Tests case if logic moved."
 fi
 
 # Test-masking guard (advisory — warning, not a gate yet)
 mask=0
 while IFS= read -r f; do
-  [ -f "$f" ] || continue
+  [[ -f "$f" ]] || continue
   removed=$(git diff "$BASE" "$HEAD" -- "$f" | grep -cE '^-.*(\[Test|\[TestCase|\[Theory|Assert\.|\.Should[A-Z])' || true)
   added=$(git diff "$BASE" "$HEAD" -- "$f" | grep -cE '^\+.*(\[Test|\[TestCase|\[Theory|Assert\.|\.Should[A-Z])' || true)
-  if [ "$removed" -gt "$((added + 2))" ]; then
+  if [[ "$removed" -gt "$((added + 2))" ]]; then
     echo "::warning file=$f::possible test-masking — removed $removed assertion/test lines, added $added"
     mask=$((mask + 1))
   fi
 done < <(grep -E '^tests/.*\.cs$' /tmp/pr-files.txt || true)
 
-if [ "$mask" -gt 0 ]; then
+if [[ "$mask" -gt 0 ]]; then
   echo "::notice::$mask changed test file(s) net-removed assertions — review for test-masking."
 fi
 

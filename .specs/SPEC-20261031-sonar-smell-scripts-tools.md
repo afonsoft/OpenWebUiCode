@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-scripts-tools-20261031` |
 | Ticket | `GH#571` |
-| Status | `Approved` |
+| Status | `In execution` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -34,6 +34,26 @@
 | 1 | `scripts/check-env-drift.sh` | `shell:S7688` |
 
 Notas: `shell:S7688` = "Use modern expansions" — substituir `` `cmd` `` → `$(cmd)` e `$[expr]`/`$((old))` legados; `python:S7503` = f-string/format moderno.
+
+## Execução (2026-11-01)
+
+**Status:** leva aplicada — 43 findings dos 8 arquivos processados.
+
+| Arquivo | Aplicado |
+| --- | --- |
+| `scripts/check-pr-test-policy.sh` | 8× S7688 `[`→`[[` |
+| `scripts/classify-changes.sh` | S7688 + S7679 (`local pattern="$1"`) |
+| `scripts/check-env-drift.sh` | S131 `*)` default no `case` |
+| `tools/check-spec-status.py` | S8786 ×2 (regex sem backtracking ambíguo) + S1192 `SPEC_GLOB` |
+| `tools/check-form-a11y.py` | S108 (elif morto) + S3776 `main()`→4 helpers `check_*` (46→<15) |
+| `tools/perf/loadtest.py` | S1172 ×3 (`expected`/`args`/`metrics`), S1481 `_`, S3457 f-string, S3358 if/elif, S3776 ×3 (`_drain_sse_events`, `_rps_dispatch`, `_subagent_one`/`_settle_children`), S7484 polling→`asyncio.Event`+`wait_for` |
+| `tools/perf/mock_ollama.py` | S8495 tuplas uniformes (`_plan`→3-tuple sempre) |
+| `tools/ide-bundle/src/index.js` | S1128 `Prec`, S3863 import fundido, S6582 ×7 `?.`, S7755 `.at(-1)` + bundle regenerado |
+
+**Won't-fix justificado:**
+- `python:S7503` ×4 em `mock_ollama.py` (`tags`/`show`/`version`/`embeddings`): handlers aiohttp **precisam** ser corotinas — remover `async` quebra o contrato do framework; `await` artificial seria código morto.
+
+**Validação:** `shellcheck -S error` OK; `bash -n` OK; `py_compile` OK; `node --check` em `index.js` + bundle; drift guards idênticos a `main` (`check-form-a11y` 72 arquivos OK, `check-spec-status` mesmo veredito, `check-i18n-parity` 1266 chaves, `check-css-classes` OK); `_plan` testado por import; `loadtest --help` OK.
 
 ## 2. Scope
 

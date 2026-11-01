@@ -54,8 +54,6 @@ def brace_spans(src, start):
         if q:
             if c == q:
                 q = None
-            elif c == '@' and src[i - 1] != '@':
-                pass
         elif c in '"\'':
             q = c
         elif c == '{':
@@ -94,55 +92,73 @@ def label_ranges(src):
     return ranges
 
 
+def check_for_id(f, ids, fors):
+    """1. for -> id"""
+    return [f'{f}: for="{fr}" has no matching id' for fr in fors if fr not in ids]
+
+
+def check_dup_ids(f, ids):
+    """2. duplicate ids (literal duplicates only)"""
+    seen = {}
+    for i in ids:
+        seen[i] = seen.get(i, 0) + 1
+    return [f'{f}: duplicate id "{i}" x{c}' for i, c in seen.items() if c > 1]
+
+
+def check_control_names(f, src, fors, lranges):
+    """3. control accessible names"""
+    errors = []
+    for m in FORM_TAGS.finditer(src):
+        attrs, _ = tag_attrs(src, m.end())
+        a = dict(ATTR.findall(attrs))
+        if a.get('type') == 'hidden':
+            continue
+        if 'aria-label' in a or 'aria-labelledby' in a:
+            continue
+        cid = a.get('id')
+        if cid and cid in fors:
+            continue
+        if in_spans(m.start(), lranges):
+            continue
+        # placeholder alone is NOT a name
+        line = src[:m.start()].count('\n') + 1
+        errors.append(f"{f}:{line}: <{m.group(1)}> without accessible name")
+    return errors
+
+
+def check_loop_labels(f, src, spans):
+    """4. label-outside / control-inside loop"""
+    errors = []
+    for m in re.finditer(r'\bid="([A-Za-z0-9_-]+)"', src):
+        if in_spans(m.start(), spans):
+            # is some for= pointing here defined outside the loop?
+            for fm in re.finditer(r'\bfor="' + re.escape(m.group(1)) + r'"', src):
+                if not in_spans(fm.start(), spans):
+                    line = src[:m.start()].count('\n') + 1
+                    errors.append(
+                        f"{f}:{line}: id \"{m.group(1)}\" inside loop referenced by label outside loop")
+    return errors
+
+
+def check_file(f):
+    src = open(f, encoding='utf-8').read()
+    ids = re.findall(r'\bid="([A-Za-z0-9_-]+)"', src)
+    fors = re.findall(r'\bfor="([A-Za-z0-9_-]+)"', src)
+    spans = loop_spans(src)
+    lranges = label_ranges(src)
+    return (
+        check_for_id(f, ids, fors)
+        + check_dup_ids(f, ids)
+        + check_control_names(f, src, fors, lranges)
+        + check_loop_labels(f, src, spans)
+    )
+
+
 def main():
     errors = []
     files = sorted(glob.glob('src/OpenWebUI.Client/**/*.razor', recursive=True))
     for f in files:
-        src = open(f, encoding='utf-8').read()
-        ids = re.findall(r'\bid="([A-Za-z0-9_-]+)"', src)
-        fors = re.findall(r'\bfor="([A-Za-z0-9_-]+)"', src)
-        spans = loop_spans(src)
-        lranges = label_ranges(src)
-
-        # 1. for -> id
-        for fr in fors:
-            if fr not in ids:
-                errors.append(f"{f}: for=\"{fr}\" has no matching id")
-
-        # 2. duplicate ids (literal duplicates only)
-        seen = {}
-        for i in ids:
-            seen[i] = seen.get(i, 0) + 1
-        for i, c in seen.items():
-            if c > 1:
-                errors.append(f"{f}: duplicate id \"{i}\" x{c}")
-
-        # 3. control accessible names
-        for m in FORM_TAGS.finditer(src):
-            attrs, _ = tag_attrs(src, m.end())
-            a = dict(ATTR.findall(attrs))
-            if a.get('type') == 'hidden':
-                continue
-            if 'aria-label' in a or 'aria-labelledby' in a:
-                continue
-            cid = a.get('id')
-            if cid and cid in fors:
-                continue
-            if in_spans(m.start(), lranges):
-                continue
-            # placeholder alone is NOT a name
-            line = src[:m.start()].count('\n') + 1
-            errors.append(f"{f}:{line}: <{m.group(1)}> without accessible name")
-
-        # 4. label-outside / control-inside loop
-        for m in re.finditer(r'\bid="([A-Za-z0-9_-]+)"', src):
-            if in_spans(m.start(), spans):
-                # is some for= pointing here defined outside the loop?
-                for fm in re.finditer(r'\bfor="' + re.escape(m.group(1)) + r'"', src):
-                    if not in_spans(fm.start(), spans):
-                        line = src[:m.start()].count('\n') + 1
-                        errors.append(
-                            f"{f}:{line}: id \"{m.group(1)}\" inside loop referenced by label outside loop")
+        errors.extend(check_file(f))
 
     if errors:
         print("Form a11y violations:")

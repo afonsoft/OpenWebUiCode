@@ -24,11 +24,12 @@ ACTIVE = ROOT / ".specs"
 ARCHIVE = ROOT / "docs" / "specs"
 
 STATUS_RE = [
-    re.compile(r"\|\s*Status\s*\|\s*`?([^|`]+?)`?\s*\|"),
-    re.compile(r"^\s*Status\s*:\s*(.+)$", re.M),
-    re.compile(r"\*\*Status\*\*\s*:\s*(.+)"),
+    re.compile(r"\|[ \t]*Status[ \t]*\|[ \t]*`?([^|`]+?)`?[ \t]*\|"),
+    re.compile(r"^[ \t]*Status[ \t]*:[ \t]*([^\n]+)", re.M),
+    re.compile(r"\*\*Status\*\*[ \t]*:[ \t]*([^\n]+)"),
 ]
 TERMINAL = ("completed", "done", "implemented", "merged", "delivered")
+SPEC_GLOB = "SPEC-*.md"
 
 
 def read_status(path: Path) -> str | None:
@@ -49,9 +50,9 @@ def is_terminal(status: str) -> bool:
 def main() -> int:
     problems: list[str] = []
 
-    archived = {f.name for f in ARCHIVE.glob("SPEC-*.md")}
+    archived = {f.name for f in ARCHIVE.glob(SPEC_GLOB)}
 
-    for f in sorted(ACTIVE.glob("SPEC-*.md")):
+    for f in sorted(ACTIVE.glob(SPEC_GLOB)):
         if f.name in archived:
             problems.append(
                 f"{f.relative_to(ROOT)}: duplicado — existe arquivado em "
@@ -66,7 +67,7 @@ def main() -> int:
                 "entregue; mover para docs/specs/ com seção `Delivered`"
             )
 
-    for f in sorted(ARCHIVE.glob("SPEC-*.md")):
+    for f in sorted(ARCHIVE.glob(SPEC_GLOB)):
         status = read_status(f)
         if status is None:
             problems.append(f"{f.relative_to(ROOT)}: sem header `Status`")
@@ -82,8 +83,8 @@ def main() -> int:
             print(f"  FAIL {p}")
         return 1
 
-    n_active = len(list(ACTIVE.glob("SPEC-*.md")))
-    n_arch = len(list(ARCHIVE.glob("SPEC-*.md")))
+    n_active = len(list(ACTIVE.glob(SPEC_GLOB)))
+    n_arch = len(list(ARCHIVE.glob(SPEC_GLOB)))
     print(f"OK: {n_active} SPECs em voo, {n_arch} arquivados, todos com Status")
     return 0
 

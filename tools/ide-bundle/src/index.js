@@ -9,7 +9,7 @@ import {
   highlightActiveLineGutter, highlightSpecialChars, lineNumbers,
   rectangularSelection, crosshairCursor, dropCursor, placeholder as cmPlaceholder,
 } from "@codemirror/view";
-import { EditorState, Prec } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import {
   history, defaultKeymap, historyKeymap, indentWithTab,
 } from "@codemirror/commands";
@@ -63,7 +63,6 @@ const darkComp = { of: null };
 const roComp = { of: null };
 const mmComp = { of: null };
 // Facets reais criadas por bundle para reconfigure:
-import { Compartment } from "@codemirror/state";
 const langC = new Compartment();
 const darkC = new Compartment();
 const roC = new Compartment();
@@ -94,8 +93,8 @@ function dotnetCall(dotnet, method, arg) {
 function lspCompletionSource(elId) {
   return (ctx) => {
     const meta = metas.get(elId);
-    const dotnet = meta && meta.dotnet;
-    const path = meta && meta.path;
+    const dotnet = meta?.dotnet;
+    const path = meta?.path;
     if (!dotnet || !path) return null;
     const pos = ctx.pos;
     const p = offsetToPos(ctx.view ?? { state: ctx.state }, pos);
@@ -106,7 +105,7 @@ function lspCompletionSource(elId) {
           path, line: p.line, col: p.col,
         })
       ).then((r) => {
-        if (!r || !r.items || !r.items.length) return null;
+        if (!r?.items?.length) return null;
         const from = posToOffset({ state: ctx.state }, r.from.line, r.from.col);
         return {
           from,
@@ -401,14 +400,14 @@ window.owuiIdeEditor = {
     const shared = [
       highlightActiveLine(), drawSelection(),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-      (optsA && optsA.path) ? (langFor(optsA.path) ?? []) : [],
-      (optsA && optsA.dark) ? oneDark : [],
+      optsA?.path ? (langFor(optsA.path) ?? []) : [],
+      optsA?.dark ? oneDark : [],
       EditorState.readOnly.of(true),
     ];
-    const editable = shared.map((x) => x === shared[shared.length - 1] ? EditorState.readOnly.of(false) : x);
+    const editable = shared.map((x) => x === shared.at(-1) ? EditorState.readOnly.of(false) : x);
     const mv = new MergeView({
-      a: { doc: (optsA && optsA.doc) || "", extensions: shared },
-      b: { doc: (optsB && optsB.doc) || "", extensions: editable },
+      a: { doc: optsA?.doc || "", extensions: shared },
+      b: { doc: optsB?.doc || "", extensions: editable },
       parent: el,
       gutter: true,
       highlightChanges: true,
