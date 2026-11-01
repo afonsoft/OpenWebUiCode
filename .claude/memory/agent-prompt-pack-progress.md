@@ -37,3 +37,8 @@ Order 84. Testes ToolSearchTests 8/8.
 ### plan-mode-v2 (#577) — entregue (PR pendente)
 - `PlanFileService` (dir plans/ + fallback home, slug, update-in-place por sessão, Latest registry), `builtin_write_plan` (Read tier), `PlanAllowed` += write_plan, `PlanSpecTemplate` com 5 fases + template de plano, `plan_exit` referencia `planPath`, endpoint `GET /api/v1/workspace/repo/plans`.
 - Build 0/0; 7 testes novos verdes (WritePlanTests).
+
+### lifecycle-hooks (#573) — entregue (PR pendente)
+- HookDefinition/HookConfigLoader (repo+user, compat devin/claude), CommandHookRunner (sh -c, exit2=block, timeout, env OPENWEBUI_*), PromptHookEvaluator (role advisor / hooks.promptModel), LifecycleHookService (cache mtime, matcher, auditoria hook.decision).
+- Integrações: PreToolUse→GateWithInterceptors, PostToolUse→OnResultAsync, SessionStart→builtinContext, Stop→re-loop ≤3, SessionEnd→FinishAsync, UserPromptSubmit→EnqueueMessage; endpoints GET/PUT/test.
+- Build 0/0; 13 testes verdes.
