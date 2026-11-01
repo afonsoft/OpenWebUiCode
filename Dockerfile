@@ -58,16 +58,15 @@ FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS runtime
 # curl para o HEALTHCHECK; git para o workspace IDE; sudo para o agente
 # (shell_exec roda com permissão total dentro do container — single-tenant);
 # tesseract-ocr para o OCR opcional do browser visual loop.
+# GitHub CLI (binário multi-arch, mesmo layer — S7031): o agente usa
+# `gh`/`git push` com o GITHUB_TOKEN/GIT_ASKPASS do AgentSecretsEnvService.
+ARG GH_VERSION=2.102.0
 RUN apt-get update \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends curl git sudo procps tesseract-ocr \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /data/workspaces
-
-# GitHub CLI (binário multi-arch): o agente usa `gh`/`git push` com o
-# GITHUB_TOKEN/GIT_ASKPASS injetado pelo AgentSecretsEnvService.
-ARG GH_VERSION=2.102.0
-RUN arch="$(uname -m)" \
+ && mkdir -p /data/workspaces \
+ && arch="$(uname -m)" \
  && case "$arch" in x86_64) GH_ARCH=amd64 ;; aarch64) GH_ARCH=arm64 ;; \
       *) echo "Unsupported arch: $arch" >&2; exit 1 ;; esac \
  && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${GH_ARCH}.tar.gz" \
@@ -135,6 +134,9 @@ EXPOSE 8080
 VOLUME ["/data"]
 # root: o agente (shell_exec/jobs) precisa de permissão total no container —
 # instalar ferramentas via apt, ler qualquer path, sudo sem senha.
+# S6471 won't-fix (SPEC-20261031-sonar-vuln-code): decisão de design —
+# deployment single-tenant onde o processo É o agente; trocar para user
+# não-root quebraria shell_exec/apt/nvm e o /data volume.
 USER root
 
 # Probe /health — retorna 200 quando o processo está de pé.

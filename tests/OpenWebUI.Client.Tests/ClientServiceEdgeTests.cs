@@ -124,6 +124,42 @@ public class ClientServiceEdgeTests
         Assert.That(fired, Is.EqualTo(1));
     }
 
+    // S7044 (SPEC-20261031-sonar-vuln-code): validação de uri em
+    // CreateRequest deve decodificar antes de checar traversal — senão
+    // %2e%2e e backslash contornam o guard e o Uri resolver escapa da
+    // origem.
+    [TestCase("/%2e%2e/admin")]
+    [TestCase("/%2E%2E/admin")]
+    [TestCase("/%2e%2e%2fadmin")]
+    [TestCase("/a/%2e./b")]
+    [TestCase("/.%2e/b")]
+    [TestCase("/a\\..\\b")]
+    [TestCase("/a%5c..%5cb")]
+    [TestCase("//evil.example/x")]
+    [TestCase("http://evil.example/x")]
+    [TestCase("../admin")]
+    [TestCase("/a/../b")]
+    public void CreateRequest_TraversalOuAbsoluta_Rejeita(string uri)
+    {
+        var auth = NewAuthService();
+        Assert.Throws<ArgumentException>(() => auth.CreateRequest(HttpMethod.Get, uri));
+    }
+
+    [Test]
+    public void CreateRequest_PathRelativoComQuery_Passa()
+    {
+        var auth = NewAuthService();
+        using var req = auth.CreateRequest(HttpMethod.Get, "/api/v1/files?x=1#f");
+        Assert.That(req.RequestUri!.OriginalString, Is.EqualTo("/api/v1/files?x=1#f"));
+    }
+
+    private static AuthService NewAuthService()
+    {
+        var js = new FakeJs();
+        var http = new HttpClient { BaseAddress = new Uri("http://localhost/") };
+        return new AuthService(http, new BrowserStorage(js), new LocalizationService(http, js));
+    }
+
     private sealed class FakeJs : IJSRuntime
     {
         private readonly Dictionary<string, string?> _stored = [];

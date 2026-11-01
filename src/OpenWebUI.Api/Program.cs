@@ -423,7 +423,11 @@ static void UseContentSecurityPolicy(WebApplication app)
     // - img-src https:/frame-src https:: markdown/artefatos embutem URLs externas.
     const string ContentSecurityPolicy =
         "default-src 'self'; " +
-        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdn.jsdelivr.net; " +
+        // S7039: sem 'unsafe-eval' — o boot WASM só precisa de
+        // 'wasm-unsafe-eval' (CSP3). 'unsafe-inline' permanece: os dois
+        // scripts inline do index.html exigem (remover = refactor de
+        // nonces/hashes, fora do escopo do finding).
+        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; " +
         "worker-src 'self' blob:; " +
         "connect-src 'self' https: wss: data: blob:; " +
         "img-src 'self' data: blob: https:; " +

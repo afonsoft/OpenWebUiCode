@@ -58,6 +58,46 @@ public class ReferenceServiceTests
             NullLogger<ReferenceService>.Instance);
     }
 
+    // S4036 (SPEC-20261031-sonar-vuln-code): RunGitAsync resolve o path
+    // absoluto do git na criação do processo — sem depender do PATH em
+    // runtime.
+    [Test]
+    public void ResolveGitPath_EncontraExeNoPath_RetornaAbsoluto()
+    {
+        var dir = Path.Join(_tmp, "bin");
+        Directory.CreateDirectory(dir);
+        var expected = Path.Join(dir, OperatingSystem.IsWindows() ? "git.exe" : "git");
+        File.WriteAllText(expected, "");
+
+        var resolved = ReferenceService.ResolveGitPath(dir);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolved, Is.EqualTo(expected));
+            Assert.That(Path.IsPathRooted(resolved), Is.True);
+        });
+    }
+
+    [Test]
+    public void ResolveGitPath_PathSemGit_FallbackAbsolutoOuErroLegivel()
+    {
+        // PATH sem git: cai nos fallbacks de container (/usr/bin/git etc.)
+        // ou lança erro legível — nunca depende de resolução por PATH.
+        try
+        {
+            var resolved = ReferenceService.ResolveGitPath(Path.Join(_tmp, "vazio"));
+            Assert.Multiple(() =>
+            {
+                Assert.That(Path.IsPathRooted(resolved), Is.True);
+                Assert.That(File.Exists(resolved), Is.True);
+            });
+        }
+        catch (FileNotFoundException ex)
+        {
+            Assert.That(ex.Message, Does.Contain("git"));
+        }
+    }
+
     private async Task<ReferenceEntry> SeedRefAsync(
         AppDbContext db, string userId, string alias, string source,
         bool hidden = false)

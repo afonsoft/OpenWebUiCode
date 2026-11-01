@@ -32,6 +32,12 @@ public static class FileEndpoints
         return group;
     }
 
+    /// <summary>Cap de upload do endpoint (S5693): 100 MB de arquivo +
+    /// folga para o envelope multipart — aplicado como limite de request
+    /// body antes do form ser lido.</summary>
+    private const long MaxUploadBytes = 100L * 1024 * 1024;
+    private const long MaxUploadRequestBytes = MaxUploadBytes + (1L << 20);
+
     private static async Task<IResult> UploadFileAsync(
         HttpContext http, AppDbContext db, IWebHostEnvironment env, CancellationToken ct)
     {
@@ -41,6 +47,12 @@ public static class FileEndpoints
             return Results.Unauthorized();
         }
 
+        // Cap por-request antes de bufar o body — sem isso o default do
+        // Kestrel (~30MB) já cortava com 413 genérico e bodies grandes
+        // eram lidos até o limite do form antes de qualquer check.
+        http.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>()
+            ?.MaxRequestBodySize = MaxUploadRequestBytes;
+
         var form = await http.Request.ReadFormAsync(ct);
         var file = form.Files.GetFile("file") ?? form.Files.FirstOrDefault();
         if (file is null || file.Length == 0)
@@ -48,7 +60,7 @@ public static class FileEndpoints
             return Results.BadRequest(new { detail = "Nenhum arquivo enviado." });
         }
 
-        if (file.Length > 100 * 1024 * 1024)
+        if (file.Length > MaxUploadBytes)
         {
             return Results.BadRequest(new { detail = "Arquivo excede 100 MB." });
         }

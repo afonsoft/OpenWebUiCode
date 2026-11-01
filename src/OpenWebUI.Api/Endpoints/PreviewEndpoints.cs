@@ -293,13 +293,21 @@ public static class PreviewEndpoints
                 return string.Empty;
             }
 
+            // S5332 (won't-fix documentado): http aqui é loopback-only —
+            // dev servers locais (vite/next etc.) só falam http no
+            // 127.0.0.1/localhost/[::1] que o proxy de preview espelha;
+            // https loopback coberto por completude. Hosts externos nunca
+            // casam a allowlist e passam intactos.
             foreach (var host in new[] { "127.0.0.1", "localhost", "[::1]" })
             {
-                var prefix = $"http://{host}:{port}";
-                if (location.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                foreach (var scheme in (string[])["http", "https"])
                 {
-                    var rest = location[prefix.Length..];
-                    return $"/preview/{port}{(rest.StartsWith('/') ? rest : $"/{rest}")}";
+                    var prefix = $"{scheme}://{host}:{port}";
+                    if (location.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var rest = location[prefix.Length..];
+                        return $"/preview/{port}{(rest.StartsWith('/') ? rest : $"/{rest}")}";
+                    }
                 }
             }
             return location;

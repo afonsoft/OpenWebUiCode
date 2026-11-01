@@ -74,6 +74,24 @@ public class PwaTests
     }
 
     [Test]
+    public async Task Index_CspNaoContemUnsafeEval()
+    {
+        // S7039 (SPEC-20261031-sonar-vuln-code): 'unsafe-eval' não é
+        // necessário ao boot WASM — 'wasm-unsafe-eval' (CSP3) basta e não
+        // abre eval() de JS arbitrário.
+        var response = await _client.GetAsync("/");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var csp = response.Headers.TryGetValues("Content-Security-Policy", out var v)
+            ? string.Join(' ', v) : string.Empty;
+        Assert.Multiple(() =>
+        {
+            Assert.That(csp, Does.Contain("wasm-unsafe-eval"));
+            Assert.That(csp, Does.Not.Contain("'unsafe-eval'"));
+        });
+    }
+
+    [Test]
     public async Task AssetsNaoHtml_NaoEmitemContentSecurityPolicy()
     {
         // O CSP é política de documento: estampar em todo response (ex.: o

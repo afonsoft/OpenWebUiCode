@@ -318,10 +318,53 @@ public class ReferenceService(
     private static string Trim(string output) =>
         output.Length <= 200 ? output : output[..200];
 
+    /// <summary>Path absoluto do git resolvido uma vez (S4036): o
+    /// processo nunca depende de resolução por PATH em runtime — PATH é
+    /// mutável entre requests e o Sonar trata spawn por nome como risco
+    /// de PATH-hijack.</summary>
+    private static readonly Lazy<string> GitExePath = new(() => ResolveGitPath());
+
+    /// <summary>Resolve o executável git para path absoluto: procura
+    /// <c>git</c>/<c>git.exe</c> nas entradas de <paramref name="pathEnv"/>
+    /// (PATH do ambiente quando omitido) e depois nos paths padrão de
+    /// container. Lança <see cref="FileNotFoundException"/> legível.</summary>
+    internal static string ResolveGitPath(string? pathEnv = null)
+    {
+        var exeName = OperatingSystem.IsWindows() ? "git.exe" : "git";
+        var pathValue = pathEnv ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (var dir in pathValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.Combine(dir, exeName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        foreach (var fallback in (string[])["/usr/bin/git", "/usr/local/bin/git", "/bin/git"])
+        {
+            if (File.Exists(fallback))
+            {
+                return fallback;
+            }
+        }
+        throw new FileNotFoundException(
+            "git não encontrado no PATH nem nos paths padrão de container.");
+    }
+
     private static async Task<(bool Ok, string Output)> RunGitAsync(
         string? workdir, List<string> args, CancellationToken ct, int timeoutSec)
     {
-        var psi = new ProcessStartInfo("git")
+        string gitPath;
+        try
+        {
+            gitPath = GitExePath.Value;
+        }
+        catch (FileNotFoundException ex)
+        {
+            return (false, ex.Message);
+        }
+
+        var psi = new ProcessStartInfo(gitPath)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
