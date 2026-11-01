@@ -408,9 +408,7 @@
                     {
                         <div class="rounded-xl border border-gray-100 dark:border-gray-850 px-4 py-3">
                             <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                                @(_arenaFeedback is null
-                                    ? L.T("arena.model_label", ("label", r.Label))
-                                    : r.Label == "A" ? _arenaFeedback.ModelA : _arenaFeedback.ModelB)
+                                @ArenaModelLabel(r.Label)
                             </div>
                             <div class="markdown-body text-sm text-gray-800 dark:text-gray-200">
                                 @((MarkupString)Markdown.ToHtml(r.Content))
@@ -1847,10 +1845,9 @@
             Toast.Show(L["chat.cmd_compact_failed"], ToastType.Warning);
             return;
         }
+        var doneKey = result.Native ? "chat.cmd_compact_native" : "chat.cmd_compact_done";
         var text = result.Warning
-            ?? (result.Compacted
-                ? L[result.Native ? "chat.cmd_compact_native" : "chat.cmd_compact_done"]
-                : L["chat.cmd_compact_failed"]);
+            ?? (result.Compacted ? L[doneKey] : L["chat.cmd_compact_failed"]);
         Toast.Show(text,
             result.Compacted ? ToastType.Success : ToastType.Warning);
     }
@@ -2147,11 +2144,12 @@
 
     /// <summary>Classe do anexo pelo MIME (espelha ChatMessageFileModel.Of).</summary>
     private static string AttachmentType(string? contentType) =>
-        contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
-            ? "image"
-            : contentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
-                ? "video"
-                : "file";
+        contentType switch
+        {
+            { } c when c.StartsWith("image/", StringComparison.OrdinalIgnoreCase) => "image",
+            { } c when c.StartsWith("video/", StringComparison.OrdinalIgnoreCase) => "video",
+            _ => "file",
+        };
 
     /// <summary>Remove anexo do composer e solta o object URL se ninguém mais usa.</summary>
     private async Task RemoveAttachmentAsync(FileResponse file)
@@ -2376,9 +2374,11 @@
         _ = GuardedAsync(Storage.RemoveAsync($"chat:draft:{_loadedChatId ?? "new"}").AsTask(), "limpar rascunho");
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var content = text.Length > 0
-            ? text
-            : _attachedFiles.Count > 0 ? L["chat.files_attached"] : text;
+        var content = text;
+        if (text.Length == 0 && _attachedFiles.Count > 0)
+        {
+            content = L["chat.files_attached"];
+        }
         if (_attachedFiles.Count > 0 && text.Length > 0)
         {
             content += "\n\n📎 " + string.Join(", ", _attachedFiles.Select(f => f.Filename));
@@ -3672,8 +3672,9 @@
                     "b" => feedback.ModelB,
                     _ => null,
                 };
+                var labelKey = winner == "tie" ? "arena.result_tie" : "arena.result_both_bad";
                 var label = winnerModel is null
-                    ? L[winner == "tie" ? "arena.result_tie" : "arena.result_both_bad"]
+                    ? L[labelKey]
                     : L.T("arena.result_winner", ("model", winnerModel));
                 var index = _messages.Count - 1;
                 if (index >= 0 && _messages[index].Role == "assistant")
@@ -3958,12 +3959,25 @@
     };
 
     /// <summary>Classes dos ícones rápidos: azul ativo, cinza normal, riscado quando não configurado.</summary>
-    private string CategoryIconClass(string category) =>
-        !CategoryConfigured(category)
-            ? "text-gray-400 dark:text-gray-600 cursor-not-allowed"
-            : IsCategoryEnabled(category)
-                ? "text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer"
-                : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 cursor-pointer";
+    private string CategoryIconClass(string category)
+    {
+        if (!CategoryConfigured(category))
+        {
+            return "text-gray-400 dark:text-gray-600 cursor-not-allowed";
+        }
+        return IsCategoryEnabled(category)
+            ? "text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer"
+            : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 cursor-pointer";
+    }
+
+    private string ArenaModelLabel(string label)
+    {
+        if (_arenaFeedback is null)
+        {
+            return L.T("arena.model_label", ("label", label));
+        }
+        return label == "A" ? _arenaFeedback.ModelA : _arenaFeedback.ModelB;
+    }
 
     /// <summary>Categoria ligada: todas as tools dela selecionadas (web exige também o flag de busca).</summary>
     private bool IsCategoryEnabled(string category)

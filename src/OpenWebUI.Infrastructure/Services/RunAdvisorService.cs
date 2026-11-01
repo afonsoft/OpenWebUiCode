@@ -185,11 +185,7 @@ public sealed class RunAdvisorService(
     /// <c>file_read</c>; o allowlist opera sobre o nome sem prefixo.
     /// </summary>
     internal static string BareName(string callName) =>
-        callName.StartsWith(BuiltinToolRegistry.SpecPrefix, StringComparison.OrdinalIgnoreCase)
-            ? callName[BuiltinToolRegistry.SpecPrefix.Length..]
-            : callName.StartsWith(BuiltinToolRegistry.IdPrefix, StringComparison.OrdinalIgnoreCase)
-                ? callName[BuiltinToolRegistry.IdPrefix.Length..]
-                : callName;
+        PermissionRuleset.BuiltinName(callName);
 
     /// <summary>
     /// Tail do transcript persistido (RF-001): últimas mensagens do chat

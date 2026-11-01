@@ -121,8 +121,12 @@ public static class ContextPruner
                         // embutido ou string "double-encoded" (Gemini) —
                         // GetString()/TryGetProperty no kind errado lançava
                         // InvalidOperationException e derrubava a run.
-                        var argsJson = a.ValueKind == JsonValueKind.String ? a.GetString()
-                            : a.ValueKind == JsonValueKind.Object ? a.GetRawText() : null;
+                        var argsJson = a.ValueKind switch
+                        {
+                            JsonValueKind.String => a.GetString(),
+                            JsonValueKind.Object => a.GetRawText(),
+                            _ => null,
+                        };
                         if (argsJson is not null)
                         {
                             try

@@ -125,15 +125,17 @@ public class ProviderService(
                 : [];
         }
 
-        return type == ProviderTypes.Ollama
-            ? index >= 0 && index < connections.OllamaBaseUrls.Count
+        if (type == ProviderTypes.Ollama)
+        {
+            return index >= 0 && index < connections.OllamaBaseUrls.Count
                 ? await FetchOllamaModelsAsync(connections.OllamaBaseUrls[index], ct)
-                : []
-            : index >= 0 && index < connections.OpenAiBaseUrls.Count
-                ? await FetchOpenAiModelsAsync(
-                    connections.OpenAiBaseUrls[index],
-                    connections.OpenAiApiKeys.ElementAtOrDefault(index), ct)
                 : [];
+        }
+        return index >= 0 && index < connections.OpenAiBaseUrls.Count
+            ? await FetchOpenAiModelsAsync(
+                connections.OpenAiBaseUrls[index],
+                connections.OpenAiApiKeys.ElementAtOrDefault(index), ct)
+            : [];
     }
 
     /// <summary>GET {base}/api/tags do Ollama; vazio quando indisponível.</summary>

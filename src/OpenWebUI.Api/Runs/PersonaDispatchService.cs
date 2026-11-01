@@ -201,11 +201,12 @@ public sealed class PersonaDispatchService(
 
         var names = builtins.All.Select(t => t.Name);
         var level = persona.GuardrailLevel;
-        var allowed = level == "strict"
-            ? names.Where(ReadTools.Contains)
-            : level == "basic"
-                ? names.Where(n => !ExecuteTools.Contains(n))
-                : names;
+        var allowed = level switch
+        {
+            "strict" => names.Where(ReadTools.Contains),
+            "basic" => names.Where(n => !ExecuteTools.Contains(n)),
+            _ => names,
+        };
         if (personaTools is not null)
         {
             var set = new HashSet<string>(personaTools, StringComparer.OrdinalIgnoreCase);

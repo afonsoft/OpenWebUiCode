@@ -12,7 +12,7 @@
         @if (Node.Type == "dir")
         {
             <span class="text-gray-400 text-[0.625rem] w-3 shrink-0" aria-hidden="true">
-                @(Node.Loading ? "…" : Node.Expanded ? "▾" : "▸")
+                @ExpandIcon
             </span>
             <span aria-hidden="true">@IconFor(Node)</span>
         }
@@ -46,6 +46,13 @@
 </div>
 
 @code {
+    private string ExpandIcon => (Node.Loading, Node.Expanded) switch
+    {
+        (true, _) => "…",
+        (_, true) => "▾",
+        _ => "▸",
+    };
+
     /// <summary>Nó (preenchido por <see cref="IdeExplorer.RefreshAsync"/>).</summary>
     [Parameter, EditorRequired] public IdeExplorer.IdeTreeEntry Node { get; set; } = default!;
 

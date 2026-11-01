@@ -91,9 +91,12 @@ public static class LspEndpoints
             var kind = s.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.Number
                 ? k.GetInt32() : 0;
             // DocumentSymbol: range+selectionRange; SymbolInformation: location.range.
-            var range = s.TryGetProperty(RangeKey, out var r) ? r
-                : s.TryGetProperty("location", out var loc) && loc.TryGetProperty(RangeKey, out r) ? r
-                : default;
+            var range = s.TryGetProperty(RangeKey, out var direct) ? direct : default;
+            if (range.ValueKind != JsonValueKind.Object
+                && s.TryGetProperty("location", out var loc))
+            {
+                loc.TryGetProperty(RangeKey, out range);
+            }
             if (range.ValueKind != JsonValueKind.Object)
             {
                 continue;
@@ -108,11 +111,16 @@ public static class LspEndpoints
         }
     }
 
-    private static (int Line, int Col) Pos(JsonElement range, string key) =>
-        range.TryGetProperty(key, out var p)
-            ? ((p.TryGetProperty("line", out var l) ? l.GetInt32() : 0),
-               (p.TryGetProperty("character", out var c) ? c.GetInt32() : 0))
-            : (0, 0);
+    private static (int Line, int Col) Pos(JsonElement range, string key)
+    {
+        if (!range.TryGetProperty(key, out var p))
+        {
+            return (0, 0);
+        }
+        var line = p.TryGetProperty("line", out var l) ? l.GetInt32() : 0;
+        var col = p.TryGetProperty("character", out var c) ? c.GetInt32() : 0;
+        return (line, col);
+    }
 
     // ---------- POST /format (SPEC-20261011-ide-intellisense) ----------
 
@@ -422,8 +430,14 @@ public static class LspEndpoints
                 var res = await lsp.RequestAsync(workdir, ready.Value.Full,
                     "textDocument/completion",
                     PosParams(ready.Value.Full, request!.Line, request.Col), ct);
-                var items = res.ValueKind == JsonValueKind.Array ? res
-                    : res.TryGetProperty("items", out JsonElement arr) ? arr : res;
+                var items = res;
+                if (res.ValueKind != JsonValueKind.Array)
+                {
+                    if (res.TryGetProperty("items", out JsonElement arr))
+                    {
+                        items = arr;
+                    }
+                }
                 var list = new List<LspCompletionItem>();
                 LspPosition? from = null;
                 if (items.ValueKind == JsonValueKind.Array)
@@ -438,10 +452,18 @@ public static class LspEndpoints
                         var kind = it.TryGetProperty("kind", out JsonElement k) && k.ValueKind == JsonValueKind.Number
                             ? k.GetInt32() : 0;
                         var detail = it.TryGetProperty("detail", out JsonElement d) ? d.GetString() : null;
-                        var info = it.TryGetProperty("documentation", out JsonElement doc)
-                            ? doc.ValueKind == JsonValueKind.String ? doc.GetString()
-                            : doc.TryGetProperty("value", out var dv) ? dv.GetString() : null
-                            : null;
+                        string? info = null;
+                        if (it.TryGetProperty("documentation", out JsonElement doc))
+                        {
+                            if (doc.ValueKind == JsonValueKind.String)
+                            {
+                                info = doc.GetString();
+                            }
+                            else if (doc.TryGetProperty("value", out var dv))
+                            {
+                                info = dv.GetString();
+                            }
+                        }
                         var apply = it.TryGetProperty("insertText", out JsonElement ins) ? ins.GetString() : label;
                         // range explícito (textEdit) → from único; senão o client
                         // usa a palavra sob o cursor.

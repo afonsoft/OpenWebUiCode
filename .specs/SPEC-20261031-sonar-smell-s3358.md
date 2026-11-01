@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s3358-20261031` |
 | Ticket | `GH#566` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -75,10 +75,10 @@ N/A.
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** cada ocorrência, **when** reescrita, **then** produz resultado idêntico para todos os caminhos (incl. null/short-circuit).
-- [ ] **Given** markup `.razor`, **when** ternário vira helper, **then** HTML/classes emitidos são idênticos (`check-css-classes.py` OK; tailwind.css regenerado apenas se classe mudar).
-- [ ] **Given** o próximo scan, **when** publicado, **then** zero `S3358` C# aberto.
-- [ ] **Given** a suite, **when** roda, **then** verde e cobertura não decresce.
+- [x] **Given** cada ocorrência, **when** reescrita, **then** produz resultado idêntico para todos os caminhos (incl. null/short-circuit).
+- [x] **Given** markup `.razor`, **when** ternário vira helper, **then** HTML/classes emitidos são idênticos (`check-css-classes.py` OK; tailwind.css regenerado apenas se classe mudar).
+- [x] **Given** o próximo scan, **when** publicado, **then** zero `S3358` C# aberto.
+- [x] **Given** a suite, **when** roda, **then** verde e cobertura não decresce.
 
 **Edge cases:**
 
@@ -90,12 +90,12 @@ N/A.
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** grupos `S3358` do board; mapear ocorrências por arquivo.
-- [ ] **T2 — Slice Pages:** WorkspaceItemEditor (11), Workspace (6), Admin (5), Ide demais.
-- [ ] **T3 — Slice Components:** ChatView (6), ChatWorkspacePanel (3), SettingsModal (3), demais.
-- [ ] **T4 — Slice Api/Infra:** LspEndpoints (6), ChatRunExecutor (4), WebSearchService/PermissionRuleset/LspResponse (9), cauda.
-- [ ] **T5 — Validation:** `dotnet test` por slice; `check-css-classes.py` se `.razor` tocado.
-- [ ] **T6 — Done + PRs.**
+- [x] **T1 — Discovery:** grupos `S3358` do board; mapear ocorrências por arquivo.
+- [x] **T2 — Slice Pages:** WorkspaceItemEditor (11), Workspace (6), Admin (5), Ide demais.
+- [x] **T3 — Slice Components:** ChatView (6), ChatWorkspacePanel (3), SettingsModal (3), demais.
+- [x] **T4 — Slice Api/Infra:** LspEndpoints (6), ChatRunExecutor (4), WebSearchService/PermissionRuleset/LspResponse (9), cauda.
+- [x] **T5 — Validation:** `dotnet test` por slice; `check-css-classes.py` se `.razor` tocado.
+- [x] **T6 — Done + PRs.**
 
 **7.1 Validation strategy**
 
@@ -111,9 +111,9 @@ N/A.
 
 ## 9. Definition of Done
 
-- [ ] 104 issues `S3358` resolvidas.
-- [ ] Testes verdes; drift guards (`check-css-classes.py`) OK.
-- [ ] Board atualizado; rescan limpo.
+- [x] 104 issues `S3358` resolvidas.
+- [x] Testes verdes; drift guards (`check-css-classes.py`) OK.
+- [x] Board atualizado; rescan limpo.
 
 **Next action after DoD is complete:** `Status = Done` + PRs por slice.
 

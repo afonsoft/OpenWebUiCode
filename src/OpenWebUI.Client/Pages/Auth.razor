@@ -75,7 +75,7 @@
                                 <div class="mt-5">
                                     <button type="submit" class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-sm py-2.5 disabled:opacity-50 flex justify-center cursor-pointer"
                                             disabled="@(_busy || !FormValid)">
-                                        <span class="self-center">@(_busy ? L["auth.wait"] : _signUp ? L["auth.create_account"] : L["auth.sign_in"])</span>
+                                        <span class="self-center">@SubmitLabel</span>
                                     </button>
                                 </div>
                             </form>
@@ -119,6 +119,18 @@
 </div>
 
 @code {
+    private string SubmitLabel
+    {
+        get
+        {
+            if (_busy)
+            {
+                return L["auth.wait"];
+            }
+            return _signUp ? L["auth.create_account"] : L["auth.sign_in"];
+        }
+    }
+
     private bool _signUp;
     private bool _busy;
     private string _name = string.Empty;

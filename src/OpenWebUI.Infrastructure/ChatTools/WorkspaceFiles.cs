@@ -72,9 +72,15 @@ public static class WorkspaceFiles
             return null;
         }
 
-        FileSystemInfo? node = Directory.Exists(full) ? new DirectoryInfo(full)
-            : File.Exists(full) ? new FileInfo(full)
-            : null;
+        FileSystemInfo? node = null;
+        if (Directory.Exists(full))
+        {
+            node = new DirectoryInfo(full);
+        }
+        else if (File.Exists(full))
+        {
+            node = new FileInfo(full);
+        }
         if (node?.LinkTarget is not null)
         {
             var target = node.ResolveLinkTarget(returnFinalTarget: true);

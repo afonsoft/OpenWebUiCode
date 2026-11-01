@@ -234,6 +234,7 @@ public static class ComboEndpoints
         var canRead = combo.UserId is null || combo.UserId == user.Id;
         var canWrite = combo.UserId == user.Id
             || (combo.UserId is null && user.Role == "admin");
-        return (user, (write ? canWrite : canRead) ? combo : null);
+        var allowed = write ? canWrite : canRead;
+        return (user, allowed ? combo : null);
     }
 }

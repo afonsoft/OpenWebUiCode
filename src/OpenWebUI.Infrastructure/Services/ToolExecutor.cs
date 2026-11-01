@@ -115,11 +115,7 @@ public class ToolExecutor(
             return tool;
         }
 
-        var bare = functionName.StartsWith(BuiltinToolRegistry.IdPrefix, StringComparison.OrdinalIgnoreCase)
-            ? functionName[BuiltinToolRegistry.IdPrefix.Length..]
-            : functionName.StartsWith(BuiltinToolRegistry.SpecPrefix, StringComparison.OrdinalIgnoreCase)
-                ? functionName[BuiltinToolRegistry.SpecPrefix.Length..]
-                : functionName;
+        var bare = PermissionRuleset.BuiltinName(functionName);
         return tools.FirstOrDefault(t =>
             t.Url?.StartsWith(BuiltinToolRegistry.UrlPrefix, StringComparison.OrdinalIgnoreCase) == true
             && string.Equals(t.Url[BuiltinToolRegistry.UrlPrefix.Length..], bare,

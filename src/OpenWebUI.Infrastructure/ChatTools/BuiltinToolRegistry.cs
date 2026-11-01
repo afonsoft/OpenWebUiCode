@@ -64,11 +64,7 @@ public sealed class BuiltinToolRegistry(IEnumerable<IBuiltinChatTool> tools, ICo
     /// Tools de DB/HTTP/MCP e nomes desconhecidos → false (sequencial).</summary>
     public bool IsSafeInParallel(string functionName)
     {
-        var bare = functionName.StartsWith(IdPrefix, StringComparison.OrdinalIgnoreCase)
-            ? functionName[IdPrefix.Length..]
-            : functionName.StartsWith(SpecPrefix, StringComparison.OrdinalIgnoreCase)
-                ? functionName[SpecPrefix.Length..]
-                : functionName;
+        var bare = PermissionRuleset.BuiltinName(functionName);
         return _byName.TryGetValue(bare, out var tool) && tool.SafeInParallel;
     }
 

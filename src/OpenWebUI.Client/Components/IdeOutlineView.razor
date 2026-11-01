@@ -18,9 +18,7 @@
         else if (_symbols is not { Count: > 0 })
         {
             <div class="px-3 py-2 text-xs text-gray-400">
-                @(ActiveFile is null ? L["ide.outline_no_file"]
-                    : _available == false ? L["ide.outline_no_lsp"]
-                    : L["ide.no_results"])
+                @OutlineEmptyMessage
             </div>
         }
         else
@@ -41,6 +39,22 @@
 </div>
 
 @code {
+    private string OutlineEmptyMessage
+    {
+        get
+        {
+            if (ActiveFile is null)
+            {
+                return L["ide.outline_no_file"];
+            }
+            if (_available == false)
+            {
+                return L["ide.outline_no_lsp"];
+            }
+            return L["ide.no_results"];
+        }
+    }
+
     /// <summary>Arquivo ativo do editor (path relativo; null = nenhum).</summary>
     [Parameter] public string? ActiveFile { get; set; }
 

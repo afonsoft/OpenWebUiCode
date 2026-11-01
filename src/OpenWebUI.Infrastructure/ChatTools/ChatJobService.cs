@@ -303,9 +303,16 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
             var job = await db2.ChatJobs.FindAsync(jobId);
             if (job is not null && job.Status == ChatJobStatus.Running)
             {
-                job.Status = timedOut
-                    ? ChatJobStatus.Failed
-                    : exitCode == 0 ? ChatJobStatus.Completed : ChatJobStatus.Failed;
+                if (timedOut)
+                {
+                    job.Status = ChatJobStatus.Failed;
+                }
+                else
+                {
+                    job.Status = exitCode == 0
+                        ? ChatJobStatus.Completed
+                        : ChatJobStatus.Failed;
+                }
                 job.ExitCode = timedOut ? -1 : exitCode;
                 if (timedOut)
                 {

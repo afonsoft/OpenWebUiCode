@@ -399,9 +399,19 @@ public sealed class FileGrepBuiltinTool(
         // Sem '/' o glob casa o basename (convenção rg/gitignore); com '/', o relativo inteiro.
         var globOnBasename = globPattern?.Contains('/') == false;
 
-        IEnumerable<string> files = File.Exists(full)
-            ? [full]
-            : Directory.Exists(full) ? WorkspaceFiles.EnumerateFiles(full) : [];
+        IEnumerable<string> files;
+        if (File.Exists(full))
+        {
+            files = [full];
+        }
+        else if (Directory.Exists(full))
+        {
+            files = WorkspaceFiles.EnumerateFiles(full);
+        }
+        else
+        {
+            files = [];
+        }
         if (glob is not null)
         {
             files = files.Where(f => glob.IsMatch(globOnBasename
@@ -443,10 +453,19 @@ public sealed class FileGrepBuiltinTool(
             }
         }
 
-        var text = matches == 0
-            ? $"Nenhum match de '{pattern}' ({scanned} arquivos lidos)."
-            : sb.ToString().TrimEnd()
-              + (matches >= max ? $"\n[truncado em {max} matches]" : string.Empty);
+        string text;
+        if (matches == 0)
+        {
+            text = $"Nenhum match de '{pattern}' ({scanned} arquivos lidos).";
+        }
+        else
+        {
+            text = sb.ToString().TrimEnd();
+            if (matches >= max)
+            {
+                text += $"\n[truncado em {max} matches]";
+            }
+        }
         return new BuiltinToolResult(text, new { pattern, matches, scanned });
     }
 

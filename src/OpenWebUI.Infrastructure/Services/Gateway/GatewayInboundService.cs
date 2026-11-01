@@ -302,8 +302,12 @@ public sealed class GatewayInboundService(
     }
 
     private static string? Excerpt(string? text) =>
-        text is null ? null
-            : text.Length <= 200 ? text : text[..200];
+        text switch
+        {
+            null => null,
+            { Length: <= 200 } => text,
+            _ => text[..200],
+        };
 
     private static string? FirstModel(string modelsJson)
     {

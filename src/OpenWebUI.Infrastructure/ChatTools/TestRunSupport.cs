@@ -89,10 +89,15 @@ public static partial class TestRunOutputParser
         var total = Regex.Match(output,
             @"Total tests:\s*(\d+)\D*?Passed:\s*(\d+)\D*?Failed:\s*(\d+)(?:\D*?Skipped:\s*(\d+))?",
             RegexOptions.Singleline, RegexDefaults.MatchTimeout);
-        return total.Success
-            ? new TestRunCounts(int.Parse(total.Groups[2].Value), int.Parse(total.Groups[3].Value),
-                total.Groups[4].Success ? int.Parse(total.Groups[4].Value) : null)
-            : null;
+        if (!total.Success)
+        {
+            return null;
+        }
+        var skipped = total.Groups[4].Success
+            ? int.Parse(total.Groups[4].Value)
+            : (int?)null;
+        return new TestRunCounts(int.Parse(total.Groups[2].Value),
+            int.Parse(total.Groups[3].Value), skipped);
     }
 
     /// <summary>"==== 12 passed, 3 failed, 1 skipped in 4.56s ====".</summary>

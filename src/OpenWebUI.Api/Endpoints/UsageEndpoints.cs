@@ -45,14 +45,14 @@ public static class UsageEndpoints
         var now = DateTimeOffset.UtcNow;
         var totals = await ledger.MonthTotalsAsync(user.Id, now, ct);
         var limits = await budgets.EffectiveAsync(user.Id, ct);
-        object? cap = limits.UsdPerMonth is { } usd
-            ? new
-            {
-                usdPerMonth = usd,
-                usedPct = usd > 0
-                    ? Math.Round(totals.CostUsd / usd * 100, 1) : 0d,
-            }
-            : null;
+        object? cap = null;
+        if (limits.UsdPerMonth is { } usd)
+        {
+            var usedPct = usd > 0
+                ? Math.Round(totals.CostUsd / usd * 100, 1)
+                : 0d;
+            cap = new { usdPerMonth = usd, usedPct };
+        }
         return Results.Ok(new
         {
             month = $"{now.Year:D4}-{now.Month:D2}",

@@ -287,15 +287,22 @@ public sealed class DelegateTaskBuiltinTool(
         {
             var registry = scope.ServiceProvider
                 .GetRequiredService<BuiltinToolRegistry>();
-            childToolIds = agent.Tools is null
-                ? childToolIds?.Where(id =>
+            if (agent.Tools is null)
+            {
+                childToolIds = childToolIds?.Where(id =>
                         registry.TierOfName(StripPrefix(id)) == ApprovalTier.Read)
-                    .ToList()
-                : agent.Tools.Contains("*")
-                    ? childToolIds
-                    : childToolIds?.Where(id => agent.Tools.Contains(
-                            StripPrefix(id), StringComparer.OrdinalIgnoreCase))
-                        .ToList();
+                    .ToList();
+            }
+            else if (agent.Tools.Contains("*"))
+            {
+                // sem restrição — childToolIds passa integral
+            }
+            else
+            {
+                childToolIds = childToolIds?.Where(id => agent.Tools.Contains(
+                        StripPrefix(id), StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+            }
         }
         // Depth residual do filho: min(maxDepth do agente, teto global) —
         // gravado como kv para enforcement quando ele próprio delegar.
@@ -851,12 +858,7 @@ public sealed class DelegateTaskBuiltinTool(
     /// <summary>Nome sem o prefixo <c>builtin:</c>/<c>builtin_</c> do id.</summary>
     private static string StripPrefix(string toolId)
     {
-        var id = toolId.StartsWith(BuiltinToolRegistry.IdPrefix, StringComparison.OrdinalIgnoreCase)
-            ? toolId[BuiltinToolRegistry.IdPrefix.Length..]
-            : toolId.StartsWith(BuiltinToolRegistry.SpecPrefix, StringComparison.OrdinalIgnoreCase)
-                ? toolId[BuiltinToolRegistry.SpecPrefix.Length..]
-                : toolId;
-        return id;
+        return PermissionRuleset.BuiltinName(toolId);
     }
 
     private static string? ReadString(JsonElement args, string field, int max)

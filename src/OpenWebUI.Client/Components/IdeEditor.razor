@@ -118,9 +118,9 @@
             </div>
             @foreach (var p in _lspProblems)
             {
-                <button class="flex w-full items-center gap-2 px-3 py-0.5 text-left text-[0.6875rem] hover:bg-gray-100 dark:hover:bg-gray-800 @(p.Severity == 1 ? "text-red-600 dark:text-red-400" : p.Severity == 2 ? "text-amber-600 dark:text-amber-400" : "text-gray-600 dark:text-gray-300")"
+                <button class="flex w-full items-center gap-2 px-3 py-0.5 text-left text-[0.6875rem] hover:bg-gray-100 dark:hover:bg-gray-800 @SeverityCss(p.Severity)"
                         @onclick="() => GotoProblemAsync(p)">
-                    <span aria-hidden="true">@(p.Severity == 1 ? "✕" : p.Severity == 2 ? "⚠" : "ℹ")</span>
+                    <span aria-hidden="true">@SeverityIcon(p.Severity)</span>
                     <span class="truncate">@p.Message</span>
                     <span class="ml-auto shrink-0 text-gray-400">@p.Path:@(p.Line + 1)</span>
                 </button>
@@ -146,6 +146,20 @@
 </div>
 
 @code {
+    private static string SeverityCss(int severity) => severity switch
+    {
+        1 => "text-red-600 dark:text-red-400",
+        2 => "text-amber-600 dark:text-amber-400",
+        _ => "text-gray-600 dark:text-gray-300",
+    };
+
+    private static string SeverityIcon(int severity) => severity switch
+    {
+        1 => "✕",
+        2 => "⚠",
+        _ => "ℹ",
+    };
+
     /// <summary>Callback pós-save — a página recarrega git/tree.</summary>
     [Parameter] public EventCallback OnSaved { get; set; }
 

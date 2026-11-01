@@ -47,9 +47,12 @@ public static class PermissionRuleset
 
     /// <summary>Normaliza o modo persistido; desconhecido → <see cref="BuildMode"/>.</summary>
     public static string Normalize(string? mode) =>
-        string.Equals(mode, PlanMode, StringComparison.OrdinalIgnoreCase) ? PlanMode
-        : string.Equals(mode, ChatMode, StringComparison.OrdinalIgnoreCase) ? ChatMode
-        : BuildMode;
+        mode switch
+        {
+            { } m when string.Equals(m, PlanMode, StringComparison.OrdinalIgnoreCase) => PlanMode,
+            { } m when string.Equals(m, ChatMode, StringComparison.OrdinalIgnoreCase) => ChatMode,
+            _ => BuildMode,
+        };
 
     /// <summary>
     /// Built-ins permitidas no modo plan: read/list/grep/glob, web/fetch,
@@ -281,12 +284,18 @@ public static class PermissionRuleset
     }
 
     /// <summary>Extrai o nome puro de uma call (<c>builtin:x</c>/<c>builtin_x</c>/x).</summary>
-    public static string BuiltinName(string toolName) =>
-        toolName.StartsWith(BuiltinToolRegistry.IdPrefix, StringComparison.OrdinalIgnoreCase)
-            ? toolName[BuiltinToolRegistry.IdPrefix.Length..]
-            : toolName.StartsWith(BuiltinToolRegistry.SpecPrefix, StringComparison.OrdinalIgnoreCase)
-                ? toolName[BuiltinToolRegistry.SpecPrefix.Length..]
-                : toolName;
+    public static string BuiltinName(string toolName)
+    {
+        if (toolName.StartsWith(BuiltinToolRegistry.IdPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return toolName[BuiltinToolRegistry.IdPrefix.Length..];
+        }
+        if (toolName.StartsWith(BuiltinToolRegistry.SpecPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return toolName[BuiltinToolRegistry.SpecPrefix.Length..];
+        }
+        return toolName;
+    }
 
     /// <summary>
     /// Assinatura de argumentos da call para a allowlist "sempre nesta
@@ -338,10 +347,14 @@ public static class PermissionRuleset
                 return null;
             }
             using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty(field, out var el)
-                    ? el.ValueKind == JsonValueKind.String ? el.GetString() : el.GetRawText()
-                    : null;
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(field, out var el))
+            {
+                return el.ValueKind == JsonValueKind.String
+                    ? el.GetString()
+                    : el.GetRawText();
+            }
+            return null;
         }
         catch (JsonException)
         {
