@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Completions;
 using OpenWebUI.Application.Contracts;
@@ -128,6 +129,135 @@ public sealed class ChatRunExecutor(
     /// <summary>Roda a run até o fim e atualiza o registro com o resultado.</summary>
     public async Task ExecuteAsync(ChatRun run, CancellationToken ct)
     {
+        var prelude = await ResolveRunPreludeAsync(run, ct);
+        if (prelude is null)
+        {
+            return;
+        }
+        var (request, user, budgetLimits, resumePlan, commandMode) = prelude;
+
+        var state = new RunStreamState();
+        IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
+        ChatPipeline.ToolLoopOutcome? loopOutcome = null;
+        var sw = Stopwatch.StartNew();
+
+        // combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada tentativa
+        // resolve o modelo efetivo; falha transitória ANTES do primeiro delta
+        // (content vazio ⇒ nenhum SSE parcial foi emitido) → report + próximo
+        // candidato. Cancelamento nunca queima cooldown.
+        var comboRef = request.Model.StartsWith(ComboService.Prefix, StringComparison.Ordinal)
+            ? request.Model[ComboService.Prefix.Length..]
+            : null;
+        var comboAttemptsLeft = 1;
+        while (true)
+        {
+            if (comboRef is not null)
+            {
+                var (resolvedRequest, attemptsLeft) = await ResolveComboModelAsync(
+                    run, request, comboRef, ct);
+                if (resolvedRequest is null)
+                {
+                    return;
+                }
+                request = resolvedRequest;
+                comboAttemptsLeft = attemptsLeft;
+            }
+
+            try
+            {
+                // Modelos pipeline:{id} e arena:{model} encerram a run por
+                // conta própria (DONE próprio após FinishAsync).
+                if (await TrySpecialModelAsync(request, run, user, ct))
+                {
+                    return;
+                }
+
+                var prepared = await PrepareRunContextAsync(
+                    run, request, user, commandMode, resumePlan, ct);
+                request = prepared.Request;
+                var effective = prepared.Effective;
+                var chatMode = prepared.ChatMode;
+                var resumeSeed = prepared.ResumeSeed;
+
+                var outletRules = ModelFilterService.OutletRules(
+                    ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()
+                        .Where(m => m.IsActive && (m.Id == request.Model || m.Name == request.Model)
+                            && (m.UserId == user.Id || m.UserId == "public"))
+                        .Select(m => m.MetaJson).FirstOrDefaultAsync(ct)));
+
+                var tools = await LoadRunToolsAsync(run, request, user, ct);
+                await PublishPhaseAsync(run, "connecting_model", null);
+                logger.LogInformation(
+                    "Run {RunId}: model={Model}, tools={ToolCount}, mensagens={MessageCount}, chat={ChatId}.",
+                    run.Id, effective.Model, tools?.Count ?? 0,
+                    effective.Messages.Count, run.ChatId);
+                if (tools is { Count: > 0 })
+                {
+                    var (outcome, done) = await RunToolLoopPathAsync(
+                        run, user, commandMode, chatMode, effective, tools,
+                        budgetLimits, outletRules, resumeSeed, state, ct);
+                    loopOutcome = outcome;
+                    toolMessages = outcome?.ToolMessages;
+                    if (done)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    await StreamPlainCompletionAsync(
+                        run, effective, outletRules, state, ct);
+                }
+
+                await CompleteRunAsync(run, request, user, state.Content,
+                    loopOutcome, toolMessages, comboRef, sw, ct);
+            }
+            catch (OperationCanceledException ex)
+            {
+                approvals.Cancel(run.Id);
+                await FinishAsync(run, state.Content.ToString(), ChatRunStatus.Stopped, toolMessages);
+                broadcaster.Publish(run.Id, SseDoneLine);
+                logger.LogWarning(ex,
+                    "Run {RunId} cancelada após {Elapsed}ms com {Chars} chars parciais.",
+                    run.Id, sw.ElapsedMilliseconds, state.Content.Length);
+            }
+            catch (Exception ex)
+            {
+                var (retry, attemptsLeft) = await HandleRunFailureAsync(
+                    run, ex, state.Content.ToString(), toolMessages,
+                    comboRef, request.Model, sw, comboAttemptsLeft);
+                if (retry)
+                {
+                    comboAttemptsLeft = attemptsLeft;
+                    continue;
+                }
+            }
+
+            return;
+        }
+    }
+
+    /// <summary>Dados resolvidos no prelúdio da run — antes do loop de
+    /// tentativas de combo.</summary>
+    private sealed record RunPrelude(
+        ChatCompletionRequest Request, User User, BudgetLimits Limits,
+        RunResumePlan? ResumePlan, string? CommandMode);
+
+    /// <summary>Estado mutável do stream — acumulador de conteúdo e bytes
+    /// desde o último checkpoint de ContentDelta.</summary>
+    private sealed class RunStreamState
+    {
+        public StringBuilder Content { get; } = new();
+        public int SinceCheckpoint;
+    }
+
+    /// <summary>Resolve o prelúdio da run — request, usuário, gate de
+    /// budget, plano de retomada e marcadores de command. <c>null</c> =
+    /// a run já terminou (falhou, estado corrompido ou delegada a uma
+    /// sub-run) e o chamador deve retornar.</summary>
+    private async Task<RunPrelude?> ResolveRunPreludeAsync(
+        ChatRun run, CancellationToken ct)
+    {
         ChatCompletionRequest request;
         try
         {
@@ -137,7 +267,7 @@ public sealed class ChatRunExecutor(
         catch (JsonException ex)
         {
             await FailAsync(run, $"Request de run inválido: {ex.Message}");
-            return;
+            return null;
         }
 
         var user = await db.Users.AsNoTracking()
@@ -145,7 +275,7 @@ public sealed class ChatRunExecutor(
         if (user is null)
         {
             await FailAsync(run, "Usuário da run não encontrado.");
-            return;
+            return null;
         }
 
         // SPEC-20261023-run-cost-budgets RF-002/004: gate pré-run —
@@ -162,7 +292,7 @@ public sealed class ChatRunExecutor(
         if (!gate.Allowed)
         {
             await FailAsync(run, $"{gate.Code}: {gate.Detail}");
-            return;
+            return null;
         }
         // Normaliza o tier efetivo no kv da run — delegate_task copia
         // para os filhos e a cadeia só afunila (min(inherited, policy)).
@@ -201,7 +331,7 @@ public sealed class ChatRunExecutor(
             broadcaster.Publish(run.Id,
                 $"data: {JsonSerializer.Serialize(new { error = run.Error })}");
             broadcaster.Publish(run.Id, SseDoneLine);
-            return;
+            return null;
         }
 
         // RF-A1 harness-seams: ciclo de vida no barramento interno —
@@ -222,7 +352,7 @@ public sealed class ChatRunExecutor(
         if (ParamBool(request.Params, "subagent"))
         {
             await SpawnCommandSubagentAsync(run, request, ct);
-            return;
+            return null;
         }
         if (commandAgent is not null)
         {
@@ -242,680 +372,704 @@ public sealed class ChatRunExecutor(
             }
         }
 
-        var content = new StringBuilder();
-        var sinceCheckpoint = 0;
-        IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
-        ChatPipeline.ToolLoopOutcome? loopOutcome = null;
-        var sw = Stopwatch.StartNew();
+        return new RunPrelude(request, user, budgetLimits, resumePlan, commandMode);
+    }
 
-        // combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada tentativa
-        // resolve o modelo efetivo; falha transitória ANTES do primeiro delta
-        // (content vazio ⇒ nenhum SSE parcial foi emitido) → report + próximo
-        // candidato. Cancelamento nunca queima cooldown.
-        var comboRef = request.Model.StartsWith(ComboService.Prefix, StringComparison.Ordinal)
-            ? request.Model[ComboService.Prefix.Length..]
-            : null;
-        var comboAttemptsLeft = 1;
+    /// <summary>Resolve o próximo candidato do combo para a tentativa.
+    /// Request <c>null</c> = indisponibilidade já reportada e a run falhada —
+    /// o chamador retorna.</summary>
+    private async Task<(ChatCompletionRequest? Request, int AttemptsLeft)>
+        ResolveComboModelAsync(
+            ChatRun run, ChatCompletionRequest request, string comboRef,
+            CancellationToken ct)
+    {
+        ComboPick pick;
+        try
+        {
+            pick = await combos.ResolveAsync(comboRef, run.UserId, ct);
+        }
+        catch (ComboUnavailableException cue)
+        {
+            var comboError = cue.RetryAt is { } retryAt
+                ? $"{cue.Code} (retry após {retryAt})"
+                : cue.Code;
+            broadcaster.Publish(run.Id,
+                $"data: {JsonSerializer.Serialize(new { error = comboError })}");
+            await FailAsync(run, comboError);
+            broadcaster.Publish(run.Id, SseDoneLine);
+            return (null, 0);
+        }
+
+        broadcaster.Publish(run.Id,
+            $"event: combo\ndata: {JsonSerializer.Serialize(new { combo = pick.ComboId, model = pick.ModelId }, JsonOptions)}");
+        return (request with { Model = pick.ModelId },
+            Math.Max(1, pick.Candidates));
+    }
+
+    /// <summary>Roteia modelos especiais (<c>pipeline:{id}</c>, arena) que
+    /// encerram a run por conta própria. <c>true</c> = tratado.</summary>
+    private async Task<bool> TrySpecialModelAsync(
+        ChatCompletionRequest request, ChatRun run, User user, CancellationToken ct)
+    {
+        // Modelos pipeline:{id} → roteia ao servidor de pipelines e repassa as linhas.
+        if (request.Model.StartsWith("pipeline:", StringComparison.Ordinal))
+        {
+            await RunPipelineAsync(request, run, ct);
+            // [DONE] só depois do FinishAsync — ver caminho principal.
+            await FinishAsync(run, string.Empty);
+            broadcaster.Publish(run.Id, SseDoneLine);
+            return true;
+        }
+
+        // Arena gera as duas respostas e publica o payload {"arena":...}.
+        var arenaModel = request.Model.StartsWith("arena:", StringComparison.Ordinal)
+            ? request.Model["arena:".Length..]
+            : request.Model;
+        if (await ChatPipeline.TryRunArenaAsync(
+            request, arenaModel, user,
+            new ChatPipeline.ArenaDeps(db, config, rag, providers, webSearch,
+                repos, promptContributors),
+            line =>
+            {
+                // O [DONE] do arena é retido: sai depois do FinishAsync.
+                if (line != SseDoneLine)
+                {
+                    broadcaster.Publish(run.Id, line);
+                }
+                return Task.CompletedTask;
+            },
+            ct))
+        {
+            await FinishAsync(run, string.Empty);
+            broadcaster.Publish(run.Id, SseDoneLine);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Prepara o contexto da run — compactação, modo do agente,
+    /// fases de busca/memória, enrich, notebook persistente e seed de
+    /// retomada (ou snapshot inicial).</summary>
+    private async Task<(ChatCompletionRequest Request, ChatCompletionRequest Effective,
+        string ChatMode, RunLoopCheckpoint? ResumeSeed)> PrepareRunContextAsync(
+        ChatRun run, ChatCompletionRequest request, User user,
+        string? commandMode, RunResumePlan? resumePlan, CancellationToken ct)
+    {
+        // SPEC-20261015 RF-005: telemetria de progresso nas etapas
+        // pré-provider — antes a run ficava muda até o primeiro token.
+        // Best-effort: uma falha de publish nunca derruba a run.
+        await PublishPhaseAsync(run, "preparing_context", null);
+
+        // Compactação de contexto (SPEC-20261010-context-compaction): aplica
+        // o resumo persistido, compacta o head se o histórico estourou o
+        // limiar e re-aplica — a janela ao modelo sai [resumo] + tail.
+        await compaction.MaybeCompactAsync(
+            run.ChatId, request.Messages, request.Model, ct, run.UserId);
+        var compacted = await compaction.ApplyAsync(
+            run.ChatId, request.Messages, ct);
+        if (compacted.Count != request.Messages.Count)
+        {
+            await PublishPhaseAsync(run, "compacting", null);
+            request = request with { Messages = compacted };
+        }
+
+        // Modo do agente do chat (SPEC-20261009 RF-001): plan/build
+        // guia o prompt e o spec de tools anunciado. SPEC-15: build
+        // sem repositório vinculado cai para chat. Override por run
+        // (commands-v2 RF-004) vem de Params["mode"].
+        var chatMode = await EffectiveModeAsync(run.ChatId, commandMode, ct);
+
+        // Busca web/arquivos anunciados antes do enrich — o usuário vê
+        // "Pesquisando na web…" em vez de uma tela parada.
+        if (request.WebSearch == true)
+        {
+            await PublishPhaseAsync(
+                run, "searching_web",
+                Scrub(Truncate(
+                    request.Messages.LastOrDefault(m => m.Role == "user")
+                        ?.Content ?? string.Empty, 60)));
+        }
+
+        // Memória durável é consultada dentro do enrich quando o
+        // memsync está ligado — o gate espelha o do ChatPipeline
+        // (global memsync.enabled + override u:{user}) para o chip
+        // "Consultando memória…" não aparecer quando está desligado.
+        var memAdminOff = await config.GetAsync<bool?>(
+            "memsync.enabled", null, ct) == false;
+        var memOn = !memAdminOff
+            && (await config.GetAsync<bool?>(
+                    $"u:{user.Id}:memsync.enabled", null, ct)
+                ?? await config.GetAsync("memsync.enabled", true, ct));
+        if (memOn)
+        {
+            await PublishPhaseAsync(run, "consulting_memory", null);
+        }
+
+        var effective = await ChatPipeline.EnrichRequestAsync(
+            request, user,
+            new ChatPipeline.EnrichDeps(db, config, rag, webSearch, repos,
+                promptContributors), ct, chatMode, run.ChatId, logger);
+
+        // Notebook persistente do chat (SPEC-20261013-agent-context-
+        // management RF-003): injetado como system na entrada de toda
+        // run — sobrevive a compactação, reload e troca de provider.
+        var contextNotebook = await boundaries.GetNotesAsync(run.ChatId, ct);
+        if (!string.IsNullOrWhiteSpace(contextNotebook))
+        {
+            effective = effective with
+            {
+                Messages = [new ChatCompletionMessage(
+                    RoleSystem, $"[context notes]\n{contextNotebook}"), .. effective.Messages],
+            };
+        }
+
+        RunLoopCheckpoint? resumeSeed = null;
+        if (resumePlan is not null)
+        {
+            // RF-003/006 run-recovery: a janela reconstruída (base do
+            // snapshot + delta pós-snapshot + resultados sintéticos das
+            // calls órfãs) vira o histórico da run retomada; a nota de
+            // sistema fica visível para o modelo e a fase resumed
+            // reporta round/recuperados no SSE.
+            resumePlan.Messages.Add(new ChatCompletionMessage(
+                RoleSystem,
+                $"[run resumed after restart — {resumePlan.RecoveredTools} "
+                + "tool results recovered]"));
+            effective = effective with { Messages = resumePlan.Messages };
+            resumeSeed = new RunLoopCheckpoint(
+                resumePlan.Round, resumePlan.Messages,
+                resumePlan.ToolMessages, resumePlan.StepCount,
+                resumePlan.StepUsages, resumePlan.EmptyRounds,
+                resumePlan.LengthContinuations,
+                resumePlan.ContinuedAnswer, resumePlan.PendingTodos);
+            await BumpResumeMetaAsync(run, resumePlan.LastSeq, ct);
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new
+                {
+                    note = $"run resumed after restart — "
+                        + $"{resumePlan.RecoveredTools} tool results recovered",
+                    round = resumePlan.Round,
+                    recovered = resumePlan.RecoveredTools,
+                }, ct);
+            await PublishPhaseAsync(run, "resumed",
+                $"round {resumePlan.Round} — {resumePlan.RecoveredTools} "
+                + "tool results recuperados");
+            // Semeia o acumulado de tokens dos steps anteriores ao
+            // restart — o veto de budget considera o custo já gasto.
+            _runPromptTokens = resumePlan.StepUsages.Sum(
+                u => (long)u.PromptTokens);
+            _runCompletionTokens = resumePlan.StepUsages.Sum(
+                u => (long)u.CompletionTokens);
+        }
+        else
+        {
+            // Snapshot inicial (RF-002): toda run ativa ganha base de
+            // retomada — morte antes do primeiro round do loop ainda
+            // re-executa a partir do request enriquecido.
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Snapshot,
+                RunRecoveryPlanner.SerializeCheckpoint(new RunLoopCheckpoint(
+                    0, effective.Messages, [], 0, [], 0, 0, "")), ct);
+        }
+
+        return (request, effective, chatMode, resumeSeed);
+    }
+
+    /// <summary>Carrega as tools da run — sincroniza .agents/mcp.json e
+    /// resolve o catálogo habilitado. Sem ToolIds → <c>null</c>.</summary>
+    private async Task<List<Tool>?> LoadRunToolsAsync(
+        ChatRun run, ChatCompletionRequest request, User user, CancellationToken ct)
+    {
+        if (request.ToolIds is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        await PublishPhaseAsync(run, "loading_tools", null);
+
+        // .agents/mcp.json (global + projeto) materializa servers
+        // env:* no boot da run (SPEC-20261016-global-agents-scope
+        // RF-006). Falha de sync nunca quebra a run.
+        try
+        {
+            await mcp.SyncEnvServersAsync(
+                await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Run {RunId}: sync de .agents/mcp.json falhou — ignorado.", run.Id);
+        }
+        return await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct);
+    }
+
+    /// <summary>Executa o caminho com tools — contexto builtin, advisor,
+    /// checkpoint inicial, spec anunciado, loop com callbacks e veto de
+    /// budget. <c>Done</c> = a run terminou (veto) e o chamador retorna.</summary>
+    private async Task<(ChatPipeline.ToolLoopOutcome? Outcome, bool Done)>
+        RunToolLoopPathAsync(
+            ChatRun run, User user, string? commandMode, string chatMode,
+            ChatCompletionRequest effective, List<Tool> tools,
+            BudgetLimits budgetLimits,
+            List<(Regex Regex, string Replacement)> outletRules,
+            RunLoopCheckpoint? resumeSeed, RunStreamState state,
+            CancellationToken ct)
+    {
+        var builtinContext = await BuildToolContextAsync(run, user, ct);
+        // Advisor (SPEC-20261013-run-advisor): a entrada da mensagem
+        // do usuário dispara a primeira revisão — em background,
+        // com o subset read-only do workspace disponível.
+        await KickAdvisorAsync(run, "user_message", builtinContext, ct);
+
+        // Checkpoints do workdir (SPEC-20261009-checkpoints-revert):
+        // turn 0 = estado pré-run; cada tool mutável depois — o
+        // evento `checkpoint` alimenta o Revert da aba Changes.
+        var checkpointTurn = 0;
+        await PublishCheckpointAsync(
+            run, builtinContext.WorkspacePath, checkpointTurn, ct);
+        // plan_exit entra no catálogo sintético da run (RF-003): só
+        // é anunciado em modo plan; em build fica invisível — o gate
+        // o conhece para interceptar a call se ela escapar.
+        if (tools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "plan_exit")
+            && builtins.All.FirstOrDefault(t => t.Name == "plan_exit") is { } planExit)
+        {
+            tools.Add(builtins.ToSyntheticTool(planExit));
+        }
+        // Spec da primeira rodada já filtrado pelo modo (RF-002) —
+        // as próximas passam pelo AnnounceToolsAsync do callback.
+        effective = effective with
+        {
+            Tools = tools
+                .Where(t => PermissionRuleset.ShouldAnnounce(chatMode, t))
+                .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
+                .ToList(),
+        };
+        // Teto de steps da run (SPEC-20261016-agent-steps-usage
+        // RF-001): min(agent.steps do kv da sub-run,
+        // agentLoop.maxRounds — override por usuário
+        // u:{id}:agentLoop.maxRounds, global default 99999;
+        // o agent.steps explícito continua vencendo).
+        var agentSteps = await config.GetAsync<int?>(
+            $"r:{run.Id}:agent.steps", null, ct);
+        var maxSteps = Math.Min(agentSteps ?? int.MaxValue,
+            await config.GetAsync<int?>(
+                $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
+            ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
+        var currentStep = 0;
+        var currentMaxSteps = 0;
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            // Checkpoint de pausa em cada iteração do loop (RF-013):
+            // fase nova só começa depois do resume.
+            OnPhaseAsync: async (phase, label, t) =>
+            {
+                await pauses.WaitIfPausedAsync(run.Id, t);
+                // generating carrega {step,maxSteps} (RF-006).
+                await PublishPhaseAsync(run, phase, label,
+                    phase == "generating" ? currentStep : null,
+                    phase == "generating" ? currentMaxSteps : null);
+            },
+            OnStepAsync: async (step, max, t) =>
+            {
+                currentStep = step;
+                currentMaxSteps = max;
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.StepStarted,
+                    new { round = step, maxSteps = max }, t);
+            },
+            // RF-002 provider-resilience: fase "retrying" com
+            // tentativa/atraso/motivo + backoff que respeita pausa —
+            // a chamada ao provider só sai depois do resume.
+            OnRetryingAsync: async (attempt, delay, reason, t) =>
+            {
+                await pauses.WaitIfPausedAsync(run.Id, t);
+                await PublishPhaseAsync(run, "retrying",
+                    $"{reason} (tentativa {attempt}, {Math.Max(1, (int)delay.TotalMilliseconds)}ms)");
+                await Task.Delay(delay, t);
+                await pauses.WaitIfPausedAsync(run.Id, t);
+            },
+            // RF-004 provider-resilience: rejeição de janela cheia
+            // → compacta o histórico do loop com tail progressivo e
+            // devolve a janela reduzida; null = sem como reduzir.
+            OnOverflowCompactAsync: async (history, tailScale, t) =>
+            {
+                var didCompact = await compaction.MaybeCompactAsync(
+                    run.ChatId, history, effective.Model, t, run.UserId,
+                    force: true, tailScale: tailScale);
+                if (!didCompact)
+                {
+                    return null;
+                }
+                await PublishPhaseAsync(run, "compacting", null);
+                return await compaction.ApplyAsync(run.ChatId, history, t);
+            },
+            OnCallAsync: async (call, t) =>
+            {
+                await PublishToolCallAsync(run, call);
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.ToolCall,
+                    new
+                    {
+                        id = call.Id,
+                        name = call.Name,
+                        args = Scrub(Truncate(
+                            call.ArgumentsJson ?? "", PreviewChars)),
+                    }, t);
+            },
+            // RF-002 run-recovery: estado do loop por fronteira.
+            OnCheckpointAsync: (checkpoint, t) =>
+                runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.Snapshot,
+                    RunRecoveryPlanner.SerializeCheckpoint(checkpoint), t),
+            // RF-001/004: ids das calls do round — base do settle
+            // de órfãs na retomada.
+            OnStepFinishedAsync: (round, step, t) =>
+            {
+                // Acumula tokens do step para o veto de budget —
+                // o record só vai ao ledger no fim da run.
+                if (step.Usage is { } stepUsage)
+                {
+                    _runPromptTokens += stepUsage.PromptTokens;
+                    _runCompletionTokens += stepUsage.CompletionTokens;
+                }
+                return runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.StepFinished,
+                    new
+                    {
+                        round,
+                        calls = step.ToolCalls.Select(c => c.Id),
+                    }, t);
+            },
+            OnMessagesAddedAsync: (added, toolAdded, t) =>
+                runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.MessagesAdded,
+                    new { messages = added, toolMessages = toolAdded }, t),
+            // Veto de budget por rodada (SPEC-20261023-run-cost-
+            // budgets RF-002/003): o próximo provider step só sai
+            // se os caps da política ainda tiverem folga.
+            OnBudgetCheckAsync: t =>
+                RunBudgetCheckAsync(run, budgetLimits, t),
+            GateAsync: (call, t) => GateWithInterceptorsAsync(
+                run, tools, call, builtinContext, t),
+            // Modo relido por rodada — o plan_exit aprovado
+            // promove a build já na próxima chamada do modelo.
+            AnnounceToolsAsync: async t =>
+            {
+                var mode = await EffectiveModeAsync(
+                    run.ChatId, commandMode, t);
+                return tools
+                    .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool))
+                    .Select(tool => JsonSerializer.Deserialize<JsonElement>(tool.SpecJson))
+                    .ToList();
+            },
+            // Steer/queue (SPEC-20261010): steer na fronteira de
+            // rodada; queued só quando a run ficaria ociosa.
+            // RF-A2 harness-seams: interceptors pre-step decidem
+            // sobre as mensagens claimed antes de entrarem no
+            // histórico enviado ao provider.
+            OnRoundBoundaryAsync: async (queuedOnly, t) =>
+            {
+                var claimed = await PollSteerAsync(run, queuedOnly, t);
+                if (claimed.Count == 0 || !interceptors.HasInterceptors)
+                {
+                    return claimed;
+                }
+                var outcome = await interceptors.RunPreStepAsync(
+                    new OpenWebUI.Application.Interfaces.PreStepContext(
+                        run.Id, run.ChatId, run.UserId,
+                        currentStep, claimed), t);
+                if (!outcome.Rejected)
+                {
+                    return outcome.Messages;
+                }
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.InterceptorVeto,
+                    new
+                    {
+                        hook = "pre-step",
+                        interceptor = outcome.VetoedBy,
+                        reason = outcome.Reason,
+                    }, t);
+                return outcome.Messages;
+            },
+            // Conselhos do advisor viram notas system no round
+            // seguinte — sem zerar o teto de iterações.
+            OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
+            OnResultAsync: async (call, output, result, denied, t) =>
+            {
+                await PublishToolResultAsync(run, call, output, result, denied);
+                // RF-001: tool_result é o fato que liquida a call na
+                // retomada — gravação mandatória (SPEC run-recovery).
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.ToolResult,
+                    new
+                    {
+                        callId = call.Id,
+                        output,
+                        denied,
+                    }, t);
+                lock (_recentTools)
+                {
+                    _recentTools.Enqueue(
+                        $"{call.Name} → {Scrub(Truncate(output, 120)).ReplaceLineEndings(" ")}");
+                    while (_recentTools.Count > 8)
+                    {
+                        _recentTools.Dequeue();
+                    }
+                }
+                // Burst de tools (RF-001): a cada 5 resultados uma
+                // revisão — no máx. 1 por burst, cap/cooldown no kick.
+                if (++_toolResultsSinceAdvise >= 5)
+                {
+                    _toolResultsSinceAdvise = 0;
+                    await KickAdvisorAsync(run, "tool_burst", builtinContext, t);
+                }
+                if (!denied && ToolExecutor.FindTool(tools, call.Name) is { } tool
+                    && (ToolCallRiskClassifier.IsFileMutation(
+                            tool, call.ArgumentsJson, builtinContext.WorkspacePath)
+                        || IsApplyPatch(call.Name)))
+                {
+                    checkpointTurn++;
+                    await PublishCheckpointAsync(
+                        run, builtinContext.WorkspacePath, checkpointTurn, t);
+                }
+            },
+            // Texto do modelo sai delta a delta — sem isso a resposta
+            // inteira só aparecia num blob no fim da run.
+            OnDeltaAsync: async (piece, t) =>
+            {
+                await pauses.WaitIfPausedAsync(run.Id, t);
+                var processed = piece;
+                foreach (var (regex, replacement) in outletRules)
+                {
+                    processed = regex.Replace(processed, replacement);
+                }
+                if (processed.Length == 0)
+                {
+                    return;
+                }
+                var chunk = JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { index = 0, delta = new { content = processed } } },
+                });
+                broadcaster.Publish(run.Id, $"data: {chunk}");
+                state.Content.Append(processed);
+                state.SinceCheckpoint += processed.Length;
+                if (state.SinceCheckpoint >= CheckpointBytes)
+                {
+                    run.PartialContent = state.Content.ToString();
+                    await db.SaveChangesAsync(CancellationToken.None);
+                    await runEvents.AppendAsync(run.Id,
+                        RunEventWriter.Types.ContentDelta,
+                        new { content = state.Content.ToString() },
+                        CancellationToken.None);
+                    state.SinceCheckpoint = 0;
+                }
+            },
+            // SPEC-20261015 RF-002: raciocínio/thinking sai como
+            // delta.reasoning — canal separado do content (a UI
+            // renderiza colapsado; nunca entra em PartialContent).
+            // Outlet rules aplicam igual — segredos no pensamento
+            // são scrubados do mesmo jeito.
+            OnReasoningAsync: async (piece, t) =>
+            {
+                await pauses.WaitIfPausedAsync(run.Id, t);
+                var processed = piece;
+                foreach (var (regex, replacement) in outletRules)
+                {
+                    processed = regex.Replace(processed, replacement);
+                }
+                if (processed.Length == 0)
+                {
+                    return;
+                }
+                var chunk = JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { index = 0, delta = new { reasoning = processed } } },
+                });
+                broadcaster.Publish(run.Id, $"data: {chunk}");
+            });
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            effective, tools, toolExecutor, providers, ct,
+            new ChatPipeline.ToolLoopOptions(
+                callbacks, builtinContext, run.UserId, logger, maxSteps,
+                toolExecutor.MaxParallel, resumeSeed));
+        if (outcome is not null)
+        {
+            await ApplyUsageMetaAsync(run, outcome, ct);
+        }
+        // Veto de budget (SPEC-20261023-run-cost-budgets RF-003):
+        // o uso já foi persistido acima — a run termina falha
+        // com a razão explicável, não silencia.
+        if (outcome?.BudgetExceededReason is { } budgetReason)
+        {
+            await FailAsync(run, budgetReason);
+            return (outcome, true);
+        }
+        return (outcome, false);
+    }
+
+    /// <summary>Stream sem tool loop — deltas diretos com retentativa
+    /// transitória enquanto nenhum conteúdo foi emitido.</summary>
+    private async Task StreamPlainCompletionAsync(
+        ChatRun run, ChatCompletionRequest effective,
+        List<(Regex Regex, string Replacement)> outletRules,
+        RunStreamState state, CancellationToken ct)
+    {
+        // Sem tool loop o conselho só sai como evento — não há
+        // fronteira de rodada para a nota de contexto.
+        await KickAdvisorAsync(run, "user_message", null, ct);
+        // RF-005: a run sem tools não emitia nenhuma fase — a UI
+        // ficava no "Pensando…" estático até o primeiro token.
+        await PublishPhaseAsync(run, "generating", null);
+        var answered = false;
+        // RF-001 provider-resilience: o stream do chat sem tools
+        // também retenta falhas transitórias — enquanto nenhum delta
+        // de conteúdo saiu (content vazio garante idempotência do
+        // recomeço; depois do primeiro delta a run falha como antes).
+        var plainAttempt = 0;
+        var plainTimeouts = 0;
         while (true)
         {
-            if (comboRef is not null)
-            {
-                ComboPick pick;
-                try
-                {
-                    pick = await combos.ResolveAsync(comboRef, run.UserId, ct);
-                }
-                catch (ComboUnavailableException cue)
-                {
-                    var comboError = cue.RetryAt is { } retryAt
-                        ? $"{cue.Code} (retry após {retryAt})"
-                        : cue.Code;
-                    broadcaster.Publish(run.Id,
-                        $"data: {JsonSerializer.Serialize(new { error = comboError })}");
-                    await FailAsync(run, comboError);
-                    broadcaster.Publish(run.Id, SseDoneLine);
-                    return;
-                }
-
-                comboAttemptsLeft = Math.Max(1, pick.Candidates);
-                request = request with { Model = pick.ModelId };
-                broadcaster.Publish(run.Id,
-                    $"event: combo\ndata: {JsonSerializer.Serialize(new { combo = pick.ComboId, model = pick.ModelId }, JsonOptions)}");
-            }
-
             try
             {
-                // Modelos pipeline:{id} → roteia ao servidor de pipelines e repassa as linhas.
-                if (request.Model.StartsWith("pipeline:", StringComparison.Ordinal))
+                await foreach (var line in providers.StreamCompletionAsync(
+                    effective, run.UserId, ct))
                 {
-                    await RunPipelineAsync(request, run, ct);
-                    // [DONE] só depois do FinishAsync — ver caminho principal.
-                    await FinishAsync(run, string.Empty);
-                    broadcaster.Publish(run.Id, SseDoneLine);
-                    return;
-                }
-
-                // Arena gera as duas respostas e publica o payload {"arena":...}.
-                var arenaModel = request.Model.StartsWith("arena:", StringComparison.Ordinal)
-                    ? request.Model["arena:".Length..]
-                    : request.Model;
-                if (await ChatPipeline.TryRunArenaAsync(
-                    request, arenaModel, user,
-                    new ChatPipeline.ArenaDeps(db, config, rag, providers, webSearch,
-                        repos, promptContributors),
-                    line =>
+                    await pauses.WaitIfPausedAsync(run.Id, ct);
+                    var processed = ModelFilterService.ProcessSseLine(line, outletRules);
+                    broadcaster.Publish(run.Id, processed);
+                    AccumulateDelta(processed, state.Content);
+                    // "answering" no 1º delta de conteúdo real — reasoning
+                    // não conta (AccumulateDelta só anexa delta.content).
+                    if (!answered && state.Content.Length > 0)
                     {
-                        // O [DONE] do arena é retido: sai depois do FinishAsync.
-                        if (line != SseDoneLine)
-                        {
-                            broadcaster.Publish(run.Id, line);
-                        }
-                        return Task.CompletedTask;
-                    },
-                    ct))
-                {
-                    await FinishAsync(run, string.Empty);
-                    broadcaster.Publish(run.Id, SseDoneLine);
-                    return;
-                }
-
-                // SPEC-20261015 RF-005: telemetria de progresso nas etapas
-                // pré-provider — antes a run ficava muda até o primeiro token.
-                // Best-effort: uma falha de publish nunca derruba a run.
-                await PublishPhaseAsync(run, "preparing_context", null);
-
-                // Compactação de contexto (SPEC-20261010-context-compaction): aplica
-                // o resumo persistido, compacta o head se o histórico estourou o
-                // limiar e re-aplica — a janela ao modelo sai [resumo] + tail.
-                await compaction.MaybeCompactAsync(
-                    run.ChatId, request.Messages, request.Model, ct, run.UserId);
-                var compacted = await compaction.ApplyAsync(
-                    run.ChatId, request.Messages, ct);
-                if (compacted.Count != request.Messages.Count)
-                {
-                    await PublishPhaseAsync(run, "compacting", null);
-                    request = request with { Messages = compacted };
-                }
-
-                // Modo do agente do chat (SPEC-20261009 RF-001): plan/build
-                // guia o prompt e o spec de tools anunciado. SPEC-15: build
-                // sem repositório vinculado cai para chat. Override por run
-                // (commands-v2 RF-004) vem de Params["mode"].
-                var chatMode = await EffectiveModeAsync(run.ChatId, commandMode, ct);
-
-                // Busca web/arquivos anunciados antes do enrich — o usuário vê
-                // "Pesquisando na web…" em vez de uma tela parada.
-                if (request.WebSearch == true)
-                {
-                    await PublishPhaseAsync(
-                        run, "searching_web",
-                        Scrub(Truncate(
-                            request.Messages.LastOrDefault(m => m.Role == "user")
-                                ?.Content ?? string.Empty, 60)));
-                }
-
-                // Memória durável é consultada dentro do enrich quando o
-                // memsync está ligado — o gate espelha o do ChatPipeline
-                // (global memsync.enabled + override u:{user}) para o chip
-                // "Consultando memória…" não aparecer quando está desligado.
-                var memAdminOff = await config.GetAsync<bool?>(
-                    "memsync.enabled", null, ct) == false;
-                var memOn = !memAdminOff
-                    && (await config.GetAsync<bool?>(
-                            $"u:{user.Id}:memsync.enabled", null, ct)
-                        ?? await config.GetAsync("memsync.enabled", true, ct));
-                if (memOn)
-                {
-                    await PublishPhaseAsync(run, "consulting_memory", null);
-                }
-
-                var effective = await ChatPipeline.EnrichRequestAsync(
-                    request, user,
-                    new ChatPipeline.EnrichDeps(db, config, rag, webSearch, repos,
-                        promptContributors), ct, chatMode, run.ChatId, logger);
-
-                // Notebook persistente do chat (SPEC-20261013-agent-context-
-                // management RF-003): injetado como system na entrada de toda
-                // run — sobrevive a compactação, reload e troca de provider.
-                var contextNotebook = await boundaries.GetNotesAsync(run.ChatId, ct);
-                if (!string.IsNullOrWhiteSpace(contextNotebook))
-                {
-                    effective = effective with
-                    {
-                        Messages = [new ChatCompletionMessage(
-                            RoleSystem, $"[context notes]\n{contextNotebook}"), .. effective.Messages],
-                    };
-                }
-
-                RunLoopCheckpoint? resumeSeed = null;
-                if (resumePlan is not null)
-                {
-                    // RF-003/006 run-recovery: a janela reconstruída (base do
-                    // snapshot + delta pós-snapshot + resultados sintéticos das
-                    // calls órfãs) vira o histórico da run retomada; a nota de
-                    // sistema fica visível para o modelo e a fase resumed
-                    // reporta round/recuperados no SSE.
-                    resumePlan.Messages.Add(new ChatCompletionMessage(
-                        RoleSystem,
-                        $"[run resumed after restart — {resumePlan.RecoveredTools} "
-                        + "tool results recovered]"));
-                    effective = effective with { Messages = resumePlan.Messages };
-                    resumeSeed = new RunLoopCheckpoint(
-                        resumePlan.Round, resumePlan.Messages,
-                        resumePlan.ToolMessages, resumePlan.StepCount,
-                        resumePlan.StepUsages, resumePlan.EmptyRounds,
-                        resumePlan.LengthContinuations,
-                        resumePlan.ContinuedAnswer, resumePlan.PendingTodos);
-                    await BumpResumeMetaAsync(run, resumePlan.LastSeq, ct);
-                    await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
-                        new
-                        {
-                            note = $"run resumed after restart — "
-                                + $"{resumePlan.RecoveredTools} tool results recovered",
-                            round = resumePlan.Round,
-                            recovered = resumePlan.RecoveredTools,
-                        }, ct);
-                    await PublishPhaseAsync(run, "resumed",
-                        $"round {resumePlan.Round} — {resumePlan.RecoveredTools} "
-                        + "tool results recuperados");
-                    // Semeia o acumulado de tokens dos steps anteriores ao
-                    // restart — o veto de budget considera o custo já gasto.
-                    _runPromptTokens = resumePlan.StepUsages.Sum(
-                        u => (long)u.PromptTokens);
-                    _runCompletionTokens = resumePlan.StepUsages.Sum(
-                        u => (long)u.CompletionTokens);
-                }
-                else
-                {
-                    // Snapshot inicial (RF-002): toda run ativa ganha base de
-                    // retomada — morte antes do primeiro round do loop ainda
-                    // re-executa a partir do request enriquecido.
-                    await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Snapshot,
-                        RunRecoveryPlanner.SerializeCheckpoint(new RunLoopCheckpoint(
-                            0, effective.Messages, [], 0, [], 0, 0, "")), ct);
-                }
-
-                var outletRules = ModelFilterService.OutletRules(
-                    ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()
-                        .Where(m => m.IsActive && (m.Id == request.Model || m.Name == request.Model)
-                            && (m.UserId == user.Id || m.UserId == "public"))
-                        .Select(m => m.MetaJson).FirstOrDefaultAsync(ct)));
-
-                if (request.ToolIds is { Count: > 0 })
-                {
-                    await PublishPhaseAsync(run, "loading_tools", null);
-
-                    // .agents/mcp.json (global + projeto) materializa servers
-                    // env:* no boot da run (SPEC-20261016-global-agents-scope
-                    // RF-006). Falha de sync nunca quebra a run.
-                    try
-                    {
-                        await mcp.SyncEnvServersAsync(
-                            await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct), ct);
+                        answered = true;
+                        await PublishPhaseAsync(run, "answering", null);
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    state.SinceCheckpoint += processed.Length;
+                    if (state.SinceCheckpoint >= CheckpointBytes)
                     {
-                        logger.LogWarning(ex, "Run {RunId}: sync de .agents/mcp.json falhou — ignorado.", run.Id);
+                        run.PartialContent = state.Content.ToString();
+                        await db.SaveChangesAsync(CancellationToken.None);
+                        await runEvents.AppendAsync(run.Id,
+                            RunEventWriter.Types.ContentDelta,
+                            new { content = state.Content.ToString() },
+                            CancellationToken.None);
+                        state.SinceCheckpoint = 0;
                     }
                 }
-                var tools = request.ToolIds is { Count: > 0 }
-                    ? await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct)
-                    : null;
-                await PublishPhaseAsync(run, "connecting_model", null);
-                logger.LogInformation(
-                    "Run {RunId}: model={Model}, tools={ToolCount}, mensagens={MessageCount}, chat={ChatId}.",
-                    run.Id, effective.Model, tools?.Count ?? 0,
-                    effective.Messages.Count, run.ChatId);
-                if (tools is { Count: > 0 })
-                {
-                    var builtinContext = await BuildToolContextAsync(run, user, ct);
-                    // Advisor (SPEC-20261013-run-advisor): a entrada da mensagem
-                    // do usuário dispara a primeira revisão — em background,
-                    // com o subset read-only do workspace disponível.
-                    await KickAdvisorAsync(run, "user_message", builtinContext, ct);
-
-                    // Checkpoints do workdir (SPEC-20261009-checkpoints-revert):
-                    // turn 0 = estado pré-run; cada tool mutável depois — o
-                    // evento `checkpoint` alimenta o Revert da aba Changes.
-                    var checkpointTurn = 0;
-                    await PublishCheckpointAsync(
-                        run, builtinContext.WorkspacePath, checkpointTurn, ct);
-                    // plan_exit entra no catálogo sintético da run (RF-003): só
-                    // é anunciado em modo plan; em build fica invisível — o gate
-                    // o conhece para interceptar a call se ela escapar.
-                    if (tools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "plan_exit")
-                        && builtins.All.FirstOrDefault(t => t.Name == "plan_exit") is { } planExit)
-                    {
-                        tools.Add(builtins.ToSyntheticTool(planExit));
-                    }
-                    // Spec da primeira rodada já filtrado pelo modo (RF-002) —
-                    // as próximas passam pelo AnnounceToolsAsync do callback.
-                    effective = effective with
-                    {
-                        Tools = tools
-                            .Where(t => PermissionRuleset.ShouldAnnounce(chatMode, t))
-                            .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
-                            .ToList(),
-                    };
-                    // Teto de steps da run (SPEC-20261016-agent-steps-usage
-                    // RF-001): min(agent.steps do kv da sub-run,
-                    // agentLoop.maxRounds — override por usuário
-                    // u:{id}:agentLoop.maxRounds, global default 99999;
-                    // o agent.steps explícito continua vencendo).
-                    var agentSteps = await config.GetAsync<int?>(
-                        $"r:{run.Id}:agent.steps", null, ct);
-                    var maxSteps = Math.Min(agentSteps ?? int.MaxValue,
-                        await config.GetAsync<int?>(
-                            $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
-                        ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
-                    var currentStep = 0;
-                    var currentMaxSteps = 0;
-                    var callbacks = new ChatPipeline.ToolLoopCallbacks(
-                        // Checkpoint de pausa em cada iteração do loop (RF-013):
-                        // fase nova só começa depois do resume.
-                        OnPhaseAsync: async (phase, label, t) =>
-                        {
-                            await pauses.WaitIfPausedAsync(run.Id, t);
-                            // generating carrega {step,maxSteps} (RF-006).
-                            await PublishPhaseAsync(run, phase, label,
-                                phase == "generating" ? currentStep : null,
-                                phase == "generating" ? currentMaxSteps : null);
-                        },
-                        OnStepAsync: async (step, max, t) =>
-                        {
-                            currentStep = step;
-                            currentMaxSteps = max;
-                            await runEvents.AppendAsync(run.Id,
-                                RunEventWriter.Types.StepStarted,
-                                new { round = step, maxSteps = max }, t);
-                        },
-                        // RF-002 provider-resilience: fase "retrying" com
-                        // tentativa/atraso/motivo + backoff que respeita pausa —
-                        // a chamada ao provider só sai depois do resume.
-                        OnRetryingAsync: async (attempt, delay, reason, t) =>
-                        {
-                            await pauses.WaitIfPausedAsync(run.Id, t);
-                            await PublishPhaseAsync(run, "retrying",
-                                $"{reason} (tentativa {attempt}, {Math.Max(1, (int)delay.TotalMilliseconds)}ms)");
-                            await Task.Delay(delay, t);
-                            await pauses.WaitIfPausedAsync(run.Id, t);
-                        },
-                        // RF-004 provider-resilience: rejeição de janela cheia
-                        // → compacta o histórico do loop com tail progressivo e
-                        // devolve a janela reduzida; null = sem como reduzir.
-                        OnOverflowCompactAsync: async (history, tailScale, t) =>
-                        {
-                            var didCompact = await compaction.MaybeCompactAsync(
-                                run.ChatId, history, effective.Model, t, run.UserId,
-                                force: true, tailScale: tailScale);
-                            if (!didCompact)
-                            {
-                                return null;
-                            }
-                            await PublishPhaseAsync(run, "compacting", null);
-                            return await compaction.ApplyAsync(run.ChatId, history, t);
-                        },
-                        OnCallAsync: async (call, t) =>
-                        {
-                            await PublishToolCallAsync(run, call);
-                            await runEvents.AppendAsync(run.Id,
-                                RunEventWriter.Types.ToolCall,
-                                new
-                                {
-                                    id = call.Id,
-                                    name = call.Name,
-                                    args = Scrub(Truncate(
-                                        call.ArgumentsJson ?? "", PreviewChars)),
-                                }, t);
-                        },
-                        // RF-002 run-recovery: estado do loop por fronteira.
-                        OnCheckpointAsync: (checkpoint, t) =>
-                            runEvents.AppendAsync(run.Id,
-                                RunEventWriter.Types.Snapshot,
-                                RunRecoveryPlanner.SerializeCheckpoint(checkpoint), t),
-                        // RF-001/004: ids das calls do round — base do settle
-                        // de órfãs na retomada.
-                        OnStepFinishedAsync: (round, step, t) =>
-                        {
-                            // Acumula tokens do step para o veto de budget —
-                            // o record só vai ao ledger no fim da run.
-                            if (step.Usage is { } stepUsage)
-                            {
-                                _runPromptTokens += stepUsage.PromptTokens;
-                                _runCompletionTokens += stepUsage.CompletionTokens;
-                            }
-                            return runEvents.AppendAsync(run.Id,
-                                RunEventWriter.Types.StepFinished,
-                                new
-                                {
-                                    round,
-                                    calls = step.ToolCalls.Select(c => c.Id),
-                                }, t);
-                        },
-                        OnMessagesAddedAsync: (added, toolAdded, t) =>
-                            runEvents.AppendAsync(run.Id,
-                                RunEventWriter.Types.MessagesAdded,
-                                new { messages = added, toolMessages = toolAdded }, t),
-                        // Veto de budget por rodada (SPEC-20261023-run-cost-
-                        // budgets RF-002/003): o próximo provider step só sai
-                        // se os caps da política ainda tiverem folga.
-                        OnBudgetCheckAsync: t =>
-                            RunBudgetCheckAsync(run, budgetLimits, t),
-                        GateAsync: (call, t) => GateWithInterceptorsAsync(
-                            run, tools, call, builtinContext, t),
-                        // Modo relido por rodada — o plan_exit aprovado
-                        // promove a build já na próxima chamada do modelo.
-                        AnnounceToolsAsync: async t =>
-                        {
-                            var mode = await EffectiveModeAsync(
-                                run.ChatId, commandMode, t);
-                            return tools
-                                .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool))
-                                .Select(tool => JsonSerializer.Deserialize<JsonElement>(tool.SpecJson))
-                                .ToList();
-                        },
-                        // Steer/queue (SPEC-20261010): steer na fronteira de
-                        // rodada; queued só quando a run ficaria ociosa.
-                        // RF-A2 harness-seams: interceptors pre-step decidem
-                        // sobre as mensagens claimed antes de entrarem no
-                        // histórico enviado ao provider.
-                        OnRoundBoundaryAsync: async (queuedOnly, t) =>
-                        {
-                            var claimed = await PollSteerAsync(run, queuedOnly, t);
-                            if (claimed.Count == 0 || !interceptors.HasInterceptors)
-                            {
-                                return claimed;
-                            }
-                            var outcome = await interceptors.RunPreStepAsync(
-                                new OpenWebUI.Application.Interfaces.PreStepContext(
-                                    run.Id, run.ChatId, run.UserId,
-                                    currentStep, claimed), t);
-                            if (!outcome.Rejected)
-                            {
-                                return outcome.Messages;
-                            }
-                            await runEvents.AppendAsync(run.Id,
-                                RunEventWriter.Types.InterceptorVeto,
-                                new
-                                {
-                                    hook = "pre-step",
-                                    interceptor = outcome.VetoedBy,
-                                    reason = outcome.Reason,
-                                }, t);
-                            return outcome.Messages;
-                        },
-                        // Conselhos do advisor viram notas system no round
-                        // seguinte — sem zerar o teto de iterações.
-                        OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
-                        OnResultAsync: async (call, output, result, denied, t) =>
-                        {
-                            await PublishToolResultAsync(run, call, output, result, denied);
-                            // RF-001: tool_result é o fato que liquida a call na
-                            // retomada — gravação mandatória (SPEC run-recovery).
-                            await runEvents.AppendAsync(run.Id,
-                                RunEventWriter.Types.ToolResult,
-                                new
-                                {
-                                    callId = call.Id,
-                                    output,
-                                    denied,
-                                }, t);
-                            lock (_recentTools)
-                            {
-                                _recentTools.Enqueue(
-                                    $"{call.Name} → {Scrub(Truncate(output, 120)).ReplaceLineEndings(" ")}");
-                                while (_recentTools.Count > 8)
-                                {
-                                    _recentTools.Dequeue();
-                                }
-                            }
-                            // Burst de tools (RF-001): a cada 5 resultados uma
-                            // revisão — no máx. 1 por burst, cap/cooldown no kick.
-                            if (++_toolResultsSinceAdvise >= 5)
-                            {
-                                _toolResultsSinceAdvise = 0;
-                                await KickAdvisorAsync(run, "tool_burst", builtinContext, t);
-                            }
-                            if (!denied && ToolExecutor.FindTool(tools, call.Name) is { } tool
-                                && (ToolCallRiskClassifier.IsFileMutation(
-                                        tool, call.ArgumentsJson, builtinContext.WorkspacePath)
-                                    || IsApplyPatch(call.Name)))
-                            {
-                                checkpointTurn++;
-                                await PublishCheckpointAsync(
-                                    run, builtinContext.WorkspacePath, checkpointTurn, t);
-                            }
-                        },
-                        // Texto do modelo sai delta a delta — sem isso a resposta
-                        // inteira só aparecia num blob no fim da run.
-                        OnDeltaAsync: async (piece, t) =>
-                        {
-                            await pauses.WaitIfPausedAsync(run.Id, t);
-                            var processed = piece;
-                            foreach (var (regex, replacement) in outletRules)
-                            {
-                                processed = regex.Replace(processed, replacement);
-                            }
-                            if (processed.Length == 0)
-                            {
-                                return;
-                            }
-                            var chunk = JsonSerializer.Serialize(new
-                            {
-                                choices = new[] { new { index = 0, delta = new { content = processed } } },
-                            });
-                            broadcaster.Publish(run.Id, $"data: {chunk}");
-                            content.Append(processed);
-                            sinceCheckpoint += processed.Length;
-                            if (sinceCheckpoint >= CheckpointBytes)
-                            {
-                                run.PartialContent = content.ToString();
-                                await db.SaveChangesAsync(CancellationToken.None);
-                                await runEvents.AppendAsync(run.Id,
-                                    RunEventWriter.Types.ContentDelta,
-                                    new { content = content.ToString() },
-                                    CancellationToken.None);
-                                sinceCheckpoint = 0;
-                            }
-                        },
-                        // SPEC-20261015 RF-002: raciocínio/thinking sai como
-                        // delta.reasoning — canal separado do content (a UI
-                        // renderiza colapsado; nunca entra em PartialContent).
-                        // Outlet rules aplicam igual — segredos no pensamento
-                        // são scrubados do mesmo jeito.
-                        OnReasoningAsync: async (piece, t) =>
-                        {
-                            await pauses.WaitIfPausedAsync(run.Id, t);
-                            var processed = piece;
-                            foreach (var (regex, replacement) in outletRules)
-                            {
-                                processed = regex.Replace(processed, replacement);
-                            }
-                            if (processed.Length == 0)
-                            {
-                                return;
-                            }
-                            var chunk = JsonSerializer.Serialize(new
-                            {
-                                choices = new[] { new { index = 0, delta = new { reasoning = processed } } },
-                            });
-                            broadcaster.Publish(run.Id, $"data: {chunk}");
-                        });
-                    var outcome = await ChatPipeline.RunToolLoopAsync(
-                        effective, tools, toolExecutor, providers, ct,
-                        new ChatPipeline.ToolLoopOptions(
-                            callbacks, builtinContext, run.UserId, logger, maxSteps,
-                            toolExecutor.MaxParallel, resumeSeed));
-                    loopOutcome = outcome;
-                    toolMessages = outcome?.ToolMessages;
-                    if (outcome is not null)
-                    {
-                        await ApplyUsageMetaAsync(run, outcome, ct);
-                    }
-                    // Veto de budget (SPEC-20261023-run-cost-budgets RF-003):
-                    // o uso já foi persistido acima — a run termina falha
-                    // com a razão explicável, não silencia.
-                    if (outcome?.BudgetExceededReason is { } budgetReason)
-                    {
-                        await FailAsync(run, budgetReason);
-                        return;
-                    }
-                }
-                else
-                {
-                    // Sem tool loop o conselho só sai como evento — não há
-                    // fronteira de rodada para a nota de contexto.
-                    await KickAdvisorAsync(run, "user_message", null, ct);
-                    // RF-005: a run sem tools não emitia nenhuma fase — a UI
-                    // ficava no "Pensando…" estático até o primeiro token.
-                    await PublishPhaseAsync(run, "generating", null);
-                    var answered = false;
-                    // RF-001 provider-resilience: o stream do chat sem tools
-                    // também retenta falhas transitórias — enquanto nenhum delta
-                    // de conteúdo saiu (content vazio garante idempotência do
-                    // recomeço; depois do primeiro delta a run falha como antes).
-                    var plainAttempt = 0;
-                    var plainTimeouts = 0;
-                    while (true)
-                    {
-                        try
-                        {
-                            await foreach (var line in providers.StreamCompletionAsync(
-                                effective, run.UserId, ct))
-                            {
-                                await pauses.WaitIfPausedAsync(run.Id, ct);
-                                var processed = ModelFilterService.ProcessSseLine(line, outletRules);
-                                broadcaster.Publish(run.Id, processed);
-                                AccumulateDelta(processed, content);
-                                // "answering" no 1º delta de conteúdo real — reasoning
-                                // não conta (AccumulateDelta só anexa delta.content).
-                                if (!answered && content.Length > 0)
-                                {
-                                    answered = true;
-                                    await PublishPhaseAsync(run, "answering", null);
-                                }
-                                sinceCheckpoint += processed.Length;
-                                if (sinceCheckpoint >= CheckpointBytes)
-                                {
-                                    run.PartialContent = content.ToString();
-                                    await db.SaveChangesAsync(CancellationToken.None);
-                                    await runEvents.AppendAsync(run.Id,
-                                        RunEventWriter.Types.ContentDelta,
-                                        new { content = content.ToString() },
-                                        CancellationToken.None);
-                                    sinceCheckpoint = 0;
-                                }
-                            }
-                            break;
-                        }
-                        catch (Exception ex)
-                            when (!(ex is OperationCanceledException && ct.IsCancellationRequested)
-                                && content.Length == 0)
-                        {
-                            plainTimeouts = ex is TaskCanceledException or TimeoutException
-                                ? plainTimeouts + 1 : 0;
-                            var decision = ProviderRetryPolicy.Decide(
-                                ex, plainAttempt, plainTimeouts,
-                                options: providers.RetryOptions);
-                            if (!decision.Retry)
-                            {
-                                throw;
-                            }
-                            plainAttempt++;
-                            await pauses.WaitIfPausedAsync(run.Id, ct);
-                            await PublishPhaseAsync(run, "retrying",
-                                $"{decision.Reason} (tentativa {plainAttempt}, "
-                                + $"{Math.Max(1, (int)decision.Delay.TotalMilliseconds)}ms)");
-                            await Task.Delay(decision.Delay, ct);
-                            await pauses.WaitIfPausedAsync(run.Id, ct);
-                        }
-                    }
-                }
-
-                // Ledger (SPEC-20261023-run-cost-budgets RF-001): run sem
-                // tool loop não teve record — grava com zeros (o provider não
-                // reporta usage nesse caminho; CostUsd null — nunca estimado).
-                if (loopOutcome is null)
-                {
-                    await usageLedger.RecordAsync(
-                        new RunUsageLedgerService.UsageEntry(
-                            run.Id, run.ChatId, run.UserId, run.ParentRunId,
-                            run.Model, 0, 0, 0, 0, null), ct);
-                }
-                // [DONE] depois do FinishAsync: o cliente recarrega o chat ao ver o
-                // marcador — a mensagem precisa já estar persistida.
-                await FinishAsync(run, content.ToString(), toolMessages: toolMessages);
-                // Auto-chain (SPEC-20261019-run-autonomy-continue RF-002): cap
-                // atingido com pendências → a run filha entra na fila ANTES do
-                // [DONE], então o reload do cliente já enxerga a continuação.
-                if (loopOutcome is not null)
-                {
-                    await TryChainContinuationAsync(run, request, user, loopOutcome, ct);
-                }
-                broadcaster.Publish(run.Id, SseDoneLine);
-                if (comboRef is not null)
-                {
-                    await combos.ReportAsync(comboRef, request.Model, ok: true,
-                        ct: CancellationToken.None);
-                }
-                logger.LogInformation(
-                    "Run {RunId} concluída em {Elapsed}ms: {Chars} chars, {ToolMessages} msgs de tool.",
-                    run.Id, sw.ElapsedMilliseconds, content.Length,
-                    toolMessages?.Count ?? 0);
+                break;
             }
-                catch (OperationCanceledException ex)
+            catch (Exception ex)
+                when (!(ex is OperationCanceledException && ct.IsCancellationRequested)
+                    && state.Content.Length == 0)
+            {
+                plainTimeouts = ex is TaskCanceledException or TimeoutException
+                    ? plainTimeouts + 1 : 0;
+                var decision = ProviderRetryPolicy.Decide(
+                    ex, plainAttempt, plainTimeouts,
+                    options: providers.RetryOptions);
+                if (!decision.Retry)
                 {
-                    approvals.Cancel(run.Id);
-                    await FinishAsync(run, content.ToString(), ChatRunStatus.Stopped, toolMessages);
-                    broadcaster.Publish(run.Id, SseDoneLine);
-                    logger.LogWarning(ex,
-                        "Run {RunId} cancelada após {Elapsed}ms com {Chars} chars parciais.",
-                        run.Id, sw.ElapsedMilliseconds, content.Length);
+                    throw;
                 }
-                catch (Exception ex)
-                {
-                    // Combo: falha transitória sem nenhum delta emitido → report e
-                    // retenta com o próximo candidato (content vazio garante que o
-                    // cliente ainda não viu resposta parcial).
-                    if (comboRef is not null
-                        && ex is (HttpRequestException or TaskCanceledException)
-                        && content.Length == 0)
-                    {
-                        await combos.ReportAsync(comboRef, request.Model, ok: false,
-                            ct: CancellationToken.None);
-                        if (--comboAttemptsLeft > 0)
-                        {
-                            logger.LogWarning(
-                                "Run {RunId}: modelo {Model} do combo {Combo} falhou — próximo candidato.",
-                                run.Id, request.Model, comboRef);
-                            continue;
-                        }
-                    }
-
-                    // Qualquer falha fecha a run como failed — uma exceção que escapasse
-                    // deixaria a run eternamente "running" (o dispatcher só loga).
-                    // InvalidOperationException loga com stack: foi a silenciar
-                    // exatamente ela que o bug dos args double-encoded ficou
-                    // invisível nos logs por dias.
-                    if (ex is not (HttpRequestException or TaskCanceledException))
-                    {
-                        logger.LogError(ex,
-                            "Run {RunId} falhou com exceção inesperada após {Elapsed}ms.",
-                            run.Id, sw.ElapsedMilliseconds);
-                    }
-
-                    var message = ex is HttpRequestException or TaskCanceledException
-                        ? $"Falha ao contactar o provedor: {ex.Message}"
-                        : ex.Message;
-                    approvals.Cancel(run.Id);
-                    broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error = message })}");
-                    run.Error = message;
-                    await FinishAsync(run, content.ToString(), ChatRunStatus.Failed, toolMessages);
-                    broadcaster.Publish(run.Id, SseDoneLine);
+                plainAttempt++;
+                await pauses.WaitIfPausedAsync(run.Id, ct);
+                await PublishPhaseAsync(run, "retrying",
+                    $"{decision.Reason} (tentativa {plainAttempt}, "
+                    + $"{Math.Max(1, (int)decision.Delay.TotalMilliseconds)}ms)");
+                await Task.Delay(decision.Delay, ct);
+                await pauses.WaitIfPausedAsync(run.Id, ct);
             }
-
-            return;
         }
+    }
+
+    /// <summary>Fecha uma run bem-sucedida — ledger zerado quando não há
+    /// tool loop, persistência, chain de continuação, [DONE], report de
+    /// combo e log.</summary>
+    private async Task CompleteRunAsync(
+        ChatRun run, ChatCompletionRequest request, User user,
+        StringBuilder content, ChatPipeline.ToolLoopOutcome? loopOutcome,
+        IReadOnlyList<ChatCompletionMessage>? toolMessages,
+        string? comboRef, Stopwatch sw, CancellationToken ct)
+    {
+        // Ledger (SPEC-20261023-run-cost-budgets RF-001): run sem
+        // tool loop não teve record — grava com zeros (o provider não
+        // reporta usage nesse caminho; CostUsd null — nunca estimado).
+        if (loopOutcome is null)
+        {
+            await usageLedger.RecordAsync(
+                new RunUsageLedgerService.UsageEntry(
+                    run.Id, run.ChatId, run.UserId, run.ParentRunId,
+                    run.Model, 0, 0, 0, 0, null), ct);
+        }
+        // [DONE] depois do FinishAsync: o cliente recarrega o chat ao ver o
+        // marcador — a mensagem precisa já estar persistida.
+        await FinishAsync(run, content.ToString(), toolMessages: toolMessages);
+        // Auto-chain (SPEC-20261019-run-autonomy-continue RF-002): cap
+        // atingido com pendências → a run filha entra na fila ANTES do
+        // [DONE], então o reload do cliente já enxerga a continuação.
+        if (loopOutcome is not null)
+        {
+            await TryChainContinuationAsync(run, request, user, loopOutcome, ct);
+        }
+        broadcaster.Publish(run.Id, SseDoneLine);
+        if (comboRef is not null)
+        {
+            await combos.ReportAsync(comboRef, request.Model, ok: true,
+                ct: CancellationToken.None);
+        }
+        logger.LogInformation(
+            "Run {RunId} concluída em {Elapsed}ms: {Chars} chars, {ToolMessages} msgs de tool.",
+            run.Id, sw.ElapsedMilliseconds, content.Length,
+            toolMessages?.Count ?? 0);
+    }
+
+    /// <summary>Falha na tentativa — combo com conteúdo vazio retenta o
+    /// próximo candidato (<c>Retry</c>); senão fecha a run como failed.</summary>
+    private async Task<(bool Retry, int AttemptsLeft)> HandleRunFailureAsync(
+        ChatRun run, Exception ex, string content,
+        IReadOnlyList<ChatCompletionMessage>? toolMessages,
+        string? comboRef, string currentModel,
+        Stopwatch sw, int comboAttemptsLeft)
+    {
+        // Combo: falha transitória sem nenhum delta emitido → report e
+        // retenta com o próximo candidato (content vazio garante que o
+        // cliente ainda não viu resposta parcial).
+        if (comboRef is not null
+            && ex is (HttpRequestException or TaskCanceledException)
+            && content.Length == 0)
+        {
+            await combos.ReportAsync(comboRef, currentModel, ok: false,
+                ct: CancellationToken.None);
+            if (comboAttemptsLeft - 1 > 0)
+            {
+                logger.LogWarning(
+                    "Run {RunId}: modelo {Model} do combo {Combo} falhou — próximo candidato.",
+                    run.Id, currentModel, comboRef);
+                return (true, comboAttemptsLeft - 1);
+            }
+        }
+
+        // Qualquer falha fecha a run como failed — uma exceção que escapasse
+        // deixaria a run eternamente "running" (o dispatcher só loga).
+        // InvalidOperationException loga com stack: foi a silenciar
+        // exatamente ela que o bug dos args double-encoded ficou
+        // invisível nos logs por dias.
+        if (ex is not (HttpRequestException or TaskCanceledException))
+        {
+            logger.LogError(ex,
+                "Run {RunId} falhou com exceção inesperada após {Elapsed}ms.",
+                run.Id, sw.ElapsedMilliseconds);
+        }
+
+        var message = ex is HttpRequestException or TaskCanceledException
+            ? $"Falha ao contactar o provedor: {ex.Message}"
+            : ex.Message;
+        approvals.Cancel(run.Id);
+        broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error = message })}");
+        run.Error = message;
+        await FinishAsync(run, content, ChatRunStatus.Failed, toolMessages);
+        broadcaster.Publish(run.Id, SseDoneLine);
+        return (false, 0);
     }
 
     /// <summary>Publica o evento <c>status</c> de fase no stream da run.</summary>
