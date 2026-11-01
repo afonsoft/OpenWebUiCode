@@ -10,7 +10,7 @@
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-smart-permission-llm |
 | Ticket | #574 (Epic #572/E19) |
-| Status | Approved |
+| Status | Completed |
 
 ## 1. User Story
 
@@ -170,3 +170,8 @@ Sem API nova. O modo aparece no catálogo de presets existente (`smart`) e decis
   (.env/.pem/.ssh/.aws/credentials).
 - Testes: 5 novos em `SmartPermissionClassifierTests` (always-ask,
   fingerprint, parse estrito, dedup). Build 0/0.
+
+
+## Delivered
+
+- PR #599 — implementação e testes mergeados em `main` (2026-11-01).
