@@ -237,9 +237,10 @@ public sealed class DelegateTaskBuiltinTool(
                             joinTeam), ct);
                 }
                 var created = await CreateDispatchAsync(
-                    args, scope, db, context, config, parentRun, agent,
-                    fullPrompt, waitExplicit, autoMerge, joinTeam,
-                    personaSkill?.Content, prompt, ct);
+                    new DispatchRequest(args, config, agent, fullPrompt,
+                        waitExplicit, autoMerge, joinTeam,
+                        personaSkill?.Content, prompt),
+                    scope, db, context, parentRun, ct);
                 if (created.ChatId is { } createdChatId)
                 {
                     await config.SetAsync(kvKey, createdChatId, ct);
@@ -259,9 +260,10 @@ public sealed class DelegateTaskBuiltinTool(
         }
 
         var dispatch = await CreateDispatchAsync(
-            args, scope, db, context, config, parentRun, agent, fullPrompt,
-            waitExplicit, autoMerge, joinTeam,
-            personaSkill?.Content, prompt, ct);
+            new DispatchRequest(args, config, agent, fullPrompt,
+                waitExplicit, autoMerge, joinTeam,
+                personaSkill?.Content, prompt),
+            scope, db, context, parentRun, ct);
         return dispatch.Result;
     }
 
@@ -273,12 +275,11 @@ public sealed class DelegateTaskBuiltinTool(
     /// </summary>
     private async Task<(BuiltinToolResult Result, string? ChatId)>
         CreateDispatchAsync(
-            JsonElement args, IServiceScope scope, AppDbContext db,
-            BuiltinToolContext context, ConfigService config,
-            ChatRun parentRun, AgentDefinition? agent, string fullPrompt,
-            bool? waitExplicit, bool autoMerge, bool joinTeam,
-            string? personaPrompt, string prompt, CancellationToken ct)
+            DispatchRequest input, IServiceScope scope, AppDbContext db,
+            BuiltinToolContext context, ChatRun parentRun, CancellationToken ct)
     {
+        var (args, config, agent, fullPrompt, waitExplicit, autoMerge,
+            joinTeam, personaPrompt, prompt) = input;
         // Profundidade da cadeia pai (depth 0 = raiz). Runs de profundidade
         // ≥ MaxDepth perdem a tool delegate_task — o filho não pode delegar
         // além do limite (SPEC-20261010-async-delegate).
@@ -390,6 +391,12 @@ public sealed class DelegateTaskBuiltinTool(
     /// Semáforo por sidekick (SPEC-20261031-sidekick-orchestration RF-002):
     /// serializa dispatches concorrentes no mesmo sidekick_id do pai.
     /// </summary>
+    /// <summary>Argumentos do caminho de dispatch (extração p/ S107).</summary>
+    private sealed record DispatchRequest(
+        JsonElement Args, ConfigService Config, AgentDefinition? Agent,
+        string FullPrompt, bool? WaitExplicit, bool AutoMerge, bool JoinTeam,
+        string? PersonaPrompt, string Prompt);
+
     private static class SidekickGate
     {
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<

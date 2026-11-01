@@ -58,7 +58,7 @@ public sealed class RestrictedExecRunner
         return new BatchResult(snippets, errors);
     }
 
-    private IEnumerable<Snippet> RunOne(string workspace, string cmd)
+    private static IEnumerable<Snippet> RunOne(string workspace, string cmd)
     {
         var space = cmd.IndexOf(' ');
         var verb = space < 0 ? cmd : cmd[..space];

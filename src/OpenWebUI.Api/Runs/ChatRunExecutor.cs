@@ -2250,7 +2250,7 @@ public sealed class ChatRunExecutor(
     private async Task<ChatRunApprovals.ApprovalResult> WaitApprovalAsync(
         string runId, string chatId, string callId, string toolName,
         CancellationToken ct, string argPattern = "*",
-        object? askedPayload = null)
+        object? askedPayload = null, string? userId = null)
     {
         var interval = int.TryParse(cfg["AgentLoop:CacheKeepaliveSeconds"], out var ka) ? ka : 0;
         if (interval <= 0)
@@ -2283,7 +2283,7 @@ public sealed class ChatRunExecutor(
                 }
                 await providers.CompleteAsync(new ChatCompletionRequest(
                     model, [new ChatCompletionMessage("user", ".")],
-                    Stream: false));
+                    Stream: false), userId, CancellationToken.None);
             }
             catch (Exception)
             {
@@ -2340,7 +2340,7 @@ public sealed class ChatRunExecutor(
         await KickAdvisorAsync(run, "pause", builtinContext, ct);
         var result = await WaitApprovalAsync(run.Id, run.ChatId, call.Id,
             call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson),
-            asked);
+            asked, run.UserId);
         var message = string.IsNullOrWhiteSpace(result.Message)
             ? null
             : Scrub(Truncate(result.Message, PreviewChars));
@@ -2386,7 +2386,8 @@ public sealed class ChatRunExecutor(
             broadcaster.Publish(run.Id,
                 $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
             var result = await WaitApprovalAsync(
-                run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked);
+                run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked,
+                userId: run.UserId);
 
             if (!result.Approved)
             {
@@ -2478,7 +2479,8 @@ public sealed class ChatRunExecutor(
             $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
 
         var result = await WaitApprovalAsync(
-            run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked);
+            run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked,
+            userId: run.UserId);
 
         // RF-004: deny/skip devolve recusa — a run segue, o modelo decide.
         if (!result.Approved || string.IsNullOrWhiteSpace(result.Message))
