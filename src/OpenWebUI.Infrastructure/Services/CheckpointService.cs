@@ -53,6 +53,9 @@ public sealed class CheckpointService(
 {
     /// <summary>Ref oculta dentro do git dir do snapshot (nunca no repo do usuário).</summary>
     private const string Ref = "refs/openwebui/checkpoints";
+    private const string NameOnlyFlag = "--name-only";
+    private const string ObjectsPath = "objects";
+    private const string RevParseCommand = "rev-parse";
 
     /// <summary>Timeout por invocação do git.</summary>
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(60);
@@ -149,7 +152,7 @@ public sealed class CheckpointService(
             await EnsureGitRepoAsync(workdir, gitdir, ct);
             await GitAddAsync(workdir, gitdir, ct);
             var diff = await RunGitAsync(workdir, gitdir, ct,
-                "diff", "--cached", "--no-ext-diff", "--name-only", hash, "--", ".");
+                "diff", "--cached", "--no-ext-diff", NameOnlyFlag, hash, "--", ".");
             return SplitLines(diff);
         }
         finally
@@ -348,7 +351,7 @@ public sealed class CheckpointService(
     /// </summary>
     private async Task EnsureGitRepoAsync(string workdir, string gitdir, CancellationToken ct)
     {
-        if (Directory.Exists(Path.Join(gitdir, "objects")))
+        if (Directory.Exists(Path.Join(gitdir, ObjectsPath)))
         {
             return;
         }
@@ -375,12 +378,12 @@ public sealed class CheckpointService(
         // Objects do repo original ficam visíveis via alternates — blobs do
         // HEAD não precisam ser re-hashados nem copiados (opencode seed()).
         var common = await RunGitAsync(workdir, null, ct,
-            "rev-parse", "--path-format=absolute", "--git-common-dir");
+            RevParseCommand, "--path-format=absolute", "--git-common-dir");
         var commonDir = common?.Trim();
         if (!string.IsNullOrEmpty(commonDir) && Directory.Exists(commonDir))
         {
             var alternates = new List<string>();
-            var objects = Path.Join(commonDir, "objects");
+            var objects = Path.Join(commonDir, ObjectsPath);
             if (Directory.Exists(objects))
             {
                 alternates.Add(objects);
@@ -393,9 +396,9 @@ public sealed class CheckpointService(
             }
             if (alternates.Count > 0)
             {
-                Directory.CreateDirectory(Path.Join(gitdir, "objects", "info"));
+                Directory.CreateDirectory(Path.Join(gitdir, ObjectsPath, "info"));
                 await File.WriteAllLinesAsync(
-                    Path.Join(gitdir, "objects", "info", "alternates"), alternates, ct);
+                    Path.Join(gitdir, ObjectsPath, "info", "alternates"), alternates, ct);
             }
 
             // Index do repo original como seed: entradas já hashadas são
@@ -418,7 +421,7 @@ public sealed class CheckpointService(
     {
         var diff = await RunGitAsync(workdir, gitdir, ct,
             "-c", "core.quotepath=false",
-            "diff-files", "--name-only", "-z", "--", ".") ?? string.Empty;
+            "diff-files", NameOnlyFlag, "-z", "--", ".") ?? string.Empty;
         var untracked = await RunGitAsync(workdir, gitdir, ct,
             "-c", "core.quotepath=false",
             "ls-files", "--full-name", "--others", "--exclude-standard", "-z", "--", ".")
@@ -456,12 +459,12 @@ public sealed class CheckpointService(
         }
 
         var tip = (await RunGitAsync(workdir, gitdir, ct,
-            "rev-parse", "--verify", Ref))?.Trim();
+            RevParseCommand, "--verify", Ref))?.Trim();
         string? parentTree = null;
         if (!string.IsNullOrEmpty(tip))
         {
             parentTree = (await RunGitAsync(workdir, gitdir, ct,
-                "rev-parse", $"{tip}^{{tree}}"))?.Trim();
+                RevParseCommand, $"{tip}^{{tree}}"))?.Trim();
             if (parentTree == tree)
             {
                 return null; // tree idêntica à do último checkpoint — dedupe
@@ -490,10 +493,10 @@ public sealed class CheckpointService(
         // Arquivos deste turno = delta vs. checkpoint anterior; no primeiro,
         // vs. o HEAD do repo (sujeira pré-existente) ou a tree vazia.
         var baseTree = parentTree
-            ?? (await RunGitAsync(workdir, null, ct, "rev-parse", "HEAD^{tree}"))?.Trim()
+            ?? (await RunGitAsync(workdir, null, ct, RevParseCommand, "HEAD^{tree}"))?.Trim()
             ?? "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
         var files = SplitLines(await RunGitAsync(workdir, gitdir, ct,
-            "diff", "--name-only", baseTree, tree, "--", "."));
+            "diff", NameOnlyFlag, baseTree, tree, "--", "."));
 
         return new CheckpointInfo(
             commit, files, turn, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
@@ -512,10 +515,10 @@ public sealed class CheckpointService(
         await EnsureGitRepoAsync(workdir, gitdir, ct);
         await GitAddAsync(workdir, gitdir, ct);
         var covered = SplitLines(await RunGitAsync(workdir, gitdir, ct,
-            "diff", "--cached", "--no-ext-diff", "--name-only", hash, "--", "."));
+            "diff", "--cached", "--no-ext-diff", NameOnlyFlag, hash, "--", "."));
 
         var tipTree = (await RunGitAsync(workdir, gitdir, ct,
-            "rev-parse", $"{Ref}^{{tree}}"))?.Trim();
+            RevParseCommand, $"{Ref}^{{tree}}"))?.Trim();
 
         var reverted = new List<string>();
         var conflicts = new List<string>();

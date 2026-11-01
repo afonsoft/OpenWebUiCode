@@ -9,6 +9,9 @@ namespace OpenWebUI.Client.Services;
 /// <summary>Cliente HTTP tipado para a API do backend .NET.</summary>
 public class ApiService(HttpClient http, AuthService auth)
 {
+    private const string DetailKey = "detail";
+    private const string ChatIdQueryParam = "&chatId=";
+    private const string ChatIdQueryStart = "?chatId=";
     private static readonly System.Text.Json.JsonSerializerOptions JsonOptions =
         new(System.Text.Json.JsonSerializerDefaults.Web);
 
@@ -393,7 +396,7 @@ public class ApiService(HttpClient http, AuthService auth)
             return null;
         }
         var node = await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions);
-        return node?["detail"]?.GetValue<string>() ?? "Erro ao salvar o secret.";
+        return node?[DetailKey]?.GetValue<string>() ?? "Erro ao salvar o secret.";
     }
 
     /// <summary>Remove o secret do usuário (o global de mesmo nome volta a valer).</summary>
@@ -454,7 +457,7 @@ public class ApiService(HttpClient http, AuthService auth)
             return null;
         }
         var node = await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions);
-        return node?["detail"]?.GetValue<string>() ?? "Erro ao salvar o secret.";
+        return node?[DetailKey]?.GetValue<string>() ?? "Erro ao salvar o secret.";
     }
 
     /// <summary>Remove o secret global (admin).</summary>
@@ -1275,7 +1278,7 @@ public class ApiService(HttpClient http, AuthService auth)
         var q = "?path=" + Uri.EscapeDataString(path ?? "")
             + (depth is null ? "" : $"&depth={depth}")
             + (cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}")
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId));
         return SendAsync<WorkspaceFileTreeResponse>(HttpMethod.Get,
             $"/api/v1/workspace/repo/tree{q}");
     }
@@ -1319,7 +1322,7 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<List<RepoSkillItemResponse>> GetRepoSkillsAsync(string? chatId = null) =>
         await SendAsync<List<RepoSkillItemResponse>>(HttpMethod.Get,
             "/api/v1/workspace/repo/skills"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId))) ?? [];
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId))) ?? [];
 
     /// <summary>Uso do chat (totais/por modelo/série por run); null sem auth ou 404.</summary>
     public Task<ChatUsageResponse?> GetChatUsageAsync(string chatId) =>
@@ -1334,19 +1337,19 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<RepoSkillDetailResponse?> GetRepoSkillAsync(string name, string? chatId = null) =>
         SendAsync<RepoSkillDetailResponse>(HttpMethod.Get,
             $"/api/v1/workspace/repo/skills/{Uri.EscapeDataString(name)}"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
 
     /// <summary>Catálogo de commands markdown do repo vinculado.</summary>
     public async Task<List<RepoCommandItemResponse>> GetRepoCommandsAsync(string? chatId = null) =>
         await SendAsync<List<RepoCommandItemResponse>>(HttpMethod.Get,
             "/api/v1/workspace/repo/commands"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId))) ?? [];
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId))) ?? [];
 
     /// <summary>Corpo (template) de um command do repo; null quando não existe.</summary>
     public Task<RepoCommandDetailResponse?> GetRepoCommandAsync(string name, string? chatId = null) =>
         SendAsync<RepoCommandDetailResponse>(HttpMethod.Get,
             $"/api/v1/workspace/repo/commands/{Uri.EscapeDataString(name)}"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
 
     // ---------------- Agentes / combos / manutenção (settings UX) ----------------
 
@@ -1439,7 +1442,7 @@ public class ApiService(HttpClient http, AuthService auth)
         string name, string? args, string? chatId = null) =>
         SendAsync<RepoCommandExpandResponse>(HttpMethod.Post,
             $"/api/v1/workspace/repo/commands/{Uri.EscapeDataString(name)}/expand"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new RepoCommandExpandRequest(args));
 
     /// <summary>Força a compactação do chat (RF-004); null em falha/404.</summary>
@@ -1466,7 +1469,7 @@ public class ApiService(HttpClient http, AuthService auth)
         var q = "?path=" + Uri.EscapeDataString(path)
             + (startLine is null ? "" : $"&startLine={startLine}")
             + (maxLines is null ? "" : $"&maxLines={maxLines}")
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId));
         return SendAsync<WorkspaceFileReadResponse>(HttpMethod.Get,
             $"/api/v1/workspace/repo/file{q}");
     }
@@ -1478,7 +1481,7 @@ public class ApiService(HttpClient http, AuthService auth)
         var q = "?path=" + Uri.EscapeDataString(path)
             + (startLine is null ? "" : $"&startLine={startLine}")
             + (maxLines is null ? "" : $"&maxLines={maxLines}")
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId));
         using var request = auth.CreateRequest(HttpMethod.Get,
             $"/api/v1/workspace/repo/file{q}");
         using var response = await http.SendAsync(request);
@@ -1496,7 +1499,7 @@ public class ApiService(HttpClient http, AuthService auth)
         string path, string content, string? ifMatch = null, string? chatId = null)
     {
         using var request = auth.CreateRequest(HttpMethod.Put, "/api/v1/workspace/repo/file"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
         request.Content = JsonContent.Create(
             new WorkspaceFileWriteRequest(path, content), options: JsonOptions);
         if (!string.IsNullOrEmpty(ifMatch))
@@ -1521,25 +1524,25 @@ public class ApiService(HttpClient http, AuthService auth)
     /// <summary>Cria diretório (recursivo) no workdir.</summary>
     public Task<bool> WorkspaceMkdirAsync(string path, string? chatId = null) =>
         SendStatusAsync(HttpMethod.Post, "/api/v1/workspace/repo/mkdir"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new WorkspaceFileMkdirRequest(path));
 
     /// <summary>Renomeia/move dentro do workdir; false em 404/409.</summary>
     public Task<bool> WorkspaceRenameAsync(string from, string to, string? chatId = null) =>
         SendStatusAsync(HttpMethod.Post, "/api/v1/workspace/repo/rename"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new WorkspaceFileRenameRequest(from, to));
 
     /// <summary>Remove arquivo ou diretório (recursivo) do workdir.</summary>
     public Task<bool> WorkspaceDeleteAsync(string path, string? chatId = null) =>
         SendStatusAsync(HttpMethod.Post, "/api/v1/workspace/repo/delete"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new WorkspaceFileDeleteRequest(path));
 
     /// <summary>Snapshot git do workdir (aba Changes do /ide); null em falha/404.</summary>
     public Task<WorkspaceGitResponse?> GetWorkspaceGitAsync(string? chatId = null) =>
         SendAsync<WorkspaceGitResponse>(HttpMethod.Get, "/api/v1/workspace/repo/git"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
 
     /// <summary>Busca global no workdir (SPEC-20261011-ide-search-scm); null em erro.</summary>
     public Task<WorkspaceSearchResponse?> SearchWorkspaceAsync(
@@ -1547,7 +1550,7 @@ public class ApiService(HttpClient http, AuthService auth)
     {
         var qs = "?q=" + Uri.EscapeDataString(q)
             + (path is null ? "" : "&path=" + Uri.EscapeDataString(path))
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId));
         return SendAsync<WorkspaceSearchResponse>(HttpMethod.Get,
             $"/api/v1/workspace/repo/search{qs}");
     }
@@ -1556,20 +1559,20 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<WorkspaceCommitResponse?> CommitWorkspaceAsync(string message, string? chatId = null) =>
         SendAsync<WorkspaceCommitResponse>(HttpMethod.Post,
             "/api/v1/workspace/repo/commit"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new WorkspaceCommitRequest(message));
 
     /// <summary>Outline LSP do arquivo (documentSymbol); null em erro.</summary>
     public Task<LspSymbolsResponse?> GetLspSymbolsAsync(string path, string? chatId = null) =>
         SendAsync<LspSymbolsResponse>(HttpMethod.Get,
             "/api/v1/workspace/lsp/symbols?path=" + Uri.EscapeDataString(path)
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId)));
 
     /// <summary>Format Document via LSP — devolve texto novo (sem escrever disco).</summary>
     public Task<LspFormatResponse?> FormatLspDocumentAsync(string path, string? chatId = null) =>
         SendAsync<LspFormatResponse>(HttpMethod.Post,
             "/api/v1/workspace/lsp/format"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new LspFormatRequest(path));
 
     /// <summary>Completion LSP — resposta vai direto pro CM autocomplete via JS.</summary>
@@ -1577,7 +1580,7 @@ public class ApiService(HttpClient http, AuthService auth)
         string path, int line, int col, string? chatId = null) =>
         SendAsync<LspCompletionResponse>(HttpMethod.Post,
             "/api/v1/workspace/lsp/completion"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new LspPosRequest(path, line, col));
 
     /// <summary>Go to Definition (F12) → locations.</summary>
@@ -1586,7 +1589,7 @@ public class ApiService(HttpClient http, AuthService auth)
         SendAsync<LspLocationsResponse>(HttpMethod.Get,
             "/api/v1/workspace/lsp/definition?path=" + Uri.EscapeDataString(path)
             + "&line=" + line + "&col=" + col
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId)));
 
     /// <summary>Find References (Shift+F12) → locations (inclui declaração).</summary>
     public Task<LspLocationsResponse?> GetLspReferencesAsync(
@@ -1594,7 +1597,7 @@ public class ApiService(HttpClient http, AuthService auth)
         SendAsync<LspLocationsResponse>(HttpMethod.Get,
             "/api/v1/workspace/lsp/references?path=" + Uri.EscapeDataString(path)
             + "&line=" + line + "&col=" + col
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId)));
 
     /// <summary>Rename Symbol (F2) — edits do arquivo ativo voltam pro
     /// editor; demais arquivos escritos no disco.</summary>
@@ -1603,7 +1606,7 @@ public class ApiService(HttpClient http, AuthService auth)
         string? chatId = null) =>
         SendAsync<LspRenameResponse>(HttpMethod.Post,
             "/api/v1/workspace/lsp/rename"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new LspRenameRequest(path, line, col, newName, activePath));
 
     /// <summary>Conteúdo do arquivo no HEAD (diff do IDE); null em 404.</summary>
@@ -1612,7 +1615,7 @@ public class ApiService(HttpClient http, AuthService auth)
     {
         using var request = auth.CreateRequest(HttpMethod.Get,
             "/api/v1/workspace/repo/file-head?path=" + Uri.EscapeDataString(path)
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId)));
         using var response = await http.SendAsync(request);
         return response.IsSuccessStatusCode
             ? await response.Content.ReadFromJsonAsync<WorkspaceFileReadResponse>(JsonOptions)
@@ -1622,7 +1625,7 @@ public class ApiService(HttpClient http, AuthService auth)
     /// <summary>PRs abertos do repo vinculado (SPEC-20261009-pr-ci-panel); null em 404/erro.</summary>
     public Task<WorkspacePullsResponse?> GetWorkspacePullsAsync(string? chatId = null) =>
         SendAsync<WorkspacePullsResponse>(HttpMethod.Get, "/api/v1/workspace/repo/pulls"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
 
     // ---------------- Checkpoints do workdir (S6) ----------------
 
@@ -1630,14 +1633,14 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<IReadOnlyList<WorkspaceCheckpointItem>> GetCheckpointsAsync(string? chatId = null) =>
         await SendAsync<List<WorkspaceCheckpointItem>>(
             HttpMethod.Get, "/api/v1/workspace/repo/checkpoints"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId))) ?? [];
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId))) ?? [];
 
     /// <summary>Detalhe do checkpoint: arquivos cobertos + diff de preview.</summary>
     public Task<WorkspaceCheckpointDetailResponse?> GetCheckpointAsync(string hash, string? chatId = null) =>
         SendAsync<WorkspaceCheckpointDetailResponse>(
             HttpMethod.Get,
             $"/api/v1/workspace/repo/checkpoints/{Uri.EscapeDataString(hash)}"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
 
     /// <summary>
     /// Reverte o workdir ao checkpoint. Devolve o resultado (reverted/
@@ -1649,7 +1652,7 @@ public class ApiService(HttpClient http, AuthService auth)
         using var request = auth.CreateRequest(
             HttpMethod.Post,
             $"/api/v1/workspace/repo/checkpoints/{Uri.EscapeDataString(hash)}/revert"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
         request.Content = JsonContent.Create(
             new WorkspaceCheckpointRevertRequest(force), options: JsonOptions);
         using var response = await http.SendAsync(request);
@@ -1698,26 +1701,26 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<LspStatusResponse?> GetLspStatusAsync(string? path, string? chatId = null) =>
         SendAsync<LspStatusResponse>(HttpMethod.Get,
             $"/api/v1/workspace/lsp/status?path={Uri.EscapeDataString(path ?? "")}"
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId)));
 
     /// <summary>Sync do documento: kind open|change|close (didOpen/didChange/didClose).</summary>
     public Task<bool> PostLspDocAsync(string path, string kind, string? text, string? chatId = null) =>
         SendStatusAsync(HttpMethod.Post, "/api/v1/workspace/lsp/doc"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new LspDocSyncRequest(path, kind, text));
 
     /// <summary>Diagnostics do arquivo (ou workdir sem path); null em erro.</summary>
     public Task<LspDiagnosticsResponse?> GetLspDiagnosticsAsync(string? path, string? chatId = null) =>
         SendAsync<LspDiagnosticsResponse>(HttpMethod.Get,
             $"/api/v1/workspace/lsp/diagnostics?path={Uri.EscapeDataString(path ?? "")}"
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId)));
 
     /// <summary>Hover na posição (1-based); null quando servidor não responde.</summary>
     public async Task<string?> GetLspHoverAsync(string path, int line, int col, string? chatId = null)
     {
         var node = await SendAsync<JsonObject>(HttpMethod.Get,
             $"/api/v1/workspace/lsp/hover?path={Uri.EscapeDataString(path)}&line={line}&col={col}"
-            + (chatId is null ? "" : "&chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryParam + Uri.EscapeDataString(chatId)));
         return node?["hover"]?.GetValue<string>();
     }
 
@@ -1740,7 +1743,7 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<IdeTestRunStartResult> StartTestRunAsync(bool confirmed = false, string? chatId = null)
     {
         using var request = auth.CreateRequest(HttpMethod.Post, "/api/v1/workspace/repo/test-run"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)));
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)));
         request.Content = JsonContent.Create(new TestRunStartRequest(confirmed), options: JsonOptions);
         using var response = await http.SendAsync(request);
         var node = await response.Content.ReadFromJsonAsync<JsonObject>(JsonOptions);
@@ -1748,7 +1751,7 @@ public class ApiService(HttpClient http, AuthService auth)
         {
             return new IdeTestRunStartResult(
                 (int)response.StatusCode, null,
-                node?["detail"]?.GetValue<string>(),
+                node?[DetailKey]?.GetValue<string>(),
                 node?["suggested"]?.GetValue<string>());
         }
         var body = System.Text.Json.JsonSerializer.Deserialize<TestRunStartResponse>(node.ToJsonString(), JsonOptions);
@@ -1763,7 +1766,7 @@ public class ApiService(HttpClient http, AuthService auth)
     /// <summary>Define/limpa o TestCommand customizado do binding (override do manifesto).</summary>
     public Task<bool> SetTestCommandAsync(string? command, string? chatId = null) =>
         SendStatusAsync(HttpMethod.Put, "/api/v1/workspace/repo/test-command"
-            + (chatId is null ? "" : "?chatId=" + Uri.EscapeDataString(chatId)),
+            + (chatId is null ? "" : ChatIdQueryStart + Uri.EscapeDataString(chatId)),
             new TestCommandRequest(command));
 
     // ---------------- Internos ----------------
@@ -1821,7 +1824,7 @@ public class ApiService(HttpClient http, AuthService auth)
         try
         {
             using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
-            detail = doc?.RootElement.TryGetProperty("detail", out var d) == true
+            detail = doc?.RootElement.TryGetProperty(DetailKey, out var d) == true
                 ? d.GetString() : null;
         }
         catch (JsonException) { /* corpo não-json — sem detail */ }

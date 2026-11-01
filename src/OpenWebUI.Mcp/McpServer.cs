@@ -12,6 +12,11 @@ namespace OpenWebUI.Mcp;
 /// </summary>
 public sealed class McpServer
 {
+    private const string StringTypeName = "string";
+    private const string ModelKey = "model";
+    private const string ChatIdKey = "chatId";
+    private const string ContentKey = "content";
+    private const string RunIdKey = "runId";
     /// <summary>Versão do protocolo MCP anunciada no handshake.</summary>
     public const string ProtocolVersion = "2024-11-05";
 
@@ -91,37 +96,37 @@ public sealed class McpServer
                 "Create a new empty chat and return it.",
                 Schema(new JsonObject
                 {
-                    ["title"] = Prop("string", "Chat title."),
-                    ["model"] = Prop("string", "Model id (required by the app)."),
-                }, required: ["title", "model"])),
+                    ["title"] = Prop(StringTypeName, "Chat title."),
+                    [ModelKey] = Prop(StringTypeName, "Model id (required by the app)."),
+                }, required: ["title", ModelKey])),
             Tool("runs.start",
                 "Enqueue a user message as a background run on a chat.",
                 Schema(new JsonObject
                 {
-                    ["chatId"] = Prop("string", "Target chat id."),
-                    ["content"] = Prop("string", "User message content."),
-                    ["model"] = Prop("string", "Model id."),
-                }, required: ["chatId", "content", "model"])),
+                    [ChatIdKey] = Prop(StringTypeName, "Target chat id."),
+                    [ContentKey] = Prop(StringTypeName, "User message content."),
+                    [ModelKey] = Prop(StringTypeName, "Model id."),
+                }, required: [ChatIdKey, ContentKey, ModelKey])),
             Tool("runs.status",
                 "Get the status of a run (queued|running|stopped|completed|failed).",
                 Schema(new JsonObject
                 {
-                    ["chatId"] = Prop("string", "Chat id."),
-                    ["runId"] = Prop("string", "Run id."),
-                }, required: ["chatId", "runId"])),
+                    [ChatIdKey] = Prop(StringTypeName, "Chat id."),
+                    [RunIdKey] = Prop(StringTypeName, "Run id."),
+                }, required: [ChatIdKey, RunIdKey])),
             Tool("runs.stop",
                 "Request cancellation of a running run.",
                 Schema(new JsonObject
                 {
-                    ["chatId"] = Prop("string", "Chat id."),
-                    ["runId"] = Prop("string", "Run id."),
-                }, required: ["chatId", "runId"])),
+                    [ChatIdKey] = Prop(StringTypeName, "Chat id."),
+                    [RunIdKey] = Prop(StringTypeName, "Run id."),
+                }, required: [ChatIdKey, RunIdKey])),
             Tool("teams.status",
                 "Roster, roles, active runs and shared tasks of an agent team.",
                 Schema(new JsonObject
                 {
-                    ["chatId"] = Prop("string", "Any member chat id."),
-                }, required: ["chatId"])),
+                    [ChatIdKey] = Prop(StringTypeName, "Any member chat id."),
+                }, required: [ChatIdKey])),
             Tool("attention.list",
                 "Attention inbox: pending approvals, finished/failed runs and "
                 + "closed terminals waiting to be seen.",
@@ -176,24 +181,24 @@ public sealed class McpServer
                 "api/v1/chats/", new
                 {
                     title = Str(args, "title") ?? "MCP chat",
-                    models = new[] { Str(args, "model") ?? "" },
+                    models = new[] { Str(args, ModelKey) ?? "" },
                     messages = Array.Empty<object>(),
                 }, ct),
             "runs.start" => await api.PostAsync(
-                $"api/v1/chats/{Uri.EscapeDataString(Req(args, "chatId"))}/messages",
+                $"api/v1/chats/{Uri.EscapeDataString(Req(args, ChatIdKey))}/messages",
                 new
                 {
-                    content = Str(args, "content"),
-                    model = Str(args, "model"),
+                    content = Str(args, ContentKey),
+                    model = Str(args, ModelKey),
                 }, ct),
             "runs.status" => await api.GetAsync(
-                $"api/v1/chats/{Uri.EscapeDataString(Req(args, "chatId"))}/runs/" +
-                $"{Uri.EscapeDataString(Req(args, "runId"))}", ct),
+                $"api/v1/chats/{Uri.EscapeDataString(Req(args, ChatIdKey))}/runs/" +
+                $"{Uri.EscapeDataString(Req(args, RunIdKey))}", ct),
             "runs.stop" => await api.PostAsync(
-                $"api/v1/chats/{Uri.EscapeDataString(Req(args, "chatId"))}/runs/" +
-                $"{Uri.EscapeDataString(Req(args, "runId"))}/stop", null, ct),
+                $"api/v1/chats/{Uri.EscapeDataString(Req(args, ChatIdKey))}/runs/" +
+                $"{Uri.EscapeDataString(Req(args, RunIdKey))}/stop", null, ct),
             "teams.status" => await api.GetAsync(
-                $"api/v1/chats/{Uri.EscapeDataString(Req(args, "chatId"))}/team", ct),
+                $"api/v1/chats/{Uri.EscapeDataString(Req(args, ChatIdKey))}/team", ct),
             "attention.list" => await api.GetAsync("api/v1/attention", ct),
             _ => (null, $"tool desconhecida: {name}"),
         };
@@ -213,7 +218,7 @@ public sealed class McpServer
 
     private static JsonObject CallText(string text) => new()
     {
-        ["content"] = new JsonArray(new JsonObject
+        [ContentKey] = new JsonArray(new JsonObject
         {
             ["type"] = "text",
             ["text"] = text,
@@ -222,7 +227,7 @@ public sealed class McpServer
 
     private static JsonObject CallError(string message) => new()
     {
-        ["content"] = new JsonArray(new JsonObject
+        [ContentKey] = new JsonArray(new JsonObject
         {
             ["type"] = "text",
             ["text"] = message,

@@ -39,6 +39,7 @@ public sealed class WorkspaceGitService
 
     /// <summary>Sha da árvore vazia do git — base de diff quando HEAD ainda não nasceu.</summary>
     private const string EmptyTreeSha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    private const string RevParseCommand = "rev-parse";
 
     /// <summary>
     /// Snapshot do repo no <paramref name="workdir"/>: branch corrente,
@@ -64,7 +65,7 @@ public sealed class WorkspaceGitService
             return Empty;
         }
 
-        var branch = await RunGitAsync(workdir, ct, "rev-parse", "--abbrev-ref", "HEAD");
+        var branch = await RunGitAsync(workdir, ct, RevParseCommand, "--abbrev-ref", "HEAD");
         if (branch is null)
         {
             // Sem git no PATH ou repo corrompido → trata como "não-repo".
@@ -72,7 +73,7 @@ public sealed class WorkspaceGitService
         }
 
         var hasHead = await RunGitAsync(
-            workdir, ct, "rev-parse", "--verify", "--quiet", "HEAD") is not null;
+            workdir, ct, RevParseCommand, "--verify", "--quiet", "HEAD") is not null;
         var (displayRef, baseSha) = hasHead
             ? await ResolveBaseAsync(workdir, branch.Trim(), baseRef, ct)
             : (null, EmptyTreeSha);
@@ -133,7 +134,7 @@ public sealed class WorkspaceGitService
                 continue;
             }
             var exists = await RunGitAsync(
-                workdir, ct, "rev-parse", "--verify", "--quiet", candidate);
+                workdir, ct, RevParseCommand, "--verify", "--quiet", candidate);
             if (exists is null)
             {
                 continue; // ref remota inexistente neste clone
@@ -312,7 +313,7 @@ public sealed class WorkspaceGitService
         {
             return null; // nada a commitar ou falha do git
         }
-        var head = await RunGitAsync(workdir, ct, "rev-parse", "HEAD");
+        var head = await RunGitAsync(workdir, ct, RevParseCommand, "HEAD");
         return head?.Trim();
     }
 
@@ -332,7 +333,7 @@ public sealed class WorkspaceGitService
     /// e leia/escreva no repositório errado (SPEC-20261011-ide-search-scm).</summary>
     private static async Task<bool> IsRepoRootAsync(string workdir, CancellationToken ct)
     {
-        var top = await RunGitAsync(workdir, ct, "rev-parse", "--show-toplevel");
+        var top = await RunGitAsync(workdir, ct, RevParseCommand, "--show-toplevel");
         if (top is null)
         {
             return false;

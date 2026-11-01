@@ -36,6 +36,8 @@ public sealed record RetrievalConfig(
     string? RerankExternalUrl = null,
     string? RerankExternalApiKey = null)
 {
+    private const string MaskedSecret = "********";
+
     /// <summary>Config padrão — web search ligada via DuckDuckGo (não exige chave).</summary>
     public static readonly RetrievalConfig Default = new(
         "duckduckgo", null, null, null, 5, 1000, 100, false, 0.5, false);
@@ -43,14 +45,14 @@ public sealed record RetrievalConfig(
     /// <summary>Mascara as chaves para respostas GET.</summary>
     public RetrievalConfig Masked() => this with
     {
-        BraveApiKey = string.IsNullOrEmpty(BraveApiKey) ? null : "********",
-        TavilyApiKey = string.IsNullOrEmpty(TavilyApiKey) ? null : "********",
-        GooglePseApiKey = string.IsNullOrEmpty(GooglePseApiKey) ? null : "********",
-        JinaApiKey = string.IsNullOrEmpty(JinaApiKey) ? null : "********",
-        ExaApiKey = string.IsNullOrEmpty(ExaApiKey) ? null : "********",
-        KagiApiKey = string.IsNullOrEmpty(KagiApiKey) ? null : "********",
-        PerplexityApiKey = string.IsNullOrEmpty(PerplexityApiKey) ? null : "********",
-        RerankExternalApiKey = string.IsNullOrEmpty(RerankExternalApiKey) ? null : "********",
+        BraveApiKey = string.IsNullOrEmpty(BraveApiKey) ? null : MaskedSecret,
+        TavilyApiKey = string.IsNullOrEmpty(TavilyApiKey) ? null : MaskedSecret,
+        GooglePseApiKey = string.IsNullOrEmpty(GooglePseApiKey) ? null : MaskedSecret,
+        JinaApiKey = string.IsNullOrEmpty(JinaApiKey) ? null : MaskedSecret,
+        ExaApiKey = string.IsNullOrEmpty(ExaApiKey) ? null : MaskedSecret,
+        KagiApiKey = string.IsNullOrEmpty(KagiApiKey) ? null : MaskedSecret,
+        PerplexityApiKey = string.IsNullOrEmpty(PerplexityApiKey) ? null : MaskedSecret,
+        RerankExternalApiKey = string.IsNullOrEmpty(RerankExternalApiKey) ? null : MaskedSecret,
     };
 }
 

@@ -16,6 +16,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class AgentPersonaEndpoints
 {
+    private const string PersonaNotFoundMessage = "Persona não encontrada.";
     private static readonly HashSet<string> GuardrailLevels = new(StringComparer.OrdinalIgnoreCase)
     {
         "none", "basic", "strict",
@@ -99,7 +100,7 @@ public static class AgentPersonaEndpoints
             .FirstOrDefaultAsync(p => p.Id == id && p.UserId == user.Id, ct);
         if (persona is null)
         {
-            return Results.NotFound(new { detail = "Persona não encontrada." });
+            return Results.NotFound(new { detail = PersonaNotFoundMessage });
         }
         if (Validate(request) is { } error)
         {
@@ -132,7 +133,7 @@ public static class AgentPersonaEndpoints
             .FirstOrDefaultAsync(p => p.Id == id && p.UserId == user.Id, ct);
         if (persona is null)
         {
-            return Results.NotFound(new { detail = "Persona não encontrada." });
+            return Results.NotFound(new { detail = PersonaNotFoundMessage });
         }
 
         db.AgentPersonas.Remove(persona);
@@ -165,7 +166,7 @@ public static class AgentPersonaEndpoints
             .FirstOrDefaultAsync(p => p.Id == id && p.UserId == user.Id, ct);
         if (persona is null || !persona.Enabled)
         {
-            return Results.NotFound(new { detail = "Persona não encontrada." });
+            return Results.NotFound(new { detail = PersonaNotFoundMessage });
         }
 
         var wait = http.Request.Query["wait"] != "false";
@@ -199,7 +200,7 @@ public static class AgentPersonaEndpoints
             .AnyAsync(p => p.Id == id && p.UserId == user.Id, ct);
         if (!owns)
         {
-            return Results.NotFound(new { detail = "Persona não encontrada." });
+            return Results.NotFound(new { detail = PersonaNotFoundMessage });
         }
 
         var turns = await db.AgentTurns.AsNoTracking()

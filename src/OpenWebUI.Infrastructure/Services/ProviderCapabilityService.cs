@@ -25,6 +25,7 @@ public class ProviderCapabilityService(
     IHttpClientFactory httpFactory, ConfigService config,
     ILogger<ProviderCapabilityService> logger)
 {
+    private const string ModelKey = "model";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     // Heurísticas de id quando o catálogo não traz output_modalities.
@@ -428,7 +429,7 @@ public class ProviderCapabilityService(
                 url, apiKey, "audio/speech",
                 new JsonObject
                 {
-                    ["model"] = model, ["voice"] = "alloy", ["input"] = "a",
+                    [ModelKey] = model, ["voice"] = "alloy", ["input"] = "a",
                 },
                 25, ct,
                 accept: r => r.Content.Headers.ContentType?.MediaType
@@ -453,7 +454,7 @@ public class ProviderCapabilityService(
                 url, apiKey, "images/generations",
                 new JsonObject
                 {
-                    ["model"] = model, ["prompt"] = "a red dot",
+                    [ModelKey] = model, ["prompt"] = "a red dot",
                     ["n"] = 1, ["size"] = "1024x1024",
                 },
                 60, ct);
@@ -478,7 +479,7 @@ public class ProviderCapabilityService(
         // Job real: qualquer resposta que não seja "rota inexistente" ativa.
         return await ProbeJsonAsync(
             url, apiKey, "videos",
-            new JsonObject { ["model"] = model, ["prompt"] = "a red dot" },
+            new JsonObject { [ModelKey] = model, ["prompt"] = "a red dot" },
             30, ct)
             ? model
             : null;
@@ -492,7 +493,7 @@ public class ProviderCapabilityService(
         {
             var ok = await ProbeJsonAsync(
                 url, apiKey, "embeddings",
-                new JsonObject { ["model"] = model, ["input"] = "a" },
+                new JsonObject { [ModelKey] = model, ["input"] = "a" },
                 25, ct,
                 accept: r => true);
             if (ok)

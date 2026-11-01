@@ -12,6 +12,11 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class ConfigEndpoints
 {
+    private const string FeatureDirectConnectionsKey = "features.direct_connections";
+    private const string FeatureUserProviderKeysKey = "features.userProviderKeys";
+    private const string MemSyncEnabledKey = "memsync.enabled";
+    private const string MemSyncIntervalHoursKey = "memsync.intervalHours";
+    private const string MemSyncMaxAgeDaysKey = "memsync.maxAgeDays";
     /// <summary>Mapeia as rotas de configuração.</summary>
     public static RouteGroupBuilder MapConfigEndpoints(this IEndpointRouteBuilder app)
     {
@@ -251,7 +256,7 @@ public static class ConfigEndpoints
     }
 
     private static async Task<IResult> GetDirectConnectionsAsync(ConfigService config, CancellationToken ct) =>
-        Results.Ok(new FeatureToggle(await config.GetAsync("features.direct_connections", false, ct)));
+        Results.Ok(new FeatureToggle(await config.GetAsync(FeatureDirectConnectionsKey, false, ct)));
 
     private static async Task<IResult> UpdateDirectConnectionsAsync(
         FeatureToggle request, HttpContext http, ConfigService config, CancellationToken ct)
@@ -260,14 +265,14 @@ public static class ConfigEndpoints
         {
             return Results.Forbid();
         }
-        await config.SetAsync("features.direct_connections", request.Enabled, ct);
+        await config.SetAsync(FeatureDirectConnectionsKey, request.Enabled, ct);
         return Results.Ok(request);
     }
 
     private static async Task<IResult> GetCodeExecutionAsync(ConfigService config, CancellationToken ct) =>
         Results.Ok(new CodeExecutionConfig(
             await config.GetAsync("code_execution.engines", new List<string> { "pyodide" }, ct),
-            await config.GetAsync("features.direct_connections", false, ct)));
+            await config.GetAsync(FeatureDirectConnectionsKey, false, ct)));
 
     private static async Task<IResult> UpdateCodeExecutionAsync(
         CodeExecutionConfig request, HttpContext http, ConfigService config, CancellationToken ct)
@@ -279,7 +284,7 @@ public static class ConfigEndpoints
         var engines = (request.Engines ?? [])
             .Where(e => e is "pyodide" or "jupyter").Distinct().ToList();
         await config.SetAsync("code_execution.engines", engines, ct);
-        await config.SetAsync("features.direct_connections", request.DirectConnections, ct);
+        await config.SetAsync(FeatureDirectConnectionsKey, request.DirectConnections, ct);
         return Results.Ok(new CodeExecutionConfig(engines, request.DirectConnections));
     }
 
@@ -459,7 +464,7 @@ public static class ConfigEndpoints
     private static async Task<IResult> GetUserProviderKeysToggleAsync(
         ConfigService config, CancellationToken ct) =>
         Results.Ok(new FeatureToggle(
-            await config.GetAsync("features.userProviderKeys", false, ct)));
+            await config.GetAsync(FeatureUserProviderKeysKey, false, ct)));
 
     /// <summary>POST /api/v1/configs/user_provider_keys — liga/desliga BYOK (admin).</summary>
     private static async Task<IResult> UpdateUserProviderKeysToggleAsync(
@@ -469,7 +474,7 @@ public static class ConfigEndpoints
         {
             return Results.Forbid();
         }
-        await config.SetAsync("features.userProviderKeys", request.Enabled, ct);
+        await config.SetAsync(FeatureUserProviderKeysKey, request.Enabled, ct);
         return Results.Ok(new FeatureToggle(request.Enabled));
     }
 
@@ -485,7 +490,7 @@ public static class ConfigEndpoints
         {
             return Results.Unauthorized();
         }
-        var enabled = await config.GetAsync("features.userProviderKeys", false, ct);
+        var enabled = await config.GetAsync(FeatureUserProviderKeysKey, false, ct);
         var keys = await config.GetAsync<Dictionary<string, string>?>(
             UserConfigOverlayService.ProviderKeysKey(user.Id), null, ct) ?? [];
         return Results.Ok(new UserProviderKeysResponse(
@@ -504,7 +509,7 @@ public static class ConfigEndpoints
         {
             return Results.Unauthorized();
         }
-        if (!await config.GetAsync("features.userProviderKeys", false, ct))
+        if (!await config.GetAsync(FeatureUserProviderKeysKey, false, ct))
         {
             return Results.BadRequest(new
             {
@@ -582,11 +587,11 @@ public static class ConfigEndpoints
             });
         }
 
-        await overlay.SetUserAsync(user.Id, "memsync.enabled", request.Enabled, ct);
+        await overlay.SetUserAsync(user.Id, MemSyncEnabledKey, request.Enabled, ct);
         await overlay.SetUserAsync(
-            user.Id, "memsync.intervalHours", request.IntervalHours, ct);
+            user.Id, MemSyncIntervalHoursKey, request.IntervalHours, ct);
         await overlay.SetUserAsync(
-            user.Id, "memsync.maxAgeDays", request.MaxAgeDays, ct);
+            user.Id, MemSyncMaxAgeDaysKey, request.MaxAgeDays, ct);
         return Results.Ok(await BuildMemorySyncResponseAsync(user.Id, overlay, config, ct));
     }
 
@@ -607,9 +612,9 @@ public static class ConfigEndpoints
                 detail = "intervalHours ∈ [1,168] e maxAgeDays ∈ [1,365].",
             });
         }
-        await config.SetAsync("memsync.enabled", request.Enabled, ct);
-        await config.SetAsync("memsync.intervalHours", request.IntervalHours, ct);
-        await config.SetAsync("memsync.maxAgeDays", request.MaxAgeDays, ct);
+        await config.SetAsync(MemSyncEnabledKey, request.Enabled, ct);
+        await config.SetAsync(MemSyncIntervalHoursKey, request.IntervalHours, ct);
+        await config.SetAsync(MemSyncMaxAgeDaysKey, request.MaxAgeDays, ct);
         return Results.Ok(await ReadGlobalMemorySyncAsync(config, ct));
     }
 
@@ -622,14 +627,14 @@ public static class ConfigEndpoints
         var adminDisabled = global.Enabled == false;
         // enabled efetivo: admin-deny é absoluto — quando desligado, false.
         var effEnabled = !adminDisabled
-            && (await overlay.GetAsync(userId, "memsync.enabled", true, ct)).Value;
+            && (await overlay.GetAsync(userId, MemSyncEnabledKey, true, ct)).Value;
         var interval = Math.Clamp(
             (await overlay.GetAsync(
-                userId, "memsync.intervalHours",
+                userId, MemSyncIntervalHoursKey,
                 MemorySyncService.DefaultIntervalHours, ct)).Value, 1, 168);
         var maxAge = Math.Clamp(
             (await overlay.GetAsync(
-                userId, "memsync.maxAgeDays",
+                userId, MemSyncMaxAgeDaysKey,
                 MemorySyncService.DefaultMaxAgeDays, ct)).Value, 1, 365);
         var userLayer = new MemorySyncPrefs(
             await config.GetAsync<bool?>($"u:{userId}:memsync.enabled", null, ct),
@@ -643,9 +648,9 @@ public static class ConfigEndpoints
     private static async Task<MemorySyncPrefs> ReadGlobalMemorySyncAsync(
         ConfigService config, CancellationToken ct) =>
         new(
-            await config.GetAsync<bool?>("memsync.enabled", null, ct),
-            await config.GetAsync<int?>("memsync.intervalHours", null, ct),
-            await config.GetAsync<int?>("memsync.maxAgeDays", null, ct));
+            await config.GetAsync<bool?>(MemSyncEnabledKey, null, ct),
+            await config.GetAsync<int?>(MemSyncIntervalHoursKey, null, ct),
+            await config.GetAsync<int?>(MemSyncMaxAgeDaysKey, null, ct));
 
     // ---------------- Agent loop (SPEC-20261019-run-autonomy-continue RF-004) ----------------
 

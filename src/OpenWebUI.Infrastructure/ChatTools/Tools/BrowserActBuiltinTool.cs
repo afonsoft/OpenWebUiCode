@@ -24,6 +24,8 @@ public sealed class BrowserActBuiltinTool(
     AppDbContext db)
     : BrowserSessionToolBase(sessions, ocr, config, configuration, db)
 {
+    private const string ClickAction = "click";
+
     /// <inheritdoc />
     public override string Name => "browser_act";
 
@@ -33,11 +35,11 @@ public sealed class BrowserActBuiltinTool(
         + "element index (from observe), CSS selector or x/y coordinates.";
 
     /// <inheritdoc />
-    public override string ParametersJson => """
+    public override string ParametersJson => $$"""
         {
           "type": "object",
           "properties": {
-            "action": { "type": "string", "enum": ["click", "fill", "press", "select", "scroll"],
+            "action": { "type": "string", "enum": ["{{ClickAction}}", "fill", "press", "select", "scroll"],
                         "description": "Action to perform." },
             "index":  { "type": "integer", "description": "Element index from browser_observe." },
             "selector": { "type": "string", "description": "CSS selector fallback." },
@@ -69,7 +71,7 @@ public sealed class BrowserActBuiltinTool(
         }
 
         var action = Str(args, "action")?.ToLowerInvariant();
-        if (action is not ("click" or "fill" or "press" or "select" or "scroll"))
+        if (action is not (ClickAction or "fill" or "press" or "select" or "scroll"))
         {
             return new BuiltinToolResult(
                 "Ação inválida — use click|fill|press|select|scroll.");
@@ -127,7 +129,7 @@ public sealed class BrowserActBuiltinTool(
             await page.Keyboard.PressAsync(key);
             return null;
         }
-        if (x is not null && y is not null && action == "click")
+        if (x is not null && y is not null && action == ClickAction)
         {
             await page.Mouse.ClickAsync(x.Value, y.Value);
             return null;
@@ -163,7 +165,7 @@ public sealed class BrowserActBuiltinTool(
         }
 
         // Healing (b): OCR do último screenshot → clique por coordenada.
-        if (action == "click" && !string.IsNullOrWhiteSpace(text)
+        if (action == ClickAction && !string.IsNullOrWhiteSpace(text)
             && Sessions.OcrEnabled && Ocr.IsAvailable
             && await OcrClickAsync(page, text, ct))
         {
@@ -221,7 +223,7 @@ public sealed class BrowserActBuiltinTool(
         {
             switch (action)
             {
-                case "click":
+                case ClickAction:
                     await locator.ClickAsync(new LocatorClickOptions { Timeout = 8000 });
                     break;
                 case "fill":

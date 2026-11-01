@@ -10,6 +10,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints de prompts, pastas, memórias e notas do workspace.</summary>
 public static class WorkspaceEndpoints
 {
+    private const string ByIdRoute = "/{id}";
     /// <summary>Mapeia as rotas de workspace.</summary>
     public static void MapWorkspaceEndpoints(this IEndpointRouteBuilder app)
     {
@@ -26,21 +27,21 @@ public static class WorkspaceEndpoints
         var folders = app.MapGroup("/api/v1/folders").RequireAuthorization();
         folders.MapGet("/", ListFoldersAsync);
         folders.MapPost("/", CreateFolderAsync);
-        folders.MapGet("/{id}", GetFolderAsync);
+        folders.MapGet(ByIdRoute, GetFolderAsync);
         folders.MapPost("/{id}/update", UpdateFolderAsync);
-        folders.MapDelete("/{id}", DeleteFolderAsync);
+        folders.MapDelete(ByIdRoute, DeleteFolderAsync);
 
         var memories = app.MapGroup("/api/v1/memories").RequireAuthorization();
         memories.MapGet("/", ListMemoriesAsync);
         memories.MapPost("/add", AddMemoryAsync);
         memories.MapPost("/{id}/update", UpdateMemoryAsync);
-        memories.MapDelete("/{id}", DeleteMemoryAsync);
+        memories.MapDelete(ByIdRoute, DeleteMemoryAsync);
         memories.MapDelete("/delete/user", DeleteAllMemoriesAsync);
 
         var notes = app.MapGroup("/api/v1/notes").RequireAuthorization();
         notes.MapGet("/", ListNotesAsync);
         notes.MapPost("/create", CreateNoteAsync);
-        notes.MapGet("/{id}", GetNoteAsync);
+        notes.MapGet(ByIdRoute, GetNoteAsync);
         notes.MapPost("/{id}/update", UpdateNoteAsync);
         notes.MapDelete("/{id}/delete", DeleteNoteAsync);
         notes.MapPost("/{id}/access/update", UpdateNoteAccessAsync);

@@ -14,6 +14,7 @@ namespace OpenWebUI.Api.Endpoints;
 public static class McpEndpoints
 {
     private const string Masked = "********";
+    private const string McpNotFoundMessage = "Servidor MCP não encontrado.";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private static readonly HybridCacheEntryOptions ListCacheOptions = new()
@@ -104,7 +105,7 @@ public static class McpEndpoints
         var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
         if (Validate(request) is { } error)
         {
@@ -164,7 +165,7 @@ public static class McpEndpoints
         var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
 
         var virtualTools = db.Tools.Where(
@@ -189,7 +190,7 @@ public static class McpEndpoints
         var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
 
         try
@@ -215,7 +216,7 @@ public static class McpEndpoints
         var server = await db.McpServers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id && s.UserId == null, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
 
         // Cache 60s do resultado (o mesmo TTL do refresh do cliente MCP);

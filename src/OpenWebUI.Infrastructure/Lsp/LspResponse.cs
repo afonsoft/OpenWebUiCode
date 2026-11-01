@@ -12,6 +12,7 @@ namespace OpenWebUI.Infrastructure.Lsp;
 /// </summary>
 public static class LspResponse
 {
+    private const string RangeKey = "range";
     /// <summary>Location | Location[] | LocationLink[] → lista plana.</summary>
     public static List<LspLocation> FlattenLocations(JsonElement result, int cap)
     {
@@ -50,7 +51,7 @@ public static class LspResponse
         var uri = item.TryGetProperty("uri", out var u) ? u.GetString()
             : item.TryGetProperty("targetUri", out var tu) ? tu.GetString()
             : null;
-        var range = item.TryGetProperty("range", out var r) ? r
+        var range = item.TryGetProperty(RangeKey, out var r) ? r
             : item.TryGetProperty("targetSelectionRange", out var tsr) ? tsr
             : item.TryGetProperty("targetRange", out var tr) ? tr
             : (JsonElement?)null;
@@ -128,13 +129,13 @@ public static class LspResponse
             {
                 itemPath = LspClient.PathForUri(lu.GetString()) ?? path;
             }
-            if (loc.TryGetProperty("range", out var lr))
+            if (loc.TryGetProperty(RangeKey, out var lr))
             {
                 pos = StartPos(lr);
             }
         }
         else if (sym.TryGetProperty("selectionRange", out var sr)
-            || sym.TryGetProperty("range", out sr))
+            || sym.TryGetProperty(RangeKey, out sr))
         {
             pos = StartPos(sr);
         }
@@ -184,7 +185,7 @@ public static class LspResponse
             {
                 continue;
             }
-            var (line, col) = loc.TryGetProperty("range", out var r) ? StartPos(r) : (0, 0);
+            var (line, col) = loc.TryGetProperty(RangeKey, out var r) ? StartPos(r) : (0, 0);
             var kind = sym.TryGetProperty("kind", out var k) && k.TryGetInt32(out var kv) ? kv : 0;
             var container = sym.TryGetProperty("containerName", out var cn)
                 ? cn.GetString() : null;

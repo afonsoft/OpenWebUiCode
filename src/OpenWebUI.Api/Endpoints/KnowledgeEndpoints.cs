@@ -10,6 +10,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints de coleções Knowledge (/api/v1/knowledge) para RAG.</summary>
 public static class KnowledgeEndpoints
 {
+    private const string CollectionNotFoundMessage = "Coleção não encontrada.";
     /// <summary>Mapeia o grupo /api/v1/knowledge.</summary>
     public static void MapKnowledgeEndpoints(this WebApplication app)
     {
@@ -105,7 +106,7 @@ public static class KnowledgeEndpoints
             || await access.LevelAsync(user, collection.UserId, collection.AccessGrantsJson, ct)
                 is AccessControlService.None)
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
 
         var files = await db.KnowledgeFiles.AsNoTracking()
@@ -133,7 +134,7 @@ public static class KnowledgeEndpoints
             || await access.LevelAsync(user, collection.UserId, collection.AccessGrantsJson, ct)
                 is not AccessControlService.Write)
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
 
         if (!string.IsNullOrWhiteSpace(request.Name))
@@ -169,7 +170,7 @@ public static class KnowledgeEndpoints
             || await access.LevelAsync(user, collection.UserId, collection.AccessGrantsJson, ct)
                 is not AccessControlService.Write)
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
 
         db.KnowledgeCollections.Remove(collection);
@@ -190,7 +191,7 @@ public static class KnowledgeEndpoints
             || await access.LevelAsync(user, collection.UserId, collection.AccessGrantsJson, ct)
                 is not AccessControlService.Write)
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
 
         var fileIds = await db.KnowledgeFiles
@@ -263,7 +264,7 @@ public static class KnowledgeEndpoints
             || await access.LevelAsync(user, collection.UserId, collection.AccessGrantsJson, ct)
                 is not AccessControlService.Write)
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
 
         var file = await db.Files.FirstOrDefaultAsync(
@@ -306,7 +307,7 @@ public static class KnowledgeEndpoints
             || await access.LevelAsync(user, collection.UserId, collection.AccessGrantsJson, ct)
                 is not AccessControlService.Write)
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
 
         var link = await db.KnowledgeFiles.FirstOrDefaultAsync(
@@ -347,7 +348,7 @@ public static class KnowledgeEndpoints
         if (collection is null
             || (collection.UserId != user.Id && user.Role != UserRoles.Admin))
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
         if (request.AccessGrants.Any(g =>
                 g.PrincipalType is not ("user" or "group")
@@ -374,7 +375,7 @@ public static class KnowledgeEndpoints
         if (collection is null
             || (collection.UserId != user.Id && user.Role != UserRoles.Admin))
         {
-            return Results.NotFound(new { detail = "Coleção não encontrada." });
+            return Results.NotFound(new { detail = CollectionNotFoundMessage });
         }
 
         return Results.Ok(new

@@ -50,6 +50,8 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
     /// <summary>Máximo de skills e de commands retornados por scan.</summary>
     public const int MaxItems = 50;
 
+    private const string AgentKind = "agent";
+
     /// <summary>Teto por arquivo lido (SKILL.md ou command .md).</summary>
     public const int MaxFileBytes = 64 * 1024;
 
@@ -487,11 +489,11 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
         var path = scope == "global" ? file : Relative(baseDir, file);
         return new RepoEntry(
             name.Trim(), description.Trim(), path, body.Trim(),
-            Agent: fm.GetValueOrDefault("agent"),
+            Agent: fm.GetValueOrDefault(AgentKind),
             Model: fm.GetValueOrDefault("model"),
             Subtask: fm.GetValueOrDefault("subtask") is { } s
                 && (s.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    || s.Equals("agent", StringComparison.OrdinalIgnoreCase))
+                    || s.Equals(AgentKind, StringComparison.OrdinalIgnoreCase))
                 || fm.GetValueOrDefault("subagent") is { } sa
                 && sa.Equals("true", StringComparison.OrdinalIgnoreCase),
             Scope: scope,
@@ -518,11 +520,11 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
             name.Trim(),
             (fm.GetValueOrDefault("description") ?? FirstLine(body) ?? string.Empty).Trim(),
             path, body.Trim(),
-            Agent: fm.GetValueOrDefault("agent"),
+            Agent: fm.GetValueOrDefault(AgentKind),
             Model: fm.GetValueOrDefault("model"),
             Subtask: fm.GetValueOrDefault("subtask") is { } s
                 && (s.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    || s.Equals("agent", StringComparison.OrdinalIgnoreCase))
+                    || s.Equals(AgentKind, StringComparison.OrdinalIgnoreCase))
                 || fm.GetValueOrDefault("subagent") is { } sa
                 && sa.Equals("true", StringComparison.OrdinalIgnoreCase),
             Scope: scope,

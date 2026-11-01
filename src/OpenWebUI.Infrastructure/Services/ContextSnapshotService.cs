@@ -20,6 +20,7 @@ public sealed class ContextSnapshotService(
     ConfigService config,
     WorkspaceRepoService repos)
 {
+    private const string InvalidPayloadCode = "invalid_payload";
     /// <summary>Cap de caracteres do <c>content</c> de um item (RF-004).</summary>
     internal const int MaxItemContentChars = 16_000;
 
@@ -110,15 +111,15 @@ public sealed class ContextSnapshotService(
     {
         if (el.ValueKind != JsonValueKind.Array)
         {
-            return (null, new SnapshotError("invalid_payload", "'items' deve ser um array."));
+            return (null, new SnapshotError(InvalidPayloadCode, "'items' deve ser um array."));
         }
         if (el.GetArrayLength() == 0)
         {
-            return (null, new SnapshotError("invalid_payload", "'items' está vazio."));
+            return (null, new SnapshotError(InvalidPayloadCode, "'items' está vazio."));
         }
         if (el.GetArrayLength() > maxItems)
         {
-            return (null, new SnapshotError("invalid_payload",
+            return (null, new SnapshotError(InvalidPayloadCode,
                 $"'items' excede o máximo de {maxItems} itens."));
         }
 
@@ -129,13 +130,13 @@ public sealed class ContextSnapshotService(
             idx++;
             if (e.ValueKind != JsonValueKind.Object)
             {
-                return (null, new SnapshotError("invalid_payload", $"item {idx} não é objeto."));
+                return (null, new SnapshotError(InvalidPayloadCode, $"item {idx} não é objeto."));
             }
             foreach (var p in e.EnumerateObject())
             {
                 if (!s_itemFields.Contains(p.Name))
                 {
-                    return (null, new SnapshotError("invalid_payload",
+                    return (null, new SnapshotError(InvalidPayloadCode,
                         $"item {idx}: campo desconhecido '{p.Name}'."));
                 }
             }
@@ -144,13 +145,13 @@ public sealed class ContextSnapshotService(
                 ? k.GetString() : null;
             if (kind is null || !ItemKinds.Contains(kind))
             {
-                return (null, new SnapshotError("invalid_payload",
+                return (null, new SnapshotError(InvalidPayloadCode,
                     $"item {idx}: kind inválido."));
             }
 
             if (!e.TryGetProperty("content", out var c) || c.ValueKind != JsonValueKind.String)
             {
-                return (null, new SnapshotError("invalid_payload",
+                return (null, new SnapshotError(InvalidPayloadCode,
                     $"item {idx}: 'content' é obrigatório."));
             }
 
@@ -159,7 +160,7 @@ public sealed class ContextSnapshotService(
             {
                 if (t.ValueKind != JsonValueKind.String && t.ValueKind != JsonValueKind.Null)
                 {
-                    return (null, new SnapshotError("invalid_payload",
+                    return (null, new SnapshotError(InvalidPayloadCode,
                         $"item {idx}: 'title' deve ser string."));
                 }
                 title = t.ValueKind == JsonValueKind.String ? t.GetString() : null;
@@ -170,7 +171,7 @@ public sealed class ContextSnapshotService(
             {
                 if (s.ValueKind != JsonValueKind.Number || !s.TryGetDouble(out var d))
                 {
-                    return (null, new SnapshotError("invalid_payload",
+                    return (null, new SnapshotError(InvalidPayloadCode,
                         $"item {idx}: 'score' deve ser número."));
                 }
                 score = d;
@@ -197,12 +198,12 @@ public sealed class ContextSnapshotService(
             var item = items[i];
             if (item.Content.Length > MaxItemContentChars)
             {
-                return new SnapshotError("invalid_payload",
+                return new SnapshotError(InvalidPayloadCode,
                     $"item {i + 1}: content excede {MaxItemContentChars} caracteres.");
             }
             if (HasControlChars(item.Content) || HasControlChars(item.Title))
             {
-                return new SnapshotError("invalid_payload",
+                return new SnapshotError(InvalidPayloadCode,
                     $"item {i + 1}: contém caracteres de controle.");
             }
             if (SecretScrubber.ContainsSecret(item.Content)
@@ -250,12 +251,12 @@ public sealed class ContextSnapshotService(
         var limits = await LimitsAsync(ct);
         if (label is not null && label.Length > MaxLabelChars)
         {
-            return (null, new SnapshotError("invalid_payload",
+            return (null, new SnapshotError(InvalidPayloadCode,
                 $"label excede {MaxLabelChars} caracteres."));
         }
         if (HasControlChars(label))
         {
-            return (null, new SnapshotError("invalid_payload", "label contém caracteres de controle."));
+            return (null, new SnapshotError(InvalidPayloadCode, "label contém caracteres de controle."));
         }
         if (SecretScrubber.ContainsSecret(label))
         {
@@ -263,11 +264,11 @@ public sealed class ContextSnapshotService(
         }
         if (items.Count == 0)
         {
-            return (null, new SnapshotError("invalid_payload", "'items' está vazio."));
+            return (null, new SnapshotError(InvalidPayloadCode, "'items' está vazio."));
         }
         if (items.Count > limits.MaxItems)
         {
-            return (null, new SnapshotError("invalid_payload",
+            return (null, new SnapshotError(InvalidPayloadCode,
                 $"'items' excede o máximo de {limits.MaxItems} itens."));
         }
         if (ValidateItems(items) is { } validation)

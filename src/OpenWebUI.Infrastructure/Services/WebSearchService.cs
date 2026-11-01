@@ -18,6 +18,12 @@ namespace OpenWebUI.Infrastructure.Services;
 /// </summary>
 public class WebSearchService(IHttpClientFactory httpFactory, ConfigService config)
 {
+    private const string BraveEngine = "brave";
+    private const string DuckDuckGoEngine = "duckduckgo";
+    private const string GooglePseEngine = "google_pse";
+    private const string TavilyEngine = "tavily";
+    private const string ResultsKey = "results";
+    private const string TitleKey = "title";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>Cooldown quando o provider devolve 429 sem Retry-After.</summary>
@@ -31,7 +37,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
 
     /// <summary>Ordem estável do modo auto: credenciados primeiro, duckduckgo (sem key) por último.</summary>
     private static readonly string[] AutoOrder =
-        ["tavily", "brave", "exa", "google_pse", "kagi", "duckduckgo"];
+        [TavilyEngine, BraveEngine, "exa", GooglePseEngine, "kagi", DuckDuckGoEngine];
 
     private static readonly ConcurrentDictionary<string, DateTimeOffset> Cooldowns = new();
 
@@ -128,13 +134,13 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
     /// <summary>Provider tem credencial configurada para entrar no pool do auto.</summary>
     private static bool HasCredentials(string provider, RetrievalConfig cfg) => provider switch
     {
-        "tavily" => !string.IsNullOrEmpty(cfg.TavilyApiKey),
-        "brave" => !string.IsNullOrEmpty(cfg.BraveApiKey),
+        TavilyEngine => !string.IsNullOrEmpty(cfg.TavilyApiKey),
+        BraveEngine => !string.IsNullOrEmpty(cfg.BraveApiKey),
         "exa" => !string.IsNullOrEmpty(cfg.ExaApiKey),
-        "google_pse" => !string.IsNullOrEmpty(cfg.GooglePseApiKey)
+        GooglePseEngine => !string.IsNullOrEmpty(cfg.GooglePseApiKey)
             && !string.IsNullOrEmpty(cfg.GooglePseEngineId),
         "kagi" => !string.IsNullOrEmpty(cfg.KagiApiKey),
-        "duckduckgo" => true,
+        DuckDuckGoEngine => true,
         _ => false,
     };
 
@@ -166,10 +172,10 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         string query, int count, CancellationToken ct) => provider switch
     {
         "searxng" => SearxngAsync(client, cfg, query, count, ct),
-        "duckduckgo" => DuckDuckGoAsync(client, query, count, ct),
-        "tavily" => TavilyAsync(client, cfg, query, count, ct),
-        "brave" => BraveAsync(client, cfg, query, count, ct),
-        "google_pse" => GooglePseAsync(client, cfg, query, count, ct),
+        DuckDuckGoEngine => DuckDuckGoAsync(client, query, count, ct),
+        TavilyEngine => TavilyAsync(client, cfg, query, count, ct),
+        BraveEngine => BraveAsync(client, cfg, query, count, ct),
+        GooglePseEngine => GooglePseAsync(client, cfg, query, count, ct),
         "jina" => JinaAsync(client, cfg, query, count, ct),
         "exa" => ExaAsync(client, cfg, query, count, ct),
         "kagi" => KagiAsync(client, cfg, query, count, ct),
@@ -215,12 +221,12 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         var url = $"{cfg.SearxngBaseUrl.TrimEnd('/')}/search?q={Uri.EscapeDataString(query)}&format=json";
         var doc = await GetJsonAsync(client, "searxng", url, ct);
         var results = new List<WebSearchResult>();
-        if (doc.TryGetProperty("results", out var items))
+        if (doc.TryGetProperty(ResultsKey, out var items))
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty(TitleKey, out var t) ? t.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty));
             }
@@ -232,7 +238,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         HttpClient client, string query, int count, CancellationToken ct)
     {
         var url = $"https://api.duckduckgo.com/?q={Uri.EscapeDataString(query)}&format=json&no_html=1&skip_disambig=1";
-        var doc = await GetJsonAsync(client, "duckduckgo", url, ct);
+        var doc = await GetJsonAsync(client, DuckDuckGoEngine, url, ct);
         var results = new List<WebSearchResult>();
 
         void AddTopic(JsonElement topic)
@@ -285,14 +291,14 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         {
             Content = JsonContent.Create(payload, options: JsonOptions),
         };
-        var doc = await SendJsonAsync(client, "tavily", request, ct);
+        var doc = await SendJsonAsync(client, TavilyEngine, request, ct);
         var results = new List<WebSearchResult>();
-        if (doc.TryGetProperty("results", out var items))
+        if (doc.TryGetProperty(ResultsKey, out var items))
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty(TitleKey, out var t) ? t.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty));
             }
@@ -311,16 +317,16 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         var url = $"https://api.search.brave.com/res/v1/web/search?q={Uri.EscapeDataString(query)}&count={count}";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("X-Subscription-Token", cfg.BraveApiKey);
-        var doc = await SendJsonAsync(client, "brave", request, ct);
+        var doc = await SendJsonAsync(client, BraveEngine, request, ct);
 
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("web", out var web)
-            && web.TryGetProperty("results", out var items))
+            && web.TryGetProperty(ResultsKey, out var items))
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty("title", out var t) ? t.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty(TitleKey, out var t) ? t.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("description", out var d) ? d.GetString() ?? string.Empty : string.Empty));
             }
@@ -340,14 +346,14 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         var url = $"{baseUrl}/customsearch/v1?key={Uri.EscapeDataString(cfg.GooglePseApiKey)}"
             + $"&cx={Uri.EscapeDataString(cfg.GooglePseEngineId)}"
             + $"&q={Uri.EscapeDataString(query)}&num={count}";
-        var doc = await GetJsonAsync(client, "google_pse", url, ct);
+        var doc = await GetJsonAsync(client, GooglePseEngine, url, ct);
         var results = new List<WebSearchResult>();
         if (doc.TryGetProperty("items", out var items))
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty("title", out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("link", out var l) ? l.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("snippet", out var s) ? s.GetString() ?? string.Empty : string.Empty));
             }
@@ -375,7 +381,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty("title", out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("description", out var d) ? d.GetString() ?? string.Empty
                         : item.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty));
@@ -400,14 +406,14 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         var doc = await SendJsonAsync(client, "exa", request, ct);
 
         var results = new List<WebSearchResult>();
-        if (doc.TryGetProperty("results", out var items))
+        if (doc.TryGetProperty(ResultsKey, out var items))
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
                 var snippet = item.TryGetProperty("text", out var tx) ? tx.GetString() ?? string.Empty
                     : item.TryGetProperty("summary", out var su) ? su.GetString() ?? string.Empty : string.Empty;
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty("title", out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
                     snippet.Length > 500 ? snippet[..500] : snippet));
             }
@@ -437,7 +443,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
                          .Where(i => i.TryGetProperty("t", out var t) && t.GetInt32() == 0))
             {
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty("title", out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
                     item.TryGetProperty("snippet", out var s) ? s.GetString() ?? string.Empty : string.Empty));
             }

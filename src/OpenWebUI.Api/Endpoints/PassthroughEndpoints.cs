@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Caching.Hybrid;
+using OpenWebUI.Application.Contracts;
 using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Endpoints;
@@ -15,25 +16,25 @@ public static class PassthroughEndpoints
         var ollama = app.MapGroup("/ollama").RequireAuthorization();
         ollama.MapGet("/api/tags",
             (HttpContext http, ProviderProxyService proxy, HybridCache cache) =>
-                Proxy(http, proxy, cache, "ollama", "api/tags", null));
+                Proxy(http, proxy, cache, ProviderTypes.Ollama, "api/tags", null));
         ollama.MapGet("/api/version",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/version", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/version", null));
         ollama.MapPost("/api/show",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/show", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/show", null));
         ollama.MapPost("/api/chat",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/chat", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/chat", null));
         ollama.MapPost("/api/generate",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/generate", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/generate", null));
         ollama.MapPost("/api/embed",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/embed", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/embed", null));
         ollama.MapPost("/api/pull",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/pull", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/pull", null));
         ollama.MapPost("/api/create",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/create", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/create", null));
         ollama.MapDelete("/api/delete",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/delete", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/delete", null));
         ollama.MapPost("/api/copy",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/copy", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/copy", null));
         ollama.MapMethods("/api/blobs/{digest}", ["GET", "HEAD"],
             (HttpContext http, string digest, ProviderProxyService proxy) =>
                 ProxyBlob(http, proxy, digest));
@@ -45,35 +46,35 @@ public static class PassthroughEndpoints
         var ollamaIndexed = app.MapGroup("/ollama/{idx:int}").RequireAuthorization();
         ollamaIndexed.MapGet("/api/tags",
             (HttpContext http, int idx, ProviderProxyService proxy, HybridCache cache) =>
-                Proxy(http, proxy, cache, "ollama", "api/tags", idx));
+                Proxy(http, proxy, cache, ProviderTypes.Ollama, "api/tags", idx));
         ollamaIndexed.MapPost("/api/chat",
-            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, "ollama", "api/chat", idx));
+            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.Ollama, "api/chat", idx));
 
         var openai = app.MapGroup("/openai").RequireAuthorization();
         openai.MapGet("/models",
             (HttpContext http, ProviderProxyService proxy, HybridCache cache) =>
-                Proxy(http, proxy, cache, "openai", "models", null));
+                Proxy(http, proxy, cache, ProviderTypes.OpenAi, "models", null));
         openai.MapPost("/chat/completions",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "chat/completions", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "chat/completions", null));
         openai.MapPost("/embeddings",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "embeddings", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "embeddings", null));
         openai.MapPost("/audio/speech",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "audio/speech", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "audio/speech", null));
         openai.MapPost("/audio/transcriptions",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "audio/transcriptions", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "audio/transcriptions", null));
         openai.MapPost("/images/generations",
-            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "images/generations", null));
+            (HttpContext http, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "images/generations", null));
 
         var openaiIndexed = app.MapGroup("/openai/{idx:int}").RequireAuthorization();
         openaiIndexed.MapPost("/audio/speech",
-            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "audio/speech", idx));
+            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "audio/speech", idx));
         openaiIndexed.MapPost("/images/generations",
-            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "images/generations", idx));
+            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "images/generations", idx));
         openaiIndexed.MapGet("/models",
             (HttpContext http, int idx, ProviderProxyService proxy, HybridCache cache) =>
-                Proxy(http, proxy, cache, "openai", "models", idx));
+                Proxy(http, proxy, cache, ProviderTypes.OpenAi, "models", idx));
         openaiIndexed.MapPost("/chat/completions",
-            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, "openai", "chat/completions", idx));
+            (HttpContext http, int idx, ProviderProxyService proxy) => Proxy(http, proxy, ProviderTypes.OpenAi, "chat/completions", idx));
     }
 
     /// <summary>Limite do upload de blob (512 MB, alinhado ao upstream).</summary>
@@ -99,7 +100,7 @@ public static class PassthroughEndpoints
                 ?.MaxRequestBodySize = maxUpload.Value;
         }
 
-        return Proxy(http, proxy, "ollama", $"api/blobs/{digest}", null);
+        return Proxy(http, proxy, ProviderTypes.Ollama, $"api/blobs/{digest}", null);
     }
 
     /// <summary>TTL do cache de respostas de leitura do proxy (tags/models).</summary>

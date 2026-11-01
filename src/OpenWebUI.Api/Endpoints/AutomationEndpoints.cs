@@ -9,6 +9,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints de automações (prompts agendados), espelhando o upstream.</summary>
 public static class AutomationEndpoints
 {
+    private const string PromptKey = "prompt";
     private static readonly HashSet<string> Kinds = ["interval", "daily", "weekly", "once"];
 
     /// <summary>Mapeia as rotas de automações.</summary>
@@ -37,10 +38,10 @@ public static class AutomationEndpoints
     private static string? Validate(AutomationUpsertRequest r)
     {
         if (string.IsNullOrWhiteSpace(r.Name)) return "Nome obrigatório.";
-        var kind = r.ActionKind ?? "prompt";
-        if (kind == "prompt" && string.IsNullOrWhiteSpace(r.Prompt))
+        var kind = r.ActionKind ?? PromptKey;
+        if (kind == PromptKey && string.IsNullOrWhiteSpace(r.Prompt))
             return "Prompt obrigatório.";
-        if (kind is "prompt" or "skill" && string.IsNullOrWhiteSpace(r.ModelId))
+        if (kind is PromptKey or "skill" && string.IsNullOrWhiteSpace(r.ModelId))
             return "Modelo obrigatório.";
         var actionError = AutomationService.ValidateAction(kind, r.ActionJson);
         if (actionError is not null) return actionError;
@@ -66,7 +67,7 @@ public static class AutomationEndpoints
         a.Name = r.Name.Trim();
         a.Prompt = r.Prompt;
         a.ModelId = r.ModelId;
-        a.ActionKind = r.ActionKind ?? "prompt";
+        a.ActionKind = r.ActionKind ?? PromptKey;
         a.ActionJson = r.ActionJson;
         a.PermissionMode = r.PermissionMode ?? "default";
         a.ChatId = r.ChatId;

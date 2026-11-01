@@ -20,6 +20,7 @@ namespace OpenWebUI.Api.Endpoints;
 public static class UserMcpEndpoints
 {
     private const string Masked = "********";
+    private const string McpNotFoundMessage = "Servidor MCP não encontrado.";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>Mapeia o grupo /api/v1/users/user/mcp-servers (autenticado).</summary>
@@ -171,7 +172,7 @@ public static class UserMcpEndpoints
             .FirstOrDefaultAsync(s => s.Id == id && s.UserId == user.Id, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
         if (McpEndpoints.Validate(request) is { } error)
         {
@@ -219,7 +220,7 @@ public static class UserMcpEndpoints
             .FirstOrDefaultAsync(s => s.Id == id && s.UserId == user.Id, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
         db.Tools.RemoveRange(db.Tools.Where(
             t => t.Url.StartsWith($"{McpClientService.VirtualUrlPrefix}{id}/")));
@@ -242,7 +243,7 @@ public static class UserMcpEndpoints
             .FirstOrDefaultAsync(s => s.Id == id && s.UserId == user.Id, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
         try
         {
@@ -273,11 +274,11 @@ public static class UserMcpEndpoints
         var server = await db.McpServers.FirstOrDefaultAsync(s => s.Id == id, ct);
         if (server is null)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
         if (server.UserId is not null && server.UserId != user.Id)
         {
-            return Results.NotFound(new { detail = "Servidor MCP não encontrado." });
+            return Results.NotFound(new { detail = McpNotFoundMessage });
         }
 
         if (server.UserId is null)

@@ -15,6 +15,7 @@ namespace OpenWebUI.Api.Endpoints;
 public static class ApiEndpoints
 {
     private const string BackendVersion = "0.11.4-dotnet";
+    private const string OpenWebUiScope = "openwebui";
 
     /// <summary>Mapeia as rotas de modelos, completions e configuração.</summary>
     public static void MapApiEndpoints(this IEndpointRouteBuilder app)
@@ -235,19 +236,19 @@ public static class ApiEndpoints
         {
             if (await ModelEndpoints.HasModelAccessAsync(user, entry, db, ct))
             {
-                models.Add(new ModelInfo(entry.Id, entry.Name, "custom", "openwebui"));
+                models.Add(new ModelInfo(entry.Id, entry.Name, "custom", OpenWebUiScope));
                 // SPEC-20261018-model-variants RF-001/002/004: variants
                 // (declaradas ou sintéticas por reasoning.effort) e aliases
                 // aparecem como entradas do seletor resolvendo ao entry real.
                 foreach (var v in ModelVariantService.ListVariantIds(entry.MetaJson))
                 {
                     models.Add(new ModelInfo(
-                        $"{entry.Id}#{v}", $"{entry.Name}#{v}", "custom", "openwebui"));
+                        $"{entry.Id}#{v}", $"{entry.Name}#{v}", "custom", OpenWebUiScope));
                 }
                 foreach (var alias in ModelVariantService.ListAliases(entry.MetaJson))
                 {
                     models.Add(new ModelInfo(
-                        alias, $"{entry.Name} ({alias})", "custom", "openwebui"));
+                        alias, $"{entry.Name} ({alias})", "custom", OpenWebUiScope));
                 }
             }
         }
@@ -260,7 +261,7 @@ public static class ApiEndpoints
             if (pipes is not null)
             {
                 models.AddRange(pipes.Select(
-                    p => new ModelInfo($"pipeline:{p.Id}", p.Name, "pipeline", "openwebui")));
+                    p => new ModelInfo($"pipeline:{p.Id}", p.Name, "pipeline", OpenWebUiScope)));
             }
         }
 

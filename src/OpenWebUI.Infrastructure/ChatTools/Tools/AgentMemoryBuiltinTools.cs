@@ -36,7 +36,7 @@ public sealed class MemorySaveBuiltinTool(AppDbContext db, WorkspaceRepoService 
             + "updates it.";
 
     /// <inheritdoc />
-    public string ParametersJson => """
+    public string ParametersJson => $$"""
         {
           "type": "object",
           "properties": {
@@ -50,7 +50,7 @@ public sealed class MemorySaveBuiltinTool(AppDbContext db, WorkspaceRepoService 
             },
             "scope": {
               "type": "string",
-              "enum": ["global", "repo"],
+              "enum": ["{{MemoryToolScopes.Global}}", "repo"],
               "description": "'global' (default): applies in every chat. 'repo': only when this chat's repo is bound."
             }
           },
@@ -91,7 +91,7 @@ public sealed class MemorySaveBuiltinTool(AppDbContext db, WorkspaceRepoService 
 
         var existing = await db.AgentMemories
             .FirstOrDefaultAsync(m => m.UserId == context.UserId
-                && m.Scope == (repoScope ? "repo" : "global")
+                && m.Scope == (repoScope ? "repo" : MemoryToolScopes.Global)
                 && m.RepoSlug == repoSlug
                 && m.Title == title, ct);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -100,7 +100,7 @@ public sealed class MemorySaveBuiltinTool(AppDbContext db, WorkspaceRepoService 
             existing = new AgentMemory
             {
                 UserId = context.UserId,
-                Scope = repoScope ? "repo" : "global",
+                Scope = repoScope ? "repo" : MemoryToolScopes.Global,
                 RepoSlug = repoSlug,
                 Title = title.Trim(),
                 CreatedAt = now,
@@ -154,7 +154,7 @@ public sealed class MemorySearchBuiltinTool(AppDbContext db, WorkspaceRepoServic
             + "scope=all searches everything.";
 
     /// <inheritdoc />
-    public string ParametersJson => """
+    public string ParametersJson => $$"""
         {
           "type": "object",
           "properties": {
@@ -164,7 +164,7 @@ public sealed class MemorySearchBuiltinTool(AppDbContext db, WorkspaceRepoServic
             },
             "scope": {
               "type": "string",
-              "enum": ["default", "global", "repo", "all"],
+              "enum": ["default", "{{MemoryToolScopes.Global}}", "repo", "all"],
               "description": "'default': global + current chat's repo. 'all': every memory you own."
             }
           },
@@ -235,14 +235,14 @@ public sealed class MemorySearchBuiltinTool(AppDbContext db, WorkspaceRepoServic
         return scopeArg switch
         {
             "all" => scoped,
-            "global" => scoped.Where(m => m.Scope == "global"),
+            MemoryToolScopes.Global => scoped.Where(m => m.Scope == MemoryToolScopes.Global),
             "repo" => repoSlug is not null
                 ? scoped.Where(m => m.Scope == "repo" && m.RepoSlug == repoSlug)
                 : scoped.Where(m => false),
             _ => repoSlug is not null
-                ? scoped.Where(m => m.Scope == "global"
+                ? scoped.Where(m => m.Scope == MemoryToolScopes.Global
                     || (m.Scope == "repo" && m.RepoSlug == repoSlug))
-                : scoped.Where(m => m.Scope == "global"),
+                : scoped.Where(m => m.Scope == MemoryToolScopes.Global),
         };
     }
 
@@ -337,7 +337,7 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
 
         var existing = await db.AgentMemories
             .FirstOrDefaultAsync(m => m.UserId == context.UserId
-                && m.Scope == "global" && m.Title == title, ct);
+                && m.Scope == MemoryToolScopes.Global && m.Title == title, ct);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var updated = existing is not null;
         if (existing is null)
@@ -345,7 +345,7 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
             existing = new AgentMemory
             {
                 UserId = context.UserId,
-                Scope = "global",
+                Scope = MemoryToolScopes.Global,
                 Title = title,
                 CreatedAt = now,
             };
@@ -408,4 +408,10 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
         }
         return slug.Length > 60 ? slug[..60].TrimEnd('-') : slug;
     }
+}
+
+/// <summary>Escopos das memórias de agente (global = todo chat do usuário).</summary>
+file static class MemoryToolScopes
+{
+    internal const string Global = "global";
 }

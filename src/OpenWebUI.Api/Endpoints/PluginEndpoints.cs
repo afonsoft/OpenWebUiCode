@@ -16,6 +16,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class PluginEndpoints
 {
+    private const string ByIdRoute = "/{id}";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public static void MapPluginEndpoints(this IEndpointRouteBuilder app)
@@ -25,11 +26,11 @@ public static class PluginEndpoints
             ListSkillsAsync(http, db, ct));
         skills.MapPost("/", (HttpContext http, AppDbContext db, CancellationToken ct) =>
             CreateSkillAsync(http, db, ct));
-        skills.MapGet("/{id}", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
+        skills.MapGet(ByIdRoute, (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             GetSkillAsync(http, id, db, ct));
-        skills.MapPost("/{id}", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
+        skills.MapPost(ByIdRoute, (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             UpdateSkillAsync(http, id, db, ct));
-        skills.MapDelete("/{id}", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
+        skills.MapDelete(ByIdRoute, (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             DeleteSkillAsync(http, id, db, ct));
 
         var functions = app.MapGroup("/api/v1/functions").RequireAuthorization();
@@ -37,15 +38,15 @@ public static class PluginEndpoints
             ListFunctionsAsync(http, db, ct));
         functions.MapPost("/", (HttpContext http, AppDbContext db, CancellationToken ct) =>
             CreateFunctionAsync(http, db, ct));
-        functions.MapGet("/{id}", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
+        functions.MapGet(ByIdRoute, (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             GetFunctionAsync(http, id, db, ct));
-        functions.MapPost("/{id}", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
+        functions.MapPost(ByIdRoute, (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             UpdateFunctionAsync(http, id, db, ct));
         functions.MapPost("/{id}/toggle", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             ToggleFunctionAsync(http, id, db, ct));
         functions.MapPost("/{id}/valves", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             UpdateValvesAsync(http, id, db, ct));
-        functions.MapDelete("/{id}", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
+        functions.MapDelete(ByIdRoute, (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             DeleteFunctionAsync(http, id, db, ct));
 
         var pipelines = app.MapGroup("/api/v1/pipelines").RequireAuthorization();
@@ -55,7 +56,7 @@ public static class PluginEndpoints
             SaveServerAsync(http, db, ct));
         pipelines.MapGet("/list", (HttpContext http, AppDbContext db, PipelineClientService client, CancellationToken ct) =>
             ListAllPipesAsync(http, db, client, ct));
-        pipelines.MapDelete("/{id}", (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
+        pipelines.MapDelete(ByIdRoute, (HttpContext http, string id, AppDbContext db, CancellationToken ct) =>
             DeleteServerAsync(http, id, db, ct));
     }
 

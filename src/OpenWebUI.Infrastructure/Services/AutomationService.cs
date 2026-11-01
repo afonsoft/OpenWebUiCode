@@ -81,12 +81,14 @@ public class AutomationService(
     IHttpClientFactory? httpFactory = null,
     ComboService? combos = null)
 {
+    private const string SkillKey = "skill";
+
     /// <summary>Cap do resumo de output gravado no <see cref="AutomationRun"/>.</summary>
     private const int MaxOutputChars = 4096;
 
     /// <summary>Tipos de ação suportados (RF-001).</summary>
     public static readonly HashSet<string> ActionKinds =
-        ["prompt", "skill", "mcp", "reminder", "webhook"];
+        ["prompt", SkillKey, "mcp", "reminder", "webhook"];
 
     /// <summary>Valida o payload <see cref="Automation.ActionJson"/> por kind (RF-008).</summary>
     public static string? ValidateAction(string actionKind, string? actionJson)
@@ -112,7 +114,7 @@ public class AutomationService(
             var e = doc.RootElement;
             return actionKind switch
             {
-                "skill" => e.TryGetProperty("skill", out var s) && s.ValueKind == JsonValueKind.String
+                SkillKey => e.TryGetProperty(SkillKey, out var s) && s.ValueKind == JsonValueKind.String
                     ? null : "ActionJson.skill (string) obrigatório.",
                 "mcp" => e.TryGetProperty("server", out var sv) && sv.ValueKind == JsonValueKind.String
                     && e.TryGetProperty("tool", out var t) && t.ValueKind == JsonValueKind.String
@@ -149,7 +151,7 @@ public class AutomationService(
         {
             var outcome = automation.ActionKind switch
             {
-                "skill" => await RunSkillAsync(automation, ct),
+                SkillKey => await RunSkillAsync(automation, ct),
                 "mcp" => await RunMcpAsync(automation, ct),
                 "reminder" => await RunReminderAsync(automation, ct),
                 "webhook" => await RunWebhookAsync(automation, ct),
@@ -211,7 +213,7 @@ public class AutomationService(
         }
 
         using var doc = JsonDocument.Parse(automation.ActionJson ?? "{}");
-        var name = doc.RootElement.GetProperty("skill").GetString()!;
+        var name = doc.RootElement.GetProperty(SkillKey).GetString()!;
         var args = doc.RootElement.TryGetProperty("args", out var a) && a.ValueKind == JsonValueKind.String
             ? a.GetString() : null;
         var model = doc.RootElement.TryGetProperty("model", out var m) && m.ValueKind == JsonValueKind.String

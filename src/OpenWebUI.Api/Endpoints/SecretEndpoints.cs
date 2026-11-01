@@ -14,18 +14,19 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class SecretEndpoints
 {
+    private const string ByNameRoute = "/{name}";
     /// <summary>Mapeia as rotas de secrets (user + admin global).</summary>
     public static void MapSecretEndpoints(this IEndpointRouteBuilder app)
     {
         var user = app.MapGroup("/api/v1/secrets").RequireAuthorization();
         user.MapGet("/", ListUserAsync);
-        user.MapPut("/{name}", PutUserAsync);
-        user.MapDelete("/{name}", DeleteUserAsync);
+        user.MapPut(ByNameRoute, PutUserAsync);
+        user.MapDelete(ByNameRoute, DeleteUserAsync);
 
         var admin = app.MapGroup("/api/v1/configs/secrets").RequireAuthorization();
         admin.MapGet("/", ListGlobalAsync);
-        admin.MapPut("/{name}", PutGlobalAsync);
-        admin.MapDelete("/{name}", DeleteGlobalAsync);
+        admin.MapPut(ByNameRoute, PutGlobalAsync);
+        admin.MapDelete(ByNameRoute, DeleteGlobalAsync);
     }
 
     // ---------------- nível usuário ----------------

@@ -20,6 +20,7 @@ namespace OpenWebUI.Api.Completions;
 /// </summary>
 public static class ChatPipeline
 {
+    private const string RoleAssistant = "assistant";
     /// <summary>Bloco "identity": postura de agente autônomo (executa,
     /// instala ferramentas, responde no idioma do usuário).</summary>
     internal const string IdentityPrompt =
@@ -704,7 +705,7 @@ public static class ChatPipeline
                     round + 1, step.FinishReason,
                     lengthContinuations, maxLengthContinuations);
                 var truncatedAssistant = new ChatCompletionMessage(
-                    "assistant", step.Content);
+                    RoleAssistant, step.Content);
                 messages.Add(truncatedAssistant);
                 toolMessages.Add(truncatedAssistant);
                 var continuePrompt = new ChatCompletionMessage(
@@ -730,7 +731,7 @@ public static class ChatPipeline
                         // com ele desincroniza stream × persistência.
                         var interimQueued = string.IsNullOrWhiteSpace(step.Content)
                             ? null
-                            : new ChatCompletionMessage("assistant", step.Content);
+                            : new ChatCompletionMessage(RoleAssistant, step.Content);
                         if (interimQueued is not null)
                         {
                             messages.Add(interimQueued);
@@ -767,7 +768,7 @@ public static class ChatPipeline
                     // do nudge (senão ele só vive no stream efêmero).
                     var interim = string.IsNullOrWhiteSpace(step.Content)
                         ? null
-                        : new ChatCompletionMessage("assistant", step.Content);
+                        : new ChatCompletionMessage(RoleAssistant, step.Content);
                     if (interim is not null)
                     {
                         messages.Add(interim);
@@ -827,7 +828,7 @@ public static class ChatPipeline
             }
 
             var assistantMessage = new ChatCompletionMessage(
-                "assistant", step.Content, ToolCallsJson: step.ToolCallsJson);
+                RoleAssistant, step.Content, ToolCallsJson: step.ToolCallsJson);
             messages.Add(assistantMessage);
             toolMessages.Add(assistantMessage);
             if (callbacks?.OnMessagesAddedAsync is not null)
@@ -1160,7 +1161,7 @@ public static class ChatPipeline
                 ? request with
                 {
                     Messages = [..request.Messages,
-                        new ChatCompletionMessage("assistant", partial.ToString()),
+                        new ChatCompletionMessage(RoleAssistant, partial.ToString()),
                         new ChatCompletionMessage("user", StreamBreakPrompt)],
                 }
                 : request,

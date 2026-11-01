@@ -19,6 +19,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class ChatRunEndpoints
 {
+    private const string RunNotFoundMessage = "Run não encontrada.";
     /// <summary>Mapeia as rotas de runs dentro do grupo de chats.</summary>
     public static void MapChatRunEndpoints(RouteGroupBuilder group)
     {
@@ -346,7 +347,7 @@ public static class ChatRunEndpoints
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
         {
-            return Results.NotFound(new { detail = "Run não encontrada." });
+            return Results.NotFound(new { detail = RunNotFoundMessage });
         }
         var asked = approvals.PendingAsked(runId);
         return Results.Ok(ToResponse(run) with
@@ -504,7 +505,7 @@ public static class ChatRunEndpoints
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
         {
-            return Results.NotFound(new { detail = "Run não encontrada." });
+            return Results.NotFound(new { detail = RunNotFoundMessage });
         }
 
         if (run.Status == ChatRunStatus.Queued
@@ -556,7 +557,7 @@ public static class ChatRunEndpoints
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
         {
-            return Results.NotFound(new { detail = "Run não encontrada." });
+            return Results.NotFound(new { detail = RunNotFoundMessage });
         }
         if (run.Status is not (ChatRunStatus.Queued or ChatRunStatus.Running
             or ChatRunStatus.Paused))
@@ -634,7 +635,7 @@ public static class ChatRunEndpoints
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
         {
-            return Results.NotFound(new { detail = "Run não encontrada." });
+            return Results.NotFound(new { detail = RunNotFoundMessage });
         }
         if (run.Status is not (ChatRunStatus.Queued or ChatRunStatus.Running))
         {
@@ -688,7 +689,7 @@ public static class ChatRunEndpoints
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
         {
-            return Results.NotFound(new { detail = "Run não encontrada." });
+            return Results.NotFound(new { detail = RunNotFoundMessage });
         }
         if (run.Status != ChatRunStatus.Paused)
         {
@@ -754,7 +755,7 @@ public static class ChatRunEndpoints
                 r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (run is null)
         {
-            return Results.NotFound(new { detail = "Run não encontrada." });
+            return Results.NotFound(new { detail = RunNotFoundMessage });
         }
         if (run.Status is not (ChatRunStatus.Queued or ChatRunStatus.Running
             or ChatRunStatus.Paused))
@@ -820,7 +821,7 @@ public static class ChatRunEndpoints
             .AnyAsync(r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
         if (!exists)
         {
-            return Results.NotFound(new { detail = "Run não encontrada." });
+            return Results.NotFound(new { detail = RunNotFoundMessage });
         }
 
         // Com repo vinculado o snapshot sai do checkout do repo; numa run
