@@ -34,7 +34,8 @@ public sealed record ChatRunToolsDeps(
     IServiceScopeFactory Scopes, PermissionRuleEvaluator Rules,
     ExternalAccessRegistry ExternalAccess, IConfiguration Cfg,
     OpenWebUI.Infrastructure.Context.StallWatchdog StallWatch,
-    OpenWebUI.Infrastructure.Context.ExtendContextBudget ExtendContext);
+    OpenWebUI.Infrastructure.Context.ExtendContextBudget ExtendContext,
+    DeferredToolState Deferred, ToolIndexService ToolIndex);
 
 public sealed record ChatRunLifecycleDeps(
     ChatRunBroadcaster Broadcaster, ChatRunApprovals Approvals,
@@ -70,6 +71,8 @@ public sealed class ChatRunExecutor(
     private readonly ComboService combos = tools.Combos;
     private readonly ContextBoundaryService boundaries = tools.Boundaries;
     private readonly IServiceScopeFactory scopes = tools.Scopes;
+    private readonly DeferredToolState deferred = tools.Deferred;
+    private readonly ToolIndexService toolIndex = tools.ToolIndex;
     private readonly PermissionRuleEvaluator rules = tools.Rules;
     private readonly ExternalAccessRegistry externalAccess = tools.ExternalAccess;
     private readonly IConfiguration cfg = tools.Cfg;
@@ -239,6 +242,11 @@ public sealed class ChatRunExecutor(
                     comboAttemptsLeft = attemptsLeft;
                     continue;
                 }
+            }
+            finally
+            {
+                // RF-004: estado por-run do deferral não vaza entre runs.
+                deferred.Clear(run.Id, run.ChatId);
             }
 
             return;
@@ -606,7 +614,27 @@ public sealed class ChatRunExecutor(
         {
             logger.LogWarning(ex, "Run {RunId}: sync de .agents/mcp.json falhou — ignorado.", run.Id);
         }
-        return await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct);
+        var loadedTools = await toolExecutor.LoadEnabledAsync(
+            user.Id, request.ToolIds, ct);
+        // SPEC-20261031-tool-search-deferred RF-001/RF-005/RF-006: split
+        // opt-in — tools deferidas saem do spec anunciado mas ficam
+        // permitidas via builtin_tool_search. Auditoria com a estimativa
+        // de tokens economizados (~spec/4 chars).
+        var deferredTools = toolIndex.SplitDeferred(loadedTools);
+        if (deferredTools.Count > 0)
+        {
+            deferred.Set(run.Id, run.ChatId, deferredTools);
+            await runEvents.AppendAsync(run.Id, "tool_search.deferred",
+                new
+                {
+                    toolsCore = loadedTools.Count - deferredTools.Count,
+                    toolsDeferred = deferredTools.Count,
+                    toolsLoaded = 0,
+                    tokensSavedEstimate = deferredTools
+                        .Sum(t => t.SpecJson.Length) / 4,
+                }, ct);
+        }
+        return loadedTools;
     }
 
     /// <summary>Executa o caminho com tools — contexto builtin, advisor,
@@ -641,12 +669,21 @@ public sealed class ChatRunExecutor(
         {
             tools.Add(builtins.ToSyntheticTool(planExit));
         }
+        // RF-001: com deferral ativo o loader é sempre core — injeta
+        // tool_search mesmo fora dos ToolIds quando há tools deferidas.
+        if (deferred.IsActive(run.Id)
+            && tools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "tool_search")
+            && builtins.All.FirstOrDefault(t => t.Name == "tool_search") is { } toolSearch)
+        {
+            tools.Add(builtins.ToSyntheticTool(toolSearch));
+        }
         // Spec da primeira rodada já filtrado pelo modo (RF-002) —
         // as próximas passam pelo AnnounceToolsAsync do callback.
         effective = effective with
         {
             Tools = tools
-                .Where(t => PermissionRuleset.ShouldAnnounce(chatMode, t))
+                .Where(t => PermissionRuleset.ShouldAnnounce(chatMode, t)
+                    && !deferred.IsDeferredOnly(run.Id, t))
                 .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
                 .ToList(),
         };
@@ -772,7 +809,8 @@ public sealed class ChatRunExecutor(
                 var mode = await EffectiveModeAsync(
                     run.ChatId, commandMode, t);
                 return tools
-                    .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool))
+                    .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool)
+                        && !deferred.IsDeferredOnly(run.Id, tool))
                     .Select(tool => JsonSerializer.Deserialize<JsonElement>(tool.SpecJson))
                     .ToList();
             },
@@ -1891,6 +1929,16 @@ public sealed class ChatRunExecutor(
         }
 
         var tool = ToolExecutor.FindTool(tools, call.Name);
+
+        // RF-004/invariante: call direta em tool ainda deferida → erro
+        // didático, sem executar nem pedir aprovação.
+        if (tool is not null && deferred.IsDeferredOnly(run.Id, tool))
+        {
+            return new ToolGateDecision(true, Output:
+                $"Erro: a tool '{call.Name}' não está carregada nesta run "
+                + "— chame builtin_tool_search com uma query para carregar "
+                + "o schema antes de usar.");
+        }
 
         if (await PolicyDeniedAsync(run, call, ct) is { } policyDenied)
         {

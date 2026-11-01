@@ -779,3 +779,29 @@ public sealed class AgentModeContributor : ISystemPromptContributor
         return Task.FromResult<IReadOnlyList<string>>([]);
     }
 }
+
+/// <summary>
+/// Índice leve das tools deferidas (SPEC-20261031-tool-search-deferred
+/// RF-002): com deferral ativo o system prompt mostra "## Available on
+/// demand" com uma linha por tool em vez do schema completo. Sem tools
+/// deferidas o contributor não emite nada — prompt idêntico ao atual.
+/// </summary>
+public sealed class DeferredToolIndexContributor(
+    DeferredToolState state, ToolIndexService index)
+    : ISystemPromptContributor
+{
+    /// <inheritdoc />
+    public int Order => 84;
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
+    {
+        if (ctx.ChatId is not { } chatId || !state.IsActive(chatId))
+        {
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
+        var block = index.BuildIndex(state.Deferred(chatId));
+        return Task.FromResult<IReadOnlyList<string>>(
+            block is null ? [] : [block]);
+    }
+}
