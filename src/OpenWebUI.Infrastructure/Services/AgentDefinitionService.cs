@@ -310,7 +310,11 @@ public sealed class AgentDefinitionService(
                 ? null : model,
             Tools: ListField(fm, "tools")?.Select(MapToolName).ToList(),
             Spawns: ListField(fm, "spawns") ?? [],
-            MaxDepth: fm.TryGetValue("maxDepth", out var depthRaw)
+            // `max_nesting` (SPEC-20261031-sidekick-orchestration RF-005)
+            // é alias de `maxDepth`; negativo/inválido → default 1;
+            // clampado ao teto global 0..3.
+            MaxDepth: (fm.TryGetValue("maxDepth", out var depthRaw)
+                    || fm.TryGetValue("max_nesting", out depthRaw))
                 && int.TryParse(depthRaw, out var depth)
                 ? Math.Clamp(depth, 0, 3) : 1,
             Skills: ListField(fm, "skills") ?? [],

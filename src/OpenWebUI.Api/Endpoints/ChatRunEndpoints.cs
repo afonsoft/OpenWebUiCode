@@ -34,6 +34,15 @@ public static class ChatRunEndpoints
         group.MapPost("/{id}/runs/{runId}/resume", ResumeRunAsync);
         group.MapPost("/{id}/runs/{runId}/approvals/{callId}", DecideApprovalAsync);
         group.MapPost("/{id}/runs/{runId}/steer", SteerRunAsync);
+        // SPEC-20261031-sidekick-orchestration RF-007: promover dispatch
+        // background↔foreground — aprovações passam a ir ao usuário (fg)
+        // ou não-aprovadas são auto-negadas (bg).
+        group.MapPost("/{id}/runs/{runId}/foreground",
+            (string id, string runId, HttpContext h, AppDbContext d, CancellationToken c) =>
+                SwitchForegroundAsync(id, runId, h, d, foreground: true, c));
+        group.MapPost("/{id}/runs/{runId}/background",
+            (string id, string runId, HttpContext h, AppDbContext d, CancellationToken c) =>
+                SwitchForegroundAsync(id, runId, h, d, foreground: false, c));
         // Roster do agent team (SPEC-20261021-harness-seams RF-E1).
         group.MapGet("/{id}/team", GetTeamAsync);
         group.MapGet("/{id}/runs/{runId}/diff", GetRunDiffAsync);
@@ -513,6 +522,45 @@ public static class ChatRunEndpoints
     }
 
     /// <summary>Pede a interrupção de uma run ativa.</summary>
+    /// <summary>
+    /// RF-007 sidekick-orchestration: foreground = preset
+    /// <c>approve-mutations</c> (aprovações interativas ao dono);
+    /// background = <c>allow-readonly</c> (mutações não aprovadas são
+    /// auto-negadas — a run segue autônoma). Atua sobre o chat da run
+    /// filha (dispatch), só pelo dono.
+    /// </summary>
+    private static async Task<IResult> SwitchForegroundAsync(
+        string id, string runId, HttpContext http, AppDbContext db,
+        bool foreground, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        var run = await db.ChatRuns.AsNoTracking()
+            .FirstOrDefaultAsync(
+                r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
+        if (run is null)
+        {
+            return Results.NotFound(new { detail = RunNotFoundMessage });
+        }
+        var chat = await db.Chats.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (chat is null)
+        {
+            return Results.NotFound(new { detail = "Chat não encontrado." });
+        }
+        chat.ApprovalPreset = foreground ? "approve-mutations" : "allow-readonly";
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(new
+        {
+            runId,
+            mode = foreground ? "foreground" : "background",
+            approvalPreset = chat.ApprovalPreset,
+        });
+    }
+
+
     private static async Task<IResult> StopRunAsync(
         string id,
         string runId,

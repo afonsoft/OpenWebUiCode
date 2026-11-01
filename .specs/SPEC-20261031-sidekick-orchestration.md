@@ -101,11 +101,11 @@ tests/OpenWebUI.Api.Tests/DelegateTaskPersistentTests.cs                 (novo)
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** `delegate_task` com `agent:"explore"`, **when** executado, **then** o filho roda read-only com modelo barato.
-- [ ] **Given** dois `delegate_task` com mesmo `persistent:true`+`sidekick_id`, **when** o segundo roda, **then** ele vê o contexto do primeiro handoff.
-- [ ] **Given** `.agent.md` com `max_nesting:0`, **when** o filho tenta `delegate_task`, **then** recebe erro estruturado.
-- [ ] **Given** sidekick retorna sem `## Evidence`, **when** o lead processa, **then** o contrato de relatório é enforçado (prompt instrui pedir complemento).
-- [ ] **Given** dispatch em background, **when** `POST /foreground`, **then** prompts de aprovação passam a ir ao usuário.
+- [x] **Given** `delegate_task` com `agent:"explore"`, **when** executado, **then** o filho roda read-only com modelo barato.
+- [x] **Given** dois `delegate_task` com mesmo `persistent:true`+`sidekick_id`, **when** o segundo roda, **then** ele vê o contexto do primeiro handoff.
+- [x] **Given** `.agent.md` com `max_nesting:0`, **when** o filho tenta `delegate_task`, **then** recebe erro estruturado.
+- [x] **Given** sidekick retorna sem `## Evidence`, **when** o lead processa, **then** o contrato de relatório é enforçado (prompt instrui pedir complemento).
+- [x] **Given** dispatch em background, **when** `POST /foreground`, **then** prompts de aprovação passam a ir ao usuário.
 
 **Edge cases:**
 
@@ -118,14 +118,14 @@ tests/OpenWebUI.Api.Tests/DelegateTaskPersistentTests.cs                 (novo)
 
 ## 7. Task Plan
 
-- [ ] **T1 — Discovery:** ler `DelegateTaskBuiltinTool`, `.agent.md` loader, `SystemPromptContributors`, runs endpoints.
-- [ ] **T2 — Profiles:** `explore.agent.md` + `general.agent.md` com tools/modelo.
-- [ ] **T3 — Persistência:** `persistent`+`sidekick_id` com reuse de chat filho + serialização.
-- [ ] **T4 — Prompts:** blocos lead-discipline + handoff + report-contract nos contributors.
-- [ ] **T5 — `max_nesting`:** frontmatter + enforcement.
-- [ ] **T6 — fg/bg:** endpoints de alternância.
-- [ ] **T7 — Testes:** unitários (profile load, persistência, nesting, relatório) + integração (dispatch persistente).
-- [ ] **T8 — Done + PR.**
+- [x] **T1 — Discovery:** ler `DelegateTaskBuiltinTool`, `.agent.md` loader, `SystemPromptContributors`, runs endpoints.
+- [x] **T2 — Profiles:** `explore.agent.md` + `general.agent.md` com tools/modelo.
+- [x] **T3 — Persistência:** `persistent`+`sidekick_id` com reuse de chat filho + serialização.
+- [x] **T4 — Prompts:** blocos lead-discipline + handoff + report-contract nos contributors.
+- [x] **T5 — `max_nesting`:** frontmatter + enforcement.
+- [x] **T6 — fg/bg:** endpoints de alternância.
+- [x] **T7 — Testes:** unitários (profile load, persistência, nesting, relatório) + integração (dispatch persistente).
+- [x] **T8 — Done + PR.**
 
 **7.1 Validation strategy**
 
@@ -142,11 +142,29 @@ tests/OpenWebUI.Api.Tests/DelegateTaskPersistentTests.cs                 (novo)
 
 ## 9. Definition of Done
 
-- [ ] RFs implementados; aceite coberto por testes.
-- [ ] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
-- [ ] Guardrails respeitados; logs sem PII.
+- [x] RFs implementados; aceite coberto por testes.
+- [x] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
+- [x] Guardrails respeitados; logs sem PII.
 
 ## Open Questions / Pending Ambiguity
 
 - `persistent` default true ou false? (recomendo opt-in — `persistent:true` explícito, sidekick_id auto-gerado).
 - O relatório standalone deve ser enforçado por parser rígido ou só prompt? (recomendo prompt-only no MVP; parser na fase 2).
+
+## Notas de implementação (branch feature/devin-20261031-sidekick-orchestration)
+
+- RF-002 `persistent`/`sidekick_id`: kv `r:{parentRun}:sidekick:{id}` →
+  chat filho; `SidekickGate` (semaphore por par) serializa dispatches;
+  2º+ handoff vai por `ResumeInExistingChatAsync`. Sidekick_id omitido →
+  auto-gerado (`sk-<guid20>`). Não se aplica a ext:* (early-return antes).
+- RF-005 `max_nesting` aceito como alias de `maxDepth` (clamp 0..3;
+  negativo→0). Enforcement já existente via kv `agent.depth`+`agent.spawns`.
+- RF-007 fg/bg: `POST /{chatId}/runs/{runId}/foreground|background`
+  ajusta `Chat.ApprovalPreset` — fg=`approve-mutations` (interativo),
+  bg=`allow-readonly` (mutações auto-negadas). Mapeamento documentado:
+  "não-aprovadas auto-negadas" = allow-readonly.
+- RF-004 relatório standalone: enforcement prompt-only (open question —
+  parser rígido ficou para fase 2); contrato no DelegationPolicyContributor
+  + nos agent.md explore/general.
+- RF-001 profiles builtin: `explore.agent.md` (read-only + web_search +
+  todo_write, max_nesting 0) e `general.agent.md` (tools [*], max_nesting 0).

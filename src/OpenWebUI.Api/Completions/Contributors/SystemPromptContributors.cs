@@ -577,8 +577,55 @@ public sealed class DelegationPolicyContributor(
                 + "before choosing. As leader you plan, slice, assign and "
                 + "review; members execute. Use team:true + resume_chat_id "
                 + "for continuity across runs.",
+            // SPEC-20261031-sidekick-orchestration RF-003/RF-006: handoff
+            // disciplinado + retenção do lead.
+            "Handoff protocol (delegate_task): write each handoff with "
+                + "## Goal, ## Frozen inputs (results you already derived, "
+                + "with paths/values — the sidekick must not re-derive them), "
+                + "## Exact commands (verbatim), ## Done criteria and "
+                + "## Report contract. Carry code, not prose: exact snippet "
+                + "beats description. Consolidate related tasks in one brief.",
+            "Lead retention — never delegate: judgment calls, queries to "
+                + "shared systems (the exact query text is yours), "
+                + "correctness-critical work (data analysis/evals), complex "
+                + "rendered UI, conversation with the user, and the diff "
+                + "review before landing. A sidekick blocked 2-3 times or by "
+                + "environment/credentials hands back with evidence.",
+            "Sidekick report contract: every delegate result should arrive "
+                + "as ## Done / ## Evidence (paths + commands + relevant "
+                + "output) / ## Deviations / ## Pending — standalone. If a "
+                + "section is missing, ask the sidekick for the complement "
+                + "before acting on the result.",
         ];
     }
+}
+
+/// <summary>
+/// Bloco 3.5a+: disciplina de loop do agente
+/// (SPEC-20261031-agent-prompt-pack RF-007) — regras de delegação e
+/// verify-once, sempre emitidas (mesmo sem catálogo de especialistas;
+/// valem para o tool-call loop comum).
+/// </summary>
+public sealed class AgentDisciplineContributor : ISystemPromptContributor
+{
+    /// <inheritdoc />
+    public int Order => 86;
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx) =>
+        Task.FromResult<IReadOnlyList<string>>(
+        [
+            "Disciplina de delegação: ao delegar (builtin_delegate_task) "
+                + "escreva instruções completas e autossuficientes — o "
+                + "executor não vê esta conversa; inclua arquivos, "
+                + "contexto e critério de pronto. Nunca delegue trabalho "
+                + "que você pode fazer num único tool call.",
+            "Verify-once: após cada ação com efeito (edição, execução, "
+                + "escrita), verifique o resultado UMA vez no próximo "
+                + "passo e siga em frente — não re-verifique o mesmo "
+                + "estado em loops; se algo falhou duas vezes, mude de "
+                + "abordagem em vez de tentar de novo igual.",
+        ]);
 }
 
 /// <summary>

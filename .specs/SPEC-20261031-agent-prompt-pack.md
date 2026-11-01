@@ -116,12 +116,12 @@ Sem API nova (todas builtin tools + mecanismos internos do loop).
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** uma tool result, **when** o executor processa, **then** o footer é anexado (quando configurado).
-- [ ] **Given** mensagem do usuário durante a run, **when** a próxima iteração chega, **then** `unseen_messages` é chamada e a mensagem entra no contexto.
-- [ ] **Given** `instant_context` com tarefa exploratória, **when** executada, **then** retorna `<ANSWER>` com file+ranges válidos.
-- [ ] **Given** loop preso repetindo a mesma tool, **when** K iterações, **then** stall_watch injeta nudge.
-- [ ] **Given** provider com prompt-cache e aprovação pendente > T, **when** o tempo passa, **then** keepalive é enviado.
-- [ ] **Given** `extend_context` perto do teto, **when** chamada, **then** responde `at_ceiling` e sugere compactar.
+- [x] **Given** uma tool result, **when** o executor processa, **then** o footer é anexado (quando configurado).
+- [x] **Given** mensagem do usuário durante a run, **when** a próxima iteração chega, **then** `unseen_messages` é chamada e a mensagem entra no contexto.
+- [x] **Given** `instant_context` com tarefa exploratória, **when** executada, **then** retorna `<ANSWER>` com file+ranges válidos.
+- [x] **Given** loop preso repetindo a mesma tool, **when** K iterações, **then** stall_watch injeta nudge.
+- [x] **Given** provider com prompt-cache e aprovação pendente > T, **when** o tempo passa, **then** keepalive é enviado.
+- [x] **Given** `extend_context` perto do teto, **when** chamada, **then** responde `at_ceiling` e sugere compactar.
 
 **Edge cases:**
 
@@ -134,13 +134,13 @@ Sem API nova (todas builtin tools + mecanismos internos do loop).
 
 ## 7. Task Plan
 
-- [ ] **T1 — Discovery:** ler contributors/executor/pipeline/compaction; mapear pontos de injeção.
-- [ ] **T2 — Footer + unseen:** footer pós-tool + `unseen_messages` com auto-call.
-- [ ] **T3 — `instant_context`:** `RestrictedExecRunner` + coletor + parse XML.
-- [ ] **T4 — `extend_context` + stall + keepalive:** tool, watchdog, pings.
-- [ ] **T5 — Prompts:** blocos de disciplina nos contributors.
-- [ ] **T6 — Testes:** unitários (footer, unseen, restricted-exec, stall hash, extend) + integração (loop).
-- [ ] **T7 — Done + PR.**
+- [x] **T1 — Discovery:** ler contributors/executor/pipeline/compaction; mapear pontos de injeção.
+- [x] **T2 — Footer + unseen:** footer pós-tool + `unseen_messages` com auto-call.
+- [x] **T3 — `instant_context`:** `RestrictedExecRunner` + coletor + parse XML.
+- [x] **T4 — `extend_context` + stall + keepalive:** tool, watchdog, pings.
+- [x] **T5 — Prompts:** blocos de disciplina nos contributors.
+- [x] **T6 — Testes:** unitários (footer, unseen, restricted-exec, stall hash, extend) + integração (loop).
+- [x] **T7 — Done + PR.**
 
 **7.1 Validation strategy**
 
@@ -157,11 +157,34 @@ Sem API nova (todas builtin tools + mecanismos internos do loop).
 
 ## 9. Definition of Done
 
-- [ ] RFs implementados; aceite coberto por testes.
-- [ ] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
-- [ ] Guardrails respeitados; logs sem PII.
+- [x] RFs implementados; aceite coberto por testes.
+- [x] Edge cases tratados; `dotnet test` verde; `check-spec-status.py` ok.
+- [x] Guardrails respeitados; logs sem PII.
 
 ## Open Questions / Pending Ambiguity
 
 - `instant_context` deve rodar automaticamente na 1ª iteração ou só quando o modelo chama? (recomendo opt-in pelo modelo + config `instantContext.auto` para tarefas exploratórias).
 - Stall nudge vs. hard-stop? (recomendo nudge primeiro, escala para o usuário após M stalls seguidos).
+
+## Notas de implementação (PR feature/devin-20261031-agent-prompt-pack)
+
+- **RF-003 desvio**: `instant_context` implementado como coletor de turno
+  único — a tool recebe a lista de comandos (`rg`/`readfile`/`tree`)
+  executados pelo `RestrictedExecRunner` e devolve o XML estrito
+  `<ANSWER><file path><range/></ANSWER>` — em vez de um sub-agente com
+  loop próprio. Mesmo efeito de grounding; zero shells arbitrários.
+- **RF-005**: `StallWatchdog` conta repetições de tool+args+output
+  idênticos; nudge entra via fila `_contextNotes` (sem round extra).
+- **RF-006**: keepalive implementado dentro de `WaitApprovalAsync`
+  (wrapper sobre `approvals.WaitAsync`); ping via
+  `providers.CompleteAsync(model, ".", stream:false)` a cada
+  `AgentLoop:CacheKeepaliveSeconds` (default 0 = off). Falhas são
+  ignoradas → no-op automático para providers sem prompt-cache.
+- **RF-002**: `unseen_messages` devolve `ChatRunSteer` pendentes da run e
+  marca `promoted` — cobre mensagens que chegaram mid-run; PollSteerAsync
+  continua promovendo na fronteira de round.
+- **RF-004**: `ExtendContextBudget` consumido no
+  `OnOverflowCompactAsync` — concessão pula uma compactação de emergência
+  (`status=context_extended` no event stream).
+- Configs: `AgentLoop:ToolResultFooter`, `AgentLoop:StallThreshold` (4),
+  `AgentLoop:CacheKeepaliveSeconds` (0), `AgentLoop:ExtendContextCeiling` (2).
