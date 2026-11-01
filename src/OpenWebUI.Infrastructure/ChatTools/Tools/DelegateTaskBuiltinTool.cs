@@ -110,6 +110,14 @@ public sealed class DelegateTaskBuiltinTool(
             "resume_chat_id": {
               "type": "string",
               "description": "Resume an existing child chat (continuable sub-agent) instead of creating a new one — the prompt is appended and a new run enqueued there."
+            },
+            "persistent": {
+              "type": "boolean",
+              "description": "true: reuse one child chat across dispatches of this parent run — the sidekick keeps memory between handoffs (requires/ generates sidekick_id; serialized per sidekick). Not valid for ext:* agents."
+            },
+            "sidekick_id": {
+              "type": "string",
+              "description": "Stable id of the persistent sidekick within this parent run (auto-generated when persistent:true and omitted)."
             }
           },
           "required": ["prompt"]
@@ -202,6 +210,47 @@ public sealed class DelegateTaskBuiltinTool(
         var resumeChatId = args.TryGetProperty("resume_chat_id", out var resumeEl)
             && resumeEl.ValueKind == JsonValueKind.String
                 ? resumeEl.GetString() : null;
+        // SPEC-20261031-sidekick-orchestration RF-002: `persistent:true`
+        // reutiliza o chat filho do sidekick entre dispatches do mesmo pai
+        // (kv r:{parentRun}:sidekick:{id} → chatId; semáforo serializa
+        // dispatches concorrentes no mesmo sidekick).
+        var persistent = args.TryGetProperty("persistent", out var persEl)
+            && persEl.ValueKind == JsonValueKind.True;
+        if (persistent)
+        {
+            var sidekickId = ReadString(args, "sidekick_id", 100)?.Trim();
+            if (string.IsNullOrEmpty(sidekickId))
+            {
+                sidekickId = $"sk-{Guid.NewGuid():N}"[..20];
+            }
+            var gate2 = SidekickGate.For(context.RunId!, sidekickId);
+            await gate2.WaitAsync(ct);
+            try
+            {
+                var kvKey = $"r:{context.RunId}:sidekick:{sidekickId}";
+                var existingChat = await config.GetAsync<string?>(kvKey, null, ct);
+                if (existingChat is not null)
+                {
+                    return await ResumeInExistingChatAsync(
+                        new ResumeRequest(scope, db, context, parentRun,
+                            existingChat, fullPrompt, waitExplicit ?? true,
+                            joinTeam), ct);
+                }
+                var created = await CreateDispatchAsync(
+                    args, scope, db, context, config, parentRun, agent,
+                    fullPrompt, waitExplicit, autoMerge, joinTeam,
+                    personaSkill?.Content, prompt, ct);
+                if (created.ChatId is { } createdChatId)
+                {
+                    await config.SetAsync(kvKey, createdChatId, ct);
+                }
+                return created.Result;
+            }
+            finally
+            {
+                gate2.Release();
+            }
+        }
         if (resumeChatId is not null)
         {
             return await ResumeInExistingChatAsync(
@@ -209,6 +258,27 @@ public sealed class DelegateTaskBuiltinTool(
                     fullPrompt, waitExplicit ?? true, joinTeam), ct);
         }
 
+        var dispatch = await CreateDispatchAsync(
+            args, scope, db, context, config, parentRun, agent, fullPrompt,
+            waitExplicit, autoMerge, joinTeam,
+            personaSkill?.Content, prompt, ct);
+        return dispatch.Result;
+    }
+
+    /// <summary>
+    /// Dispatch one-shot de uma run filha (extraído do fluxo principal para
+    /// o caminho persistente do sidekick criar o primeiro handoff).
+    /// Devolve o tool result + o chatId criado (para persistência do
+    /// sidekick no kv do pai).
+    /// </summary>
+    private async Task<(BuiltinToolResult Result, string? ChatId)>
+        CreateDispatchAsync(
+            JsonElement args, IServiceScope scope, AppDbContext db,
+            BuiltinToolContext context, ConfigService config,
+            ChatRun parentRun, AgentDefinition? agent, string fullPrompt,
+            bool? waitExplicit, bool autoMerge, bool joinTeam,
+            string? personaPrompt, string prompt, CancellationToken ct)
+    {
         // Profundidade da cadeia pai (depth 0 = raiz). Runs de profundidade
         // ≥ MaxDepth perdem a tool delegate_task — o filho não pode delegar
         // além do limite (SPEC-20261010-async-delegate).
@@ -226,7 +296,7 @@ public sealed class DelegateTaskBuiltinTool(
             scope, agent, parentRun, context, parentMaxTier, ct);
         if (modelError is not null)
         {
-            return modelError;
+            return (modelError, null);
         }
 
         // `blocking` do agente é o default de wait (o arg explícito vence).
@@ -234,7 +304,7 @@ public sealed class DelegateTaskBuiltinTool(
 
         // RF-001 `skills`: slugs de skills pessoais ativas autoload —
         // conteúdo concatenado ao system prompt do agente.
-        var systemPrompt = agent is null ? personaSkill?.Content
+        var systemPrompt = agent is null ? personaPrompt
             : await ComposeSystemPromptAsync(db, context, agent, ct);
 
         var preset = context.ChatId is { } chatId
@@ -289,7 +359,7 @@ public sealed class DelegateTaskBuiltinTool(
             childRun.Status = ChatRunStatus.Failed;
             childRun.Error = repoError;
             await db.SaveChangesAsync(ct);
-            return new BuiltinToolResult(repoError);
+            return (new BuiltinToolResult(repoError), childChat.Id);
         }
 
         dispatcher.Enqueue(childRun.Id);
@@ -299,7 +369,7 @@ public sealed class DelegateTaskBuiltinTool(
         {
             // wait=false: devolve já — o pai segue o turno e colhe o
             // resultado depois via builtin:run_result (paralelismo real).
-            return new BuiltinToolResult(
+            return (new BuiltinToolResult(
                 $"Subtarefa delegada em background — run filha {childRun.Id} "
                     + $"(chat filho: {link}). Chame builtin_run_result com "
                     + $"run_id={childRun.Id} para colher o resultado.",
@@ -308,13 +378,28 @@ public sealed class DelegateTaskBuiltinTool(
                     childChatId = childChat.Id,
                     childRunId = childRun.Id,
                     status = "queued",
-                });
+                }), childChat.Id);
         }
 
-        return await WaitForChildAsync(
+        return (await WaitForChildAsync(
             new ChildWait(db, scope, context, childChat, childRun,
-                autoMerge, link), ct);
+                autoMerge, link), ct), childChat.Id);
     }
+
+    /// <summary>
+    /// Semáforo por sidekick (SPEC-20261031-sidekick-orchestration RF-002):
+    /// serializa dispatches concorrentes no mesmo sidekick_id do pai.
+    /// </summary>
+    private static class SidekickGate
+    {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+            string, SemaphoreSlim> Gates = new();
+
+        /// <summary>Semáforo do par (run-pai, sidekick).</summary>
+        public static SemaphoreSlim For(string parentRunId, string sidekickId) =>
+            Gates.GetOrAdd($"{parentRunId}:{sidekickId}", _ => new SemaphoreSlim(1, 1));
+    }
+
 
     /// <summary>
     /// Gate de delegação: depth residual esgotado bloqueia sempre; run de

@@ -577,6 +577,25 @@ public sealed class DelegationPolicyContributor(
                 + "before choosing. As leader you plan, slice, assign and "
                 + "review; members execute. Use team:true + resume_chat_id "
                 + "for continuity across runs.",
+            // SPEC-20261031-sidekick-orchestration RF-003/RF-006: handoff
+            // disciplinado + retenção do lead.
+            "Handoff protocol (delegate_task): write each handoff with "
+                + "## Goal, ## Frozen inputs (results you already derived, "
+                + "with paths/values — the sidekick must not re-derive them), "
+                + "## Exact commands (verbatim), ## Done criteria and "
+                + "## Report contract. Carry code, not prose: exact snippet "
+                + "beats description. Consolidate related tasks in one brief.",
+            "Lead retention — never delegate: judgment calls, queries to "
+                + "shared systems (the exact query text is yours), "
+                + "correctness-critical work (data analysis/evals), complex "
+                + "rendered UI, conversation with the user, and the diff "
+                + "review before landing. A sidekick blocked 2-3 times or by "
+                + "environment/credentials hands back with evidence.",
+            "Sidekick report contract: every delegate result should arrive "
+                + "as ## Done / ## Evidence (paths + commands + relevant "
+                + "output) / ## Deviations / ## Pending — standalone. If a "
+                + "section is missing, ask the sidekick for the complement "
+                + "before acting on the result.",
         ];
     }
 }
