@@ -57,10 +57,25 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
 
         var recursive = args.TryGetProperty("recursive", out var r)
             && r.ValueKind is JsonValueKind.True;
-        var root = Path.GetFullPath(context.WorkspacePath);
+        var (text, count) = CollectEntries(full, recursive);
+        if (count >= WorkspaceEntriesCap)
+        {
+            text += $"\n[listagem truncada em {WorkspaceEntriesCap} entradas]";
+        }
+
+        return Task.FromResult(new BuiltinToolResult(text, new
+        {
+            path = WorkspaceFiles.RelativeOf(
+                Path.GetFullPath(context.WorkspacePath), full),
+            entries = count,
+        }));
+    }
+
+    /// <summary>Varredura BFS do diretório até o cap de entradas.</summary>
+    private static (string Text, int Count) CollectEntries(string full, bool recursive)
+    {
         var sb = new StringBuilder();
         var count = 0;
-
         var pending = new Queue<(string Dir, int Depth)>();
         pending.Enqueue((full, 0));
         while (pending.Count > 0 && count < WorkspaceFiles.MaxEntries)
@@ -84,38 +99,35 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
                     break;
                 }
 
-                var indent = new string(' ', depth * 2);
-                if (Directory.Exists(entry))
-                {
-                    sb.Append(indent).Append(Path.GetFileName(entry)).Append('/').Append('\n');
-                    if (recursive
-                        && !Path.GetFileName(entry).Equals(".git", StringComparison.OrdinalIgnoreCase))
-                    {
-                        pending.Enqueue((entry, depth + 1));
-                    }
-                }
-                else
-                {
-                    var size = new FileInfo(entry).Length;
-                    sb.Append(indent).Append(Path.GetFileName(entry))
-                        .Append("  (").Append(FormatSize(size)).Append(')').Append('\n');
-                }
-
+                AppendEntry(sb, entry, depth, recursive, pending);
                 count++;
             }
         }
 
-        var text = sb.Length == 0 ? "(diretório vazio)" : sb.ToString().TrimEnd();
-        if (count >= WorkspaceEntriesCap)
-        {
-            text += $"\n[listagem truncada em {WorkspaceEntriesCap} entradas]";
-        }
+        return (sb.Length == 0 ? "(diretório vazio)" : sb.ToString().TrimEnd(), count);
+    }
 
-        return Task.FromResult(new BuiltinToolResult(text, new
+    /// <summary>Formata uma entrada (dir ou arquivo) e enfileira sub-dirs.</summary>
+    private static void AppendEntry(
+        StringBuilder sb, string entry, int depth, bool recursive,
+        Queue<(string Dir, int Depth)> pending)
+    {
+        var indent = new string(' ', depth * 2);
+        if (Directory.Exists(entry))
         {
-            path = WorkspaceFiles.RelativeOf(root, full),
-            entries = count,
-        }));
+            sb.Append(indent).Append(Path.GetFileName(entry)).Append('/').Append('\n');
+            if (recursive
+                && !Path.GetFileName(entry).Equals(".git", StringComparison.OrdinalIgnoreCase))
+            {
+                pending.Enqueue((entry, depth + 1));
+            }
+        }
+        else
+        {
+            var size = new FileInfo(entry).Length;
+            sb.Append(indent).Append(Path.GetFileName(entry))
+                .Append("  (").Append(FormatSize(size)).Append(')').Append('\n');
+        }
     }
 
     private const int WorkspaceEntriesCap = WorkspaceFiles.MaxEntries;
@@ -173,31 +185,7 @@ public sealed class FileReadBuiltinTool(
         var path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
         if (HistoryResourceService.IsHistoryUri(path))
         {
-            var (transcript, histError) = await history.ResolveAsync(
-                path!, context.UserId, context.ChatId, ct);
-            if (transcript is null)
-            {
-                return new BuiltinToolResult(histError ?? "histórico vazio.");
-            }
-
-            var histLines = transcript.Split('\n');
-            var hOffset = args.TryGetProperty("offset", out var ho)
-                && ho.TryGetInt32(out var hoff)
-                ? Math.Max(1, hoff) : 1;
-            var hLimit = args.TryGetProperty("limit", out var hl)
-                && hl.TryGetInt32(out var hlim)
-                ? Math.Clamp(hlim, 1, 2000) : 400;
-            var hsb = new StringBuilder($"{path} ({histLines.Length} linhas)\n");
-            for (var i = hOffset - 1; i < histLines.Length && i < hOffset - 1 + hLimit; i++)
-            {
-                hsb.Append($"{i + 1,6}: {histLines[i]}\n");
-            }
-            if (hOffset - 1 + hLimit < histLines.Length)
-            {
-                hsb.Append($"[truncado — restam {histLines.Length - (hOffset - 1 + hLimit)} linhas; "
-                    + "use offset para continuar]");
-            }
-            return new BuiltinToolResult(hsb.ToString().TrimEnd());
+            return await ReadHistoryAsync(path!, args, context, ct);
         }
 
         // Allowlist (RF-005 SPEC-20261016-tool-output-bounding): path
@@ -229,6 +217,38 @@ public sealed class FileReadBuiltinTool(
 
         var rel = WorkspaceFiles.RelativeOf(context.WorkspacePath, full);
         return await ReadFileAsync(full, rel, args, ct);
+    }
+
+    /// <summary>Ramo history:// — transcript paginado igual ao de arquivo.</summary>
+    private async Task<BuiltinToolResult> ReadHistoryAsync(
+        string path, JsonElement args, BuiltinToolContext context,
+        CancellationToken ct)
+    {
+        var (transcript, histError) = await history.ResolveAsync(
+            path, context.UserId, context.ChatId, ct);
+        if (transcript is null)
+        {
+            return new BuiltinToolResult(histError ?? "histórico vazio.");
+        }
+
+        var histLines = transcript.Split('\n');
+        var hOffset = args.TryGetProperty("offset", out var ho)
+            && ho.TryGetInt32(out var hoff)
+            ? Math.Max(1, hoff) : 1;
+        var hLimit = args.TryGetProperty("limit", out var hl)
+            && hl.TryGetInt32(out var hlim)
+            ? Math.Clamp(hlim, 1, 2000) : 400;
+        var hsb = new StringBuilder($"{path} ({histLines.Length} linhas)\n");
+        for (var i = hOffset - 1; i < histLines.Length && i < hOffset - 1 + hLimit; i++)
+        {
+            hsb.Append($"{i + 1,6}: {histLines[i]}\n");
+        }
+        if (hOffset - 1 + hLimit < histLines.Length)
+        {
+            hsb.Append($"[truncado — restam {histLines.Length - (hOffset - 1 + hLimit)} linhas; "
+                + "use offset para continuar]");
+        }
+        return new BuiltinToolResult(hsb.ToString().TrimEnd());
     }
 
     /// <summary>Leitura paginada comum (workspace ou arquivo gerenciado allowlisted).</summary>
@@ -352,22 +372,62 @@ public sealed class FileGrepBuiltinTool(
         var path = args.TryGetProperty("path", out var pEl) ? pEl.GetString() : null;
         if (HistoryResourceService.IsHistoryUri(path))
         {
-            var (transcript, histError) = await history.ResolveAsync(
-                path!, context.UserId, context.ChatId, ct);
-            if (transcript is null)
-            {
-                return new BuiltinToolResult(histError ?? "histórico vazio.");
-            }
-            var hits = transcript.Split('\n')
-                .Where(line => regex.IsMatch(line))
-                .Take(max)
-                .ToList();
-            return new BuiltinToolResult(hits.Count == 0
-                ? "Sem matches no histórico."
-                : string.Join('\n', hits.Select(h => $"history: {h}")));
+            return await GrepHistoryAsync(path!, regex, max, context, ct);
         }
-        string root;
-        string full;
+        var (root, full, targetError) = await ResolveGrepTargetAsync(path, context, ct);
+        if (targetError is not null)
+        {
+            return targetError;
+        }
+
+        root = Path.GetFullPath(root);
+        var files = EnumerateGrepFiles(root, full, args);
+        var sb = new StringBuilder();
+        var (matches, scanned) = await CollectMatchesAsync(
+            files, regex, root, max, sb, ct);
+
+        string text;
+        if (matches == 0)
+        {
+            text = $"Nenhum match de '{pattern}' ({scanned} arquivos lidos).";
+        }
+        else
+        {
+            text = sb.ToString().TrimEnd();
+            if (matches >= max)
+            {
+                text += $"\n[truncado em {max} matches]";
+            }
+        }
+        return new BuiltinToolResult(text, new { pattern, matches, scanned });
+    }
+
+    /// <summary>Ramo history:// — casa a regex linha a linha no transcript.</summary>
+    private async Task<BuiltinToolResult> GrepHistoryAsync(
+        string path, Regex regex, int max, BuiltinToolContext context,
+        CancellationToken ct)
+    {
+        var (transcript, histError) = await history.ResolveAsync(
+            path, context.UserId, context.ChatId, ct);
+        if (transcript is null)
+        {
+            return new BuiltinToolResult(histError ?? "histórico vazio.");
+        }
+        var hits = transcript.Split('\n')
+            .Where(line => regex.IsMatch(line))
+            .Take(max)
+            .ToList();
+        return new BuiltinToolResult(hits.Count == 0
+            ? "Sem matches no histórico."
+            : string.Join('\n', hits.Select(h => $"history: {h}")));
+    }
+
+    /// <summary>Resolve raiz+alvo do grep — ref:// usa a raiz da referência
+    /// como jail; senão, o workspace.</summary>
+    private async Task<(string Root, string Full, BuiltinToolResult? Error)>
+        ResolveGrepTargetAsync(
+            string? path, BuiltinToolContext context, CancellationToken ct)
+    {
         if (refs is not null
             && ReferenceService.TrySplitRef(path, out _, out _))
         {
@@ -376,22 +436,21 @@ public sealed class FileGrepBuiltinTool(
                 context.UserId, path, context.AttachedRefs, ct);
             if (target is null)
             {
-                return new BuiltinToolResult(refError!);
+                return (string.Empty, string.Empty, new BuiltinToolResult(refError!));
             }
-            root = target.Root;
-            full = target.Full;
+            return (target.Root, target.Full, null);
         }
-        else
-        {
-            root = context.WorkspacePath;
-            var resolved = WorkspaceFiles.ResolveInside(root, path, out var error);
-            if (resolved is null)
-            {
-                return new BuiltinToolResult(error);
-            }
-            full = resolved;
-        }
+        var resolved = WorkspaceFiles.ResolveInside(
+            context.WorkspacePath, path, out var error);
+        return resolved is null
+            ? (string.Empty, string.Empty, new BuiltinToolResult(error))
+            : (context.WorkspacePath, resolved, null);
+    }
 
+    /// <summary>Enumera os arquivos do alvo aplicando o filtro de glob.</summary>
+    private static IEnumerable<string> EnumerateGrepFiles(
+        string root, string full, JsonElement args)
+    {
         var globPattern = args.TryGetProperty("glob", out var g) ? g.GetString() : null;
         Regex? glob = !string.IsNullOrWhiteSpace(globPattern)
             ? WorkspaceFiles.GlobToRegex(globPattern)
@@ -412,15 +471,18 @@ public sealed class FileGrepBuiltinTool(
         {
             files = [];
         }
-        if (glob is not null)
-        {
-            files = files.Where(f => glob.IsMatch(globOnBasename
+        return glob is null
+            ? files
+            : files.Where(f => glob.IsMatch(globOnBasename
                 ? Path.GetFileName(f)
                 : WorkspaceFiles.RelativeOf(root, f)));
-        }
+    }
 
-        root = Path.GetFullPath(root);
-        var sb = new StringBuilder();
+    /// <summary>Varre os arquivos acumulando matches até o cap.</summary>
+    private static async Task<(int Matches, int Scanned)> CollectMatchesAsync(
+        IEnumerable<string> files, Regex regex, string root, int max,
+        StringBuilder sb, CancellationToken ct)
+    {
         var matches = 0;
         var scanned = 0;
         foreach (var file in files)
@@ -452,21 +514,7 @@ public sealed class FileGrepBuiltinTool(
                 }
             }
         }
-
-        string text;
-        if (matches == 0)
-        {
-            text = $"Nenhum match de '{pattern}' ({scanned} arquivos lidos).";
-        }
-        else
-        {
-            text = sb.ToString().TrimEnd();
-            if (matches >= max)
-            {
-                text += $"\n[truncado em {max} matches]";
-            }
-        }
-        return new BuiltinToolResult(text, new { pattern, matches, scanned });
+        return (matches, scanned);
     }
 
     private static async IAsyncEnumerable<string> ReadLinesAsync(
