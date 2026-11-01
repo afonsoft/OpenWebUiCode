@@ -50,23 +50,18 @@ public static class ApplyPatch
         var ended = false;
         while (i < lines.Length && !ended)
         {
-            var line = lines[i];
-            if (string.IsNullOrWhiteSpace(line))
+            var trimmed = lines[i].Trim();
+            if (trimmed.Length == 0 || trimmed == "*** End of File")
             {
+                // "End of File" é terminador opcional de seção (compat
+                // com o formato codex).
                 i++;
                 continue;
             }
 
-            if (line.Trim() == "*** End Patch")
+            if (trimmed == "*** End Patch")
             {
                 ended = true;
-                i++;
-                continue;
-            }
-
-            if (line.Trim() == "*** End of File")
-            {
-                // Terminador opcional de seção (compat com o formato codex).
                 i++;
                 continue;
             }

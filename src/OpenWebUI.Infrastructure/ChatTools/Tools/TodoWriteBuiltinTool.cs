@@ -67,6 +67,30 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
                 "Parâmetro 'todos' (array) é obrigatório."));
         }
 
+        var parsed = ParseTodos(todosEl);
+        if (parsed.Error is not null)
+        {
+            return Task.FromResult(new BuiltinToolResult(parsed.Error));
+        }
+
+        var text = $"Plano atualizado: {parsed.Items!.Count} tarefa(s) — "
+            + $"{parsed.Done} concluída(s), {parsed.Doing} em andamento.";
+        // A próxima tarefa pendente volta no resultado: o modelo vê na hora
+        // o que falta e encadeia a continuação sem precisar de intervenção
+        // do usuário ("vai para a próxima tarefa" manual).
+        if (parsed.NextPending is not null)
+        {
+            text += $" Próxima tarefa: {parsed.NextPending} — continue sem interrupção.";
+        }
+        return Task.FromResult(new BuiltinToolResult(
+            text, new { tasks = parsed.Items }));
+    }
+
+    /// <summary>Normaliza e valida os itens do plano: ids sintéticos
+    /// <c>t{n}</c>, cap por item, truncamento de content e contadores
+    /// por status.</summary>
+    private static ParsedTodos ParseTodos(JsonElement todosEl)
+    {
         var items = new List<object>();
         string? nextPendingContent = null;
         var done = 0;
@@ -89,8 +113,8 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
             if (string.IsNullOrWhiteSpace(content)
                 || status is not ("pending" or "in_progress" or "completed"))
             {
-                return Task.FromResult(new BuiltinToolResult(
-                    "Todo item exige 'content' e 'status' ∈ pending|in_progress|completed."));
+                return new ParsedTodos(null, 0, 0, null,
+                    "Todo item exige 'content' e 'status' ∈ pending|in_progress|completed.");
             }
 
             var id = el.TryGetProperty("id", out var idEl) && !string.IsNullOrWhiteSpace(idEl.GetString())
@@ -117,16 +141,10 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
 
             items.Add(new { id, content, status });
         }
-
-        var text = $"Plano atualizado: {items.Count} tarefa(s) — "
-            + $"{done} concluída(s), {doing} em andamento.";
-        // A próxima tarefa pendente volta no resultado: o modelo vê na hora
-        // o que falta e encadeia a continuação sem precisar de intervenção
-        // do usuário ("vai para a próxima tarefa" manual).
-        if (nextPendingContent is not null)
-        {
-            text += $" Próxima tarefa: {nextPendingContent} — continue sem interrupção.";
-        }
-        return Task.FromResult(new BuiltinToolResult(text, new { tasks = items }));
+        return new ParsedTodos(items, done, doing, nextPendingContent, null);
     }
+
+    private sealed record ParsedTodos(
+        List<object>? Items, int Done, int Doing,
+        string? NextPending, string? Error);
 }
