@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s3776-20261031` |
 | Ticket | `GH#565` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -127,3 +127,9 @@ N/A.
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` Fatiamento: um PR por fatia (3 PRs) vs PR único grande — recomendação: por fatia.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/590 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/565
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

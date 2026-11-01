@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/reasoning-tag-sanitization-20261031` |
 | Ticket | `GH#561` |
-| Status | `Done` |
+| Status | `Completed` |
 | Parent | gap-analysis-20261031 · bug reportado pelo usuário (chat `30b15271-12c9-42b6-8fa6-ca2a8968ab5a` em produção) |
 
 ## 1. User Story
@@ -158,3 +158,9 @@ N/A — nenhum endpoint/contrato novo; o shape SSE (`delta.content`, `delta.reas
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` Reescrita retroativa das ~2 mensagens persistidas com markup (UPDATE sanitizante em `ChatMessages.Content`) — decidir se entra nesta entrega ou em SPEC de data-fix separada. Recomendação: separada.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/580 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/561
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

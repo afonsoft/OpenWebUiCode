@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s3358-20261031` |
 | Ticket | `GH#566` |
-| Status | `Done` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -120,3 +120,9 @@ N/A.
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` granularidade de PR (por slice de camada — recomendado).
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/585 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/566
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

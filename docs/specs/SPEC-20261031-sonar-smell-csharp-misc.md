@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-csharp-misc-20261031` |
 | Ticket | `GH#569` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -158,3 +158,9 @@ N/A.
 
 - `[A DEFINIR]` `S1135`: os 20 "TODO" legítimos viram issues GitHub próprias ou são reworded? — decisão por item em T3 (padrão: pendência real → issue; comentário descritivo → reword).
 - `[A DEFINIR]` `css:S9423` em `tailwind.input.css` — fix (adicionar font stack) ou FP — confirmar em T1 lendo o input.css.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/587 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/569
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560
