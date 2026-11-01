@@ -10,7 +10,7 @@
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-tool-search-deferred |
 | Ticket | #576 (Epic #572/E19) |
-| Status | Approved |
+| Status | Completed |
 
 ## 1. User Story
 
@@ -177,3 +177,8 @@ Sem API nova. `tool_search` é builtin tool (`builtin_tool_search`).
 - Testes: `ToolSearchTests` 8/8 — split opt-in, csv/never-defer, MCP
   threshold+core, índice cap/"and N more", loader match/no-match/inativo,
   gate state por-run + alias chatId.
+
+
+## Delivered
+
+- PR #596 — implementação e testes mergeados em `main` (2026-11-01).
