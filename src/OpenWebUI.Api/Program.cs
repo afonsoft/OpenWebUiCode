@@ -259,6 +259,9 @@ builder.Services.AddScoped<IBuiltinChatTool, PlanExitBuiltinTool>();
 builder.Services.AddSingleton<DeferredToolState>();
 builder.Services.AddSingleton<ToolIndexService>();
 builder.Services.AddScoped<IBuiltinChatTool, ToolSearchBuiltinTool>();
+// Plan mode v2 (SPEC-20261031): write_plan + diretório de planos.
+builder.Services.AddSingleton<PlanFileService>();
+builder.Services.AddScoped<IBuiltinChatTool, WritePlanBuiltinTool>();
 // Agent teams (SPEC-20261021-harness-seams RF-E2).
 builder.Services.AddScoped<IBuiltinChatTool, TeamTaskBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TeamMessageBuiltinTool>();
@@ -676,6 +679,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapCheckpointEndpoints();
     app.MapWorkspaceTestRunEndpoints();
     app.MapRepoSkillEndpoints();
+    app.MapPlanEndpoints();
     app.MapAgentEndpoints();
     app.MapIdeEndpoints();
     app.MapPreviewEndpoints();
