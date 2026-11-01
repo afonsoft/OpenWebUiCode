@@ -113,7 +113,7 @@ public sealed class ExtendContextBuiltinTool(
         var ceiling = int.TryParse(config["AgentLoop:ExtendContextCeiling"], out var ceil)
             ? ceil
             : ExtendContextBudget.DefaultCeiling;
-        var status = budget.Request(context.RunId, ceiling);
+        var status = budget.Request(context.RunId ?? string.Empty, ceiling);
         var text = status switch
         {
             ExtendContextBudget.Status.Granted =>
