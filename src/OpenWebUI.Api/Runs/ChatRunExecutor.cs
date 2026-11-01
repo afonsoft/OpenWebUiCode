@@ -2264,7 +2264,7 @@ public sealed class ChatRunExecutor(
         var model = runId is null ? null : ModelOfRun(runId);
         while (!wait.IsCompleted)
         {
-            var done = await Task.WhenAny(wait, Task.Delay(delay, ct));
+            var done = await Task.WhenAny(wait, Task.Delay(delay, CancellationToken.None));
             if (done == wait || ct.IsCancellationRequested)
             {
                 break;

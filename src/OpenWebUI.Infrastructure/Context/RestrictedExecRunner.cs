@@ -74,7 +74,7 @@ public sealed class RestrictedExecRunner
     }
 
     /// <summary><c>rg &lt;pattern&gt;</c> — busca regex linha a linha.</summary>
-    private IEnumerable<Snippet> RunGrep(string workspace, string pattern)
+    private static IEnumerable<Snippet> RunGrep(string workspace, string pattern)
     {
         if (string.IsNullOrWhiteSpace(pattern))
         {
@@ -93,29 +93,9 @@ public sealed class RestrictedExecRunner
         var matches = 0;
         foreach (var file in EnumerateFiles(workspace))
         {
-            var rel = Path.GetRelativePath(workspace, file);
-            string[] lines;
-            try
+            foreach (var snippet in GrepFile(workspace, file, re))
             {
-                lines = File.ReadAllLines(file);
-            }
-            catch (IOException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
-            var found = new List<(int Line, string Text)>();
-            for (var i = 0; i < lines.Length && found.Count < 10; i++)
-            {
-                if (re.IsMatch(lines[i]))
-                {
-                    found.Add((i + 1, lines[i]));
-                }
-            }
-            foreach (var g in found.GroupConsecutive())
-            {
-                var start = g.First().Line;
-                var end = g.Last().Line;
-                var text = string.Join('\n',
-                    g.Select(m => $"{m.Line}: {m.Text}"));
-                yield return new Snippet(rel, start, end, text);
+                yield return snippet;
                 if (++matches >= MaxMatches)
                 {
                     yield break;
@@ -128,8 +108,36 @@ public sealed class RestrictedExecRunner
         }
     }
 
+    /// <summary>Matches do pattern num arquivo → snippets agrupados.</summary>
+    private static IEnumerable<Snippet> GrepFile(
+        string workspace, string file, Regex re)
+    {
+        string[] lines;
+        try
+        {
+            lines = File.ReadAllLines(file);
+        }
+        catch (IOException) { yield break; }
+        catch (UnauthorizedAccessException) { yield break; }
+        var found = new List<(int Line, string Text)>();
+        for (var i = 0; i < lines.Length && found.Count < 10; i++)
+        {
+            if (re.IsMatch(lines[i]))
+            {
+                found.Add((i + 1, lines[i]));
+            }
+        }
+        var rel = Path.GetRelativePath(workspace, file);
+        foreach (var g in found.GroupConsecutive())
+        {
+            var text = string.Join('\n',
+                g.Select(m => $"{m.Line}: {m.Text}"));
+            yield return new Snippet(rel, g[0].Line, g[^1].Line, text);
+        }
+    }
+
     /// <summary><c>readfile &lt;path&gt; &lt;a&gt; &lt;b&gt;</c> — linhas a–b.</summary>
-    private IEnumerable<Snippet> RunReadFile(string workspace, string rest)
+    private static IEnumerable<Snippet> RunReadFile(string workspace, string rest)
     {
         var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 3
@@ -159,7 +167,7 @@ public sealed class RestrictedExecRunner
     }
 
     /// <summary><c>tree &lt;path&gt; [depth]</c> — árvore de diretório.</summary>
-    private IEnumerable<Snippet> RunTree(string workspace, string rest)
+    private static IEnumerable<Snippet> RunTree(string workspace, string rest)
     {
         var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var rel = parts.Length > 0 ? parts[0] : ".";
