@@ -185,7 +185,8 @@ public class SddOrchestratorPromptsTests
             .ContributeAsync(Ctx(_root));
         Assert.Multiple(() =>
         {
-            Assert.That(sections, Has.Count.EqualTo(1));
+            // Delegação + handoff/lead/report (sidekick-orchestration).
+            Assert.That(sections, Has.Count.EqualTo(4));
             Assert.That(sections[0], Does.Contain("delegate_task"));
             Assert.That(sections[0], Does.Contain("agent_catalog"));
         });
@@ -202,7 +203,7 @@ public class SddOrchestratorPromptsTests
         await db.SaveChangesAsync();
         var sections = await new DelegationPolicyContributor(Agents(), db)
             .ContributeAsync(Ctx(_root, chatId: "c1"));
-        Assert.That(sections, Has.Count.EqualTo(1));
+        Assert.That(sections, Has.Count.EqualTo(4));
     }
 
     // ---------- D: envelope <untrusted_input> (RF-D) ----------
