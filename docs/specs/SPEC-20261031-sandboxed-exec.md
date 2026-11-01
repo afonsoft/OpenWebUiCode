@@ -10,7 +10,7 @@
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-sandboxed-exec |
 | Ticket | #578 (Epic #572/E19) |
-| Status | Approved |
+| Status | Completed |
 
 ## 1. User Story
 
@@ -171,3 +171,7 @@ tests/OpenWebUI.Api.Tests/SandboxedExecTests.cs                   (novo)
   adiciona à allowlist da sessão (limpa no fim da run).
 - Testes: 6 novos em `SandboxedExecTests` (allowlist, escopo/grants,
   args do bwrap, proxy 403 + DeniedHosts, capabilities). Build 0/0.
+
+## Delivered
+
+- PR #600 — implementação e testes mergeados em `main` (2026-11-01).
