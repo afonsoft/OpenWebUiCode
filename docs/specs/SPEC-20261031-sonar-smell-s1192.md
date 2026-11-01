@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s1192-20261031` |
 | Ticket | `GH#567` |
-| Status | `Done` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -122,3 +122,9 @@ N/A — valores de campo JSON preservados exatamente.
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` Promover literais cross-arquivo a classe compartilhada (`internal static class WireKeys`) vs const privada por arquivo — recomendação: privada salvo ≥3 arquivos com a mesma literal (avaliar em T1).
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/584 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/567
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

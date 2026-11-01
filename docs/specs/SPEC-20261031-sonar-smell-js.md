@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-js-20261031` |
 | Ticket | `GH#570` |
-| Status | `PR aberto (#588)` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -146,3 +146,9 @@ N/A.
 | S3776 | `ide-editor.js` `renderDiags` | resolvido via extração de `appendSquiggles` (2 níveis de nesting removidos). |
 
 **Evidências:** `node --check` OK nos 11 arquivos; semântica preservada (arrow `this` no `resolve` de app.js, clones antes de `await` no SW, `InvokeAsync<bool>` tolera async nos callers de audio).
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/588 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/570
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

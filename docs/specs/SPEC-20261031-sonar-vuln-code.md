@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-vuln-code-20261031` |
 | Ticket | `GH#563` |
-| Status | `Done` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -146,3 +146,9 @@ N/A — possível endurecimento de validação de `uri` em `CreateRequest` (inte
 
 - `[A DEFINIR]` Valor atual exato de `ContentSecurityPolicy` e baseline CSP do WASM (confirmar em T1 — pode exigir `wasm-unsafe-eval`, que é aceitável e distinto de `unsafe-eval`).
 - `[A DEFINIR]` Confirmação do usuário para tocar `Dockerfile` (RF-007) — Soft Rule 1.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/582 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/563
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

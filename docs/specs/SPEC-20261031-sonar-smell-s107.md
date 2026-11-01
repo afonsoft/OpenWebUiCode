@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s107-20261031` |
 | Ticket | `GH#568` |
-| Status | `Done` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -139,3 +139,9 @@ N/A — **o contrato existente não muda**: `[AsParameters]` preserva binding de
 - `ContextCompactionService` opcionais → `CompactionDeps` (registrado; defaults preservados).
 - Query records (`ChatListQuery`, `UserListQuery`, `LocationQuery`) preservam os nomes do contrato de query string.
 - Testes atualizados para as novas assinaturas (sem mudança de expectativa).
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/586 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/568
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

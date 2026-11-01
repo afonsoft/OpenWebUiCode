@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-vuln-fp-triage-20261031` |
 | Ticket | `GH#564` |
-| Status | `Done` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -115,3 +115,9 @@ N/A.
 
 - `[A DEFINIR]` `SONAR_TOKEN` disponível? Se não, entregar instruções de UI para ação humana (mesmo modelo de `sonar-vendor-cleanup.md`).
 - `[A DEFINIR]` Preferência do usuário: won't-fix (recomendado) vs rename das chaves.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/581 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/564
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

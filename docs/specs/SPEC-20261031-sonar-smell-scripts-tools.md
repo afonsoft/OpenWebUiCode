@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-scripts-tools-20261031` |
 | Ticket | `GH#571` |
-| Status | `In execution` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -158,3 +158,9 @@ N/A.
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` Comando exato de rebuild do `ide-editor.bundle.js` (package.json do `tools/ide-bundle` — confirmar em T1).
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/589 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/571
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560

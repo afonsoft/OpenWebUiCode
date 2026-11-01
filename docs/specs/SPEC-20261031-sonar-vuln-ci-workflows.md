@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-vuln-ci-workflows-20261031` |
 | Ticket | `GH#562` |
-| Status | `In review` |
+| Status | `Completed` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -131,3 +131,9 @@ N/A.
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` Fonte do checksum oficial do actionlint (release notes vs checksums.txt no release) — confirmar em T1.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/583 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/562
+- Epic: https://github.com/afonsoft/OpenWebUiCode/issues/560
