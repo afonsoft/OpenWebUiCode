@@ -10,7 +10,7 @@
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-agent-prompt-pack |
 | Ticket | #579 (Epic #572/E19) |
-| Status | Approved |
+| Status | Completed |
 
 ## 1. User Story
 
@@ -188,3 +188,7 @@ Sem API nova (todas builtin tools + mecanismos internos do loop).
   (`status=context_extended` no event stream).
 - Configs: `AgentLoop:ToolResultFooter`, `AgentLoop:StallThreshold` (4),
   `AgentLoop:CacheKeepaliveSeconds` (0), `AgentLoop:ExtendContextCeiling` (2).
+
+## Delivered
+
+- PR #594 — implementação e testes mergeados em `main` (2026-11-01).
