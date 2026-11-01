@@ -32,7 +32,7 @@ public static class TerminalPtyEndpoints
             ConfigGetAsync(http, config, configuration, ct));
         group.MapPut("/config", (HttpContext http, ConfigService config,
             AppDbContext db, CancellationToken ct) =>
-            ConfigPutAsync(http, config, db, ct));
+            ConfigPutAsync(http, config, ct));
 
         group.MapPost("/sessions", (HttpContext http,
             [AsParameters] TerminalDeps deps, CancellationToken ct) =>
@@ -81,7 +81,7 @@ public static class TerminalPtyEndpoints
     }
 
     private static async Task<IResult> ConfigPutAsync(
-        HttpContext http, ConfigService config, AppDbContext db, CancellationToken ct)
+        HttpContext http, ConfigService config, CancellationToken ct)
     {
         var user = await CurrentUserAsync(http, ct);
         if (user is null)
@@ -104,7 +104,7 @@ public static class TerminalPtyEndpoints
         HttpContext http, TerminalDeps deps, CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(
-            http, deps.Db, deps.Config, deps.Configuration, ct);
+            http, deps.Config, deps.Configuration, ct);
         if (error is not null)
         {
             return error;
@@ -186,7 +186,7 @@ public static class TerminalPtyEndpoints
         ConfigService config, IConfiguration configuration,
         string? chatId, CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(http, config, configuration, ct);
         if (error is not null)
         {
             return error;
@@ -204,7 +204,7 @@ public static class TerminalPtyEndpoints
         AppDbContext db, ConfigService config, IConfiguration configuration,
         CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(http, config, configuration, ct);
         if (error is not null)
         {
             return error;
@@ -220,7 +220,7 @@ public static class TerminalPtyEndpoints
         AppDbContext db, ConfigService config, IConfiguration configuration,
         CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(http, config, configuration, ct);
         if (error is not null)
         {
             return error;
@@ -312,7 +312,7 @@ public static class TerminalPtyEndpoints
         HttpContext http, TerminalDeps deps, CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(
-            http, deps.Db, deps.Config, deps.Configuration, ct);
+            http, deps.Config, deps.Configuration, ct);
         if (error is not null)
         {
             return error;
@@ -563,7 +563,7 @@ public static class TerminalPtyEndpoints
     }
 
     private static async Task<(User? User, IResult? Error)> AuthorizedAsync(
-        HttpContext http, AppDbContext db, ConfigService config,
+        HttpContext http, ConfigService config,
         IConfiguration configuration, CancellationToken ct)
     {
         var user = await CurrentUserAsync(http, ct);

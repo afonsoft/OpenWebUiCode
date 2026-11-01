@@ -166,7 +166,7 @@ public class GlobalAgentsScopeTests
             {"mcpServers":{"dup":{"url":"https://proj.example.com"}}}
             """);
 
-        var config = _svc.LoadMcpServers(_dir, _home);
+        var config = SkillDiscoveryService.LoadMcpServers(_dir, _home);
 
         Assert.Multiple(() =>
         {
@@ -194,7 +194,7 @@ public class GlobalAgentsScopeTests
         WriteFile(_dir, ".agents/mcp.json",
             """{"mcpServers":{"ok":{"url":"https://x.example.com"}}}""");
 
-        var config = _svc.LoadMcpServers(_dir, _home);
+        var config = SkillDiscoveryService.LoadMcpServers(_dir, _home);
 
         Assert.Multiple(() =>
         {
@@ -210,7 +210,7 @@ public class GlobalAgentsScopeTests
         WriteFile(_home, ".agents/mcp.json",
             """{"mcpServers":{"vazio":{"foo":1}}}""");
 
-        var config = _svc.LoadMcpServers(null, _home);
+        var config = SkillDiscoveryService.LoadMcpServers(null, _home);
 
         Assert.Multiple(() =>
         {

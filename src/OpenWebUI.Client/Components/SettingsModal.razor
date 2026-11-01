@@ -776,8 +776,7 @@
                                 </div>
                                 @foreach (var model in group)
                                 {
-                                    var key = $"{model.Provider}:{model.Id}";
-                                    var on = ModelEnabled(model);
+                                                                        var on = ModelEnabled(model);
                                     <div class="flex items-center justify-between gap-2 min-h-11">
                                         <div class="min-w-0">
                                             <div class="text-sm truncate">@model.Name</div>
@@ -2190,7 +2189,7 @@
 
     /// <summary>Trocar o tipo recarrega o endpoint oficial quando o campo está
     /// vazio ou ainda aponta para um default conhecido (URL custom é preservada).</summary>
-    private void OnProviderTypeChanged(ProviderRow row)
+    private static void OnProviderTypeChanged(ProviderRow row)
     {
         var knownDefaults = ProviderTypes.All
             .Select(ProviderTypes.DefaultBaseUrl)

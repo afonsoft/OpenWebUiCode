@@ -132,13 +132,13 @@ public sealed class ContextSnapshotService(
             {
                 return (null, new SnapshotError(InvalidPayloadCode, $"item {idx} não é objeto."));
             }
-            foreach (var p in e.EnumerateObject())
+            var unknownField = e.EnumerateObject()
+                .Select(p => p.Name)
+                .FirstOrDefault(n => !s_itemFields.Contains(n));
+            if (unknownField is not null)
             {
-                if (!s_itemFields.Contains(p.Name))
-                {
-                    return (null, new SnapshotError(InvalidPayloadCode,
-                        $"item {idx}: campo desconhecido '{p.Name}'."));
-                }
+                return (null, new SnapshotError(InvalidPayloadCode,
+                        $"item {idx}: campo desconhecido '{unknownField}'."));
             }
 
             var kind = e.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String

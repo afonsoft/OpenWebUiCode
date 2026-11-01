@@ -192,7 +192,7 @@
         _userToggled = true;
     }
 
-    private string ToolSuffix => Name.Split(':', '/').Last();
+    private string ToolSuffix => Name.Split([':', '/'])[^1];
 
     private bool IsShell => ToolSuffix == "shell_exec";
     private bool IsCode => ToolSuffix == "code_interpreter";

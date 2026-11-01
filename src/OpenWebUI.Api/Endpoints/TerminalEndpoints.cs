@@ -20,7 +20,7 @@ public static class TerminalEndpoints
         var group = app.MapGroup("/api/v1/terminals").RequireAuthorization();
 
         group.MapGet("/", (HttpContext http, TerminalProxyService terminals, CancellationToken ct) =>
-            ListAsync(http, terminals, ct));
+            ListAsync(terminals, ct));
         group.MapGet("/config", (HttpContext http, TerminalProxyService terminals, CancellationToken ct) =>
             ListConfigAsync(http, terminals, ct));
         group.MapPost("/config", (HttpContext http, TerminalProxyService terminals, CancellationToken ct) =>
@@ -37,7 +37,7 @@ public static class TerminalEndpoints
     }
 
     private static async Task<IResult> ListAsync(
-        HttpContext http, TerminalProxyService terminals, CancellationToken ct)
+        TerminalProxyService terminals, CancellationToken ct)
     {
         var servers = await terminals.GetServersAsync(ct);
         return Results.Ok(servers.Select(s => new TerminalServerResponse(
@@ -52,7 +52,7 @@ public static class TerminalEndpoints
             return Results.Forbid();
         }
 
-        return await ListAsync(http, terminals, ct);
+        return await ListAsync(terminals, ct);
     }
 
     private static async Task<IResult> SaveConfigAsync(
@@ -151,7 +151,7 @@ public static class TerminalEndpoints
         {
             var subProtocol = http.WebSockets.WebSocketRequestedProtocols.FirstOrDefault();
             using var socket = await http.WebSockets.AcceptWebSocketAsync(subProtocol);
-            await terminals.TunnelAsync(
+            await TerminalProxyService.TunnelAsync(
                 socket, server, clean, http.Request.QueryString.Value,
                 subProtocol, WsIdleTimeout, ct);
             return Results.Empty;

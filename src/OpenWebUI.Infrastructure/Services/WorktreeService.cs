@@ -316,14 +316,14 @@ public sealed class WorktreeService(
         return output;
     }
 
-    private async Task<string?> RunGitAsync(string workdir, CancellationToken ct, params string[] args)
+    private static async Task<string?> RunGitAsync(string workdir, CancellationToken ct, params string[] args)
     {
         var (code, stdout, _) = await RunGitInputAsync(workdir, null, ct, args);
         return code == 0 ? stdout : null;
     }
 
     /// <summary>git -C workdir args; devolve a 1ª linha do erro ou null em sucesso.</summary>
-    private async Task<string?> RunGitLoggedAsync(
+    private static async Task<string?> RunGitLoggedAsync(
         string workdir, CancellationToken ct, params string[] args)
     {
         var (code, _, stderr) = await RunGitInputAsync(workdir, null, ct, args);

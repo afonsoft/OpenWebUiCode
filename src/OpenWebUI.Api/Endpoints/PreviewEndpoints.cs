@@ -70,7 +70,7 @@ public static class PreviewEndpoints
     }
 
     private static async Task<IResult> ConfigPutAsync(
-        HttpContext http, ConfigService config, AppDbContext db, CancellationToken ct)
+        HttpContext http, ConfigService config, CancellationToken ct)
     {
         var user = await CurrentUserAsync(http, ct);
         if (user is null)

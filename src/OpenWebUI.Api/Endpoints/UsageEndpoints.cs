@@ -121,6 +121,10 @@ public static class UsageEndpoints
         }
         var (fromEpoch, toEpoch) = ParseWindow(from, to);
         var users = await ledger.ByUserAsync(fromEpoch, toEpoch, ct);
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            users = users.Where(u => u.UserId == userId).ToList();
+        }
         var emails = await db.Users.AsNoTracking()
             .Where(u => users.Select(x => x.UserId).Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.Email, ct);
@@ -267,9 +271,9 @@ public static class UsageEndpoints
     private static (long From, long To) ParseWindow(string? from, string? to)
     {
         var now = DateTimeOffset.UtcNow;
-        var fromDt = DateTimeOffset.TryParse(from, out var f)
+        var fromDt = DateTimeOffset.TryParse(from, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var f)
             ? f : new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-        var toDt = DateTimeOffset.TryParse(to, out var t)
+        var toDt = DateTimeOffset.TryParse(to, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t)
             ? t : fromDt.AddMonths(1);
         return (fromDt.ToUnixTimeSeconds(), toDt.ToUnixTimeSeconds());
     }

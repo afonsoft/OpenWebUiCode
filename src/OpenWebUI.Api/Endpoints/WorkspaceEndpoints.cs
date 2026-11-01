@@ -450,6 +450,10 @@ public static class WorkspaceEndpoints
         AccessControlService access, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var note = await db.Notes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id, ct);
         if (note is null
             || await access.LevelAsync(user!, note.UserId, note.AccessGrantsJson, ct)
@@ -469,6 +473,10 @@ public static class WorkspaceEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var note = await db.Notes.FirstOrDefaultAsync(n => n.Id == id, ct);
         if (note is null
             || await access.LevelAsync(user!, note.UserId, note.AccessGrantsJson, ct)
@@ -489,6 +497,10 @@ public static class WorkspaceEndpoints
         string id, HttpContext http, AppDbContext db, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var note = await db.Notes.FirstOrDefaultAsync(n => n.Id == id && n.UserId == user!.Id, ct);
         if (note is null)
         {
@@ -508,8 +520,12 @@ public static class WorkspaceEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var note = await db.Notes.FirstOrDefaultAsync(n => n.Id == id, ct);
-        if (note is null || (note.UserId != user!.Id && user!.Role != UserRoles.Admin))
+        if (note is null || (note.UserId != user.Id && user.Role != UserRoles.Admin))
         {
             return Results.NotFound();
         }
@@ -534,8 +550,12 @@ public static class WorkspaceEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var note = await db.Notes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id, ct);
-        if (note is null || (note.UserId != user!.Id && user!.Role != UserRoles.Admin))
+        if (note is null || (note.UserId != user.Id && user.Role != UserRoles.Admin))
         {
             return Results.NotFound();
         }

@@ -256,7 +256,7 @@
     private async Task LoadAsync()
     {
         _loading = true;
-        var first = new DateTimeOffset(new DateTime(_year, _month, 1));
+        var first = new DateTimeOffset(new DateTime(_year, _month, 1, 0, 0, 0, DateTimeKind.Unspecified));
         var last = first.AddMonths(1).AddSeconds(-1);
         var from = first.ToUnixTimeSeconds();
         var to = last.ToUnixTimeSeconds();
@@ -280,7 +280,7 @@
 
     private async Task ChangeMonthAsync(int delta)
     {
-        var d = new DateTime(_year, _month, 1).AddMonths(delta);
+        var d = new DateTime(_year, _month, 1, 0, 0, 0, DateTimeKind.Unspecified).AddMonths(delta);
         _year = d.Year;
         _month = d.Month;
         _selectedDay = null;
@@ -358,7 +358,7 @@
 
     private IEnumerable<(int Day, bool Today)> Cells()
     {
-        var first = new DateTime(_year, _month, 1);
+        var first = new DateTime(_year, _month, 1, 0, 0, 0, DateTimeKind.Unspecified);
         var days = DateTime.DaysInMonth(_year, _month);
         var today = DateTime.Today;
         for (var i = 0; i < (int)first.DayOfWeek; i++)

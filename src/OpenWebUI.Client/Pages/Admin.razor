@@ -549,7 +549,6 @@
                         @for (var i = 0; i < _provTypedRows.Count; i++)
                         {
                             var row = _provTypedRows[i];
-                            var idx = i;
                             <div class="card-row">
                                 <div class="flex flex-col sm:flex-row gap-2 w-full">
                                     <select aria-label="@L["settings.provider_type"]" class="input sm:w-44"
@@ -2041,7 +2040,7 @@
 
     /// <summary>Trocar o tipo recarrega o endpoint oficial quando a URL está
     /// vazia ou ainda é um default conhecido (URL custom é preservada).</summary>
-    private void OnProvTypedTypeChanged(ProvTypedRow row)
+    private static void OnProvTypedTypeChanged(ProvTypedRow row)
     {
         var knownDefaults = ProviderTypes.All
             .Select(ProviderTypes.DefaultBaseUrl)
@@ -2517,7 +2516,7 @@
         }
     }
 
-    private string McpStatusClass(McpServerResponse server) =>
+    private static string McpStatusClass(McpServerResponse server) =>
         server switch
         {
             { Enabled: false } => "bg-gray-400",

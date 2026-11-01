@@ -27,7 +27,6 @@ public sealed class LocalTerminalSpawner : IDisposable
 
     private readonly IConfiguration _configuration;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IHostApplicationLifetime? _lifetime;
     private readonly IServiceProvider? _services;
     private readonly ConcurrentDictionary<string, LocalServer> _servers = new();
     private readonly SemaphoreSlim _spawnLock = new(1, 1);
@@ -41,7 +40,6 @@ public sealed class LocalTerminalSpawner : IDisposable
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
         _services = services;
-        _lifetime = lifetime;
         lifetime?.ApplicationStopping.Register(Dispose);
     }
 

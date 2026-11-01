@@ -59,7 +59,7 @@ public static class ChannelEndpoints
 
         var channels = all
             .Where(c => c.Members.Any(m => m.UserId == user.Id)
-                || access.LevelByGrants(user, c.AccessGrantsJson, groups)
+                || AccessControlService.LevelByGrants(user, c.AccessGrantsJson, groups)
                     is not AccessControlService.None)
             .Select(c => new
             {
@@ -778,7 +778,7 @@ public static class ChannelEndpoints
 
         var isMember = await db.ChannelMembers
             .AnyAsync(m => m.ChannelId == channelId && m.UserId == user.Id, ct);
-        if (!isMember && !await HasGrantAsync(http, db, user, channel, ct))
+        if (!isMember && !await HasGrantAsync(http, user, channel, ct))
         {
             return (user, null);
         }
@@ -851,7 +851,7 @@ public static class ChannelEndpoints
 
     /// <summary>Verdadeiro se o usuário tem pelo menos leitura via access_grants do canal.</summary>
     private static async Task<bool> HasGrantAsync(
-        HttpContext http, AppDbContext db, User user, Channel channel, CancellationToken ct)
+        HttpContext http, User user, Channel channel, CancellationToken ct)
     {
         var access = http.RequestServices.GetRequiredService<AccessControlService>();
         return await access.LevelByGrantsAsync(user, channel.AccessGrantsJson, ct)

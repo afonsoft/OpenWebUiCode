@@ -30,7 +30,7 @@ public class SamlService(ConfigService config)
             await config.GetAsync("saml.role_attribute", string.Empty, ct));
 
     /// <summary>EntityDescriptor do SP (sem chave — AuthnRequests não assinados).</summary>
-    public string BuildMetadata(SamlSettings settings, string entityId, string acsUrl) =>
+    public static string BuildMetadata(SamlSettings settings, string entityId, string acsUrl) =>
         $"""
         <?xml version="1.0" encoding="UTF-8"?>
         <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="{Escape(entityId)}">
@@ -44,7 +44,7 @@ public class SamlService(ConfigService config)
         """;
 
     /// <summary>Monta o redirect SP-initiated (AuthnRequest DEFLATE + Base64 + URL-encoded).</summary>
-    public string BuildLoginRedirect(SamlSettings settings, string entityId, string acsUrl)
+    public static string BuildLoginRedirect(SamlSettings settings, string entityId, string acsUrl)
     {
         var authnRequest = $"""
             <samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
@@ -76,7 +76,7 @@ public class SamlService(ConfigService config)
     /// <param name="samlResponseBase64">Valor do campo SAMLResponse.</param>
     /// <param name="settings">Configuração SAML.</param>
     /// <param name="expectedAudience">URI esperado em AudienceRestriction (ACS URL ou entity id).</param>
-    public SamlAssertion? ValidateResponse(
+    public static SamlAssertion? ValidateResponse(
         string samlResponseBase64, SamlSettings settings, string expectedAudience)
     {
         XmlDocument doc;
@@ -219,7 +219,7 @@ public class SamlService(ConfigService config)
     }
 
     private static DateTime? ParseInstant(string value) =>
-        DateTime.TryParse(value, null,
+        DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.RoundtripKind, out var parsed)
             ? parsed.ToUniversalTime() : null;
 

@@ -274,7 +274,7 @@
             if (content != _htmlFor)
             {
                 _htmlFor = content;
-                _html = Markdown.ToHtml(content);
+                _html = MarkdownService.ToHtml(content);
             }
             return _html;
         }

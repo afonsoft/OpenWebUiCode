@@ -209,7 +209,6 @@ public static class EvaluationEndpoints
     }
 
     private static async Task<IResult> SaveFeedbackByIdAsync(
-        string id,
         FeedbackUpsertRequest request,
         HttpContext http,
         AppDbContext db,

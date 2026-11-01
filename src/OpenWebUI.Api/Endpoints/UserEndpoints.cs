@@ -112,7 +112,7 @@ public static class UserEndpoints
     }
 
     private static async Task<IResult> SearchUsersAsync(
-        HttpContext http, AppDbContext db, CancellationToken ct, string? query = null)
+        AppDbContext db, CancellationToken ct, string? query = null)
     {
         var users = db.Users.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(query))

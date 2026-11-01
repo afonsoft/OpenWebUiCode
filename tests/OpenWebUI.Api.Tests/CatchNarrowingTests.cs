@@ -106,7 +106,7 @@ public class CatchNarrowingTests
     {
         var svc = new WorkspaceGitService();
         // WorkingDirectory inexistente → Process.Start lança Win32Exception → null.
-        var info = await svc.GetInfoAsync("/nonexistent-dir-xyz-123", CancellationToken.None);
+        var info = await WorkspaceGitService.GetInfoAsync("/nonexistent-dir-xyz-123", CancellationToken.None);
         Assert.That(info, Is.Not.Null);
     }
 
@@ -158,7 +158,7 @@ public class CatchNarrowingTests
             Exec(dir, "git", "commit", "-qm", "init");
             File.AppendAllText(Path.Join(dir, "a.txt"), "dois\ntres\n");
 
-            var info = await new WorkspaceGitService().GetInfoAsync(dir, CancellationToken.None);
+            var info = await WorkspaceGitService.GetInfoAsync(dir, CancellationToken.None);
             Assert.That(info.IsRepo, Is.True);
             Assert.That(info.Files.Any(f => f.Path == "a.txt"), Is.True);
         }

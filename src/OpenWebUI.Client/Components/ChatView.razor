@@ -233,7 +233,8 @@
                             @L["chat.loading_older"]
                         </button>
                     }
-                    @for (var i = 0; i < _messages.Count; i++)
+                    @{ var i = 0; }
+                    @while (i < _messages.Count)
                     {
                         var index = i;
                         var message = _messages[i];
@@ -251,7 +252,7 @@
                                 .Skip(index).Take(lastTool - index + 1)
                                 .Select(PersistedToolCall).ToList();
                             <div class="msg-cv"><RunActivityFeed Calls="persisted" Streaming="false" Collapsed="true" /></div>
-                            i = lastTool;
+                            i = lastTool + 1;
                             continue;
                         }
                         if (message.Role == "compaction")
@@ -264,6 +265,7 @@
                                 <span class="truncate max-w-[60%]">@L["chat.context_collapsed"]</span>
                                 <span class="flex-1 border-t border-gray-200 dark:border-gray-800"></span>
                             </div>
+                            i++;
                             continue;
                         }
                         var isLastAssistant = message.Role == "assistant" && i == _messages.Count - 1;
@@ -304,6 +306,7 @@
                             OnSpeak="() => SpeakAtAsync(index)"
                             OnBranch="() => ActivateLeafAsync(message.Id!)" />
                         </div>
+                        i++;
                     }
                 </div>
             }
@@ -411,7 +414,7 @@
                                 @ArenaModelLabel(r.Label)
                             </div>
                             <div class="markdown-body text-sm text-gray-800 dark:text-gray-200">
-                                @((MarkupString)Markdown.ToHtml(r.Content))
+                                @((MarkupString)MarkdownService.ToHtml(r.Content))
                             </div>
                         </div>
                     }
@@ -1073,7 +1076,6 @@
     // Árvore de conversa (SPEC-20261013-chat-branching): leaf ativo,
     // nº de leafs divergentes e o popover de ramos.
     private int _branchCount;
-    private string? _activeLeafId;
     private bool _showBranches;
     private List<BranchLeafResponse> _branches = [];
     // SPEC-20261009-agent-modes-plan-build: build (default) | plan.
@@ -1531,7 +1533,6 @@
             _agentMode = AgentModeVisuals.Normalize(chat.Mode);
             _advisorEnabled = chat.AdvisorEnabled;
             _branchCount = chat.BranchCount;
-            _activeLeafId = chat.ActiveLeafId;
             _showBranches = false;
             _branches = [];
             _messages.Clear();
@@ -2537,7 +2538,7 @@
     }
 
     /// <summary>Fallback do preview quando o item da fila só tem anexos/mentions.</summary>
-    private string QueueItemFallback(ComposerQueueItem item) =>
+    private static string QueueItemFallback(ComposerQueueItem item) =>
         item.Files.Count > 0
             ? string.Join(", ", item.Files.Select(f => f.Filename))
             : string.Join(", ", item.Mentions);
@@ -2701,7 +2702,6 @@
             _hasMoreMessages = ChatWindow.TrimToTail(branchMsgs, ChatWindow.InitialTail) > 0;
             _messages.AddRange(branchMsgs);
             _branchCount = chat.BranchCount;
-            _activeLeafId = chat.ActiveLeafId;
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {

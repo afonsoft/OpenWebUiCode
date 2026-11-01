@@ -89,7 +89,7 @@ public static class AuthEndpoints
                 string.Empty, "Bearer", DateTimeOffset.UtcNow, ToResponse(user)));
         }
 
-        return await IssueAuthResponseAsync(user, tokens, config, ct);
+        return await IssueAuthResponseAsync(user, tokens, ct);
     }
 
     private static async Task<IResult> SignInAsync(
@@ -139,7 +139,7 @@ public static class AuthEndpoints
         user.LastActiveAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         limits.ResetLogin(lockKey);
         await db.SaveChangesAsync(ct);
-        return await IssueAuthResponseAsync(user, tokens, config, ct);
+        return await IssueAuthResponseAsync(user, tokens, ct);
     }
 
     private static IResult SignOutAsync() => Results.Ok(new StatusResponse(true));
@@ -183,7 +183,7 @@ public static class AuthEndpoints
         }
 
         deps.Limits.ResetLogin(lockKey);
-        return await IssueAuthResponseAsync(user, deps.Tokens, deps.Config, ct);
+        return await IssueAuthResponseAsync(user, deps.Tokens, ct);
     }
 
     private static async Task<IResult> GetCurrentUserAsync(
@@ -452,7 +452,7 @@ public static class AuthEndpoints
         new(user.Id, user.Name, user.Email, user.Role, user.ProfileImageUrl, user.Timezone);
 
     private static async Task<IResult> IssueAuthResponseAsync(
-        User user, JwtTokenService tokens, ConfigService config, CancellationToken ct)
+        User user, JwtTokenService tokens, CancellationToken ct)
     {
         var (token, expires) = await tokens.CreateTokenAsync(user, ct);
         return Results.Ok(new AuthResponse(token, "Bearer", expires, ToResponse(user)));

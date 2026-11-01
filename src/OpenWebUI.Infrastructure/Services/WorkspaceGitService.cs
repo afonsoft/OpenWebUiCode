@@ -51,7 +51,7 @@ public sealed class WorkspaceGitService
     /// </summary>
     /// <param name="baseRef">Ref preferida como base (ex.: <c>origin/main</c>);
     /// quando ausente tenta <c>origin/{branch corrente}</c>, depois HEAD.</param>
-    public async Task<GitWorkspaceInfo> GetInfoAsync(
+    public static async Task<GitWorkspaceInfo> GetInfoAsync(
         string workdir, CancellationToken ct, string? baseRef = null)
     {
         // `.git` pode ser ARQUIVO (worktree ligado → aponta pro gitdir real).
@@ -282,7 +282,7 @@ public sealed class WorkspaceGitService
         {
             throw; // cancelamento do request propaga, não vira "sem git"
         }
-        catch (Win32Exception) { return null; }
+        catch (Win32Exception) { return null; } // falha de spawn/exec do git → null por contrato
         catch (ObjectDisposedException) { return null; }
         catch (InvalidOperationException) { return null; }
         catch (IOException) { return null; }
@@ -294,7 +294,7 @@ public sealed class WorkspaceGitService
     /// + <c>git commit</c> com identidade <c>-c</c> (não depender de config do
     /// repo). Retorna o hash novo; null no erro/sem git.
     /// </summary>
-    public async Task<string?> CommitAsync(string workdir, string message, CancellationToken ct)
+    public static async Task<string?> CommitAsync(string workdir, string message, CancellationToken ct)
     {
         if (!await IsRepoRootAsync(workdir, ct))
         {
@@ -319,7 +319,7 @@ public sealed class WorkspaceGitService
 
     /// <summary><c>git show HEAD:rel</c> — conteúdo do arquivo no HEAD
     /// (diff da IDE). null sem repo/sem commit/arquivo não trackeado.</summary>
-    public async Task<string?> ShowHeadAsync(string workdir, string relPath, CancellationToken ct)
+    public static async Task<string?> ShowHeadAsync(string workdir, string relPath, CancellationToken ct)
     {
         if (!await IsRepoRootAsync(workdir, ct))
         {

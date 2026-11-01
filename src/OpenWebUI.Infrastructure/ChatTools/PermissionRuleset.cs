@@ -182,6 +182,17 @@ public static class PermissionRuleset
             : PermissionDecision.Deny;
     }
 
+    /// <summary>Sobrecarga com o <see cref="Tool"/> carregado (builtin-ness pela URL).</summary>
+    public static PermissionDecision Evaluate(string? mode, Tool tool, string? argsSummary = null)
+    {
+        var isBuiltin = tool.Url?.StartsWith(
+            BuiltinToolRegistry.UrlPrefix, StringComparison.OrdinalIgnoreCase) == true;
+        var name = isBuiltin
+            ? tool.Url![BuiltinToolRegistry.UrlPrefix.Length..]
+            : ToolExecutor.FunctionName(tool) ?? tool.Name;
+        return Evaluate(mode, name, isBuiltin, argsSummary);
+    }
+
     /// <summary>
     /// Decisão da escrita em modo plan (SPEC-20261030): todos os paths
     /// tocados precisam ser artefatos de planejamento — <c>*.md</c> ou sob
@@ -216,7 +227,7 @@ public static class PermissionRuleset
                 ? []
                 : ops.SelectMany(op => op.MoveTo is null
                         ? new[] { op.Path }
-                        : new[] { op.Path, op.MoveTo! })
+                        : new[] { op.Path, op.MoveTo })
                     .ToList();
         }
         var path = TryGetString(argumentsJson, "path");
@@ -248,17 +259,6 @@ public static class PermissionRuleset
         return PlanWritableDirs.Any(d =>
                 normalized.StartsWith(d, StringComparison.OrdinalIgnoreCase))
             || normalized.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>Sobrecarga com o <see cref="Tool"/> carregado (builtin-ness pela URL).</summary>
-    public static PermissionDecision Evaluate(string? mode, Tool tool, string? argsSummary = null)
-    {
-        var isBuiltin = tool.Url?.StartsWith(
-            BuiltinToolRegistry.UrlPrefix, StringComparison.OrdinalIgnoreCase) == true;
-        var name = isBuiltin
-            ? tool.Url![BuiltinToolRegistry.UrlPrefix.Length..]
-            : ToolExecutor.FunctionName(tool) ?? tool.Name;
-        return Evaluate(mode, name, isBuiltin, argsSummary);
     }
 
     /// <summary>Se a tool entra no spec anunciado ao provider neste modo.</summary>

@@ -22,7 +22,6 @@ public sealed class LspService : IAsyncDisposable
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _byWorkdir =
         new(StringComparer.Ordinal);
-    private readonly IHostApplicationLifetime? _lifetime;
     private int _disposed;
 
     public LspService(IConfiguration configuration, ILogger<LspService> logger,
@@ -36,7 +35,6 @@ public sealed class LspService : IAsyncDisposable
     {
         Options = options;
         _logger = logger;
-        _lifetime = lifetime;
         lifetime?.ApplicationStopping.Register(() => _ = DisposeAsync());
     }
 
@@ -52,7 +50,7 @@ public sealed class LspService : IAsyncDisposable
     /// <summary>
     /// Linguagem LSP do arquivo (extensão → servidor); null quando não mapeada.
     /// </summary>
-    public LspLanguage? LanguageFor(string? path) => LspLanguageMap.ForPath(path);
+    public static LspLanguage? LanguageFor(string? path) => LspLanguageMap.ForPath(path);
 
     /// <summary>
     /// Estado do servidor de <paramref name="serverKey"/> no workdir
@@ -124,7 +122,7 @@ public sealed class LspService : IAsyncDisposable
     }
 
     /// <summary>Server do arquivo ou null (sem spawnar — usado p/ status).</summary>
-    public LspLanguage? LanguageOfFile(string? path) => LspLanguageMap.ForPath(path);
+    public static LspLanguage? LanguageOfFile(string? path) => LspLanguageMap.ForPath(path);
 
     // ---------- sync (didOpen/didChange/didSave/didClose) ----------
 

@@ -50,9 +50,8 @@ public class PolicyService(AppDbContext db)
         var candidates = resources.Where(r => !string.IsNullOrEmpty(r)).ToList();
         // Último match vence (avaliação ordenada) — LastOrDefault preserva.
         return statements
-            .Where(s => s.Effect == "deny"
-                && candidates.Any(r => GlobMatch(s.Resource, r)))
-            .LastOrDefault();
+            .LastOrDefault(s => s.Effect == "deny"
+                && candidates.Any(r => GlobMatch(s.Resource, r)));
     }
 
     /// <summary>

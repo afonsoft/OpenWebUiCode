@@ -68,7 +68,7 @@ public static class AutomationSchedule
     }
 
     private static bool TryParseTime(string? value, out TimeOnly time) =>
-        TimeOnly.TryParseExact(value, "HH:mm", out time);
+        TimeOnly.TryParseExact(value, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out time);
 }
 
 /// <summary>Serviço de automações: criação, validação e execução imediata.</summary>
@@ -219,7 +219,7 @@ public class AutomationService(
         var model = doc.RootElement.TryGetProperty("model", out var m) && m.ValueKind == JsonValueKind.String
             ? m.GetString() : null;
 
-        var entry = skills.Find(skills.Scan(workdir: null), name);
+        var entry = SkillDiscoveryService.Find(skills.Scan(workdir: null), name);
         if (entry is null)
         {
             return new(Error: $"Skill '{name}' não encontrada no escopo global.");
@@ -428,7 +428,8 @@ public class AutomationService(
             throw new InvalidOperationException("ComboService indisponível.");
         }
 
-        for (var attempt = 0; ; attempt++)
+        var attempt = 0;
+        while (true)
         {
             var pick = await combos.ResolveAsync(comboRef, automation.UserId, ct);
             try
@@ -449,11 +450,12 @@ public class AutomationService(
                 await combos.ReportAsync(pick.ComboId, pick.ModelId, ok: false,
                     ct: CancellationToken.None);
             }
+            attempt++;
         }
     }
 
     /// <summary>Reagenda a próxima execução de uma automação.</summary>
-    public void Reschedule(Automation automation)
+    public static void Reschedule(Automation automation)
     {
         automation.NextRunAt = automation.Enabled
             ? AutomationSchedule.ComputeNextRun(automation, DateTimeOffset.UtcNow)

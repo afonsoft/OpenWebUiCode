@@ -153,8 +153,8 @@ public sealed class ComfyUiVideoEngine(IHttpClientFactory httpClientFactory)
                         {
                             continue;
                         }
-                        var subfolder = file!["subfolder"]?.GetValue<string>() ?? "";
-                        var type = file!["type"]?.GetValue<string>() ?? "output";
+                        var subfolder = file["subfolder"]?.GetValue<string>() ?? "";
+                        var type = file["type"]?.GetValue<string>() ?? "output";
                         var viewUrl = $"{Base(config)}/view?filename={Uri.EscapeDataString(filename)}" +
                             $"&subfolder={Uri.EscapeDataString(subfolder)}&type={Uri.EscapeDataString(type)}";
                         videos.Add(new VideoResult(await GetBytesAsync(viewUrl, config, ct), ext));

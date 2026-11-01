@@ -781,7 +781,6 @@ public static class ChatEndpoints
         ChatPatchRequest request,
         HttpContext http,
         AppDbContext db,
-        WorkspaceRepoService repos,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -1361,12 +1360,10 @@ public static class ChatEndpoints
         while (queue.Count > 0)
         {
             var parentId = queue.Dequeue();
-            foreach (var child in chat.Messages.Where(m => m.ParentId == parentId))
+            foreach (var child in chat.Messages.Where(
+                m => m.ParentId == parentId && toRemoveIds.Add(m.Id)))
             {
-                if (toRemoveIds.Add(child.Id))
-                {
-                    queue.Enqueue(child.Id);
-                }
+                queue.Enqueue(child.Id);
             }
         }
         foreach (var m in chat.Messages.Where(

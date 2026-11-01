@@ -44,7 +44,7 @@
                             <div class="message-content">
                                 @if (message.Role == "assistant")
                                 {
-                                    @((MarkupString)Markdown.ToHtml(message.Content))
+                                    @((MarkupString)MarkdownService.ToHtml(message.Content))
                                 }
                                 else
                                 {

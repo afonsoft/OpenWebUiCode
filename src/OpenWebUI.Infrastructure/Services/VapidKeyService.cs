@@ -86,7 +86,7 @@ public sealed class VapidKeyService(
         }
     }
 
-    private string? ReadEnv(string name) =>
+    private static string? ReadEnv(string name) =>
         Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : null;
 
     private static (string PublicKey, string PrivateKey) Generate()

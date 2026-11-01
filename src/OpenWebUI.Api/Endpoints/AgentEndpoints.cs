@@ -79,7 +79,7 @@ public static class AgentEndpoints
         }
         await config.SetAsync(
             $"u:{user.Id}:agents.workspace.enabled", request.Enabled, ct);
-        agents.Invalidate(user.Id);
+        AgentDefinitionService.Invalidate(user.Id);
         return Results.Ok(new StatusResponse(true));
     }
 }

@@ -184,7 +184,7 @@ public class ScimService(AppDbContext db, ConfigService config)
     }
 
     /// <summary>Converte User para o recurso SCIM User.</summary>
-    public ScimUser ToScimUser(User user, string baseUrl)
+    public static ScimUser ToScimUser(User user, string baseUrl)
     {
         var active = user.Role is not UserRoles.Pending;
         return new ScimUser(
@@ -197,7 +197,7 @@ public class ScimService(AppDbContext db, ConfigService config)
                 Iso(user.CreatedAt), Iso(user.UpdatedAt)));
     }
 
-    private ScimGroup ToScimGroup(Group group, string baseUrl) =>
+    private static ScimGroup ToScimGroup(Group group, string baseUrl) =>
         new(
             ["urn:ietf:params:scim:schemas:core:2.0:Group"],
             group.Id, group.Name,

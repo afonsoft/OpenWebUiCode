@@ -113,7 +113,7 @@ public class PipelineClientService(AppDbContext db, IHttpClientFactory httpFacto
         }
     }
 
-    private HttpRequestMessage NewRequest(HttpMethod method, PipelineServer server, string path)
+    private static HttpRequestMessage NewRequest(HttpMethod method, PipelineServer server, string path)
     {
         var request = new HttpRequestMessage(
             method, $"{server.Url.TrimEnd('/')}/{path}");

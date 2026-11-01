@@ -302,8 +302,8 @@ public class ProviderCapabilityService(
 
             entries.Add(new CatalogEntry(
                 id,
-                Modalities(item?["output_modalities"]),
-                Modalities(item?["input_modalities"])));
+                Modalities(item["output_modalities"]),
+                Modalities(item["input_modalities"])));
         }
         return entries;
     }

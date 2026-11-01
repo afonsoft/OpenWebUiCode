@@ -355,7 +355,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             }
             // Keepalive do servidor (`: hb`) — não é `data:` mas prova que
             // o stream segue vivo (proxies derrubam/fecham SSE ocioso).
-            if (line.StartsWith(":"))
+            if (line.StartsWith(':'))
             {
                 yield return new ChatStreamEvent.Heartbeat();
                 continue;

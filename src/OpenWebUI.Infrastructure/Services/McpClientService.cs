@@ -376,19 +376,10 @@ public partial class McpClientService(
             await using var client = await ConnectAsync(server, timeout.Token);
             var result = await client.GetPromptAsync(
                 promptName, args, cancellationToken: timeout.Token);
-            var parts = new List<string>();
-            foreach (var message in result.Messages)
-            {
-                if (message.Content is TextContentBlock text)
-                {
-                    parts.Add(text.Text);
-                }
-                else
-                {
-                    parts.Add(JsonSerializer.Serialize(
-                        message.Content, message.Content.GetType(), JsonOptions));
-                }
-            }
+            var parts = result.Messages.Select(message =>
+                message.Content is TextContentBlock text
+                    ? text.Text
+                    : JsonSerializer.Serialize(message.Content, message.Content.GetType(), JsonOptions));
             return string.Join("\n\n", parts);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -653,7 +644,7 @@ public partial class McpClientService(
         }
         EnvSyncAt[throttleKey] = DateTimeOffset.UtcNow;
 
-        var config = skills.LoadMcpServers(workdir);
+        var config = SkillDiscoveryService.LoadMcpServers(workdir);
         foreach (var w in config.Warnings)
         {
             logger?.LogWarning("mcp.json: {Warning}", w);
@@ -717,7 +708,7 @@ public partial class McpClientService(
             catch (InvalidOperationException ex)
             {
                 logger?.LogWarning(
-                    "Servidor MCP env:{Id} falhou no refresh: {Error}", row.Name, ex.Message);
+                    ex, "Servidor MCP env:{Id} falhou no refresh", row.Name);
             }
         }
 

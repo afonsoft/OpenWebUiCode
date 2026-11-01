@@ -151,6 +151,10 @@ public static class ModelEndpoints
         CancellationToken ct, string? id = null)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var model = await db.ModelEntries.AsNoTracking()
             .FirstOrDefaultAsync(m => m.Id == id, ct);
         var readable = model is not null
@@ -168,6 +172,10 @@ public static class ModelEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var model = await db.ModelEntries
             .FirstOrDefaultAsync(m => m.Id == request.Id, ct);
         if (model is null
@@ -204,6 +212,10 @@ public static class ModelEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var model = await db.ModelEntries
             .FirstOrDefaultAsync(m => m.Id == request.Id, ct);
         if (model is null
@@ -227,6 +239,10 @@ public static class ModelEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var model = await db.ModelEntries
             .FirstOrDefaultAsync(m => m.Id == request.Id, ct);
         if (model is null
@@ -313,8 +329,12 @@ public static class ModelEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var model = await db.ModelEntries.AsNoTracking().FirstOrDefaultAsync(m => m.Id == id, ct);
-        if (model is null || (model.UserId != user!.Id && user!.Role != UserRoles.Admin))
+        if (model is null || (model.UserId != user.Id && user.Role != UserRoles.Admin))
         {
             return Results.NotFound();
         }
@@ -330,8 +350,12 @@ public static class ModelEndpoints
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
         var model = await db.ModelEntries.FirstOrDefaultAsync(m => m.Id == id, ct);
-        if (model is null || (model.UserId != user!.Id && user!.Role != UserRoles.Admin))
+        if (model is null || (model.UserId != user.Id && user.Role != UserRoles.Admin))
         {
             return Results.NotFound();
         }

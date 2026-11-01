@@ -10,23 +10,20 @@ public class ClientServiceEdgeTests
     [Test]
     public void ToHtml_ConverteNegrito()
     {
-        var svc = new MarkdownService();
-        Assert.That(svc.ToHtml("**ola**"), Does.Contain("<strong>ola</strong>"));
+        Assert.That(MarkdownService.ToHtml("**ola**"), Does.Contain("<strong>ola</strong>"));
     }
 
     [Test]
     public void ToHtml_NuloOuVazio_RetornaVazio()
     {
-        var svc = new MarkdownService();
-        Assert.That(svc.ToHtml(null), Is.EqualTo(string.Empty));
-        Assert.That(svc.ToHtml("   "), Is.EqualTo(string.Empty));
+        Assert.That(MarkdownService.ToHtml(null), Is.EqualTo(string.Empty));
+        Assert.That(MarkdownService.ToHtml("   "), Is.EqualTo(string.Empty));
     }
 
     [Test]
     public void ToHtml_RemoveScriptEAtributosPerigosos()
     {
-        var svc = new MarkdownService();
-        var html = svc.ToHtml("<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>");
+        var html = MarkdownService.ToHtml("<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>");
         Assert.That(html, Does.Not.Contain("<script"));
         Assert.That(html, Does.Not.Contain("onerror"));
     }
@@ -34,23 +31,20 @@ public class ClientServiceEdgeTests
     [Test]
     public void ToHtml_LinkJavascript_EhNeutralizado()
     {
-        var svc = new MarkdownService();
-        var html = svc.ToHtml("[x](javascript:alert(1))");
+        var html = MarkdownService.ToHtml("[x](javascript:alert(1))");
         Assert.That(html, Does.Not.Contain("javascript:"));
     }
 
     [Test]
     public void ToHtml_RenderizaBlocoDeCodigo()
     {
-        var svc = new MarkdownService();
-        Assert.That(svc.ToHtml("```\nvar x = 1;\n```"), Does.Contain("<code"));
+        Assert.That(MarkdownService.ToHtml("```\nvar x = 1;\n```"), Does.Contain("<code"));
     }
 
     [Test]
     public void ToHtml_LinkExterno_AbreEmNovaAba()
     {
-        var svc = new MarkdownService();
-        var html = svc.ToHtml("[doc](https://example.com/x)");
+        var html = MarkdownService.ToHtml("[doc](https://example.com/x)");
         Assert.Multiple(() =>
         {
             Assert.That(html, Does.Contain("target=\"_blank\""));
@@ -62,8 +56,7 @@ public class ClientServiceEdgeTests
     [Test]
     public void ToHtml_AncoraInterna_PermaneceNaMesmaAba()
     {
-        var svc = new MarkdownService();
-        var html = svc.ToHtml("[topo](#secao)");
+        var html = MarkdownService.ToHtml("[topo](#secao)");
         Assert.That(html, Does.Not.Contain("target=\"_blank\""));
         Assert.That(html, Does.Contain("href=\"#secao\""));
     }

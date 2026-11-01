@@ -75,7 +75,7 @@ public class AccessControlService(AppDbContext db)
     /// Nível de acesso considerando apenas grants — sem bypass de owner/admin.
     /// Usado por recursos cuja visibilidade é governada por membership (canais).
     /// </summary>
-    public string LevelByGrants(User user, string? grantsJson, HashSet<string> userGroupIds)
+    public static string LevelByGrants(User user, string? grantsJson, HashSet<string> userGroupIds)
     {
         var level = None;
         foreach (var grant in Parse(grantsJson))

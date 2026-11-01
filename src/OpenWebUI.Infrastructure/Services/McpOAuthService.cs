@@ -91,9 +91,9 @@ public sealed class McpOAuthService(
         if (asBase is null
             || await FetchJsonAsync(http,
                 $"{asBase}/.well-known/oauth-authorization-server", ct) is not { } meta
-            || meta.TryGetProperty("authorization_endpoint", out var authEl) is false
+            || !meta.TryGetProperty("authorization_endpoint", out var authEl)
             || authEl.GetString() is not { Length: > 0 } authorizeEndpoint
-            || meta.TryGetProperty("token_endpoint", out var tokEl) is false
+            || !meta.TryGetProperty("token_endpoint", out var tokEl)
             || tokEl.GetString() is not { Length: > 0 } tokenEndpoint)
         {
             return null;

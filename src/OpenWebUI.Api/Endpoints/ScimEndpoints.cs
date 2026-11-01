@@ -56,7 +56,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         return ScimJson(new
@@ -80,7 +80,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         var startIndex = int.TryParse(http.Request.Query["startIndex"], out var s) ? s : 1;
@@ -96,7 +96,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         var user = await scim.GetUserAsync(id, BaseUrl(http), ct);
@@ -110,7 +110,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         var input = await JsonSerializer.DeserializeAsync<ScimUser>(
@@ -129,7 +129,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         var input = await JsonSerializer.DeserializeAsync<ScimUser>(
@@ -150,7 +150,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         var patch = await JsonNode.ParseAsync(http.Request.Body, cancellationToken: ct);
@@ -170,7 +170,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         return await scim.DeleteUserAsync(id, ct)
@@ -183,7 +183,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         var startIndex = int.TryParse(http.Request.Query["startIndex"], out var s) ? s : 1;
@@ -197,7 +197,7 @@ public static class ScimEndpoints
     {
         if (!await AuthorizeAsync(http, scim, ct))
         {
-            return UnauthorizedOrDisabled(http);
+            return UnauthorizedOrDisabled();
         }
 
         var input = await JsonSerializer.DeserializeAsync<ScimGroup>(
@@ -223,7 +223,7 @@ public static class ScimEndpoints
         return await scim.ValidateTokenAsync(token, ct);
     }
 
-    private static IResult UnauthorizedOrDisabled(HttpContext http) =>
+    private static IResult UnauthorizedOrDisabled() =>
         Results.Json(ScimError.Of(401, "SCIM desabilitado ou token inválido"),
             statusCode: 401, contentType: "application/scim+json");
 

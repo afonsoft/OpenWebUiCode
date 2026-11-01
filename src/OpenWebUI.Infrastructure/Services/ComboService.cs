@@ -89,8 +89,8 @@ public sealed class ComboService(AppDbContext db)
         CheckWindow(combo, now);
 
         var available = combo.Items
-            .OrderBy(i => i.Position)
             .Where(i => !InCooldown(combo.Id, i.ModelId, now))
+            .OrderBy(i => i.Position)
             .Select(i => i.ModelId)
             .ToList();
         if (available.Count == 0)
@@ -106,7 +106,7 @@ public sealed class ComboService(AppDbContext db)
 
         var modelId = combo.Strategy switch
         {
-            "round-robin" => available[(int)(combo.RoundRobinCursor % available.Count)],
+            "round-robin" => available[(combo.RoundRobinCursor % available.Count)],
             "priority-round-robin" => RoundRobinInGroup(combo, available),
             _ => available[0],
         };
@@ -176,14 +176,14 @@ public sealed class ComboService(AppDbContext db)
             .ToList();
         var (requests, tokens) = WindowCounts(combo.Id, now);
         var available = combo.Items
-            .OrderBy(i => i.Position)
             .Where(i => !InCooldown(combo.Id, i.ModelId, now))
+            .OrderBy(i => i.Position)
             .ToList();
         var effective = available.Count == 0
             ? null
             : combo.Strategy switch
             {
-                "round-robin" => available[(int)(combo.RoundRobinCursor % available.Count)].ModelId,
+                "round-robin" => available[(combo.RoundRobinCursor % available.Count)].ModelId,
                 "priority-round-robin" => PeekRoundRobinInGroup(combo, available).ModelId,
                 _ => available[0].ModelId,
             };
@@ -214,7 +214,7 @@ public sealed class ComboService(AppDbContext db)
         }
     }
 
-    private void CheckWindow(ModelCombo combo, DateTimeOffset now)
+    private static void CheckWindow(ModelCombo combo, DateTimeOffset now)
     {
         if (combo.RequestsPerMinute is null && combo.TokensPerMinute is null)
         {
@@ -257,13 +257,13 @@ public sealed class ComboService(AppDbContext db)
     private static string RoundRobinInGroup(ModelCombo combo, List<string> available)
     {
         var group = FirstGroup(combo, available);
-        return group[(int)(combo.RoundRobinCursor % group.Count)];
+        return group[(combo.RoundRobinCursor % group.Count)];
     }
 
     private static ModelComboItem PeekRoundRobinInGroup(ModelCombo combo, List<ModelComboItem> available)
     {
-        var group = FirstGroupItems(combo, available);
-        return group[(int)(combo.RoundRobinCursor % group.Count)];
+        var group = FirstGroupItems(available);
+        return group[(combo.RoundRobinCursor % group.Count)];
     }
 
     private static List<string> FirstGroup(ModelCombo combo, List<string> available)
@@ -276,7 +276,7 @@ public sealed class ComboService(AppDbContext db)
             .OrderBy(i => i.ModelId).Select(i => i.ModelId).ToList();
     }
 
-    private static List<ModelComboItem> FirstGroupItems(ModelCombo combo, List<ModelComboItem> available)
+    private static List<ModelComboItem> FirstGroupItems(List<ModelComboItem> available)
     {
         var first = available.Min(i => i.Position);
         return available.Where(i => i.Position == first).OrderBy(i => i.ModelId).ToList();

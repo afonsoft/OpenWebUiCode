@@ -32,7 +32,7 @@ public static class BrowserToolEndpoints
             ConfigGetAsync(http, config, configuration, screenshots, sessions, ocr, ct));
         group.MapPut("/config", (HttpContext http, ConfigService config,
             AppDbContext db, CancellationToken ct) =>
-            ConfigPutAsync(http, config, db, ct));
+            ConfigPutAsync(http, config, ct));
 
         return group;
     }
@@ -55,7 +55,7 @@ public static class BrowserToolEndpoints
     }
 
     private static async Task<IResult> ConfigPutAsync(
-        HttpContext http, ConfigService config, AppDbContext db, CancellationToken ct)
+        HttpContext http, ConfigService config, CancellationToken ct)
     {
         var user = await CurrentUserAsync(http, ct);
         if (user is null)

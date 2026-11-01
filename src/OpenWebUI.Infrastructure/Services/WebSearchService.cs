@@ -89,7 +89,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
     /// e tenta o próximo. Todos cooling/falhos → outcome de erro
     /// <c>all-providers-cooling</c> com retry até o cooldown mais próximo.
     /// </summary>
-    private async Task<WebSearchOutcome> SearchAutoAsync(
+    private static async Task<WebSearchOutcome> SearchAutoAsync(
         HttpClient client, RetrievalConfig cfg, string query, int count, CancellationToken ct)
     {
         var attempted = new List<string>();

@@ -435,7 +435,7 @@ else
     private bool _userMenuOpen;
     private bool _loadFailed;
 
-    private record ThemeOption(string Value, string Label, string Icon);
+    private sealed record ThemeOption(string Value, string Label, string Icon);
 
     private ThemeOption[] _themeOptions = [];
 

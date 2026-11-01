@@ -56,12 +56,10 @@ public static class UserMcpEndpoints
         var items = new List<McpPromptItemResponse>();
         foreach (var entry in effective.Where(e => e.EnabledForMe))
         {
-            foreach (var prompt in await mcp.ListPromptsAsync(entry.Server, ct))
-            {
-                items.Add(new McpPromptItemResponse(
+            items.AddRange((await mcp.ListPromptsAsync(entry.Server, ct)).Select(prompt =>
+                new McpPromptItemResponse(
                     entry.Server.Name, prompt.Name,
-                    prompt.Description, prompt.Arguments));
-            }
+                    prompt.Description, prompt.Arguments)));
         }
         return Results.Ok(items);
     }

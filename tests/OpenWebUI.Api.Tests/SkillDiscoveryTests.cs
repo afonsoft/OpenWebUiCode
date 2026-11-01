@@ -153,8 +153,8 @@ public class SkillDiscoveryTests
         var scan = _svc.Scan(_dir);
         Assert.Multiple(() =>
         {
-            Assert.That(_svc.Find(scan, "DUP")!.Body, Is.EqualTo("skill body"));
-            Assert.That(_svc.Find(scan, "inexistente"), Is.Null);
+            Assert.That(SkillDiscoveryService.Find(scan, "DUP")!.Body, Is.EqualTo("skill body"));
+            Assert.That(SkillDiscoveryService.Find(scan, "inexistente"), Is.Null);
         });
     }
 
