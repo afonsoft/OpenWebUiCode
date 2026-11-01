@@ -31,6 +31,7 @@
     <EmbeddedResource Include="Services\model-capabilities.json" />
     <!-- Prompt do revisor de run (SPEC-20261013-run-advisor). -->
     <EmbeddedResource Include="prompts\advisor-system.md" />
+    <EmbeddedResource Include="prompts\smart-permission-judge.md" />
     <EmbeddedResource Include="agents\*.agent.md" />
   </ItemGroup>
 

@@ -186,6 +186,12 @@ builder.Services.AddScoped(sp => new PromptHookEvaluator(
     sp.GetRequiredService<ModelRoleResolver>(),
     sp.GetRequiredService<ConfigService>(),
     (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct)));
+// Juiz do preset smart (SPEC-20261031): mesmo delegate de completion.
+builder.Services.AddScoped(sp => new SmartPermissionClassifier(
+    sp.GetRequiredService<ModelRoleResolver>(),
+    sp.GetRequiredService<ConfigService>(),
+    (req, uid, ct) => sp.GetRequiredService<ProviderService>().CompleteWithToolsAsync(req, uid, ct),
+    sp.GetService<ILogger<SmartPermissionClassifier>>()));
 
 // Notificações de run (SPEC-20261007-chat-notifications): SignalR para abas
 // conectadas + Web Push quando nenhuma aba está conectada.
