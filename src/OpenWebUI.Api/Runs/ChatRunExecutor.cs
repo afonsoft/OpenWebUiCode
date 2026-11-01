@@ -1684,13 +1684,7 @@ public sealed class ChatRunExecutor(
             .Where(c => c.Id == run.ChatId)
             .Select(c => new { c.ApprovalPreset, c.Mode })
             .FirstOrDefaultAsync(ct);
-        var mode = PermissionRuleset.Normalize(gateInfo?.Mode);
-        // SPEC-15: build sem repo vinculado não executa tools de workspace.
-        if (mode == PermissionRuleset.BuildMode
-            && await repos.GetChatBindingAsync(run.ChatId, ct) is null)
-        {
-            mode = PermissionRuleset.ChatMode;
-        }
+        var mode = await ResolveEffectiveModeAsync(run, gateInfo?.Mode, ct);
 
         // ask_user (RF-005): a pergunta é o próprio gate; a resposta volta
         // como ToolGateDecision.Output e vira o resultado da tool. SPEC-15
@@ -1711,16 +1705,9 @@ public sealed class ChatRunExecutor(
 
         var tool = ToolExecutor.FindTool(tools, call.Name);
 
-        // Policies admin (SPEC-20261018-policies-admin): hard-deny antes de
-        // qualquer camada de usuário. Candidatos: nome da tool (MCP já
-        // materializa como mcp_{server}_{tool}) e nome:arg-pattern.
-        var argPattern = PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson);
-        if (policies is not null
-            && await policies.DenyAsync(PolicyService.ActionToolUse,
-                new[] { call.Name, $"{call.Name}:{argPattern}" }, run.UserId, ct) is { } denied)
+        if (await PolicyDeniedAsync(run, call, ct) is { } policyDenied)
         {
-            return new ToolGateDecision(true, Output:
-                "Erro: " + PolicyService.DeniedMessage(denied, call.Name));
+            return policyDenied;
         }
 
         // Ruleset do modo do agente (RF-002): negação estruturada — nem
@@ -1738,27 +1725,11 @@ public sealed class ChatRunExecutor(
                 + "builtin_plan_exit quando terminar.");
         }
 
-        // Overrides persistentes do dono (SPEC-20261013-approval-tiers
-        // RF-002): deny → erro estruturado; allow → executa (o deny do
-        // modo já foi avaliado acima e continua absoluto); prompt →
-        // sempre pergunta, inclusive em always-allow.
-        var userOverrides = await toolOverrides.GetAsync(run.UserId, ct);
-        var forcePrompt = false;
-        if (tool is not null)
+        var (overrideDecision, forcePrompt) =
+            await ApplyUserOverrideAsync(run, tool, call, ct);
+        if (overrideDecision is not null)
         {
-            switch (ToolApprovalPolicy.OverrideFor(userOverrides, call.Name))
-            {
-                case ToolOverride.Deny:
-                    return new ToolGateDecision(true, Output:
-                        $"Erro: a tool '{call.Name}' está bloqueada pelo dono "
-                        + "(override deny nas aprovações por ferramenta). "
-                        + "Escolha outra tool ou peça para o dono ajustar o override.");
-                case ToolOverride.Allow:
-                    return ToolGateDecision.Allow;
-                case ToolOverride.Prompt:
-                    forcePrompt = true;
-                    break;
-            }
+            return overrideDecision;
         }
 
         if (tool is null || (!forcePrompt
@@ -1770,22 +1741,90 @@ public sealed class ChatRunExecutor(
         }
 
         var preset = gateInfo?.ApprovalPreset ?? "approve-mutations";
-        if (!forcePrompt)
+        if (!forcePrompt
+            && AutoPresetDecision(run, tool, call, preset) is { } autoDecision)
         {
-            switch (preset)
-            {
+            return autoDecision;
+        }
+
+        return await AskToolApprovalAsync(run, call, tool, builtinContext, ct);
+    }
+
+    /// <summary>SPEC-15: build sem repo vinculado não executa tools de workspace.</summary>
+    private async Task<string> ResolveEffectiveModeAsync(
+        ChatRun run, string? rawMode, CancellationToken ct)
+    {
+        var mode = PermissionRuleset.Normalize(rawMode);
+        if (mode == PermissionRuleset.BuildMode
+            && await repos.GetChatBindingAsync(run.ChatId, ct) is null)
+        {
+            mode = PermissionRuleset.ChatMode;
+        }
+        return mode;
+    }
+
+    /// <summary>
+    /// Policies admin (SPEC-20261018-policies-admin): hard-deny antes de
+    /// qualquer camada de usuário. Candidatos: nome da tool (MCP já
+    /// materializa como mcp_{server}_{tool}) e nome:arg-pattern.
+    /// </summary>
+    private async Task<ToolGateDecision?> PolicyDeniedAsync(
+        ChatRun run, ProviderToolCall call, CancellationToken ct)
+    {
+        var argPattern = PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson);
+        if (policies is not null
+            && await policies.DenyAsync(PolicyService.ActionToolUse,
+                new[] { call.Name, $"{call.Name}:{argPattern}" }, run.UserId, ct) is { } denied)
+        {
+            return new ToolGateDecision(true, Output:
+                "Erro: " + PolicyService.DeniedMessage(denied, call.Name));
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Overrides persistentes do dono (SPEC-20261013-approval-tiers
+    /// RF-002): deny → erro estruturado; allow → executa (o deny do
+    /// modo já foi avaliado acima e continua absoluto); prompt →
+    /// sempre pergunta, inclusive em always-allow.
+    /// </summary>
+    private async Task<(ToolGateDecision? Decision, bool ForcePrompt)> ApplyUserOverrideAsync(
+        ChatRun run, Tool? tool, ProviderToolCall call, CancellationToken ct)
+    {
+        if (tool is null)
+        {
+            return (null, false);
+        }
+        var userOverrides = await toolOverrides.GetAsync(run.UserId, ct);
+        return ToolApprovalPolicy.OverrideFor(userOverrides, call.Name) switch
+        {
+            ToolOverride.Deny => (new ToolGateDecision(true, Output:
+                $"Erro: a tool '{call.Name}' está bloqueada pelo dono "
+                + "(override deny nas aprovações por ferramenta). "
+                + "Escolha outra tool ou peça para o dono ajustar o override."), false),
+            ToolOverride.Allow => (ToolGateDecision.Allow, false),
+            ToolOverride.Prompt => (null, true),
+            _ => (null, false),
+        };
+    }
+
+    /// <summary>
+    /// RF-012 (paridade OpenHands): LOW executa direto; MEDIUM executa com
+    /// notice no stream; HIGH cai no fluxo de pergunta. O preset <c>smart</c>
+    /// segue os mesmos tiers, mas mutações de arquivo caem na pergunta —
+    /// "executa sem aprovação, com restrição em alterações". Null → segue pro ask.
+    /// </summary>
+    private ToolGateDecision? AutoPresetDecision(
+        ChatRun run, Tool tool, ProviderToolCall call, string preset)
+    {
+        switch (preset)
+        {
             case "always-allow":
                 return ToolGateDecision.Allow;
             case "allow-readonly":
                 return ToolGateDecision.Deny;
             case "auto":
             case "smart":
-            {
-                // RF-012 (paridade OpenHands): LOW executa direto; MEDIUM
-                // executa com notice no stream; HIGH cai no fluxo de
-                // pergunta abaixo. O preset <c>smart</c> segue o mesmo
-                // tiers, mas mutações de arquivo caem na pergunta —
-                // "executa sem aprovação, com restrição em alterações".
                 var workspace = Path.Join(
                     DataPaths.Root(env.ContentRootPath), "workspaces", run.UserId);
                 var risk = ToolCallRiskClassifier.Classify(
@@ -1798,19 +1837,27 @@ public sealed class ChatRunExecutor(
                 {
                     return ToolGateDecision.Allow;
                 }
-
                 if (risk == ToolCallRisk.Medium && !fileMutation)
                 {
                     broadcaster.Publish(run.Id,
                         $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("auto_approved", call.Name), JsonOptions)}");
                     return ToolGateDecision.Allow;
                 }
-
-                break;
-            }
-            }
+                return null;
+            default:
+                return null;
         }
+    }
 
+    /// <summary>
+    /// Pausa por aprovação (RF-001): o advisor revisa enquanto o dono decide.
+    /// askedPayload: o GET da run devolve a pendência a quem perdeu o
+    /// attach SSE (proxies que matam o stream antes do 1º evento).
+    /// </summary>
+    private async Task<ToolGateDecision> AskToolApprovalAsync(
+        ChatRun run, ProviderToolCall call, Tool tool,
+        BuiltinToolContext builtinContext, CancellationToken ct)
+    {
         var argsPreview = Scrub(Truncate(call.ArgumentsJson, PreviewChars));
         var kind = tool switch
         {
@@ -1824,10 +1871,7 @@ public sealed class ChatRunExecutor(
         var asked = new RunApprovalAskedEvent(call.Id, call.Name, kind, argsPreview);
         broadcaster.Publish(run.Id,
             $"event: approval_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
-        // Pausa por aprovação (RF-001): o advisor revisa enquanto o dono decide.
         await KickAdvisorAsync(run, "pause", builtinContext, ct);
-        // askedPayload: o GET da run devolve a pendência a quem perdeu o
-        // attach SSE (proxies que matam o stream antes do 1º evento).
         var result = await approvals.WaitAsync(run.Id, run.ChatId, call.Id,
             call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson),
             asked);
