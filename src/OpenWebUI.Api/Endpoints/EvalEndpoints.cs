@@ -527,11 +527,19 @@ public static class EvalEndpoints
             .ToDictionary(g => g.Key, g => g.Any(r => r.Pass));
         return curByCase.Select(kv =>
         {
-            var status = !prevByCase.TryGetValue(kv.Key, out var was)
-                ? "new"
-                : kv.Value == was
-                    ? "unchanged"
-                    : kv.Value ? "improved" : "regressed";
+            string status;
+            if (!prevByCase.TryGetValue(kv.Key, out var was))
+            {
+                status = "new";
+            }
+            else if (kv.Value == was)
+            {
+                status = "unchanged";
+            }
+            else
+            {
+                status = kv.Value ? "improved" : "regressed";
+            }
             return new EvalCaseDiff(
                 kv.Key, status, kv.Value,
                 prevByCase.GetValueOrDefault(kv.Key),

@@ -164,9 +164,16 @@
         }
     }
 
-    private string PrincipalLabel(AccessGrant g) => g.PrincipalId == "*"
-        ? L["share.everyone"]
-        : g.PrincipalType == "group"
-            ? $"{L["share.group"]}: {_groups.FirstOrDefault(x => x.Id == g.PrincipalId)?.Name ?? g.PrincipalId}"
-            : _users?.FirstOrDefault(u => u.Id == g.PrincipalId)?.Name ?? g.PrincipalId;
+    private string PrincipalLabel(AccessGrant g)
+    {
+        if (g.PrincipalId == "*")
+        {
+            return L["share.everyone"];
+        }
+        if (g.PrincipalType == "group")
+        {
+            return $"{L["share.group"]}: {_groups.FirstOrDefault(x => x.Id == g.PrincipalId)?.Name ?? g.PrincipalId}";
+        }
+        return _users?.FirstOrDefault(u => u.Id == g.PrincipalId)?.Name ?? g.PrincipalId;
+    }
 }

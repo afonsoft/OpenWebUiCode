@@ -153,10 +153,22 @@ else
     private string _branch = "main";
     private string? _message;
 
-    private List<GitHubRepoResponse> Filtered =>
-        _repos is null ? []
-            : string.IsNullOrWhiteSpace(_filter) ? _repos
-            : _repos.Where(r => r.FullName.Contains(_filter, StringComparison.OrdinalIgnoreCase)).ToList();
+    private List<GitHubRepoResponse> Filtered
+    {
+        get
+        {
+            if (_repos is null)
+            {
+                return [];
+            }
+            if (string.IsNullOrWhiteSpace(_filter))
+            {
+                return _repos;
+            }
+            return _repos.Where(r =>
+                r.FullName.Contains(_filter, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {

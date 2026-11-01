@@ -1138,13 +1138,22 @@ public sealed class ChatRunExecutor(
         // SPEC-20261027: workdir sob scratch/ já é isolado por conversa
         // (e o subdir agents/ isola o filho) — worktree de run seria
         // redundante e perderia mudanças não-commitadas do scratch.
-        var (isolated, warning) = parentWorktree is not null
-            ? (parentWorktree, null)
-            : repos.IsScratchDir(user.Id, workdir)
-                ? (null, null)
-                : await worktrees.TryCreateForRunAsync(
-                    user.Id, run.Id, workdir, ct,
-                    force: run.ParentRunId is not null && !sameChatParent);
+        string? isolated;
+        string? warning;
+        if (parentWorktree is not null)
+        {
+            (isolated, warning) = (parentWorktree, null);
+        }
+        else if (repos.IsScratchDir(user.Id, workdir))
+        {
+            (isolated, warning) = (null, null);
+        }
+        else
+        {
+            (isolated, warning) = await worktrees.TryCreateForRunAsync(
+                user.Id, run.Id, workdir, ct,
+                force: run.ParentRunId is not null && !sameChatParent);
+        }
         if (warning is not null)
         {
             // Fallback shared: visível no stream como fase informativa.
@@ -1767,10 +1776,13 @@ public sealed class ChatRunExecutor(
         }
 
         var argsPreview = Scrub(Truncate(call.ArgumentsJson, PreviewChars));
-        var kind = !string.IsNullOrWhiteSpace(tool.Code)
-            ? "python"
-            : tool.Url.StartsWith(McpClientService.VirtualUrlPrefix,
-                StringComparison.Ordinal) ? "mcp" : "http";
+        var kind = tool switch
+        {
+            _ when !string.IsNullOrWhiteSpace(tool.Code) => "python",
+            _ when tool.Url.StartsWith(McpClientService.VirtualUrlPrefix,
+                StringComparison.Ordinal) => "mcp",
+            _ => "http",
+        };
         broadcaster.Publish(run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
         var asked = new RunApprovalAskedEvent(call.Id, call.Name, kind, argsPreview);
@@ -2008,15 +2020,24 @@ public sealed class ChatRunExecutor(
             return [];
         }
         return [.. opts.EnumerateArray()
-            .Select(o => o.ValueKind == JsonValueKind.String
-                ? o.GetString()
-                : o.ValueKind == JsonValueKind.Object
-                    && o.TryGetProperty("label", out var l)
-                        ? l.GetString()
-                        : null)
+            .Select(OptionLabel)
             .Where(o => !string.IsNullOrWhiteSpace(o))
             .Select(o => o!)
             .Take(4)];
+
+        static string? OptionLabel(JsonElement o)
+        {
+            if (o.ValueKind == JsonValueKind.String)
+            {
+                return o.GetString();
+            }
+            if (o.ValueKind == JsonValueKind.Object
+                && o.TryGetProperty("label", out var l))
+            {
+                return l.GetString();
+            }
+            return null;
+        }
     }
 
     /// <summary>
@@ -2513,11 +2534,12 @@ public sealed class ChatRunExecutor(
         runBus.PublishAsync(
             new OpenWebUI.Application.Interfaces.AgentRunEvent(
                 run.Id, run.ChatId, run.UserId,
-                run.Status == ChatRunStatus.Completed
-                    ? "run.completed"
-                    : run.Status == ChatRunStatus.Stopped
-                        ? "run.stopped"
-                        : "run.failed",
+                run.Status switch
+                {
+                    ChatRunStatus.Completed => "run.completed",
+                    ChatRunStatus.Stopped => "run.stopped",
+                    _ => "run.failed",
+                },
                 JsonSerializer.Serialize(
                     new { status = run.Status, error = run.Error }, JsonOptions)),
             CancellationToken.None);

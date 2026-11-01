@@ -465,9 +465,12 @@ public static class ChatEndpoints
         }
 
         var path = BranchService.WalkPath(chat);
-        var end = before is null
-            ? path.Count
-            : path.FindIndex(m => m.Id == before) is { } i && i >= 0 ? i : path.Count;
+        var end = path.Count;
+        if (before is not null
+            && path.FindIndex(m => m.Id == before) is { } i && i >= 0)
+        {
+            end = i;
+        }
         take = Math.Clamp(take <= 0 ? 50 : take, 1, 200);
         var start = Math.Max(0, end - take);
         // Snap de fronteira: nunca abrir a página no meio de um grupo "tool"

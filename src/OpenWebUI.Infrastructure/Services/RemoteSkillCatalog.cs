@@ -213,13 +213,17 @@ public sealed class RemoteSkillCatalog(
 
         foreach (var item in array.EnumerateArray())
         {
-            var name = item.ValueKind == JsonValueKind.String
-                ? item.GetString()
-                : item.ValueKind == JsonValueKind.Object
-                    && item.TryGetProperty("name", out var n)
-                    && n.ValueKind == JsonValueKind.String
-                    ? n.GetString()
-                    : null;
+            string? name = null;
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                name = item.GetString();
+            }
+            else if (item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("name", out var n)
+                && n.ValueKind == JsonValueKind.String)
+            {
+                name = n.GetString();
+            }
             var description = item.ValueKind == JsonValueKind.Object
                 && item.TryGetProperty("description", out var d)
                 && d.ValueKind == JsonValueKind.String

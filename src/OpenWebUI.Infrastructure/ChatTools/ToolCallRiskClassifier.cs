@@ -112,10 +112,14 @@ public static class ToolCallRiskClassifier
         try
         {
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty(field, out var el)
-                ? el.ValueKind == JsonValueKind.String ? el.GetString() : el.GetRawText()
-                : null;
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(field, out var el))
+            {
+                return el.ValueKind == JsonValueKind.String
+                    ? el.GetString()
+                    : el.GetRawText();
+            }
+            return null;
         }
         catch (JsonException)
         {

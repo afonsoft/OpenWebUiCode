@@ -43,10 +43,13 @@ public static class GitDiffRender
     {
         foreach (var line in diff.Split('\n'))
         {
-            var css = line.StartsWith('+') ? "text-green-600 dark:text-green-400"
-                : line.StartsWith('-') ? "text-red-500 dark:text-red-400"
-                : line.StartsWith("@@") ? "text-blue-600 dark:text-blue-400"
-                : "text-gray-500 dark:text-gray-400";
+            var css = line switch
+            {
+                { } l2 when l2.StartsWith('+') => "text-green-600 dark:text-green-400",
+                { } l2 when l2.StartsWith('-') => "text-red-500 dark:text-red-400",
+                { } l2 when l2.StartsWith("@@") => "text-blue-600 dark:text-blue-400",
+                _ => "text-gray-500 dark:text-gray-400",
+            };
             yield return (line, css);
         }
     }

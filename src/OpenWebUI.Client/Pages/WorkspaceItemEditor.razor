@@ -177,6 +177,9 @@
 </div>
 
 @code {
+    private static string? NullIfWhiteSpace(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s;
+
     [Parameter] public string? Kind { get; set; }
     [Parameter] public string? Id { get; set; }
 
@@ -368,27 +371,27 @@
             "models" => IsCreate
                 ? await Api.CreateCustomModelAsync(new ModelEntryUpsertRequest(
                     _mName.Trim(), _mBase, _mSystem,
-                    string.IsNullOrWhiteSpace(_mParams) ? null : _mParams, null,
-                    string.IsNullOrWhiteSpace(_mMeta) ? null : _mMeta,
-                    string.IsNullOrWhiteSpace(_mGrants) ? null : _mGrants)) is not null
+                    NullIfWhiteSpace(_mParams), null,
+                    NullIfWhiteSpace(_mMeta),
+                    NullIfWhiteSpace(_mGrants))) is not null
                 : await Api.UpdateCustomModelAsync(Id!, new ModelEntryUpsertRequest(
                     _mName.Trim(), _mBase, _mSystem,
-                    string.IsNullOrWhiteSpace(_mParams) ? null : _mParams, _model?.ProfileImageUrl,
-                    string.IsNullOrWhiteSpace(_mMeta) ? null : _mMeta,
-                    string.IsNullOrWhiteSpace(_mGrants) ? null : _mGrants)) is not null,
+                    NullIfWhiteSpace(_mParams), _model?.ProfileImageUrl,
+                    NullIfWhiteSpace(_mMeta),
+                    NullIfWhiteSpace(_mGrants))) is not null,
             "tools" => IsCreate
                 ? await Api.CreateToolAsync(new ToolUpsertRequest(
                     _tName.Trim(), _tDesc, _tSpec,
-                    string.IsNullOrWhiteSpace(_tUrl) ? null : _tUrl.Trim(),
-                    string.IsNullOrWhiteSpace(_tCode) ? null : _tCode, _tEnabled)) is not null
+                    NullIfWhiteSpace(_tUrl?.Trim()),
+                    NullIfWhiteSpace(_tCode), _tEnabled)) is not null
                 : await Api.UpdateToolAsync(Id!, new ToolUpsertRequest(
                     _tName.Trim(), _tDesc, _tSpec, null,
-                    string.IsNullOrWhiteSpace(_tCode) ? "" : _tCode, _tEnabled)) is not null,
+                    NullIfWhiteSpace(_tCode) ?? "", _tEnabled)) is not null,
             _ => IsCreate
                 ? await Api.CreateKnowledgeAsync(_kName.Trim(),
-                    string.IsNullOrWhiteSpace(_kDesc) ? null : _kDesc) is not null
+                    NullIfWhiteSpace(_kDesc)) is not null
                 : await Api.UpdateKnowledgeAsync(Id!, _kName.Trim(),
-                    string.IsNullOrWhiteSpace(_kDesc) ? null : _kDesc) is not null,
+                    NullIfWhiteSpace(_kDesc)) is not null,
         };
 
         if (ok)

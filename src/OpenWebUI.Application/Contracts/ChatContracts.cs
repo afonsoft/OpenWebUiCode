@@ -23,11 +23,12 @@ public sealed record ChatMessageFileModel(
     public static ChatMessageFileModel Of(
         string id, string name, string? contentType, long size) => new(
         id, name, contentType, size,
-        contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
-            ? "image"
-            : contentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
-                ? "video"
-                : "file");
+        contentType switch
+        {
+            { } c when c.StartsWith("image/", StringComparison.OrdinalIgnoreCase) => "image",
+            { } c when c.StartsWith("video/", StringComparison.OrdinalIgnoreCase) => "video",
+            _ => "file",
+        });
 }
 
 /// <summary>Uma mensagem dentro de um chat (formato OpenAI simplificado).</summary>

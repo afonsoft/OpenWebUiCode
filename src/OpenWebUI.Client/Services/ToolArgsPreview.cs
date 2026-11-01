@@ -55,10 +55,14 @@ public static class ToolArgsPreview
         try
         {
             using var doc = JsonDocument.Parse(argsJson);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty(field, out var el)
-                ? el.ValueKind == JsonValueKind.String ? el.GetString() : el.GetRawText()
-                : null;
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(field, out var el))
+            {
+                return el.ValueKind == JsonValueKind.String
+                    ? el.GetString()
+                    : el.GetRawText();
+            }
+            return null;
         }
         catch (JsonException)
         {

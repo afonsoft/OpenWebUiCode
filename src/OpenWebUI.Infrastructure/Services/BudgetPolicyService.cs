@@ -244,5 +244,10 @@ public sealed class BudgetPolicyService(
     }
 
     private static int? Min(int? a, int? b) =>
-        a is null ? b : b is null ? a : Math.Min(a.Value, b.Value);
+        (a, b) switch
+        {
+            (null, _) => b,
+            (_, null) => a,
+            _ => Math.Min(a!.Value, b!.Value),
+        };
 }

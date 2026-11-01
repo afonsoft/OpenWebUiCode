@@ -126,10 +126,13 @@ public sealed class LspOptions
                 continue;
             }
 
-            var args = child.GetSection("Args").Get<string[]>()
-                ?? (child["Args"] is { } flat
+            var args = child.GetSection("Args").Get<string[]>();
+            if (args is null)
+            {
+                args = child["Args"] is { } flat
                     ? flat.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    : []);
+                    : [];
+            }
             servers[child.Key] = new LspServerSpec(command.Trim(), args);
         }
 
@@ -145,15 +148,31 @@ public sealed class LspOptions
         };
     }
 
-    private static bool? ParseBool(IConfiguration configuration, string key, string env) =>
-        bool.TryParse(configuration[key], out var v) ? v
-        : bool.TryParse(Environment.GetEnvironmentVariable(env), out v) ? v
-        : null;
+    private static bool? ParseBool(IConfiguration configuration, string key, string env)
+    {
+        if (bool.TryParse(configuration[key], out var v))
+        {
+            return v;
+        }
+        if (bool.TryParse(Environment.GetEnvironmentVariable(env), out v))
+        {
+            return v;
+        }
+        return null;
+    }
 
-    private static int? ParseInt(IConfiguration configuration, string key, string env) =>
-        int.TryParse(configuration[key], out var v) ? v
-        : int.TryParse(Environment.GetEnvironmentVariable(env), out v) ? v
-        : null;
+    private static int? ParseInt(IConfiguration configuration, string key, string env)
+    {
+        if (int.TryParse(configuration[key], out var v))
+        {
+            return v;
+        }
+        if (int.TryParse(Environment.GetEnvironmentVariable(env), out v))
+        {
+            return v;
+        }
+        return null;
+    }
 }
 
 /// <summary>

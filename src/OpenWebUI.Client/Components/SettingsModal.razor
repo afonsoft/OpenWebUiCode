@@ -2466,9 +2466,12 @@
     private async Task TestWebhookAsync()
     {
         var result = await Api.TestWebhookAsync();
-        _webhookMessage = result is null
-            ? L["settings.save_failed"]
-            : result.Ok ? L["settings.webhook_test_ok"] : $"{L["settings.webhook_test_fail"]} ({result.StatusCode})";
+        _webhookMessage = result switch
+        {
+            null => L["settings.save_failed"],
+            { Ok: true } => L["settings.webhook_test_ok"],
+            _ => $"{L["settings.webhook_test_fail"]} ({result.StatusCode})",
+        };
     }
 
     private async Task DeleteWebhookAsync()
@@ -2494,9 +2497,12 @@
     private async Task TestAdminWebhookAsync()
     {
         var result = await Api.TestAdminWebhookAsync();
-        _adminWebhookMessage = result is null
-            ? L["settings.save_failed"]
-            : result.Ok ? L["settings.webhook_test_ok"] : $"{L["settings.webhook_test_fail"]} ({result.StatusCode})";
+        _adminWebhookMessage = result switch
+        {
+            null => L["settings.save_failed"],
+            { Ok: true } => L["settings.webhook_test_ok"],
+            _ => $"{L["settings.webhook_test_fail"]} ({result.StatusCode})",
+        };
     }
 
     private async Task DeleteAdminWebhookAsync()
@@ -2911,9 +2917,12 @@
         _adminMessage = null;
         await SaveAudioAsync();
         var result = await Api.TestAudioConfigAsync();
-        _adminMessage = result is null
-            ? L["settings.save_failed"]
-            : result.Ok ? L["settings.audio_test_ok"] : $"{L["settings.audio_test_fail"]}: {result.Detail}";
+        _adminMessage = result switch
+        {
+            null => L["settings.save_failed"],
+            { Ok: true } => L["settings.audio_test_ok"],
+            _ => $"{L["settings.audio_test_fail"]}: {result.Detail}",
+        };
         _audioTesting = false;
     }
 

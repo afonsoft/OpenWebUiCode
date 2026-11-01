@@ -75,12 +75,20 @@ public sealed class TelegramAdapter(IHttpClientFactory httpFactory) : IGatewayAd
             string? name = null;
             if (msg.TryGetProperty("from", out var fromEl))
             {
-                name = fromEl.TryGetProperty("username", out var un)
-                    && un.ValueKind == JsonValueKind.String
-                        ? un.GetString()
-                        : fromEl.TryGetProperty("first_name", out var fn)
-                            && fn.ValueKind == JsonValueKind.String
-                                ? fn.GetString() : null;
+                if (fromEl.TryGetProperty("username", out var un)
+                    && un.ValueKind == JsonValueKind.String)
+                {
+                    name = un.GetString();
+                }
+                else if (fromEl.TryGetProperty("first_name", out var fn)
+                    && fn.ValueKind == JsonValueKind.String)
+                {
+                    name = fn.GetString();
+                }
+                else
+                {
+                    name = null;
+                }
             }
             var messageId = msg.TryGetProperty("message_id", out var mid)
                 ? mid.ToString() : null;

@@ -135,10 +135,13 @@
     {
         _sel = 0;
         var q = _query;
-        _mode = q.StartsWith('>') ? "commands"
-            : q.StartsWith(':') ? "line"
-            : q.StartsWith('@') ? "symbols"
-            : "files";
+        _mode = q switch
+        {
+            { } s when s.StartsWith('>') => "commands",
+            { } s when s.StartsWith(':') => "line",
+            { } s when s.StartsWith('@') => "symbols",
+            _ => "files",
+        };
         var body = _mode == "files" ? q : q[1..];
         switch (_mode)
         {

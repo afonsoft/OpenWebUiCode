@@ -287,17 +287,33 @@ public sealed partial class SpecsBuiltinTool : IBuiltinChatTool
     }
 
     /// <summary>Valor do status no formato que casou (tabela/linha/negrito).</summary>
-    private static string StatusValue(Match m) =>
-        m.Groups["line"].Success ? m.Groups["line"].Value.Trim()
-            : m.Groups["bold"].Success ? m.Groups["bold"].Value.Trim()
-            : m.Groups["value"].Value.Trim();
+    private static string StatusValue(Match m)
+    {
+        if (m.Groups["line"].Success)
+        {
+            return m.Groups["line"].Value.Trim();
+        }
+        if (m.Groups["bold"].Success)
+        {
+            return m.Groups["bold"].Value.Trim();
+        }
+        return m.Groups["value"].Value.Trim();
+    }
 
     /// <summary>Reconstrói a linha de status preservando o formato original
     /// (tabela, linha ou negrito).</summary>
-    private static string RebuildStatusLine(Match m, string to) =>
-        m.Groups["line"].Success ? $"Status: {to}"
-            : m.Groups["bold"].Success ? $"**Status**: {to}"
-            : $"| Status | `{to}` |";
+    private static string RebuildStatusLine(Match m, string to)
+    {
+        if (m.Groups["line"].Success)
+        {
+            return $"Status: {to}";
+        }
+        if (m.Groups["bold"].Success)
+        {
+            return $"**Status**: {to}";
+        }
+        return $"| Status | `{to}` |";
+    }
 
     /// <summary>Move a SPEC para <c>docs/specs/</c> — <c>git mv</c> quando o
     /// workdir é repo git (dir <c>.git</c> ou arquivo de worktree), senão

@@ -148,7 +148,22 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         => CooldownUntil(provider) is { } until && until > Now();
 
     private static DateTimeOffset? CooldownUntil(string provider)
-        => Cooldowns.TryGetValue(provider, out var until) ? until : null;
+    {
+        if (Cooldowns.TryGetValue(provider, out var until))
+        {
+            return until;
+        }
+        return null;
+    }
+
+    private static string StrProp(JsonElement item, string key)
+    {
+        if (item.TryGetProperty(key, out var v))
+        {
+            return v.GetString() ?? string.Empty;
+        }
+        return string.Empty;
+    }
 
     /// <summary>
     /// Marca cooldown do provider (RF-002): 429 honra Retry-After (teto de
@@ -380,11 +395,19 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
+                string desc;
+                if (item.TryGetProperty("description", out var d))
+                {
+                    desc = d.GetString() ?? string.Empty;
+                }
+                else
+                {
+                    desc = StrProp(item, "content");
+                }
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("description", out var d) ? d.GetString() ?? string.Empty
-                        : item.TryGetProperty("content", out var c) ? c.GetString() ?? string.Empty : string.Empty));
+                    StrProp(item, TitleKey),
+                    StrProp(item, "url"),
+                    desc));
             }
         }
         return results;
@@ -410,11 +433,18 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
         {
             foreach (var item in items.EnumerateArray().Take(count))
             {
-                var snippet = item.TryGetProperty("text", out var tx) ? tx.GetString() ?? string.Empty
-                    : item.TryGetProperty("summary", out var su) ? su.GetString() ?? string.Empty : string.Empty;
+                string snippet;
+                if (item.TryGetProperty("text", out var tx))
+                {
+                    snippet = tx.GetString() ?? string.Empty;
+                }
+                else
+                {
+                    snippet = StrProp(item, "summary");
+                }
                 results.Add(new WebSearchResult(
-                    item.TryGetProperty(TitleKey, out var ti) ? ti.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
+                    StrProp(item, TitleKey),
+                    StrProp(item, "url"),
                     snippet.Length > 500 ? snippet[..500] : snippet));
             }
         }

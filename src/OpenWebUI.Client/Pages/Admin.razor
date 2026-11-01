@@ -645,10 +645,7 @@
                                             aria-expanded="@_showDefaultModelsMenu" aria-haspopup="listbox"
                                             @onclick="() => _showDefaultModelsMenu = !_showDefaultModelsMenu">
                                         <span class="truncate text-gray-800 dark:text-gray-200">
-                                            @(_defaultModels.Count == 0
-                                                ? L["admin.default_models_empty"]
-                                                : string.Join(", ", _defaultModels.Take(3))
-                                                    + (_defaultModels.Count > 3 ? $" +{_defaultModels.Count - 3}" : ""))
+                                            @DefaultModelsSummary
                                         </span>
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 flex-none"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
                                     </button>
@@ -2507,10 +2504,26 @@
         }
     }
 
+    private string DefaultModelsSummary
+    {
+        get
+        {
+            if (_defaultModels.Count == 0)
+            {
+                return L["admin.default_models_empty"];
+            }
+            var suffix = _defaultModels.Count > 3 ? $" +{_defaultModels.Count - 3}" : "";
+            return string.Join(", ", _defaultModels.Take(3)) + suffix;
+        }
+    }
+
     private string McpStatusClass(McpServerResponse server) =>
-        !server.Enabled ? "bg-gray-400"
-        : server.LastError is not null ? "bg-red-500"
-        : "bg-green-500";
+        server switch
+        {
+            { Enabled: false } => "bg-gray-400",
+            { LastError: not null } => "bg-red-500",
+            _ => "bg-green-500",
+        };
 
     private string McpStatusTitle(McpServerResponse server) =>
         !server.Enabled ? L["common.disabled"]
@@ -2964,10 +2977,19 @@
         }
     }
 
-    private string PermLabel(string key) =>
-        _permValues.TryGetValue(key, out var v)
-            ? (v == true ? "✓ " + L["admin.perm_on"] : v == false ? "✗ " + L["admin.perm_off"] : "—")
-            : "—";
+    private string PermLabel(string key)
+    {
+        if (!_permValues.TryGetValue(key, out var v))
+        {
+            return "—";
+        }
+        return v switch
+        {
+            true => "✓ " + L["admin.perm_on"],
+            false => "✗ " + L["admin.perm_off"],
+            _ => "—",
+        };
+    }
 
     private async Task TogglePermEditorAsync(AdminUserResponse user)
     {
@@ -2997,7 +3019,12 @@
     private void CyclePermAsync(string key)
     {
         var cur = _permValues.TryGetValue(key, out var v) ? v : null;
-        _permValues[key] = cur is null ? true : cur == true ? false : (bool?)null;
+        _permValues[key] = cur switch
+        {
+            null => true,
+            true => false,
+            _ => null,
+        };
     }
 
     private async Task SavePermsAsync()

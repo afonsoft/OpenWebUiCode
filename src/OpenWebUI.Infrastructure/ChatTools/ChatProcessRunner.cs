@@ -127,7 +127,11 @@ public static class ChatProcessRunner
         }
 
         var scrubbed = SecretScrubber.Scrub(combined, secretsToScrub) ?? string.Empty;
-        var exitCode = timedOut ? -1 : process.HasExited ? process.ExitCode : -1;
+        var exitCode = -1;
+        if (!timedOut && process.HasExited)
+        {
+            exitCode = process.ExitCode;
+        }
         return new ProcessOutcome(exitCode, scrubbed, truncated, timedOut);
     }
 }

@@ -196,20 +196,25 @@ public sealed class WorktreeMergeBuiltinTool(
         }
 
         var result = await worktrees.MergeAsync(mainWorkdir, worktree, ct);
-        return result.Merged
-            ? new BuiltinToolResult(
-                result.Applied.Count == 0
-                    ? "Worktree sem mudanças — nada aplicado; worktree removido."
-                    : $"Merge aplicado ({result.Applied.Count} arquivo(s)): "
-                        + string.Join(", ", result.Applied),
+        if (result.Merged)
+        {
+            var mergedText = result.Applied.Count == 0
+                ? "Worktree sem mudanças — nada aplicado; worktree removido."
+                : $"Merge aplicado ({result.Applied.Count} arquivo(s)): "
+                    + string.Join(", ", result.Applied);
+            return new BuiltinToolResult(mergedText,
                 new { runId = run.Id, action = "merge", merged = true,
-                    applied = result.Applied })
-            : new BuiltinToolResult(
-                $"Merge parcial — {result.Conflicts.Count} conflito(s) não "
-                    + $"aplicados (worktree preservado p/ correção manual): "
-                    + string.Join("; ", result.Conflicts)
-                    + (result.Error is { } err ? $" — {err}" : string.Empty),
-                new { runId = run.Id, action = "merge", merged = false,
-                    applied = result.Applied, conflicts = result.Conflicts });
+                    applied = result.Applied });
+        }
+        var detail = $"Merge parcial — {result.Conflicts.Count} conflito(s) não "
+            + $"aplicados (worktree preservado p/ correção manual): "
+            + string.Join("; ", result.Conflicts);
+        if (result.Error is { } err)
+        {
+            detail += $" — {err}";
+        }
+        return new BuiltinToolResult(detail,
+            new { runId = run.Id, action = "merge", merged = false,
+                applied = result.Applied, conflicts = result.Conflicts });
     }
 }

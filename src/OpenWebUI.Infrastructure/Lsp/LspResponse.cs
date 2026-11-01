@@ -48,13 +48,36 @@ public static class LspResponse
         }
 
         // LocationLink: {targetUri, targetSelectionRange|targetRange}
-        var uri = item.TryGetProperty("uri", out var u) ? u.GetString()
-            : item.TryGetProperty("targetUri", out var tu) ? tu.GetString()
-            : null;
-        var range = item.TryGetProperty(RangeKey, out var r) ? r
-            : item.TryGetProperty("targetSelectionRange", out var tsr) ? tsr
-            : item.TryGetProperty("targetRange", out var tr) ? tr
-            : (JsonElement?)null;
+        string? uri;
+        if (item.TryGetProperty("uri", out var u))
+        {
+            uri = u.GetString();
+        }
+        else if (item.TryGetProperty("targetUri", out var tu))
+        {
+            uri = tu.GetString();
+        }
+        else
+        {
+            uri = null;
+        }
+        JsonElement? range;
+        if (item.TryGetProperty(RangeKey, out var r))
+        {
+            range = r;
+        }
+        else if (item.TryGetProperty("targetSelectionRange", out var tsr))
+        {
+            range = tsr;
+        }
+        else if (item.TryGetProperty("targetRange", out var tr))
+        {
+            range = tr;
+        }
+        else
+        {
+            range = null;
+        }
         var path = LspClient.PathForUri(uri);
         if (path is null || range is null)
         {

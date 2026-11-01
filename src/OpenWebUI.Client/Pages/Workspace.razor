@@ -300,13 +300,15 @@
         }
     }
 
-    private string Section =>
-        Nav.Uri.Contains("/workspace/models") ? "models"
-        : Nav.Uri.Contains("/workspace/files") ? "files"
-        : Nav.Uri.Contains("/workspace/knowledge") ? "knowledge"
-        : Nav.Uri.Contains("/workspace/tools") ? "tools"
-        : Nav.Uri.Contains("/workspace/skills") ? "skills"
-        : "prompts";
+    private string Section => Nav.Uri switch
+    {
+        { } u when u.Contains("/workspace/models") => "models",
+        { } u when u.Contains("/workspace/files") => "files",
+        { } u when u.Contains("/workspace/knowledge") => "knowledge",
+        { } u when u.Contains("/workspace/tools") => "tools",
+        { } u when u.Contains("/workspace/skills") => "skills",
+        _ => "prompts",
+    };
 
     private List<PromptResponse> _prompts = [];
     private List<ModelEntryResponse> _models = [];
@@ -460,11 +462,14 @@
     {
         _knowledgeStatus = L["workspace.reindexing"];
         var result = await Api.ReindexKnowledgeAsync(item.Id);
-        _knowledgeStatus = result is null
-            ? L["workspace.reindex_failed"]
-            : result.Status
-                ? L.T("workspace.reindexed", ("count", result.Indexed.ToString()))
-                : L.T("workspace.reindex_partial", ("ok", result.Indexed.ToString()), ("fail", result.Failed.ToString()));
+        _knowledgeStatus = result switch
+        {
+            null => L["workspace.reindex_failed"],
+            { Status: true } => L.T("workspace.reindexed",
+                ("count", result.Indexed.ToString())),
+            _ => L.T("workspace.reindex_partial",
+                ("ok", result.Indexed.ToString()), ("fail", result.Failed.ToString())),
+        };
     }
 
     private async Task BatchDeleteKnowledgeAsync()
@@ -567,9 +572,12 @@
     }
 
     private static string FormatSize(long bytes) =>
-        bytes > 1024 * 1024 ? $"{bytes / 1024.0 / 1024.0:F1} MB"
-        : bytes > 1024 ? $"{bytes / 1024.0:F1} KB"
-        : $"{bytes} B";
+        bytes switch
+        {
+            > 1024 * 1024 => $"{bytes / 1024.0 / 1024.0:F1} MB",
+            > 1024 => $"{bytes / 1024.0:F1} KB",
+            _ => $"{bytes} B",
+        };
 
     private string FormatDate(long unixSeconds) =>
         L.FormatDateTime(DateTimeOffset.FromUnixTimeSeconds(unixSeconds).LocalDateTime);

@@ -115,8 +115,13 @@ public sealed class GitHubService(
         try
         {
             using var doc = await SendAsync(token, HttpMethod.Get, $"{ApiBase}/user", ct);
-            return doc is null ? null
-                : doc.RootElement.TryGetProperty("login", out var l) ? l.GetString() : null;
+            if (doc is null)
+            {
+                return null;
+            }
+            return doc.RootElement.TryGetProperty("login", out var l)
+                ? l.GetString()
+                : null;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
@@ -304,9 +309,13 @@ public sealed class GitHubService(
         }
         CountCheckRuns(checksDoc, tally);
 
-        var state = tally.Failing > 0 ? "failure"
-            : tally.Pending > 0 || tally.Total == 0 ? "pending"
-            : "success";
+        var state = tally switch
+        {
+            { Failing: > 0 } => "failure",
+            { Pending: > 0 } => "pending",
+            { Total: 0 } => "pending",
+            _ => "success",
+        };
         return new WorkspacePrChecksResponse(
             tally.Total, tally.Passing, tally.Failing, tally.Pending, state);
     }

@@ -228,9 +228,11 @@
     private async Task SaveAsync()
     {
         _error = null;
+        var createName = string.IsNullOrWhiteSpace(_name)
+            ? L["notes.untitled"]
+            : _name.Trim();
         var saved = Id is null
-            ? await Api.CreateNoteAsync(
-                string.IsNullOrWhiteSpace(_name) ? L["notes.untitled"] : _name.Trim(), _content)
+            ? await Api.CreateNoteAsync(createName, _content)
             : await Api.UpdateNoteAsync(Id, _name.Trim(), _content);
 
         if (saved is null)

@@ -325,7 +325,7 @@
                         @foreach (var server in Mcps)
                         {
                             <li class="flex items-center gap-1.5 rounded-lg border border-gray-100 dark:border-gray-800 px-2 py-1.5">
-                                <span class="size-1.5 flex-none rounded-full @(server.Enabled && server.LastError is null ? "bg-green-500" : server.Enabled ? "bg-amber-500" : "bg-gray-300 dark:bg-gray-600")"
+                                <span class="size-1.5 flex-none rounded-full @McpDotCss(server)"
                                         role="img" aria-label="@McpStatusLabel(server)" title="@McpStatusLabel(server)"></span>
                                 <div class="min-w-0 flex-1">
                                     <div class="truncate text-[0.6875rem] font-medium text-gray-700 dark:text-gray-300" title="@server.Name">@server.Name</div>
@@ -624,7 +624,7 @@
                                     <span class="font-mono text-gray-500 dark:text-gray-400">$@myUsage.CostUsd.ToString("0.##") / $@cap.UsdPerMonth.ToString("0.##") · @cap.UsedPct.ToString("0.#")%</span>
                                 </div>
                                 <div class="mt-0.5 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-                                    <div class="h-full rounded-full @(cap.UsedPct >= 90 ? "bg-red-500" : cap.UsedPct >= 70 ? "bg-amber-500" : "bg-emerald-500")" style="width:@Math.Min(cap.UsedPct, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%"></div>
+                                    <div class="h-full rounded-full @UsageBarCss(cap.UsedPct)" style="width:@Math.Min(cap.UsedPct, 100).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)%"></div>
                                 </div>
                             </div>
                         }
@@ -1027,9 +1027,28 @@
     }
 
     private string McpStatusLabel(McpServerResponse server) =>
-        !server.Enabled ? L["chat.panel_mcp_disabled"]
-        : server.LastError is not null ? L["chat.panel_mcp_error"]
-        : L["chat.panel_mcp_ok"];
+        server switch
+        {
+            { Enabled: false } => L["chat.panel_mcp_disabled"],
+            { LastError: not null } => L["chat.panel_mcp_error"],
+            _ => L["chat.panel_mcp_ok"],
+        };
+
+    private static string McpDotCss(McpServerResponse server) =>
+        server switch
+        {
+            { Enabled: true, LastError: null } => "bg-green-500",
+            { Enabled: true } => "bg-amber-500",
+            _ => "bg-gray-300 dark:bg-gray-600",
+        };
+
+    private static string UsageBarCss(double pct) =>
+        pct switch
+        {
+            >= 90 => "bg-red-500",
+            >= 70 => "bg-amber-500",
+            _ => "bg-emerald-500",
+        };
 
     private static string JobDotCss(string status) => status switch
     {
