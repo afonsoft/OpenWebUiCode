@@ -1,4 +1,6 @@
 using System.Text.Json;
+using OpenWebUI.Infrastructure.Sandbox;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 
@@ -10,7 +12,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// cancel e saída truncada em 16KB com segredos mascarados.
 /// Mutável → passa pelo gate de aprovação do preset de tool safety.
 /// </summary>
-public sealed class CodeInterpreterBuiltinTool : IBuiltinChatTool
+public sealed class CodeInterpreterBuiltinTool(ConfigService? config = null) : IBuiltinChatTool
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MaxTimeout = TimeSpan.FromSeconds(300);
@@ -78,16 +80,23 @@ public sealed class CodeInterpreterBuiltinTool : IBuiltinChatTool
 
         try
         {
-            var outcome = await ChatProcessRunner.RunAsync(
-                $"{binary} \"{scriptPath}\"",
-                context.WorkspacePath,
-                timeout,
-                ct: ct);
+            var boxed = config is null
+                ? new SandboxedOutcome(
+                    await ChatProcessRunner.RunAsync(
+                        $"{binary} \"{scriptPath}\"",
+                        context.WorkspacePath, timeout, ct: ct),
+                    false, [])
+                : await SandboxExec.RunAsync(
+                    Name, $"{binary} \"{scriptPath}\"", context, config,
+                    timeout, ct: ct);
+            var outcome = boxed.Outcome;
 
             var status = outcome.TimedOut
                 ? $"timeout após {(int)timeout.TotalSeconds}s"
                 : $"exit {outcome.ExitCode}";
-            var text = $"[{language} — {status}]\n{outcome.Output}";
+            var footer = boxed.FooterText();
+            var text = $"[{language} — {status}]\n{outcome.Output}"
+                + (footer.Length > 0 ? "\n" + footer : "");
             if (outcome.Truncated)
             {
                 text += "\n[saída truncada em 16KB]";

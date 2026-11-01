@@ -43,10 +43,26 @@ public static class ChatProcessRunner
         RunOptions? options = null,
         CancellationToken ct = default)
     {
-        var maxOutputChars = options?.MaxOutputChars ?? DefaultMaxOutputChars;
+        var psi = CreateStartInfo(
+            command, workingDirectory, options?.Stdin, options?.Env);
+        return await RunAsync(psi, timeout, options, ct);
+    }
+
+    /// <summary>
+    /// Executa um <see cref="ProcessStartInfo"/> já montado (ex.: bwrap do
+    /// <c>SandboxedProcessRunner</c>) com o mesmo coletor/timeout/scrub.
+    /// </summary>
+    public static async Task<ProcessOutcome> RunAsync(
+        ProcessStartInfo psi,
+        TimeSpan timeout,
+        RunOptions? options = null,
+        CancellationToken ct = default)
+    {
         var stdin = options?.Stdin;
-        var secretsToScrub = options?.SecretsToScrub;
-        var psi = CreateStartInfo(command, workingDirectory, stdin, options?.Env);
+        if (stdin is not null)
+        {
+            psi.RedirectStandardInput = true;
+        }
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stdout = new StringBuilder();
@@ -93,7 +109,9 @@ public static class ChatProcessRunner
         await CollectOutputAsync(stdoutTask, stderrTask, stdout, stderr);
 
         var (scrubbed, truncated) = CombineAndScrub(
-            stdout, stderr, maxOutputChars, secretsToScrub);
+            stdout, stderr,
+            options?.MaxOutputChars ?? DefaultMaxOutputChars,
+            options?.SecretsToScrub);
         var exitCode = !timedOut && process.HasExited ? process.ExitCode : -1;
         return new ProcessOutcome(exitCode, scrubbed, truncated, timedOut);
     }

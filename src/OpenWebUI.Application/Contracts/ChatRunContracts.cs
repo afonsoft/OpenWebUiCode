@@ -266,7 +266,7 @@ public sealed record ToolGateDecision(
 
 /// <summary>Atualização parcial do chat (preset de aprovação de tools e/ou título).</summary>
 /// <param name="ApprovalPreset">
-/// <c>allow-readonly</c> | <c>approve-mutations</c> | <c>smart</c> |
+/// <c>allow-readonly</c> | <c>approve-mutations</c> | <c>smart</c> | <c>autonomous</c> |
 /// <c>always-allow</c> | <c>auto</c> (RF-004). Null não altera.
 /// </param>
 /// <param name="Title">Novo título do chat. Null não altera; vazio é ignorado.</param>

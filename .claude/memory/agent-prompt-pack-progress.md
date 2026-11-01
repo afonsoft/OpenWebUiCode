@@ -43,6 +43,7 @@ Order 84. Testes ToolSearchTests 8/8.
 - Integrações: PreToolUse→GateWithInterceptors, PostToolUse→OnResultAsync, SessionStart→builtinContext, Stop→re-loop ≤3, SessionEnd→FinishAsync, UserPromptSubmit→EnqueueMessage; endpoints GET/PUT/test.
 - Build 0/0; 13 testes verdes.
 
+
 ## smart-permission-llm (#574) — 2026-11-01
 - `SmartPermissionClassifier` + prompt embedded nonce-tag + integração no
   gate (preset `smart`, após regras determinísticas; fail-safe ask).
@@ -51,3 +52,11 @@ Order 84. Testes ToolSearchTests 8/8.
 - Merge com `main` após lifecycle-hooks: `ChatRunLifecycleDeps` terminou
   `(Budgets, Hooks, SmartJudge)`; DI no Program.cs adicionado ao lado do
   PromptHookEvaluator. 5 testes novos verdes.
+
+## sandboxed-exec (#578) — 2026-11-01
+- `Sandbox/`: scope+deny defaults, BwrapBuilder, proxy CONNECT com
+  allowlist+DeniedHosts, runner com fallback degradado, `SandboxExec`
+  ponto de entrada; shell_exec/code_interpreter/jobs confinados.
+- Preset `autonomous` (allow dentro do sandbox, excluídas → prompt do
+  dono); `GET /api/v1/system/sandbox` (admin); grants de domínio por
+  sessão (`GrantDomain`, limpo no fim da run). 6 testes verdes.

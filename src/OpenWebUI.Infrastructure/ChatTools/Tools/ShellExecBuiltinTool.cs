@@ -1,5 +1,6 @@
 using System.Text.Json;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.Sandbox;
 using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Infrastructure.ChatTools.Tools;
@@ -12,7 +13,9 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// Mutável → gate de aprovação.
 /// </summary>
 public sealed class ShellExecBuiltinTool(
-    ChatJobService jobs, AgentSecretsEnvService? agentEnv = null) : IBuiltinChatTool
+    ChatJobService jobs,
+    AgentSecretsEnvService? agentEnv = null,
+    ConfigService? config = null) : IBuiltinChatTool
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MaxTimeout = TimeSpan.FromSeconds(300);
@@ -78,13 +81,27 @@ public sealed class ShellExecBuiltinTool(
         var env = agentEnv is null
             ? AgentEnv.Empty
             : await agentEnv.BuildAsync(context.UserId, ct);
-        var outcome = await ChatProcessRunner.RunAsync(
-            prepared, context.WorkspacePath, timeout,
-            new ChatProcessRunner.RunOptions(
-                Stdin: stdin, Env: env.Vars,
-                SecretsToScrub: env.SecretsToScrub), ct);
+        var runOptions = new ChatProcessRunner.RunOptions(
+            Stdin: stdin, Env: env.Vars,
+            SecretsToScrub: env.SecretsToScrub);
+        // Sandbox (SPEC-20261031-sandboxed-exec): quando habilitado e a
+        // tool não está em sandbox.excluded, roda via bwrap.
+        var boxed = config is null
+            ? new SandboxedOutcome(
+                await ChatProcessRunner.RunAsync(
+                    prepared, context.WorkspacePath, timeout,
+                    runOptions, ct), false, [])
+            : await SandboxExec.RunAsync(
+                Name, prepared, context, config, timeout, runOptions, ct);
+        var outcome = boxed.Outcome;
+        var footer = boxed.FooterText();
 
-        return BuildResult(outcome, timeout, assessment);
+        var result = BuildResult(outcome, timeout, assessment);
+        if (footer.Length > 0)
+        {
+            result = result with { Text = result.Text + "\n" + footer };
+        }
+        return result;
     }
 
     /// <summary>Negação do classifier com hint de instalação quando o binário é desconhecido.</summary>

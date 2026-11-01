@@ -695,6 +695,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapRepoSkillEndpoints();
     app.MapPlanEndpoints();
     app.MapHookEndpoints();
+    app.MapSandboxEndpoints();
     app.MapAgentEndpoints();
     app.MapIdeEndpoints();
     app.MapPreviewEndpoints();
