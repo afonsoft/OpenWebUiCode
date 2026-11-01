@@ -893,5 +893,5 @@ public static class ChatRunEndpoints
     /// <summary>Bundle DI do diff da run (S107).</summary>
     internal sealed record RunDiffDeps(
         AppDbContext Db, WorkspaceRepoService Repos,
-        WorkspaceGitService Git, WorktreeService Worktrees);
+        WorktreeService Worktrees);
 }

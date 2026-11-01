@@ -61,7 +61,7 @@ public class AccessControlService(AppDbContext db)
     /// <param name="ownerUserId">Dono da entidade.</param>
     /// <param name="grantsJson">JSON de grants da entidade.</param>
     /// <param name="userGroupIds">Grupos do usuário (de <see cref="GetGroupIdsAsync"/>).</param>
-    public string Level(User user, string ownerUserId, string? grantsJson, HashSet<string> userGroupIds)
+    public static string Level(User user, string ownerUserId, string? grantsJson, HashSet<string> userGroupIds)
     {
         if (user.Id == ownerUserId || user.Role == UserRoles.Admin)
         {
@@ -106,6 +106,16 @@ public class AccessControlService(AppDbContext db)
     public async Task<string> LevelAsync(
         User user, string ownerUserId, string? grantsJson, CancellationToken ct = default) =>
         Level(user, ownerUserId, grantsJson, await GetGroupIdsAsync(user.Id, ct));
+
+    /// <summary>True quando o usuário tem pelo menos leitura na entidade.</summary>
+    public async Task<bool> CanReadAsync(
+        User user, string ownerUserId, string? grantsJson, CancellationToken ct = default) =>
+        await LevelAsync(user, ownerUserId, grantsJson, ct) is not None;
+
+    /// <summary>True quando o usuário tem escrita na entidade.</summary>
+    public async Task<bool> CanWriteAsync(
+        User user, string ownerUserId, string? grantsJson, CancellationToken ct = default) =>
+        await LevelAsync(user, ownerUserId, grantsJson, ct) is Write;
 
     /// <summary>Filtra uma lista em memória para os itens com pelo menos leitura.</summary>
     public List<T> FilterReadable<T>(

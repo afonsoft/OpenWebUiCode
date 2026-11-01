@@ -36,7 +36,7 @@ public static class ToolArgsPreview
     /// </summary>
     public static string? Summary(string toolName, string? argsJson)
     {
-        var suffix = toolName.Split([':', '/'])[^1];
+        var suffix = toolName.Split(':', '/')[^1];
         var field = SummaryFields.FirstOrDefault(f => f.Tool == suffix).Field;
         return field is null ? null : TryGetField(argsJson, field);
     }

@@ -70,7 +70,7 @@ public static class AgentEndpoints
     /// </summary>
     private static async Task<IResult> SetWorkspaceEnabledAsync(
         McpServerEnabledRequest request, HttpContext http, AppDbContext db,
-        ConfigService config, AgentDefinitionService agents, CancellationToken ct)
+        ConfigService config, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)

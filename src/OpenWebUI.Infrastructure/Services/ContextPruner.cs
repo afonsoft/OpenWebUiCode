@@ -103,7 +103,7 @@ public static class ContextPruner
         {
             try
             {
-                foreach (var el in JsonDocument.Parse(m.ToolCallsJson).RootElement.EnumerateArray())
+                foreach (var el in JsonDocument.Parse(m.ToolCallsJson!).RootElement.EnumerateArray())
                 {
                     var id = el.TryGetProperty("id", out var i) ? i.GetString() : null;
                     var fn = el.TryGetProperty("function", out var f) ? f : default;

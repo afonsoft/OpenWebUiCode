@@ -205,7 +205,7 @@ public sealed class CheckpointService(
         {
             return IsGitWorkdir(workdir)
                 ? await GitRevertAsync(workdir, hash, force, ct)
-                : await FallbackRevertAsync(workdir, hash, force, ct);
+                : await FallbackRevertAsync(workdir, hash, force);
         }
         finally
         {
@@ -677,7 +677,7 @@ public sealed class CheckpointService(
     }
 
     private async Task<RevertResult> FallbackRevertAsync(
-        string workdir, string hash, bool force, CancellationToken ct)
+        string workdir, string hash, bool force)
     {
         var root = FallbackRootFor(workdir);
         var manifest = ReadManifest(root, hash);

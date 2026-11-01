@@ -5,7 +5,7 @@ using Markdig;
 namespace OpenWebUI.Client.Services;
 
 /// <summary>Renderiza Markdown em HTML sanitizado, seguro para exibição.</summary>
-public partial class MarkdownService
+public static partial class MarkdownService
 {
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()

@@ -29,7 +29,7 @@ public sealed record GitWorkspaceInfo(
 /// unstaged + untracked listados). Invoca o binário <c>git</c> — zero
 /// deps novas; sem git ou sem repo retorna <c>IsRepo=false</c>.
 /// </summary>
-public sealed class WorkspaceGitService
+public static class WorkspaceGitService
 {
     /// <summary>Cap do diff unificado devolvido (linhas grandes demais são cortadas).</summary>
     private const int MaxDiffChars = 96_000;

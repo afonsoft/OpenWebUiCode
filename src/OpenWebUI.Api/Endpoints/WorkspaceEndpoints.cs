@@ -456,8 +456,7 @@ public static class WorkspaceEndpoints
         }
         var note = await db.Notes.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id, ct);
         if (note is null
-            || await access.LevelAsync(user!, note.UserId, note.AccessGrantsJson, ct)
-                is AccessControlService.None)
+            || !await access.CanReadAsync(user, note.UserId, note.AccessGrantsJson, ct))
         {
             return Results.NotFound();
         }
@@ -479,8 +478,7 @@ public static class WorkspaceEndpoints
         }
         var note = await db.Notes.FirstOrDefaultAsync(n => n.Id == id, ct);
         if (note is null
-            || await access.LevelAsync(user!, note.UserId, note.AccessGrantsJson, ct)
-                is not AccessControlService.Write)
+            || !await access.CanWriteAsync(user, note.UserId, note.AccessGrantsJson, ct))
         {
             return Results.NotFound();
         }

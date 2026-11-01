@@ -89,7 +89,7 @@ public static class ModelEndpoints
         var groups = await access.GetGroupIdsAsync(user.Id, ct);
         var models = all.Where(m =>
             (m.UserId == "public"
-            || access.Level(user, m.UserId, m.AccessGrantsJson, groups) is not AccessControlService.None)
+            || AccessControlService.Level(user, m.UserId, m.AccessGrantsJson, groups) is not AccessControlService.None)
             && PolicyService.MatchIn(modelRules,
                 new[] { m.Name, m.BaseModelId ?? "", m.Id }) is null);
 
@@ -159,8 +159,7 @@ public static class ModelEndpoints
             .FirstOrDefaultAsync(m => m.Id == id, ct);
         var readable = model is not null
             && (model.UserId == "public"
-                || await access.LevelAsync(user!, model.UserId, model.AccessGrantsJson, ct)
-                    is not AccessControlService.None);
+                || await access.CanReadAsync(user, model.UserId, model.AccessGrantsJson, ct));
         return readable ? Results.Ok(ToResponse(model!)) : Results.NotFound();
     }
 
@@ -179,8 +178,7 @@ public static class ModelEndpoints
         var model = await db.ModelEntries
             .FirstOrDefaultAsync(m => m.Id == request.Id, ct);
         if (model is null
-            || await access.LevelAsync(user!, model.UserId, model.AccessGrantsJson, ct)
-                is not AccessControlService.Write)
+            || !await access.CanWriteAsync(user, model.UserId, model.AccessGrantsJson, ct))
         {
             return Results.NotFound();
         }
@@ -219,8 +217,7 @@ public static class ModelEndpoints
         var model = await db.ModelEntries
             .FirstOrDefaultAsync(m => m.Id == request.Id, ct);
         if (model is null
-            || await access.LevelAsync(user!, model.UserId, model.AccessGrantsJson, ct)
-                is not AccessControlService.Write)
+            || !await access.CanWriteAsync(user, model.UserId, model.AccessGrantsJson, ct))
         {
             return Results.NotFound();
         }
@@ -246,8 +243,7 @@ public static class ModelEndpoints
         var model = await db.ModelEntries
             .FirstOrDefaultAsync(m => m.Id == request.Id, ct);
         if (model is null
-            || await access.LevelAsync(user!, model.UserId, model.AccessGrantsJson, ct)
-                is not AccessControlService.Write)
+            || !await access.CanWriteAsync(user, model.UserId, model.AccessGrantsJson, ct))
         {
             return Results.NotFound();
         }

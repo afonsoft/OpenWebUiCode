@@ -166,7 +166,7 @@ public class AuthService(
         string path;
         try
         {
-            path = Uri.UnescapeDataString(uri.Split(['?', '#'])[0]);
+            path = Uri.UnescapeDataString(uri.Split('?', '#')[0]);
         }
         catch (UriFormatException)
         {

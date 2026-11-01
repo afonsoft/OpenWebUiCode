@@ -296,7 +296,7 @@ public sealed class WorktreeService(
     /// <c>git status --porcelain</c> do worktree (SPEC-20261010-worktree-review):
     /// não-vazio = há mudanças (tracked ou untracked) a revisar.
     /// </summary>
-    public async Task<string?> StatusPorcelainAsync(string worktreePath, CancellationToken ct) =>
+    public static async Task<string?> StatusPorcelainAsync(string worktreePath, CancellationToken ct) =>
         await RunGitAsync(worktreePath, ct, "status", "--porcelain");
 
     /// <summary>
@@ -305,7 +305,7 @@ public sealed class WorktreeService(
     /// intent-to-add faz o diff cobrir também arquivos untracked; o índice é
     /// restaurado com <c>reset</c> no fim.
     /// </summary>
-    public async Task<string?> DiffAsync(
+    public static async Task<string?> DiffAsync(
         string worktreePath, CancellationToken ct, bool stat = false)
     {
         _ = await RunGitAsync(worktreePath, ct, "add", "--intent-to-add", "--all");

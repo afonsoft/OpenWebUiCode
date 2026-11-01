@@ -102,7 +102,7 @@
     {
         get
         {
-            var suffix = ToolName.Split([':', '/'])[^1];
+            var suffix = ToolName.Split(':', '/')[^1];
             return suffix switch
             {
                 "shell_exec" => TryField("$", "command"),

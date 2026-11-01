@@ -79,7 +79,6 @@ public sealed class ChatMentionTests
         ctx.Services.AddSingleton(storage);
         ctx.Services.AddSingleton(new ChatStreamService(http, auth));
         ctx.Services.AddSingleton(new ChatListState());
-        ctx.Services.AddSingleton(new MarkdownService());
         ctx.Services.AddSingleton(new RealtimeService());
         ctx.Services.AddSingleton(new DialogService());
         ctx.Services.AddSingleton(new ToastService());

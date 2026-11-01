@@ -22,7 +22,7 @@ public static class ToolActivityMap
     /// </summary>
     public static (string Key, string? Target) Map(string toolName, string? argsPreview)
     {
-        var suffix = toolName.Split([':', '/'])[^1];
+        var suffix = toolName.Split(':', '/')[^1];
         if (suffix.StartsWith("builtin_", StringComparison.OrdinalIgnoreCase))
         {
             suffix = suffix["builtin_".Length..];

@@ -16,7 +16,6 @@ builder.Services.AddScoped<BrowserStorage>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<ApiService>();
 builder.Services.AddScoped<ChatStreamService>();
-builder.Services.AddScoped<MarkdownService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<ChatListState>();
 builder.Services.AddScoped<RealtimeService>();

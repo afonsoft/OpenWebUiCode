@@ -436,8 +436,8 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
                     pending.Push(sub);
                 }
             }
-            catch (IOException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
+            catch (IOException) { /* ignora dir ilegível */ }
+            catch (UnauthorizedAccessException) { /* ignora dir sem acesso */ }
         }
 
         return found;

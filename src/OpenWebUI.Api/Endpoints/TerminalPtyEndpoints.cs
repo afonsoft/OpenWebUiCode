@@ -38,13 +38,13 @@ public static class TerminalPtyEndpoints
             [AsParameters] TerminalDeps deps, CancellationToken ct) =>
             CreateSessionAsync(http, deps, ct));
         group.MapGet("/sessions", (HttpContext http, TerminalSessionManager terminals,
-            AppDbContext db, ConfigService config, IConfiguration configuration,
+            ConfigService config, IConfiguration configuration,
             string? chatId, CancellationToken ct) =>
-            ListSessionsAsync(http, terminals, db, config, configuration, chatId, ct));
+            ListSessionsAsync(http, terminals, config, configuration, chatId, ct));
         group.MapDelete("/sessions/{id}", (HttpContext http, string id,
-            TerminalSessionManager terminals, AppDbContext db, ConfigService config,
+            TerminalSessionManager terminals, ConfigService config,
             IConfiguration configuration, CancellationToken ct) =>
-            DeleteSessionAsync(http, id, terminals, db, config, configuration, ct));
+            DeleteSessionAsync(http, id, terminals, config, configuration, ct));
 
         return group;
     }
@@ -52,9 +52,9 @@ public static class TerminalPtyEndpoints
     /// <summary>Mapeia o WebSocket multiplexador <c>/ws/terminal/{id}</c>.</summary>
     public static IEndpointConventionBuilder MapTerminalWebSocket(this IEndpointRouteBuilder app) =>
         app.Map("/ws/terminal/{id}", (HttpContext http, string id,
-            TerminalSessionManager terminals, AppDbContext db, ConfigService config,
+            TerminalSessionManager terminals, ConfigService config,
             IConfiguration configuration, CancellationToken ct) =>
-            TerminalWsAsync(http, id, terminals, db, config, configuration, ct))
+            TerminalWsAsync(http, id, terminals, config, configuration, ct))
         .RequireAuthorization();
 
     /// <summary>
@@ -182,7 +182,7 @@ public static class TerminalPtyEndpoints
     }
 
     private static async Task<IResult> ListSessionsAsync(
-        HttpContext http, TerminalSessionManager terminals, AppDbContext db,
+        HttpContext http, TerminalSessionManager terminals,
         ConfigService config, IConfiguration configuration,
         string? chatId, CancellationToken ct)
     {
@@ -201,7 +201,7 @@ public static class TerminalPtyEndpoints
 
     private static async Task<IResult> DeleteSessionAsync(
         HttpContext http, string id, TerminalSessionManager terminals,
-        AppDbContext db, ConfigService config, IConfiguration configuration,
+        ConfigService config, IConfiguration configuration,
         CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(http, config, configuration, ct);
@@ -217,7 +217,7 @@ public static class TerminalPtyEndpoints
 
     private static async Task<IResult> TerminalWsAsync(
         HttpContext http, string id, TerminalSessionManager terminals,
-        AppDbContext db, ConfigService config, IConfiguration configuration,
+        ConfigService config, IConfiguration configuration,
         CancellationToken ct)
     {
         var (user, error) = await AuthorizedAsync(http, config, configuration, ct);

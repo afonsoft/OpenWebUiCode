@@ -323,7 +323,6 @@ public class CoverageRound2Tests
         await CommitAllAsync(dir, "base");
         File.WriteAllText(Path.Join(dir, "x.txt"), "1\n2\n");
 
-        var svc = new WorkspaceGitService();
         var sha = await WorkspaceGitService.CommitAsync(dir, "commit via servico", default);
         Assert.That(sha, Has.Length.GreaterThanOrEqualTo(7));
 
@@ -619,7 +618,6 @@ public class CoverageRound2Tests
         await GitAsync(dir, "checkout", "-b", "run-del");
         File.Delete(Path.Join(dir, "vai.txt"));
 
-        var svc = new WorkspaceGitService();
         var info = await WorkspaceGitService.GetInfoAsync(dir, default);
         Assert.That(info.Files.Any(f => f.Status == "D" && f.Path == "vai.txt"),
             Is.True, "arquivo deletado deve aparecer como D");

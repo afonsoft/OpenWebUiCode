@@ -104,7 +104,6 @@ public class CatchNarrowingTests
     [Test]
     public async Task GitWorkdir_Inexistente_GetInfo_ErroTipado()
     {
-        var svc = new WorkspaceGitService();
         // WorkingDirectory inexistente → Process.Start lança Win32Exception → null.
         var info = await WorkspaceGitService.GetInfoAsync("/nonexistent-dir-xyz-123", CancellationToken.None);
         Assert.That(info, Is.Not.Null);

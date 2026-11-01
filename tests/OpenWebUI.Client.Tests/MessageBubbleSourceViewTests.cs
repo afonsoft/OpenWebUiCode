@@ -60,7 +60,6 @@ public sealed class MessageBubbleSourceViewTests
         ctx.Services.AddSingleton(l10n);
         ctx.Services.AddSingleton(auth);
         ctx.Services.AddSingleton(storage);
-        ctx.Services.AddSingleton(new MarkdownService());
         return ctx;
     }
 
