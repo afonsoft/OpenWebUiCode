@@ -455,6 +455,11 @@ public static class ChatPipeline
         /// </summary>
         Func<IReadOnlyList<ChatCompletionMessage>, double, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>?>>? OnOverflowCompactAsync = null,
         /// <summary>
+        /// Footer anexado a cada tool result (SPEC-20261031-agent-prompt-
+        /// pack RF-001): lembrete fixo de paralelismo; vazio/null desliga.
+        /// </summary>
+        string? ToolResultFooter = null,
+        /// <summary>
         /// Checkpoint de loop-state no topo de cada round
         /// (SPEC-20261016-run-recovery RF-002): recebe o estado completo —
         /// janela, tail de tools, contadores — para o evento
@@ -1217,8 +1222,11 @@ public static class ChatPipeline
         {
             await callbacks.OnResultAsync(call, output, outcome.Result, denied, ct);
         }
+        var toolText = callbacks?.ToolResultFooter is { Length: > 0 } footer
+            ? output + "\n\n" + footer
+            : output;
         var toolMessage = new ChatCompletionMessage(
-            "tool", output, ToolCallId: call.Id);
+            "tool", toolText, ToolCallId: call.Id);
         state.Messages.Add(toolMessage);
         state.ToolMessages.Add(toolMessage);
     }

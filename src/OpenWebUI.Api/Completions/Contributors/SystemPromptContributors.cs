@@ -582,6 +582,34 @@ public sealed class DelegationPolicyContributor(
 }
 
 /// <summary>
+/// Bloco 3.5a+: disciplina de loop do agente
+/// (SPEC-20261031-agent-prompt-pack RF-007) — regras de delegação e
+/// verify-once, sempre emitidas (mesmo sem catálogo de especialistas;
+/// valem para o tool-call loop comum).
+/// </summary>
+public sealed class AgentDisciplineContributor : ISystemPromptContributor
+{
+    /// <inheritdoc />
+    public int Order => 86;
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx) =>
+        Task.FromResult<IReadOnlyList<string>>(
+        [
+            "Disciplina de delegação: ao delegar (builtin_delegate_task) "
+                + "escreva instruções completas e autossuficientes — o "
+                + "executor não vê esta conversa; inclua arquivos, "
+                + "contexto e critério de pronto. Nunca delegue trabalho "
+                + "que você pode fazer num único tool call.",
+            "Verify-once: após cada ação com efeito (edição, execução, "
+                + "escrita), verifique o resultado UMA vez no próximo "
+                + "passo e siga em frente — não re-verifique o mesmo "
+                + "estado em loops; se algo falhou duas vezes, mude de "
+                + "abordagem em vez de tentar de novo igual.",
+        ]);
+}
+
+/// <summary>
 /// Bloco 3.5b: menções @path do composer — cada chip vira
 /// <c>&lt;file path="…"&gt;</c> (cap 16KB/arquivo, 64KB total; fora do
 /// jail é descartado em silêncio). Chips <c>ref:alias</c> anexam a

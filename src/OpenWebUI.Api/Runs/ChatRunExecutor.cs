@@ -32,7 +32,9 @@ public sealed record ChatRunToolsDeps(
     ToolApprovalOverrideService ToolOverrides, McpClientService Mcp,
     ComboService Combos, ContextBoundaryService Boundaries,
     IServiceScopeFactory Scopes, PermissionRuleEvaluator Rules,
-    ExternalAccessRegistry ExternalAccess);
+    ExternalAccessRegistry ExternalAccess, IConfiguration Cfg,
+    OpenWebUI.Infrastructure.Context.StallWatchdog StallWatch,
+    OpenWebUI.Infrastructure.Context.ExtendContextBudget ExtendContext);
 
 public sealed record ChatRunLifecycleDeps(
     ChatRunBroadcaster Broadcaster, ChatRunApprovals Approvals,
@@ -70,6 +72,9 @@ public sealed class ChatRunExecutor(
     private readonly IServiceScopeFactory scopes = tools.Scopes;
     private readonly PermissionRuleEvaluator rules = tools.Rules;
     private readonly ExternalAccessRegistry externalAccess = tools.ExternalAccess;
+    private readonly IConfiguration cfg = tools.Cfg;
+    private readonly OpenWebUI.Infrastructure.Context.StallWatchdog stallWatch = tools.StallWatch;
+    private readonly OpenWebUI.Infrastructure.Context.ExtendContextBudget extendContext = tools.ExtendContext;
     private readonly ChatRunBroadcaster broadcaster = lifecycle.Broadcaster;
     private readonly ChatRunApprovals approvals = lifecycle.Approvals;
     private readonly ChatRunPauses pauses = lifecycle.Pauses;
@@ -693,6 +698,15 @@ public sealed class ChatRunExecutor(
             // devolve a janela reduzida; null = sem como reduzir.
             OnOverflowCompactAsync: async (history, tailScale, t) =>
             {
+                // RF-004 agent-prompt-pack: o modelo pediu extend_context
+                // explicitamente → pular esta compactação de emergência.
+                if (extendContext.TryConsume(run.Id))
+                {
+                    await runEvents.AppendAsync(run.Id,
+                        RunEventWriter.Types.Note,
+                        new { status = "context_extended" }, t);
+                    return history;
+                }
                 var didCompact = await compaction.MaybeCompactAsync(
                     run.ChatId, history, effective.Model, t, run.UserId,
                     force: true, tailScale: tailScale);
@@ -795,6 +809,11 @@ public sealed class ChatRunExecutor(
             // Conselhos do advisor viram notas system no round
             // seguinte — sem zerar o teto de iterações.
             OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
+            // RF-001 agent-prompt-pack: lembrete fixo de paralelismo
+            // anexado a cada tool result (vazio desliga).
+            ToolResultFooter: cfg["AgentLoop:ToolResultFooter"] is { Length: > 0 } footer
+                ? footer
+                : "First privately list what you need next; then request every item that doesn't depend on another's result in this one response",
             OnResultAsync: async (call, output, result, denied, t) =>
             {
                 await PublishToolResultAsync(run, call, output, result, denied);
@@ -815,6 +834,17 @@ public sealed class ChatRunExecutor(
                     while (_recentTools.Count > 8)
                     {
                         _recentTools.Dequeue();
+                    }
+                }
+                // RF-005 stall watch (agent-prompt-pack): mesma tool+args
+                // com resultado idêntico K vezes seguidas → nudge.
+                if (stallWatch.Record(run.Id, call.Name, call.ArgumentsJson,
+                        output, int.TryParse(cfg["AgentLoop:StallThreshold"], out var st) ? st : 4) is { } nudge)
+                {
+                    lock (_contextNotes)
+                    {
+                        _contextNotes.Enqueue(
+                            new ChatCompletionMessage(RoleSystem, nudge));
                     }
                 }
                 // Burst de tools (RF-001): a cada 5 resultados uma
@@ -2211,6 +2241,81 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>
+    /// <c>approvals.WaitAsync</c> + keepalive de prompt-cache
+    /// (SPEC-20261031-agent-prompt-pack RF-006): durante esperas longas do
+    /// dono, ping leve ao provider no modelo da run a cada
+    /// <c>AgentLoop:CacheKeepaliveSeconds</c> (default 0 = desligado);
+    /// falhas são ignoradas — nunca interfere na run.
+    /// </summary>
+    private async Task<ChatRunApprovals.ApprovalResult> WaitApprovalAsync(
+        string runId, string chatId, string callId, string toolName,
+        CancellationToken ct, string argPattern = "*",
+        object? askedPayload = null)
+    {
+        var interval = int.TryParse(cfg["AgentLoop:CacheKeepaliveSeconds"], out var ka) ? ka : 0;
+        if (interval <= 0)
+        {
+            return await approvals.WaitAsync(runId, chatId, callId,
+                toolName, ct, argPattern, askedPayload);
+        }
+        var wait = approvals.WaitAsync(runId, chatId, callId,
+            toolName, ct, argPattern, askedPayload);
+        var delay = TimeSpan.FromSeconds(interval);
+        var model = runId is null ? null : ModelOfRun(runId);
+        while (!wait.IsCompleted)
+        {
+            var done = await Task.WhenAny(wait, Task.Delay(delay, ct));
+            if (done == wait || ct.IsCancellationRequested)
+            {
+                break;
+            }
+            _ = KeepalivePingAsync(model);
+        }
+        return await wait;
+
+        async Task KeepalivePingAsync(string? model)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(model))
+                {
+                    return;
+                }
+                await providers.CompleteAsync(new ChatCompletionRequest(
+                    model, [new ChatCompletionMessage("user", ".")],
+                    Stream: false));
+            }
+            catch (Exception)
+            {
+                // Provider sem prompt-cache ou offline — no-op silencioso.
+            }
+        }
+    }
+
+    private string? _keepaliveModel;
+
+    /// <summary>Modelo da run (cacheado para os pings de keepalive).</summary>
+    private string? ModelOfRun(string runId)
+    {
+        if (_keepaliveModel is not null)
+        {
+            return _keepaliveModel;
+        }
+        try
+        {
+            _keepaliveModel = db.ChatRuns.AsNoTracking()
+                .Where(r => r.Id == runId)
+                .Select(r => r.Model)
+                .FirstOrDefault();
+            return _keepaliveModel;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Pausa por aprovação (RF-001): o advisor revisa enquanto o dono decide.
     /// askedPayload: o GET da run devolve a pendência a quem perdeu o
     /// attach SSE (proxies que matam o stream antes do 1º evento).
@@ -2233,7 +2338,7 @@ public sealed class ChatRunExecutor(
         broadcaster.Publish(run.Id,
             $"event: approval_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
         await KickAdvisorAsync(run, "pause", builtinContext, ct);
-        var result = await approvals.WaitAsync(run.Id, run.ChatId, call.Id,
+        var result = await WaitApprovalAsync(run.Id, run.ChatId, call.Id,
             call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson),
             asked);
         var message = string.IsNullOrWhiteSpace(result.Message)
@@ -2280,7 +2385,7 @@ public sealed class ChatRunExecutor(
                 ["Executar o plano", "Continuar planejando"], false);
             broadcaster.Publish(run.Id,
                 $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
-            var result = await approvals.WaitAsync(
+            var result = await WaitApprovalAsync(
                 run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked);
 
             if (!result.Approved)
@@ -2372,7 +2477,7 @@ public sealed class ChatRunExecutor(
         broadcaster.Publish(run.Id,
             $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
 
-        var result = await approvals.WaitAsync(
+        var result = await WaitApprovalAsync(
             run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked);
 
         // RF-004: deny/skip devolve recusa — a run segue, o modelo decide.

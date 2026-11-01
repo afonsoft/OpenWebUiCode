@@ -80,6 +80,9 @@ builder.Services.AddSingleton<RateLimitService>();
 builder.Services.AddSingleton<ChatRunBroadcaster>();
 builder.Services.AddSingleton<ChatRunApprovals>();
 builder.Services.AddScoped<PermissionRuleEvaluator>();
+builder.Services.AddSingleton<OpenWebUI.Infrastructure.Context.RestrictedExecRunner>();
+builder.Services.AddSingleton<OpenWebUI.Infrastructure.Context.StallWatchdog>();
+builder.Services.AddSingleton<OpenWebUI.Infrastructure.Context.ExtendContextBudget>();
 builder.Services.AddSingleton<ExternalAccessRegistry>();
 builder.Services.AddSingleton<ChatRunPauses>();
 builder.Services.AddSingleton<ChatRunDispatcher>();
@@ -138,6 +141,8 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
     OpenWebUI.Api.Completions.Contributors.InstinctContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.MentionsContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.AgentDisciplineContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AgentModeContributor>();
 // Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
@@ -232,6 +237,9 @@ builder.Services.AddScoped<IBuiltinChatTool, MemorySearchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemoryLearnBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, AgentCatalogBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, SpecsBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, UnseenMessagesBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ExtendContextBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, InstantContextBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RoutineBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReminderBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, BrowserScreenshotBuiltinTool>();
