@@ -45,7 +45,8 @@ public sealed record ChatRunLifecycleDeps(
     OpenWebUI.Infrastructure.Runs.AgentRunEventBus RunBus,
     OpenWebUI.Infrastructure.Runs.RunInterceptorRunner Interceptors,
     PolicyService? Policies, RunUsageLedgerService UsageLedger,
-    BudgetPolicyService Budgets, LifecycleHookService Hooks);
+    BudgetPolicyService Budgets, LifecycleHookService Hooks,
+    SmartPermissionClassifier SmartJudge);
 
 public sealed class ChatRunExecutor(
     ChatRunPipelineDeps pipeline,
@@ -77,6 +78,7 @@ public sealed class ChatRunExecutor(
     private readonly LifecycleHookService hooks = lifecycle.Hooks;
     private readonly ExternalAccessRegistry externalAccess = tools.ExternalAccess;
     private readonly IConfiguration cfg = tools.Cfg;
+    private readonly SmartPermissionClassifier smartJudge = lifecycle.SmartJudge;
     private readonly OpenWebUI.Infrastructure.Context.StallWatchdog stallWatch = tools.StallWatch;
     private readonly OpenWebUI.Infrastructure.Context.ExtendContextBudget extendContext = tools.ExtendContext;
     private readonly ChatRunBroadcaster broadcaster = lifecycle.Broadcaster;
@@ -282,6 +284,7 @@ public sealed class ChatRunExecutor(
             {
                 // RF-004: estado por-run do deferral não vaza entre runs.
                 deferred.Clear(run.Id, run.ChatId);
+            SmartPermissionClassifier.Clear(run.Id);
             }
 
             return;
@@ -2089,7 +2092,38 @@ public sealed class ChatRunExecutor(
             return autoDecision;
         }
 
-        return await AskToolApprovalAsync(run, call, tool, builtinContext, ct);
+        // Juiz LLM do preset smart (SPEC-20261031-smart-permission-llm):
+        // só decide o que a regra determinística não cobriu — fail-safe ask.
+        if (preset == "smart" && tool is not null)
+        {
+            var verdict = await smartJudge.ClassifyAsync(
+                run.Id, run, call.Name, call.ArgumentsJson,
+                projectRules: null,
+                conversationContext: string.Join("\n",
+                    _recentTools.ToArray()), ct);
+            await runEvents.AppendAsync(run.Id,
+                $"permission.smart.{verdict.Decision}", new
+                {
+                    actionHash = verdict.Fingerprint,
+                    tool = call.Name,
+                    decision = verdict.Decision,
+                    reason = verdict.Reason,
+                    model = verdict.Model,
+                    latencyMs = verdict.LatencyMs,
+                    fromCache = verdict.FromCache,
+                }, ct);
+            switch (verdict.Decision)
+            {
+                case "allow":
+                    return ToolGateDecision.Allow;
+                case "deny":
+                    return new ToolGateDecision(true, Output:
+                        $"Negado pelo juiz smart: {verdict.Reason}");
+            }
+            // "ask" → segue para a fila de aprovação do dono.
+        }
+
+        return await AskToolApprovalAsync(run, call, tool!, builtinContext, ct);
     }
 
     /// <summary>SPEC-15: build sem repo vinculado não executa tools de workspace.</summary>

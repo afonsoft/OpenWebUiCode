@@ -42,3 +42,12 @@ Order 84. Testes ToolSearchTests 8/8.
 - HookDefinition/HookConfigLoader (repo+user, compat devin/claude), CommandHookRunner (sh -c, exit2=block, timeout, env OPENWEBUI_*), PromptHookEvaluator (role advisor / hooks.promptModel), LifecycleHookService (cache mtime, matcher, auditoria hook.decision).
 - Integrações: PreToolUse→GateWithInterceptors, PostToolUse→OnResultAsync, SessionStart→builtinContext, Stop→re-loop ≤3, SessionEnd→FinishAsync, UserPromptSubmit→EnqueueMessage; endpoints GET/PUT/test.
 - Build 0/0; 13 testes verdes.
+
+## smart-permission-llm (#574) — 2026-11-01
+- `SmartPermissionClassifier` + prompt embedded nonce-tag + integração no
+  gate (preset `smart`, após regras determinísticas; fail-safe ask).
+- Audit `permission.smart.{decision}`; dedup por fingerprint/sessão;
+  `Clear` no fim do run. Config `smartPermission.timeoutMs` (15s default).
+- Merge com `main` após lifecycle-hooks: `ChatRunLifecycleDeps` terminou
+  `(Budgets, Hooks, SmartJudge)`; DI no Program.cs adicionado ao lado do
+  PromptHookEvaluator. 5 testes novos verdes.
