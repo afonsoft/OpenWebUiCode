@@ -10,7 +10,7 @@
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-sidekick-orchestration |
 | Ticket | #575 (Epic #572/E19) |
-| Status | Approved |
+| Status | Completed |
 
 ## 1. User Story
 
@@ -168,3 +168,8 @@ tests/OpenWebUI.Api.Tests/DelegateTaskPersistentTests.cs                 (novo)
   + nos agent.md explore/general.
 - RF-001 profiles builtin: `explore.agent.md` (read-only + web_search +
   todo_write, max_nesting 0) e `general.agent.md` (tools [*], max_nesting 0).
+
+
+## Delivered
+
+- PR #595 — implementação e testes mergeados em `main` (2026-11-01).

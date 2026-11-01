@@ -10,7 +10,7 @@
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-plan-mode-v2 |
 | Ticket | #577 (Epic #572/E19) |
-| Status | Approved |
+| Status | Completed |
 
 ## 1. User Story
 
@@ -158,3 +158,8 @@ tests/OpenWebUI.Api.Tests/WritePlanTests.cs                             (novo)
 - `plan_exit` anexa `planPath` (último arquivo via write_plan) na confirmação — build recebe a referência.
 - Endpoint `GET /api/v1/workspace/repo/plans` (`PlanEndpoints`): `[{name,path,title,modifiedAt}]` desc, requer auth + chat próprio, só repo vinculado.
 - Testes: `WritePlanTests` — 7 casos (create+path, update-in-place, sufixo concorrente, aviso de seções, fallback home, listagem ordenada, plan_exit referencia).
+
+
+## Delivered
+
+- PR #597 — implementação e testes mergeados em `main` (2026-11-01).

@@ -10,7 +10,7 @@
 | Repository | afonsoft/OpenWebUiCode |
 | Branch | feature/devin-20261031-lifecycle-hooks |
 | Ticket | #573 (Epic #572/E19) |
-| Status | Approved |
+| Status | Completed |
 
 ## 1. User Story
 
@@ -180,3 +180,8 @@ tests/OpenWebUI.Api.Tests/LifecycleHookTests.cs                     (novo)
 - `PermissionRequest`/`PostCompaction`: schema aceito, sem ponto de integração ainda (fase 2 — conforme spec).
 - Desvio documentado: `Stop` re-invoca o tool loop inteiro com mensagem de instrução em vez de apenas um step; `PostToolUse` block não altera o tool_result já publicado — feedback chega via nota system.
 - Testes: `LifecycleHookTests` — 13 casos (loader nativo/devin/claude/regex inválido/precedência, runner exit0/exit2/JSON inválido/updatedInput+contexto, payload, matcher, primeiro block, parse prompt).
+
+
+## Delivered
+
+- PR #598 — implementação e testes mergeados em `main` (2026-11-01).
