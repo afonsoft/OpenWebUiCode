@@ -10,7 +10,8 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// <c>builtin:file_list</c> — lista entradas de um diretório do workspace
 /// (SPEC-20261007-chat-agent-parity RF-011). Somente leitura.
 /// </summary>
-public sealed class FileListBuiltinTool : IBuiltinChatTool
+public sealed class FileListBuiltinTool(ExternalAccessRegistry? external = null)
+    : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_list";
@@ -41,7 +42,8 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
         var path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
-        var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
+        var full = WorkspaceFiles.ResolveInsideOrExternal(
+            context.WorkspacePath, path, external, context.RunId, out var error);
         if (full is null)
         {
             return Task.FromResult(new BuiltinToolResult(error));
@@ -147,7 +149,8 @@ public sealed class FileListBuiltinTool : IBuiltinChatTool
 /// </summary>
 public sealed class FileReadBuiltinTool(
     HistoryResourceService history, ToolOutputService toolOutputs,
-    ReferenceService? refs = null) : IBuiltinChatTool
+    ReferenceService? refs = null, ExternalAccessRegistry? external = null)
+    : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_read";
@@ -209,7 +212,8 @@ public sealed class FileReadBuiltinTool(
             return await ReadFileAsync(target.Full, target.Display, args, ct);
         }
 
-        var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
+        var full = WorkspaceFiles.ResolveInsideOrExternal(
+            context.WorkspacePath, path, external, context.RunId, out var error);
         if (full is null)
         {
             return new BuiltinToolResult(error);
@@ -310,7 +314,8 @@ public sealed class FileReadBuiltinTool(
 /// <c>path:linha: conteúdo</c>. Somente leitura.
 /// </summary>
 public sealed class FileGrepBuiltinTool(
-    HistoryResourceService history, ReferenceService? refs = null)
+    HistoryResourceService history, ReferenceService? refs = null,
+    ExternalAccessRegistry? external = null)
     : IBuiltinChatTool
 {
     /// <inheritdoc />
@@ -440,8 +445,8 @@ public sealed class FileGrepBuiltinTool(
             }
             return (target.Root, target.Full, null);
         }
-        var resolved = WorkspaceFiles.ResolveInside(
-            context.WorkspacePath, path, out var error);
+        var resolved = WorkspaceFiles.ResolveInsideOrExternal(
+            context.WorkspacePath, path, external, context.RunId, out var error);
         return resolved is null
             ? (string.Empty, string.Empty, new BuiltinToolResult(error))
             : (context.WorkspacePath, resolved, null);
@@ -532,7 +537,8 @@ public sealed class FileGrepBuiltinTool(
 /// <c>builtin:file_glob</c> — casamento de arquivos por glob
 /// (<c>**/*.cs</c>, <c>{a,b}</c>, <c>[abc]</c>) no workspace. Somente leitura.
 /// </summary>
-public sealed class FileGlobBuiltinTool(ReferenceService? refs = null)
+public sealed class FileGlobBuiltinTool(ReferenceService? refs = null,
+    ExternalAccessRegistry? external = null)
     : IBuiltinChatTool
 {
     /// <inheritdoc />
@@ -589,7 +595,8 @@ public sealed class FileGlobBuiltinTool(ReferenceService? refs = null)
         else
         {
             root = context.WorkspacePath;
-            var resolved = WorkspaceFiles.ResolveInside(root, path, out var error);
+            var resolved = WorkspaceFiles.ResolveInsideOrExternal(
+                root, path, external, context.RunId, out var error);
             if (resolved is null)
             {
                 return new BuiltinToolResult(error);
@@ -632,7 +639,8 @@ public sealed class FileGlobBuiltinTool(ReferenceService? refs = null)
 /// <param name="formatHook">Format hook pós-escrita (RF-004).</param>
 public sealed class FileWriteBuiltinTool(
     Lsp.LspService? lsp = null,
-    FormatHookService? formatHook = null) : IBuiltinChatTool
+    FormatHookService? formatHook = null,
+    ExternalAccessRegistry? external = null) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_write";
@@ -671,7 +679,8 @@ public sealed class FileWriteBuiltinTool(
             return new BuiltinToolResult("ref:// é somente-leitura — escrita negada.");
         }
 
-        var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
+        var full = WorkspaceFiles.ResolveInsideOrExternal(
+            context.WorkspacePath, path, external, context.RunId, out var error);
         if (full is null)
         {
             return new BuiltinToolResult(error);
@@ -743,7 +752,8 @@ public sealed class FileWriteBuiltinTool(
 /// <param name="formatHook">Format hook pós-escrita (RF-004).</param>
 public sealed class FileEditBuiltinTool(
     Lsp.LspService? lsp = null,
-    FormatHookService? formatHook = null) : IBuiltinChatTool
+    FormatHookService? formatHook = null,
+    ExternalAccessRegistry? external = null) : IBuiltinChatTool
 {
     /// <inheritdoc />
     public string Name => "file_edit";
@@ -786,7 +796,8 @@ public sealed class FileEditBuiltinTool(
             return new BuiltinToolResult("ref:// é somente-leitura — edição negada.");
         }
 
-        var full = WorkspaceFiles.ResolveInside(context.WorkspacePath, path, out var error);
+        var full = WorkspaceFiles.ResolveInsideOrExternal(
+            context.WorkspacePath, path, external, context.RunId, out var error);
         if (full is null)
         {
             return new BuiltinToolResult(error);

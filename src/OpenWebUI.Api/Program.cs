@@ -79,6 +79,8 @@ builder.Services.AddSingleton<RateLimitService>();
 // Runs de chat desacopladas (SPEC-20261007-chat-detached-runs).
 builder.Services.AddSingleton<ChatRunBroadcaster>();
 builder.Services.AddSingleton<ChatRunApprovals>();
+builder.Services.AddScoped<PermissionRuleEvaluator>();
+builder.Services.AddSingleton<ExternalAccessRegistry>();
 builder.Services.AddSingleton<ChatRunPauses>();
 builder.Services.AddSingleton<ChatRunDispatcher>();
 builder.Services.AddSingleton<IChatRunDispatcher>(
@@ -623,6 +625,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapApiEndpoints();
     app.MapGroupEndpoints();
     app.MapAdminPolicyEndpoints();
+    app.MapPermissionEndpoints();
     app.MapUsageEndpoints();
     app.MapEvalEndpoints();
     app.MapInstinctEndpoints();

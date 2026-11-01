@@ -1264,5 +1264,16 @@
   "settings.ref_hidden_hint": "Hidden refs do not show in the @ menu but still resolve directly.",
   "settings.ref_refresh": "refresh",
   "settings.ref_alias_hint": "Use @alias in the composer to attach; the agent reads via ref://alias/path.",
-  "settings.ref_save_failed": "Save failed (duplicate alias or invalid source)."
+  "settings.ref_save_failed": "Save failed (duplicate alias or invalid source).",
+  "common.revoke": "",
+  "settings.permissions": "",
+  "settings.perm_rules_title": "",
+  "settings.perm_rules_hint": " {,  glob, }：。、。",
+  "settings.perm_resource_ph": " glob（：shell_exec:rm *, /etc/**, *）",
+  "settings.perm_rules_empty": " — 。",
+  "settings.perm_approvals_title": "",
+  "settings.perm_approvals_hint": "“” workdir ，。",
+  "settings.perm_approvals_empty": "。",
+  "settings.perm_load_error": "。",
+  "settings.perm_save_error": "。"
 }

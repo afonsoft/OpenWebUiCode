@@ -1264,5 +1264,16 @@
   "settings.ref_hidden_hint": "Las ocultas no aparecen en el menú @ pero resuelven directo.",
   "settings.ref_refresh": "actualizar",
   "settings.ref_alias_hint": "Usa @alias en el composer para anexar; el agente lee vía ref://alias/ruta.",
-  "settings.ref_save_failed": "Error al guardar (alias duplicado u origen inválido)."
+  "settings.ref_save_failed": "Error al guardar (alias duplicado u origen inválido).",
+  "common.revoke": "Revocar",
+  "settings.permissions": "Permisos",
+  "settings.perm_rules_title": "Reglas de permiso",
+  "settings.perm_rules_hint": "Reglas ordenadas {acción, recurso glob, efecto}: gana la última que coincide. Se evalúan tras las policies de admin y antes del preset de riesgo.",
+  "settings.perm_resource_ph": "glob de recurso (ej.: shell_exec:rm *, /etc/**, *)",
+  "settings.perm_rules_empty": "Sin reglas — decide el preset de riesgo.",
+  "settings.perm_approvals_title": "Aprobaciones guardadas",
+  "settings.perm_approvals_hint": "Las decisiones con \"Siempre\" persisten aquí por workdir y se revocan individualmente.",
+  "settings.perm_approvals_empty": "Sin aprobaciones guardadas.",
+  "settings.perm_load_error": "Error al cargar los permisos.",
+  "settings.perm_save_error": "Error al guardar el permiso."
 }

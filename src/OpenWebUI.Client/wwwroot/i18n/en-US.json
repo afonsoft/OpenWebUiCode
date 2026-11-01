@@ -1264,5 +1264,16 @@
   "settings.ref_hidden_hint": "Hidden refs do not show in the @ menu but still resolve directly.",
   "settings.ref_refresh": "refresh",
   "settings.ref_alias_hint": "Use @alias in the composer to attach; the agent reads via ref://alias/path.",
-  "settings.ref_save_failed": "Save failed (duplicate alias or invalid source)."
+  "settings.ref_save_failed": "Save failed (duplicate alias or invalid source).",
+  "common.revoke": "Revoke",
+  "settings.permissions": "Permissions",
+  "settings.perm_rules_title": "Permission rules",
+  "settings.perm_rules_hint": "Ordered rules {action, resource glob, effect}: the last matching rule wins. They run after admin policies and before the risk preset.",
+  "settings.perm_resource_ph": "resource glob (ex.: shell_exec:rm *, /etc/**, *)",
+  "settings.perm_rules_empty": "No rules — the risk preset decides.",
+  "settings.perm_approvals_title": "Saved approvals",
+  "settings.perm_approvals_hint": "Decisions marked \"Always\" persist here per workdir and are revoked individually.",
+  "settings.perm_approvals_empty": "No saved approvals.",
+  "settings.perm_load_error": "Failed to load permissions.",
+  "settings.perm_save_error": "Failed to save permission."
 }

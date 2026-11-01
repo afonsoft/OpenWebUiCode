@@ -1264,5 +1264,16 @@
   "settings.ref_hidden_hint": "Versteckte erscheinen nicht im @-Menü, lösen aber direkt auf.",
   "settings.ref_refresh": "aktualisieren",
   "settings.ref_alias_hint": "@alias im Composer zum Anhängen; der Agent liest via ref://alias/pfad.",
-  "settings.ref_save_failed": "Speichern fehlgeschlagen (doppelter Alias oder ungültige Quelle)."
+  "settings.ref_save_failed": "Speichern fehlgeschlagen (doppelter Alias oder ungültige Quelle).",
+  "common.revoke": "Widerrufen",
+  "settings.permissions": "Berechtigungen",
+  "settings.perm_rules_title": "Berechtigungsregeln",
+  "settings.perm_rules_hint": "Geordnete Regeln {Aktion, Ressourcen-Glob, Effekt}: die letzte passende gewinnt. Nach Admin-Policies und vor dem Risiko-Preset.",
+  "settings.perm_resource_ph": "Ressourcen-Glob (z. B.: shell_exec:rm *, /etc/**, *)",
+  "settings.perm_rules_empty": "Keine Regeln — das Risiko-Preset entscheidet.",
+  "settings.perm_approvals_title": "Gespeicherte Genehmigungen",
+  "settings.perm_approvals_hint": "„Immer“-Entscheidungen bleiben hier pro Workdir erhalten und werden einzeln widerrufen.",
+  "settings.perm_approvals_empty": "Keine gespeicherten Genehmigungen.",
+  "settings.perm_load_error": "Berechtigungen konnten nicht geladen werden.",
+  "settings.perm_save_error": "Berechtigung konnte nicht gespeichert werden."
 }

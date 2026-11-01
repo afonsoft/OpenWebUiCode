@@ -1264,5 +1264,16 @@
   "settings.ref_hidden_hint": "Les masquées n’apparaissent pas au menu @ mais se résolvent directement.",
   "settings.ref_refresh": "actualiser",
   "settings.ref_alias_hint": "Utilisez @alias dans le composer pour attacher ; l’agent lit via ref://alias/chemin.",
-  "settings.ref_save_failed": "Échec (alias en double ou source invalide)."
+  "settings.ref_save_failed": "Échec (alias en double ou source invalide).",
+  "common.revoke": "Révoquer",
+  "settings.permissions": "Permissions",
+  "settings.perm_rules_title": "Règles de permission",
+  "settings.perm_rules_hint": "Règles ordonnées {action, glob de ressource, effet} : la dernière correspondance l'emporte. Évaluées après les policies admin et avant le preset de risque.",
+  "settings.perm_resource_ph": "glob de ressource (ex. : shell_exec:rm *, /etc/**, *)",
+  "settings.perm_rules_empty": "Aucune règle — le preset de risque décide.",
+  "settings.perm_approvals_title": "Approbations enregistrées",
+  "settings.perm_approvals_hint": "Les décisions « Toujours » persistent ici par workdir et se révoquent individuellement.",
+  "settings.perm_approvals_empty": "Aucune approbation enregistrée.",
+  "settings.perm_load_error": "Échec du chargement des permissions.",
+  "settings.perm_save_error": "Échec de l'enregistrement de la permission."
 }

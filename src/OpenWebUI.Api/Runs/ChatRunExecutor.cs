@@ -31,7 +31,8 @@ public sealed record ChatRunToolsDeps(
     WorktreeService Worktrees, BuiltinToolRegistry Builtins,
     ToolApprovalOverrideService ToolOverrides, McpClientService Mcp,
     ComboService Combos, ContextBoundaryService Boundaries,
-    IServiceScopeFactory Scopes);
+    IServiceScopeFactory Scopes, PermissionRuleEvaluator Rules,
+    ExternalAccessRegistry ExternalAccess);
 
 public sealed record ChatRunLifecycleDeps(
     ChatRunBroadcaster Broadcaster, ChatRunApprovals Approvals,
@@ -67,6 +68,8 @@ public sealed class ChatRunExecutor(
     private readonly ComboService combos = tools.Combos;
     private readonly ContextBoundaryService boundaries = tools.Boundaries;
     private readonly IServiceScopeFactory scopes = tools.Scopes;
+    private readonly PermissionRuleEvaluator rules = tools.Rules;
+    private readonly ExternalAccessRegistry externalAccess = tools.ExternalAccess;
     private readonly ChatRunBroadcaster broadcaster = lifecycle.Broadcaster;
     private readonly ChatRunApprovals approvals = lifecycle.Approvals;
     private readonly ChatRunPauses pauses = lifecycle.Pauses;
@@ -1879,12 +1882,25 @@ public sealed class ChatRunExecutor(
                 + "builtin_plan_exit quando terminar.");
         }
 
+        // Regras ordenadas do usuário + aprovações duráveis
+        // (SPEC-20261018-permissions-v2 RF-001/RF-002): depois de admin
+        // policy/ruleset e antes do override/preset — deny de regra vence
+        // inclusive aprovação salva.
+        var (rulesDecision, rulesPrompt) =
+            await ApplyPermissionRulesAsync(run, tool, call, builtinContext, ct);
+        if (rulesDecision is not null)
+        {
+            return rulesDecision;
+        }
+
         var (overrideDecision, forcePrompt) =
             await ApplyUserOverrideAsync(run, tool, call, ct);
         if (overrideDecision is not null)
         {
             return overrideDecision;
         }
+
+        forcePrompt |= rulesPrompt;
 
         if (tool is null || (!forcePrompt
             && (!ToolExecutor.IsMutable(tool)
@@ -1934,6 +1950,197 @@ public sealed class ChatRunExecutor(
                 "Erro: " + PolicyService.DeniedMessage(denied, call.Name));
         }
         return null;
+    }
+
+    /// <summary>
+    /// Permissions-v2 (SPEC-20261018 RF-001/RF-002/RF-003): regras
+    /// ordenadas do usuário (last-match-wins) e aprovações duráveis por
+    /// workdir, além do boundary <c>external_directory</c>. Ordem: regra
+    /// casada → efeito; sem regra → aprovação salva casa → sua decisão;
+    /// nada → segue para overrides/preset. Retorna
+    /// <c>(decisão, forcePrompt)</c>.
+    /// </summary>
+    private async Task<(ToolGateDecision? Decision, bool ForcePrompt)> ApplyPermissionRulesAsync(
+        ChatRun run, Tool? tool, ProviderToolCall call,
+        BuiltinToolContext builtinContext, CancellationToken ct)
+    {
+        var argPattern = PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson);
+
+        // RF-003: path fora do workdir → regra external_directory (default ask).
+        var external = ExternalPathOf(call, builtinContext.WorkspacePath);
+        if (external is not null)
+        {
+            var extEffect = await rules.EvaluateAsync(
+                run.UserId, "external_directory", external, ct);
+            if (string.Equals(extEffect, "deny", StringComparison.OrdinalIgnoreCase))
+            {
+                return (new ToolGateDecision(true, Output:
+                    $"Erro: '{external}' está fora do workspace e a regra "
+                    + "external_directory do usuário é deny."), false);
+            }
+            if (string.Equals(extEffect, "allow", StringComparison.OrdinalIgnoreCase))
+            {
+                externalAccess.Allow(run.Id, external);
+            }
+            else if (tool is not null)
+            {
+                // default ask — prompt com o path; aprovado, libera para a run.
+                var gate = await AskToolApprovalAsync(
+                    run, call, tool, builtinContext, ct);
+                if (gate.Approved)
+                {
+                    externalAccess.Allow(run.Id, external);
+                }
+                return (gate, false);
+            }
+        }
+
+        // RF-001: regras ordenadas — a última que casa decide.
+        var action = PermissionRuleEvaluator.ActionOf(call.Name);
+        var effect = await rules.EvaluateAsync(run.UserId, action,
+            new[] { call.Name, $"{call.Name}:{argPattern}" }, ct);
+        switch (effect?.ToLowerInvariant())
+        {
+            case "deny":
+                return (new ToolGateDecision(true, Output:
+                    $"Erro: a call '{call.Name}' está bloqueada por regra de "
+                    + $"permissão do usuário (deny {action}:{argPattern}). "
+                    + "Revogue ou ajuste a regra em Settings → Permissions."), false);
+            case "allow":
+                return (ToolGateDecision.Allow, false);
+            case "ask":
+                return (null, true);
+        }
+
+        // RF-002: aprovação salva no mesmo workdir (base da run, não o
+        // worktree isolado — "sempre" vale em todos os chats do workdir).
+        var workdir = await repos.ResolveWorkdirAsync(run.UserId, run.ChatId, ct);
+        var saved = await rules.SavedDecisionAsync(
+            run.UserId, workdir, call.Name, argPattern, ct);
+        return saved switch
+        {
+            true => (ToolGateDecision.Allow, false),
+            false => (new ToolGateDecision(true, Output:
+                $"Erro: a call '{call.Name}' foi rejeitada permanentemente "
+                + "pelo dono neste workdir (aprovação salva deny). "
+                + "Revogue em Settings → Permissions."), false),
+            _ => (null, false),
+        };
+    }
+
+    /// <summary>
+    /// Path externo alvo da call (RF-003): args <c>path</c>/<c>dir</c> ou
+    /// cabeçalhos de patch que resolvem fora do workdir. <c>null</c> quando
+    /// tudo está dentro — symlinks contam pelo destino real.
+    /// </summary>
+    private static string? ExternalPathOf(ProviderToolCall call, string workspace)
+    {
+        foreach (var raw in CandidatePaths(call))
+        {
+            var resolved = ResolveAbsolute(workspace, raw);
+            if (resolved is not null
+                && !CommandRiskClassifier.PathInside(workspace, resolved))
+            {
+                return resolved;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Paths declarados nos args (file_* path/dir + apply_patch).</summary>
+    private static IEnumerable<string> CandidatePaths(ProviderToolCall call)
+    {
+        var name = PermissionRuleset.BuiltinName(call.Name);
+        if (name is "apply_patch")
+        {
+            var patch = JsonField(call.ArgumentsJson, "patch");
+            if (string.IsNullOrWhiteSpace(patch))
+            {
+                yield break;
+            }
+            var ops = ApplyPatch.Parse(patch, out _);
+            if (ops is null)
+            {
+                yield break;
+            }
+            foreach (var op in ops)
+            {
+                yield return op.Path;
+                if (op.MoveTo is { } moveTo)
+                {
+                    yield return moveTo;
+                }
+            }
+            yield break;
+        }
+        if (name.StartsWith("file_", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var field in new[] { "path", "dir", "directory" })
+            {
+                if (JsonField(call.ArgumentsJson, field) is { } p
+                    && !string.IsNullOrWhiteSpace(p))
+                {
+                    yield return p;
+                }
+            }
+            if (name is "file_write" or "file_edit")
+            {
+                if (JsonField(call.ArgumentsJson, "move_to") is { } m
+                    && !string.IsNullOrWhiteSpace(m))
+                {
+                    yield return m;
+                }
+            }
+        }
+    }
+
+    /// <summary>Absolutiza o path contra o workdir (null = inválido).</summary>
+    private static string? ResolveAbsolute(string workspace, string candidate)
+    {
+        var trimmed = candidate.Trim();
+        if (trimmed.StartsWith('~') || trimmed.StartsWith('$'))
+        {
+            trimmed = trimmed[1..].TrimStart('/', '\\');
+        }
+        try
+        {
+            var full = Path.IsPathRooted(trimmed)
+                ? Path.GetFullPath(trimmed)
+                : Path.GetFullPath(Path.Join(workspace, trimmed));
+            // Symlink real do nó final decide o boundary (RF-003).
+            FileSystemInfo? node = Directory.Exists(full)
+                ? new DirectoryInfo(full)
+                : File.Exists(full) ? new FileInfo(full) : null;
+            return node?.LinkTarget is not null
+                ? node.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? full
+                : full;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Campo string do JSON de args da call (defensivo).</summary>
+    private static string? JsonField(string? json, string field)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(field, out var el)
+                && el.ValueKind == JsonValueKind.String
+                    ? el.GetString()
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

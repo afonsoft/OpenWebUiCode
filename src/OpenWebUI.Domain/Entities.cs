@@ -2461,3 +2461,70 @@ public class UserTheme
     /// <summary>Última atualização (epoch seconds).</summary>
     public long UpdatedAt { get; set; }
 }
+
+/// <summary>
+/// Regra de permissão ordenada do usuário
+/// (SPEC-20261018-permissions-v2 RF-001): par
+/// <see cref="Action"/>/<see cref="Resource"/> (glob) com efeito
+/// <c>allow|ask|deny</c>, avaliada em ordem — last-match-wins — depois
+/// das admin policies e antes das aprovações salvas/preset.
+/// </summary>
+public class UserPermissionRule
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono da regra.</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Ação alvo: <c>read|edit|glob|grep|shell|subagent|skill|
+    /// question|webfetch|websearch|external_directory|mcp[:server]</c>.</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>Recurso em glob: <c>tool</c>, <c>tool:argprefix*</c> ou
+    /// <c>*</c> (global); para <c>external_directory</c>, glob de path.</summary>
+    public string Resource { get; set; } = "*";
+
+    /// <summary>Efeito: <c>allow</c>, <c>ask</c> ou <c>deny</c>.</summary>
+    public string Effect { get; set; } = "ask";
+
+    /// <summary>Posição na ordenação — a última regra que casa decide.</summary>
+    public int Position { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Aprovação durável ("sempre") de uma call de tool
+/// (SPEC-20261018-permissions-v2 RF-002): sobrevive a restart e vale em
+/// todos os chats do mesmo <see cref="Workdir"/>. <see cref="Decision"/>
+/// <c>allow</c> auto-aprova; <c>deny</c> bloqueia (rejeição durável,
+/// revogável via Settings).
+/// </summary>
+public class SavedApproval
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono da aprovação.</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Diretório de trabalho normalizado da run (base, não o
+    /// worktree isolado) — a aprovação vale para qualquer chat nele.</summary>
+    public string Workdir { get; set; } = string.Empty;
+
+    /// <summary>Nome da tool da call (como anunciada ao provider).</summary>
+    public string Tool { get; set; } = string.Empty;
+
+    /// <summary>Padrão de argumentos salvo — glob no mesmo formato de
+    /// <c>PermissionRuleset.ArgPattern</c> (<c>exec:git</c>,
+    /// <c>write:src/**</c>, <c>*</c>).</summary>
+    public string ArgPattern { get; set; } = "*";
+
+    /// <summary>Decisão gravada: <c>allow</c> ou <c>deny</c>.</summary>
+    public string Decision { get; set; } = "allow";
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}

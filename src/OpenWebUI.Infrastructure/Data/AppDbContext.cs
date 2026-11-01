@@ -165,6 +165,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Auditoria de bloqueios por policy.</summary>
     public DbSet<PolicyDenial> PolicyDenials => Set<PolicyDenial>();
 
+    /// <summary>Regras de permissão ordenadas do usuário (SPEC permissions-v2).</summary>
+    public DbSet<UserPermissionRule> UserPermissionRules => Set<UserPermissionRule>();
+
+    /// <summary>Aprovações duráveis ("sempre") por workdir (SPEC permissions-v2).</summary>
+    public DbSet<SavedApproval> SavedApprovals => Set<SavedApproval>();
+
     /// <summary>Snapshots versionados do contexto de trabalho por chat.</summary>
     public DbSet<ContextSnapshot> ContextSnapshots => Set<ContextSnapshot>();
 

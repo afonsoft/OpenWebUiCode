@@ -134,6 +134,31 @@ public static class WorkspaceFiles
         return true;
     }
 
+    /// <summary>
+    /// <see cref="ResolveInsideFinal"/> com escape autorizado
+    /// (SPEC-20261018-permissions-v2 RF-003): quando o jail nega, tenta o
+    /// <see cref="ExternalAccessRegistry"/> — o gate libera paths fora do
+    /// workdir quando a regra <c>external_directory</c> do usuário é
+    /// <c>allow</c> ou o dono aprovou o prompt.
+    /// </summary>
+    public static string? ResolveInsideOrExternal(
+        string workspace, string? relative, ExternalAccessRegistry? external,
+        string? runId, out string error)
+    {
+        var full = ResolveInsideFinal(workspace, relative, out error);
+        if (full is not null)
+        {
+            return full;
+        }
+        var allowed = external?.ResolveAllowed(runId, workspace, relative);
+        if (allowed is not null)
+        {
+            error = string.Empty;
+            return allowed;
+        }
+        return null;
+    }
+
     /// <summary>True quando o conteúdo parece binário (NUL nos primeiros 8KB).</summary>
     public static bool LooksBinary(string path)
     {
