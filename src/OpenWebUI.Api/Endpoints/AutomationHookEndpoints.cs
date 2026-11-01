@@ -81,27 +81,10 @@ public static class AutomationHookEndpoints
             return Results.BadRequest(new { detail = "name é obrigatório (máx. 120)." });
         }
 
-        Chat? chat = null;
-        if (request?.ChatId is { } chatId)
+        var (chat, chatError) = await ResolveHookChatAsync(db, user, request, name, ct);
+        if (chatError is not null)
         {
-            chat = await db.Chats.FirstOrDefaultAsync(
-                c => c.Id == chatId && c.UserId == user.Id, ct);
-            if (chat is null)
-            {
-                return Results.NotFound(new { detail = "chatId não encontrado." });
-            }
-        }
-        else
-        {
-            var now0 = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            chat = new Chat
-            {
-                UserId = user.Id,
-                Title = $"webhook: {name}",
-                CreatedAt = now0,
-                UpdatedAt = now0,
-            };
-            db.Chats.Add(chat);
+            return chatError;
         }
 
         var provider = (request?.Provider ?? "generic").Trim().ToLowerInvariant();
@@ -117,13 +100,50 @@ public static class AutomationHookEndpoints
                 new { detail = "agentMode deve ser chat|plan|build." });
         }
 
+        var hook = BuildHook(request, user, chat!, name, provider);
+        db.AutomationHooks.Add(hook);
+        await db.SaveChangesAsync(ct);
+
+        return Results.Ok(new AutomationHookResponse(
+            hook.Id, hook.Name, hook.ChatId, hook.Enabled, hook.CreatedAt,
+            hook.LastFiredAt, $"/api/v1/hooks/{hook.Id}"));
+    }
+
+    /// <summary>Resolve o chat do hook — chatId existente do dono ou cria
+    /// um chat dedicado <c>webhook: {name}</c>.</summary>
+    private static async Task<(Chat? Chat, IResult? Error)> ResolveHookChatAsync(
+        AppDbContext db, User user, AutomationHookCreateRequest? request,
+        string name, CancellationToken ct)
+    {
+        if (request?.ChatId is { } chatId)
+        {
+            var chat = await db.Chats.FirstOrDefaultAsync(
+                c => c.Id == chatId && c.UserId == user.Id, ct);
+            return chat is null
+                ? (null, Results.NotFound(new { detail = "chatId não encontrado." }))
+                : (chat, null);
+        }
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var hook = new AutomationHook
+        var created = new Chat
+        {
+            UserId = user.Id,
+            Title = $"webhook: {name}",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.Chats.Add(created);
+        return (created, null);
+    }
+
+    /// <summary>Monta a entidade do hook a partir do request validado.</summary>
+    private static AutomationHook BuildHook(
+        AutomationHookCreateRequest? request, User user, Chat chat,
+        string name, string provider) => new()
         {
             UserId = user.Id,
             ChatId = chat.Id,
             Name = name,
-            CreatedAt = now,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Secret = string.IsNullOrWhiteSpace(request?.Secret)
                 ? null : request.Secret.Trim(),
             Provider = provider,
@@ -139,13 +159,6 @@ public static class AutomationHookEndpoints
             AgentMode = string.IsNullOrWhiteSpace(request?.AgentMode)
                 ? null : request.AgentMode.Trim().ToLowerInvariant(),
         };
-        db.AutomationHooks.Add(hook);
-        await db.SaveChangesAsync(ct);
-
-        return Results.Ok(new AutomationHookResponse(
-            hook.Id, hook.Name, hook.ChatId, hook.Enabled, hook.CreatedAt,
-            hook.LastFiredAt, $"/api/v1/hooks/{hook.Id}"));
-    }
 
     private static async Task<IResult> DeleteAsync(
         HttpContext http, AppDbContext db, string id, CancellationToken ct)
@@ -205,22 +218,9 @@ public static class AutomationHookEndpoints
         string token, CancellationToken ct)
     {
         var db = deps.Db;
-        var dispatcher = deps.Dispatcher;
-        var config = deps.Config;
-        var limits = deps.Limits;
-        var repos = deps.Repos;
-        var rateConfig = await config.GetAsync("ratelimit", RateLimitConfig.Default, ct);
-        if (rateConfig.Enabled)
+        if (await CheckHookRateLimitAsync(http, deps, ct) is { } limited)
         {
-            var key = $"hook:{http.Connection.RemoteIpAddress?.ToString() ?? "anon"}";
-            var retryAfter = limits.TryAcquire(
-                key, rateConfig, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-            if (retryAfter is { } retry)
-            {
-                http.Response.Headers.RetryAfter = retry.ToString();
-                return Results.Json(
-                    new { detail = "Limite de disparos excedido." }, statusCode: 429);
-            }
+            return limited;
         }
 
         var hook = await db.AutomationHooks
@@ -255,36 +255,18 @@ public static class AutomationHookEndpoints
 
         // Idempotência (RF-D2): delivery já aceita com a mesma chave →
         // devolve a run original sem criar mensagem/run novas.
-        if (deliveryKey is not null)
+        if (await DuplicateResultAsync(db, hook, deliveryKey, ct) is { } dup)
         {
-            var prevRunId = await db.AutomationHookDeliveries.AsNoTracking()
-                .Where(d => d.HookId == hook.Id && d.DeliveryKey == deliveryKey
-                    && d.Status == "accepted")
-                .Select(d => d.RunId)
-                .FirstOrDefaultAsync(ct);
-            if (prevRunId is not null)
-            {
-                return Results.Accepted(value: new AutomationHookFireResponse(
-                    prevRunId, hook.ChatId, "duplicate"));
-            }
+            return dup;
         }
 
         // Assinatura: hook com secret exige X-Hub-Signature-256 válida;
         // sem secret aceita (legado) com warning de auditoria.
-        string? securityWarning = null;
-        if (hook.Secret is { Length: > 0 } secret)
+        var (sigError, securityWarning) = await VerifySignatureAsync(
+            db, hook, http.Request, raw, deliveryKey, eventType, ct);
+        if (sigError is not null)
         {
-            var sig = http.Request.Headers["X-Hub-Signature-256"].ToString();
-            if (!WebhookSignature.Verify(secret, raw, sig))
-            {
-                await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "rejected", null, "assinatura ausente/inválida", null), ct);
-                return Results.Json(
-                    new { detail = "assinatura inválida." }, statusCode: 401);
-            }
-        }
-        else
-        {
-            securityWarning = "unsigned — hook legado sem secret";
+            return sigError;
         }
 
         // Filtro de eventos (RF-D1): lista vazia/ausente aceita tudo;
@@ -298,49 +280,12 @@ public static class AutomationHookEndpoints
         }
 
         // Prompt: template {{path}} sobre o payload, ou o parse legado.
-        string? content;
-        string? modelOverride = null;
-        if (!string.IsNullOrWhiteSpace(hook.PromptTemplate))
+        var (content, modelOverride, contentError) = await ResolveHookContentAsync(
+            db, hook, raw, deliveryKey, eventType, securityWarning, ct);
+        if (contentError is not null)
         {
-            try
-            {
-                using var doc = JsonDocument.Parse(
-                    string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
-                content = WebhookPromptTemplate.Render(
-                    hook.PromptTemplate, doc.RootElement,
-                    source: $"hook:{hook.Id}");
-            }
-            catch (JsonException)
-            {
-                return Results.BadRequest(new
-                {
-                    detail = "corpo não é JSON válido — exigido pelo promptTemplate do hook.",
-                });
-            }
-            catch (WebhookTemplateException tex)
-            {
-                await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "rejected", null, tex.Message, securityWarning), ct);
-                return Results.UnprocessableEntity(
-                    new { detail = $"template: {tex.Message}" });
-            }
+            return contentError;
         }
-        else
-        {
-            (content, modelOverride) = ReadPrompt(raw);
-            // Ramo legado (sem template): o conteúdo cru do payload também
-            // ganha proveniência explícita — doutrina <untrusted_input> do
-            // SPEC-20261023 cap. D vale para QUALQUER conteúdo externo.
-            if (!string.IsNullOrWhiteSpace(content))
-            {
-                content = "<untrusted_input source=\"hook:" + hook.Id
-                    + "\" field=\"payload\">"
-                    + content.Replace("</untrusted_input>",
-                        "<\\/untrusted_input>",
-                        StringComparison.OrdinalIgnoreCase)
-                    + "</untrusted_input>";
-            }
-        }
-
         if (string.IsNullOrWhiteSpace(content))
         {
             return Results.BadRequest(
@@ -359,18 +304,10 @@ public static class AutomationHookEndpoints
 
         // Binding de repo (RF-D2): vincula na primeira entrega do hook —
         // worktree exclusivo do chat; falha vira delivery "failed".
-        if (hook.RepoSlug is { Length: > 0 } slug
-            && await repos.GetChatBindingAsync(hook.ChatId, ct) is null)
+        if (await BindHookRepoAsync(db, deps.Repos, hook, deliveryKey, eventType,
+                securityWarning, ct) is { } bindError)
         {
-            var (_, bindError) = await repos.OpenChatAsync(
-                hook.UserId, hook.ChatId, slug, "main",
-                $"https://github.com/{slug}.git", null, ct);
-            if (bindError is not null)
-            {
-                await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "failed", null, $"repo: {bindError}", securityWarning), ct);
-                return Results.UnprocessableEntity(
-                    new { detail = $"repo: {bindError}" });
-            }
+            return bindError;
         }
         if (hook.AgentMode is { Length: > 0 } mode)
         {
@@ -378,39 +315,17 @@ public static class AutomationHookEndpoints
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var leaf = await db.ChatMessages
-            .Where(m => m.ChatId == hook.ChatId)
-            .OrderByDescending(m => m.Position)
-            .Select(m => new { m.Id, m.Position })
-            .FirstOrDefaultAsync(ct);
-        // Leaf explícito só vale se ainda existe (podem ter sido deletados);
-        // senão cai no topo legado por Position.
-        string? leafId = hook.Chat.LeafMessageId;
-        if (leafId is not null && leaf?.Id != leafId
-            && !await db.ChatMessages.AnyAsync(
-                m => m.ChatId == hook.ChatId && m.Id == leafId, ct))
-        {
-            leafId = null;
-        }
-        leafId ??= leaf?.Id;
+        var (leafPosition, leafId) = await ResolveLeafAsync(db, hook.Chat, ct);
 
         // Persona do hook (RF-D2): Skill ativa vira system message da run.
-        string? personaPrompt = null;
-        if (hook.PersonaId is { Length: > 0 } personaSlug)
-        {
-            personaPrompt = await db.Skills.AsNoTracking()
-                .Where(s => s.UserId == hook.UserId && s.IsActive
-                    && (s.Name == personaSlug || s.Id == personaSlug))
-                .Select(s => s.Content)
-                .FirstOrDefaultAsync(ct);
-        }
+        var personaPrompt = await ResolvePersonaPromptAsync(db, hook, ct);
 
         var message = new ChatMessage
         {
             ChatId = hook.ChatId,
             Role = "user",
             Content = content,
-            Position = (leaf?.Position ?? -1) + 1,
+            Position = (leafPosition ?? -1) + 1,
             Timestamp = now,
             ParentId = leafId,
         };
@@ -441,9 +356,176 @@ public static class AutomationHookEndpoints
         await db.SaveChangesAsync(ct);
         await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "accepted", run.Id, null, securityWarning), ct);
 
-        dispatcher.Enqueue(run.Id);
+        deps.Dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: new AutomationHookFireResponse(
             run.Id, hook.ChatId, ChatRunStatus.Queued));
+    }
+
+    /// <summary>Rate limit do disparo — resposta 429 quando estourado.</summary>
+    private static async Task<IResult?> CheckHookRateLimitAsync(
+        HttpContext http, HookFireDeps deps, CancellationToken ct)
+    {
+        var rateConfig = await deps.Config.GetAsync("ratelimit", RateLimitConfig.Default, ct);
+        if (!rateConfig.Enabled)
+        {
+            return null;
+        }
+        var key = $"hook:{http.Connection.RemoteIpAddress?.ToString() ?? "anon"}";
+        var retryAfter = deps.Limits.TryAcquire(
+            key, rateConfig, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (retryAfter is not { } retry)
+        {
+            return null;
+        }
+        http.Response.Headers.RetryAfter = retry.ToString();
+        return Results.Json(
+            new { detail = "Limite de disparos excedido." }, statusCode: 429);
+    }
+
+    /// <summary>Entrega duplicada devolve a run original já aceita.</summary>
+    private static async Task<IResult?> DuplicateResultAsync(
+        AppDbContext db, AutomationHook hook, string? deliveryKey,
+        CancellationToken ct)
+    {
+        if (deliveryKey is null)
+        {
+            return null;
+        }
+        var prevRunId = await db.AutomationHookDeliveries.AsNoTracking()
+            .Where(d => d.HookId == hook.Id && d.DeliveryKey == deliveryKey
+                && d.Status == "accepted")
+            .Select(d => d.RunId)
+            .FirstOrDefaultAsync(ct);
+        return prevRunId is null
+            ? null
+            : Results.Accepted(value: new AutomationHookFireResponse(
+                prevRunId, hook.ChatId, "duplicate"));
+    }
+
+    /// <summary>Verifica X-Hub-Signature-256 quando o hook tem Secret —
+    /// rejeição grava delivery; sem secret devolve o warning legado.</summary>
+    private static async Task<(IResult? Error, string? Warning)> VerifySignatureAsync(
+        AppDbContext db, AutomationHook hook, HttpRequest request, string raw,
+        string? deliveryKey, string? eventType, CancellationToken ct)
+    {
+        if (hook.Secret is not { Length: > 0 } secret)
+        {
+            return (null, "unsigned — hook legado sem secret");
+        }
+        var sig = request.Headers["X-Hub-Signature-256"].ToString();
+        if (WebhookSignature.Verify(secret, raw, sig))
+        {
+            return (null, null);
+        }
+        await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "rejected", null, "assinatura ausente/inválida", null), ct);
+        return (Results.Json(new { detail = "assinatura inválida." }, statusCode: 401), null);
+    }
+
+    /// <summary>Resolve o prompt da entrega — template {{path}} sobre o
+    /// payload ou o parse legado com marcação untrusted_input.</summary>
+    private static async Task<(string? Content, string? ModelOverride, IResult? Error)>
+        ResolveHookContentAsync(
+            AppDbContext db, AutomationHook hook, string raw,
+            string? deliveryKey, string? eventType, string? securityWarning,
+            CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(hook.PromptTemplate))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(
+                    string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+                var rendered = WebhookPromptTemplate.Render(
+                    hook.PromptTemplate, doc.RootElement,
+                    source: $"hook:{hook.Id}");
+                return (rendered, null, null);
+            }
+            catch (JsonException)
+            {
+                return (null, null, Results.BadRequest(new
+                {
+                    detail = "corpo não é JSON válido — exigido pelo promptTemplate do hook.",
+                }));
+            }
+            catch (WebhookTemplateException tex)
+            {
+                await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "rejected", null, tex.Message, securityWarning), ct);
+                return (null, null, Results.UnprocessableEntity(
+                    new { detail = $"template: {tex.Message}" }));
+            }
+        }
+        var (content, modelOverride) = ReadPrompt(raw);
+        // Ramo legado (sem template): o conteúdo cru do payload também
+        // ganha proveniência explícita — doutrina <untrusted_input> do
+        // SPEC-20261023 cap. D vale para QUALQUER conteúdo externo.
+        if (!string.IsNullOrWhiteSpace(content))
+        {
+            content = "<untrusted_input source=\"hook:" + hook.Id
+                + "\" field=\"payload\">"
+                + content.Replace("</untrusted_input>",
+                    "<\\/untrusted_input>",
+                    StringComparison.OrdinalIgnoreCase)
+                + "</untrusted_input>";
+        }
+        return (content, modelOverride, null);
+    }
+
+    /// <summary>Vincula o repo do hook na primeira entrega — falha vira
+    /// delivery "failed" e resposta 422.</summary>
+    private static async Task<IResult?> BindHookRepoAsync(
+        AppDbContext db, WorkspaceRepoService repos, AutomationHook hook,
+        string? deliveryKey, string? eventType, string? securityWarning,
+        CancellationToken ct)
+    {
+        if (hook.RepoSlug is not { Length: > 0 } slug
+            || await repos.GetChatBindingAsync(hook.ChatId, ct) is not null)
+        {
+            return null;
+        }
+        var (_, bindError) = await repos.OpenChatAsync(
+            hook.UserId, hook.ChatId, slug, "main",
+            $"https://github.com/{slug}.git", null, ct);
+        if (bindError is null)
+        {
+            return null;
+        }
+        await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "failed", null, $"repo: {bindError}", securityWarning), ct);
+        return Results.UnprocessableEntity(new { detail = $"repo: {bindError}" });
+    }
+
+    /// <summary>Resolve a posição e o pai da nova mensagem — leaf explícito
+    /// só vale se ainda existe; senão cai no topo legado por Position.</summary>
+    private static async Task<(int? Position, string? LeafId)> ResolveLeafAsync(
+        AppDbContext db, Chat chat, CancellationToken ct)
+    {
+        var leaf = await db.ChatMessages
+            .Where(m => m.ChatId == chat.Id)
+            .OrderByDescending(m => m.Position)
+            .Select(m => new { m.Id, m.Position })
+            .FirstOrDefaultAsync(ct);
+        string? leafId = chat.LeafMessageId;
+        if (leafId is not null && leaf?.Id != leafId
+            && !await db.ChatMessages.AnyAsync(
+                m => m.ChatId == chat.Id && m.Id == leafId, ct))
+        {
+            leafId = null;
+        }
+        return (leaf?.Position, leafId ?? leaf?.Id);
+    }
+
+    /// <summary>Skill ativa do PersonaId vira system message da run.</summary>
+    private static async Task<string?> ResolvePersonaPromptAsync(
+        AppDbContext db, AutomationHook hook, CancellationToken ct)
+    {
+        if (hook.PersonaId is not { Length: > 0 } personaSlug)
+        {
+            return null;
+        }
+        return await db.Skills.AsNoTracking()
+            .Where(s => s.UserId == hook.UserId && s.IsActive
+                && (s.Name == personaSlug || s.Id == personaSlug))
+            .Select(s => s.Content)
+            .FirstOrDefaultAsync(ct);
     }
 
     /// <summary>Persiste a linha de auditoria da entrega (RF-D2).</summary>
