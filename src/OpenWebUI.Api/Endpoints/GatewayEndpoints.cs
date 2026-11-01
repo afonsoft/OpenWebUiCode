@@ -129,6 +129,31 @@ public static class GatewayEndpoints
         {
             return Results.NotFound(new { detail = "canal não encontrado." });
         }
+        if (ApplyFields(channel, request) is { } badRequest)
+        {
+            return badRequest;
+        }
+        if (request?.BotToken is { Length: > 0 } token)
+        {
+            var error = await secrets.SetUserAsync(
+                user.Id, channel.SecretRef, token.Trim(), ct);
+            if (error is not null)
+            {
+                return Results.BadRequest(new { detail = $"botToken: {error}" });
+            }
+        }
+        if (request?.RotateWebhookSecret == true)
+        {
+            channel.WebhookSecret = Guid.NewGuid().ToString("N");
+        }
+        await db.SaveChangesAsync(ct);
+        return Results.Ok(ToResponse(channel));
+    }
+
+    /// <summary>Aplica enabled/toolsPolicy/defaultModelId/personaId; devolve 400 em policy inválida.</summary>
+    private static IResult? ApplyFields(
+        GatewayChannel channel, GatewayChannelUpdateRequest? request)
+    {
         if (request?.Enabled is { } enabled)
         {
             channel.Enabled = enabled;
@@ -154,21 +179,7 @@ public static class GatewayEndpoints
             channel.PersonaId = string.IsNullOrWhiteSpace(persona)
                 ? null : persona.Trim();
         }
-        if (request?.BotToken is { Length: > 0 } token)
-        {
-            var error = await secrets.SetUserAsync(
-                user.Id, channel.SecretRef, token.Trim(), ct);
-            if (error is not null)
-            {
-                return Results.BadRequest(new { detail = $"botToken: {error}" });
-            }
-        }
-        if (request?.RotateWebhookSecret == true)
-        {
-            channel.WebhookSecret = Guid.NewGuid().ToString("N");
-        }
-        await db.SaveChangesAsync(ct);
-        return Results.Ok(ToResponse(channel));
+        return null;
     }
 
     private static async Task<IResult> DeleteChannelAsync(

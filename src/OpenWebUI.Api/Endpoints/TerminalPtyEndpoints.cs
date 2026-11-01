@@ -339,6 +339,51 @@ public static class TerminalPtyEndpoints
             }
         }
 
+        async Task CreateAsync(JsonElement root)
+        {
+            var chatId = root.TryGetProperty("chatId", out var ci)
+                && ci.ValueKind is JsonValueKind.String
+                    ? ci.GetString() : null;
+            var runId = root.TryGetProperty("runId", out var ri)
+                && ri.ValueKind is JsonValueKind.String
+                    ? ri.GetString() : null;
+            var wdir = root.TryGetProperty("workdir", out var wd)
+                && wd.ValueKind is JsonValueKind.String
+                    ? wd.GetString() : null;
+            var cols = root.TryGetProperty("cols", out var cc)
+                && cc.ValueKind is JsonValueKind.Number
+                && cc.TryGetInt32(out var ccv) ? ccv : 120;
+            var rows = root.TryGetProperty("rows", out var rr)
+                && rr.ValueKind is JsonValueKind.Number
+                && rr.TryGetInt32(out var rrv) ? rrv : 30;
+
+            var (resolved, resolveError) =
+                await ResolveBoundWorkdirAsync(
+                    uid, wdir, runId, chatId, deps, ct);
+            if (resolveError is not null)
+            {
+                await Send(new { type = "error", detail = "workdir fora de data/." });
+                return;
+            }
+
+            var secrets = await deps.AgentEnv.BuildAsync(uid, ct);
+            try
+            {
+                var newSid = deps.Terminals.Create(
+                    uid, cols, rows, secrets.Vars,
+                    resolved, chatId, runId);
+                await Send(new
+                {
+                    type = "created", sid = newSid, chatId, runId,
+                });
+                await AttachAsync(newSid);
+            }
+            catch (InvalidOperationException ex)
+            {
+                await Send(new { type = "error", detail = ex.Message });
+            }
+        }
+
         // Lista inicial — o cliente abre abas para sessões já vivas.
         await Send(new
         {
@@ -411,50 +456,8 @@ public static class TerminalPtyEndpoints
                         await deps.Terminals.KillAsync(uid, sid);
                         break;
                     case "create":
-                    {
-                        var chatId = root.TryGetProperty("chatId", out var ci)
-                            && ci.ValueKind is JsonValueKind.String
-                                ? ci.GetString() : null;
-                        var runId = root.TryGetProperty("runId", out var ri)
-                            && ri.ValueKind is JsonValueKind.String
-                                ? ri.GetString() : null;
-                        var wdir = root.TryGetProperty("workdir", out var wd)
-                            && wd.ValueKind is JsonValueKind.String
-                                ? wd.GetString() : null;
-                        var cols = root.TryGetProperty("cols", out var cc)
-                            && cc.ValueKind is JsonValueKind.Number
-                            && cc.TryGetInt32(out var ccv) ? ccv : 120;
-                        var rows = root.TryGetProperty("rows", out var rr)
-                            && rr.ValueKind is JsonValueKind.Number
-                            && rr.TryGetInt32(out var rrv) ? rrv : 30;
-
-                        var (resolved, resolveError) =
-                            await ResolveBoundWorkdirAsync(
-                                uid, wdir, runId, chatId, deps, ct);
-                        if (resolveError is not null)
-                        {
-                            await Send(new { type = "error", detail = "workdir fora de data/." });
-                            break;
-                        }
-
-                        var secrets = await deps.AgentEnv.BuildAsync(uid, ct);
-                        try
-                        {
-                            var newSid = deps.Terminals.Create(
-                                uid, cols, rows, secrets.Vars,
-                                resolved, chatId, runId);
-                            await Send(new
-                            {
-                                type = "created", sid = newSid, chatId, runId,
-                            });
-                            await AttachAsync(newSid);
-                        }
-                        catch (InvalidOperationException ex)
-                        {
-                            await Send(new { type = "error", detail = ex.Message });
-                        }
+                        await CreateAsync(root);
                         break;
-                    }
                 }
             }
         }
