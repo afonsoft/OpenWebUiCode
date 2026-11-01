@@ -43,6 +43,7 @@ Order 84. Testes ToolSearchTests 8/8.
 - Integrações: PreToolUse→GateWithInterceptors, PostToolUse→OnResultAsync, SessionStart→builtinContext, Stop→re-loop ≤3, SessionEnd→FinishAsync, UserPromptSubmit→EnqueueMessage; endpoints GET/PUT/test.
 - Build 0/0; 13 testes verdes.
 
+
 ## smart-permission-llm (#574) — 2026-11-01
 - `SmartPermissionClassifier` + prompt embedded nonce-tag + integração no
   gate (preset `smart`, após regras determinísticas; fail-safe ask).
