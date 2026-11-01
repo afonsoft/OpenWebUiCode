@@ -105,112 +105,116 @@ public sealed class TeamTaskBuiltinTool(IServiceScopeFactory scopeFactory)
             ? tidEl.GetString() : null;
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-        switch (op)
+        return op switch
         {
-            case "list":
-            {
-                var tasks = await db.TeamTasks.AsNoTracking()
-                    .Where(t => t.TeamId == teamId)
-                    .OrderBy(t => t.CreatedAt)
-                    .ToListAsync(ct);
-                if (tasks.Count == 0)
-                {
-                    return new BuiltinToolResult("Task list do team vazia.");
-                }
-                var lines = tasks.Select(t =>
-                    $"- [{t.Status}] {t.Title} (id {t.Id}"
-                    + $"{(t.AssigneeChatId is not null ? $", assignee {t.AssigneeChatId}" : "")}"
-                    + $"{(t.Result is not null ? $" — {t.Result}" : "")})");
-                return new BuiltinToolResult(
-                    string.Join("\n", lines),
-                    new { tasks });
-            }
+            "list" => await ListTasksAsync(db, teamId, ct),
+            "create" => await CreateTaskAsync(db, args, context, teamId, now, ct),
+            "claim" or "update" or "complete" => await MutateTaskAsync(
+                db, args, context, teamId, taskId, op, now, ct),
+            _ => new BuiltinToolResult(
+                "op deve ser list|create|claim|update|complete."),
+        };
+    }
 
-            case "create":
-            {
-                var title = args.TryGetProperty("title", out var tEl)
-                    ? tEl.GetString() : null;
-                if (string.IsNullOrWhiteSpace(title) || title.Length > 200)
-                {
-                    return new BuiltinToolResult("'title' é obrigatório (máx. 200).");
-                }
-                var task = new TeamTask
-                {
-                    TeamId = teamId,
-                    Title = title.Trim(),
-                    Status = "pending",
-                    CreatedByChatId = context.ChatId,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                };
-                db.TeamTasks.Add(task);
-                await db.SaveChangesAsync(ct);
-                return new BuiltinToolResult(
-                    $"Tarefa criada: {task.Title} (id {task.Id}).",
-                    new { taskId = task.Id, status = task.Status });
-            }
-
-            case "claim" or "update" or "complete":
-            {
-                if (taskId is null)
-                {
-                    return new BuiltinToolResult("'task_id' é obrigatório.");
-                }
-                var task = await db.TeamTasks.FirstOrDefaultAsync(
-                    t => t.Id == taskId && t.TeamId == teamId, ct);
-                if (task is null)
-                {
-                    return new BuiltinToolResult(
-                        $"Tarefa '{taskId}' não existe neste team.");
-                }
-
-                if (op == "claim")
-                {
-                    if (task.AssigneeChatId is not null && task.Status != "pending")
-                    {
-                        return new BuiltinToolResult(
-                            $"Tarefa já claimada por {task.AssigneeChatId}.");
-                    }
-                    task.AssigneeChatId = context.ChatId;
-                    task.Status = "in_progress";
-                }
-                else if (op == "complete")
-                {
-                    task.Status = "done";
-                    task.AssigneeChatId ??= context.ChatId;
-                    if (args.TryGetProperty("result", out var rEl)
-                        && rEl.GetString() is { } r)
-                    {
-                        task.Result = r.Length > 500 ? r[..500] : r;
-                    }
-                    else
-                    {
-                        task.Result = null;
-                    }
-                }
-                else // update
-                {
-                    var status = args.TryGetProperty("status", out var sEl)
-                        ? sEl.GetString() : null;
-                    if (status is not ("pending" or "in_progress" or "done"))
-                    {
-                        return new BuiltinToolResult(
-                            "'status' deve ser pending|in_progress|done.");
-                    }
-                    task.Status = status;
-                }
-
-                task.UpdatedAt = now;
-                await db.SaveChangesAsync(ct);
-                return new BuiltinToolResult(
-                    $"Tarefa {task.Id}: {task.Status}.",
-                    new { taskId = task.Id, status = task.Status });
-            }
-
-            default:
-                return new BuiltinToolResult(
-                    "op deve ser list|create|claim|update|complete.");
+    private static async Task<BuiltinToolResult> ListTasksAsync(
+        AppDbContext db, string teamId, CancellationToken ct)
+    {
+        var tasks = await db.TeamTasks.AsNoTracking()
+            .Where(t => t.TeamId == teamId)
+            .OrderBy(t => t.CreatedAt)
+            .ToListAsync(ct);
+        if (tasks.Count == 0)
+        {
+            return new BuiltinToolResult("Task list do team vazia.");
         }
+        var lines = tasks.Select(t =>
+            $"- [{t.Status}] {t.Title} (id {t.Id}"
+            + $"{(t.AssigneeChatId is not null ? $", assignee {t.AssigneeChatId}" : "")}"
+            + $"{(t.Result is not null ? $" — {t.Result}" : "")})");
+        return new BuiltinToolResult(
+            string.Join("\n", lines),
+            new { tasks });
+    }
+
+    private static async Task<BuiltinToolResult> CreateTaskAsync(
+        AppDbContext db, JsonElement args, BuiltinToolContext context,
+        string teamId, long now, CancellationToken ct)
+    {
+        var title = args.TryGetProperty("title", out var tEl)
+            ? tEl.GetString() : null;
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 200)
+        {
+            return new BuiltinToolResult("'title' é obrigatório (máx. 200).");
+        }
+        var task = new TeamTask
+        {
+            TeamId = teamId,
+            Title = title.Trim(),
+            Status = "pending",
+            CreatedByChatId = context.ChatId,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.TeamTasks.Add(task);
+        await db.SaveChangesAsync(ct);
+        return new BuiltinToolResult(
+            $"Tarefa criada: {task.Title} (id {task.Id}).",
+            new { taskId = task.Id, status = task.Status });
+    }
+
+    private static async Task<BuiltinToolResult> MutateTaskAsync(
+        AppDbContext db, JsonElement args, BuiltinToolContext context,
+        string teamId, string? taskId, string op, long now,
+        CancellationToken ct)
+    {
+        if (taskId is null)
+        {
+            return new BuiltinToolResult("'task_id' é obrigatório.");
+        }
+        var task = await db.TeamTasks.FirstOrDefaultAsync(
+            t => t.Id == taskId && t.TeamId == teamId, ct);
+        if (task is null)
+        {
+            return new BuiltinToolResult(
+                $"Tarefa '{taskId}' não existe neste team.");
+        }
+
+        if (op == "claim")
+        {
+            if (task.AssigneeChatId is not null && task.Status != "pending")
+            {
+                return new BuiltinToolResult(
+                    $"Tarefa já claimada por {task.AssigneeChatId}.");
+            }
+            task.AssigneeChatId = context.ChatId;
+            task.Status = "in_progress";
+        }
+        else if (op == "complete")
+        {
+            task.Status = "done";
+            task.AssigneeChatId ??= context.ChatId;
+            task.Result = args.TryGetProperty("result", out var rEl)
+                && rEl.GetString() is { } r
+                    ? r.Length > 500 ? r[..500] : r
+                    : null;
+        }
+        else // update
+        {
+            var status = args.TryGetProperty("status", out var sEl)
+                ? sEl.GetString() : null;
+            if (status is not ("pending" or "in_progress" or "done"))
+            {
+                return new BuiltinToolResult(
+                    "'status' deve ser pending|in_progress|done.");
+            }
+            task.Status = status;
+        }
+
+        task.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+        return new BuiltinToolResult(
+            $"Tarefa {task.Id}: {task.Status}.",
+            new { taskId = task.Id, status = task.Status });
     }
 }
 
@@ -285,15 +289,7 @@ public sealed class TeamMessageBuiltinTool(IServiceScopeFactory scopeFactory)
 
         // ACL: alvo tem que ser membro do MESMO team — fora disso falha
         // fechado (sem vazamento entre times).
-        var target = await db.Chats.AsNoTracking()
-            .Where(c => c.Id == toChatId && c.UserId == context.UserId)
-            .Select(c => new { c.Id, c.TeamId })
-            .FirstOrDefaultAsync(ct);
-        var targetTeam = target is null
-            ? null
-            : target.TeamId ?? await TeamService.ResolveTeamIdAsync(
-                db, toChatId, ct);
-        if (target is null || targetTeam != teamId)
+        if (!await IsTeamMemberAsync(db, context, teamId, toChatId, ct))
         {
             return new BuiltinToolResult(
                 $"Chat '{toChatId}' não é membro deste team.");
@@ -332,6 +328,31 @@ public sealed class TeamMessageBuiltinTool(IServiceScopeFactory scopeFactory)
 
         // Membro ocioso: mensagem durável — vira input na próxima
         // continuação do chat alvo.
+        return await DeliverDurableAsync(
+            db, context, toChatId, message, content, now, ct);
+    }
+
+    /// <summary>Alvo existe, é do usuário e pertence ao mesmo team.</summary>
+    private static async Task<bool> IsTeamMemberAsync(
+        AppDbContext db, BuiltinToolContext context, string teamId,
+        string toChatId, CancellationToken ct)
+    {
+        var target = await db.Chats.AsNoTracking()
+            .Where(c => c.Id == toChatId && c.UserId == context.UserId)
+            .Select(c => new { c.Id, c.TeamId })
+            .FirstOrDefaultAsync(ct);
+        var targetTeam = target is null
+            ? null
+            : target.TeamId ?? await TeamService.ResolveTeamIdAsync(
+                db, toChatId, ct);
+        return target is not null && targetTeam == teamId;
+    }
+
+    /// <summary>Entrega durável: mensagem user no topo do alvo + notificação.</summary>
+    private static async Task<BuiltinToolResult> DeliverDurableAsync(
+        AppDbContext db, BuiltinToolContext context, string toChatId,
+        string message, string content, long now, CancellationToken ct)
+    {
         var leaf = await db.ChatMessages
             .Where(m => m.ChatId == toChatId)
             .OrderByDescending(m => m.Position)

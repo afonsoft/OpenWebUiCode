@@ -22,27 +22,36 @@ internal static class ExecutableResolver
                 : throw new InvalidOperationException($"Executável '{name}' não encontrado.");
         }
 
-        return s_cache.GetOrAdd(name, static n =>
+        return s_cache.GetOrAdd(name, static n => FindOnPath(n)
+            ?? throw new InvalidOperationException(
+                $"Executável '{n}' não encontrado no PATH."));
+    }
+
+    /// <summary>Varre os diretórios do <c>PATH</c> atrás do executável
+    /// (no Windows, tenta <c>.exe/.cmd/.bat</c> quando o nome não tem
+    /// extensão). Null quando ausente.</summary>
+    private static string? FindOnPath(string name)
+    {
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(pathEnv))
         {
-            var pathEnv = Environment.GetEnvironmentVariable("PATH");
-            if (!string.IsNullOrEmpty(pathEnv))
+            return null;
+        }
+        var candidates = OperatingSystem.IsWindows() && !Path.HasExtension(name)
+            ? new[] { name + ".exe", name + ".cmd", name + ".bat", name }
+            : new[] { name };
+        foreach (var dir in pathEnv.Split(
+            Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var candidate in candidates)
             {
-                var candidates = OperatingSystem.IsWindows() && !Path.HasExtension(n)
-                    ? new[] { n + ".exe", n + ".cmd", n + ".bat", n }
-                    : new[] { n };
-                foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                var full = Path.Join(dir, candidate);
+                if (File.Exists(full))
                 {
-                    foreach (var candidate in candidates)
-                    {
-                        var full = Path.Join(dir, candidate);
-                        if (File.Exists(full))
-                        {
-                            return full;
-                        }
-                    }
+                    return full;
                 }
             }
-            throw new InvalidOperationException($"Executável '{n}' não encontrado no PATH.");
-        });
+        }
+        return null;
     }
 }

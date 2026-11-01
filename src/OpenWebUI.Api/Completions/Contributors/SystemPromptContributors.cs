@@ -175,15 +175,7 @@ public sealed class CustomModelContributor(AppDbContext db) : ISystemPromptContr
         // SPEC-20261018-model-variants RF-001: "model#variant" → resolve
         // o modelo base e aplica a variant (settings > params do modelo).
         var (baseRef, variantId) = ModelVariantService.Split(ctx.Model);
-        var customModel = await FindModelAsync(ctx, baseRef)
-            ?? (variantId is null ? null : await FindModelAsync(ctx, ctx.Model));
-        customModel ??= await FindByAliasAsync(ctx, baseRef);
-        if (customModel is not null
-            && !await ModelEndpoints.HasModelAccessAsync(
-                ctx.User, customModel, db, ctx.Ct))
-        {
-            customModel = null;
-        }
+        var customModel = await ResolveCustomModelAsync(ctx, baseRef, variantId);
 
         ctx.CustomModel = customModel;
         if (customModel is null)
@@ -197,6 +189,34 @@ public sealed class CustomModelContributor(AppDbContext db) : ISystemPromptContr
             return [];
         }
 
+        ApplyModelAndVariant(ctx, customModel, baseRef, variantId);
+        MergeCustomParams(ctx, customModel.ParamsJson);
+
+        return string.IsNullOrWhiteSpace(customModel.SystemPrompt)
+            ? []
+            : [customModel.SystemPrompt];
+    }
+
+    /// <summary>Resolve a entry custom por id/nome/alias com ACL do dono.</summary>
+    private async Task<ModelEntry?> ResolveCustomModelAsync(
+        PromptContext ctx, string baseRef, string? variantId)
+    {
+        var customModel = await FindModelAsync(ctx, baseRef)
+            ?? (variantId is null ? null : await FindModelAsync(ctx, ctx.Model));
+        customModel ??= await FindByAliasAsync(ctx, baseRef);
+        if (customModel is not null
+            && !await ModelEndpoints.HasModelAccessAsync(
+                ctx.User, customModel, db, ctx.Ct))
+        {
+            customModel = null;
+        }
+        return customModel;
+    }
+
+    /// <summary>Model id servido + variant (RF-001).</summary>
+    private static void ApplyModelAndVariant(
+        PromptContext ctx, ModelEntry customModel, string baseRef, string? variantId)
+    {
         if (!string.IsNullOrWhiteSpace(customModel.BaseModelId))
         {
             ctx.Model = customModel.BaseModelId;
@@ -219,31 +239,32 @@ public sealed class CustomModelContributor(AppDbContext db) : ISystemPromptContr
             }
             ApplyVariant(ctx, variant);
         }
+    }
 
-        if (!string.IsNullOrWhiteSpace(customModel.ParamsJson))
+    /// <summary>Mescla ParamsJson do modelo (perde para persona/request).</summary>
+    private static void MergeCustomParams(PromptContext ctx, string? paramsJson)
+    {
+        if (string.IsNullOrWhiteSpace(paramsJson))
         {
-            try
+            return;
+        }
+        try
+        {
+            var customParams = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                paramsJson);
+            if (customParams is not null)
             {
-                var customParams = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                    customModel.ParamsJson);
-                if (customParams is not null)
+                ctx.Parameters ??= [];
+                foreach (var (key, value) in customParams)
                 {
-                    ctx.Parameters ??= [];
-                    foreach (var (key, value) in customParams)
-                    {
-                        ctx.Parameters.TryAdd(key, value);
-                    }
+                    ctx.Parameters.TryAdd(key, value);
                 }
             }
-            catch (JsonException)
-            {
-                // Payload auxiliar malformado — segue sem ele.
-            }
         }
-
-        return string.IsNullOrWhiteSpace(customModel.SystemPrompt)
-            ? []
-            : [customModel.SystemPrompt];
+        catch (JsonException)
+        {
+            // Payload auxiliar malformado — segue sem ele.
+        }
     }
 
     /// <summary>Lookup direto por id/nome visível ao usuário.</summary>

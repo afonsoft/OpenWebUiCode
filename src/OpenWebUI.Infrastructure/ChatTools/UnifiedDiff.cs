@@ -120,6 +120,30 @@ public static class UnifiedDiff
             return string.Empty;
         }
 
+        var hunks = GroupHunks(ops, changed);
+
+        var sb = new StringBuilder();
+        sb.Append("--- a/").Append(path).Append('\n')
+            .Append("+++ b/").Append(path).Append('\n');
+        var ai = 0;
+        var bi = 0;
+        var pos = 0;
+        var body = new StringBuilder();
+        foreach (var (hs, he) in hunks)
+        {
+            AdvanceTo(ops, hs, ref pos, ref ai, ref bi);
+            EmitHunk(sb, body, ops, a, b, hs, he,
+                ref pos, ref ai, ref bi);
+        }
+
+        return sb.ToString().TrimEnd('\n');
+    }
+
+    /// <summary>Agrupa os índices com mudança em janelas de
+    /// <see cref="Context"/> linhas de margem.</summary>
+    private static List<(int Start, int End)> GroupHunks(
+        List<Op> ops, List<int> changed)
+    {
         var hunks = new List<(int Start, int End)>();
         var start = Math.Max(0, changed[0] - Context);
         var end = Math.Min(ops.Count - 1, changed[0] + Context);
@@ -138,70 +162,71 @@ public static class UnifiedDiff
         }
 
         hunks.Add((start, end));
+        return hunks;
+    }
 
-        var sb = new StringBuilder();
-        sb.Append("--- a/").Append(path).Append('\n')
-            .Append("+++ b/").Append(path).Append('\n');
-        var ai = 0;
-        var bi = 0;
-        var pos = 0;
-        var body = new StringBuilder();
-        foreach (var (hs, he) in hunks)
+    /// <summary>Avança os cursores ai/bi pelas ops anteriores ao hunk.</summary>
+    private static void AdvanceTo(
+        List<Op> ops, int target, ref int pos, ref int ai, ref int bi)
+    {
+        while (pos < target)
         {
-            // Avança ai/bi até o início do hunk.
-            while (pos < hs)
+            if (ops[pos] == Op.Keep)
             {
-                if (ops[pos] == Op.Keep)
-                {
-                    ai++;
-                    bi++;
-                }
-                else if (ops[pos] == Op.Del)
-                {
-                    ai++;
-                }
-                else
-                {
-                    bi++;
-                }
-
-                pos++;
+                ai++;
+                bi++;
+            }
+            else if (ops[pos] == Op.Del)
+            {
+                ai++;
+            }
+            else
+            {
+                bi++;
             }
 
-            var oldStart = ai + 1;
-            var newStart = bi + 1;
-            var oldCount = 0;
-            var newCount = 0;
-            body.Clear();
-            for (var i = hs; i <= he && pos <= he; i++, pos++)
-            {
-                switch (ops[i])
-                {
-                    case Op.Keep:
-                        body.Append(' ').Append(a[ai++]).Append('\n');
-                        bi++;
-                        oldCount++;
-                        newCount++;
-                        break;
-                    case Op.Del:
-                        body.Append('-').Append(a[ai++]).Append('\n');
-                        oldCount++;
-                        break;
-                    case Op.Add:
-                        body.Append('+').Append(b[bi++]).Append('\n');
-                        newCount++;
-                        break;
-                }
-            }
+            pos++;
+        }
+    }
 
-            sb.Append("@@ -").Append(oldCount == 0 ? oldStart - 1 : oldStart)
-                .Append(',').Append(oldCount)
-                .Append(" +").Append(newCount == 0 ? newStart - 1 : newStart)
-                .Append(',').Append(newCount)
-                .Append(" @@\n").Append(body);
+    /// <summary>Emite um hunk <c>@@ -oldStart,oldCount +newStart,newCount @@</c>
+    /// consumindo as ops da janela e avançando os cursores.</summary>
+    private static void EmitHunk(
+        StringBuilder sb, StringBuilder body, List<Op> ops,
+        string[] a, string[] b, int hs, int he,
+        ref int pos, ref int ai, ref int bi)
+    {
+        var oldStart = ai + 1;
+        var newStart = bi + 1;
+        var oldCount = 0;
+        var newCount = 0;
+        body.Clear();
+        for (var i = hs; i <= he && pos <= he; i++, pos++)
+        {
+            switch (ops[i])
+            {
+                case Op.Keep:
+                    body.Append(' ').Append(a[ai++]).Append('\n');
+                    bi++;
+                    oldCount++;
+                    newCount++;
+                    break;
+                case Op.Del:
+                    body.Append('-').Append(a[ai++]).Append('\n');
+                    oldCount++;
+                    break;
+                case Op.Add:
+                    body.Append('+').Append(b[bi++]).Append('\n');
+                    newCount++;
+                    break;
+            }
         }
 
-        return sb.ToString().TrimEnd('\n');
+        sb.Append("@@ -").Append(oldCount == 0 ? oldStart - 1 : oldStart)
+            .Append(',').Append(oldCount)
+            .Append(" +").Append(newCount == 0 ? newStart - 1 : newStart)
+            .Append(',').Append(newCount)
+            .Append(" @@\n").Append(body);
     }
 
     /// <summary>Fallback para arquivos grandes: tudo removido/adicionado.</summary>

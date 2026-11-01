@@ -137,33 +137,41 @@ public sealed class ComfyUiVideoEngine(IHttpClientFactory httpClientFactory)
                 continue;
             }
 
-            foreach (var node in outputs)
-            {
-                foreach (var key in new[] { "videos", "gifs", "images" })
-                {
-                    foreach (var file in node.Value?[key]?.AsArray() ?? [])
-                    {
-                        var filename = file!["filename"]?.GetValue<string>();
-                        if (filename is null)
-                        {
-                            continue;
-                        }
-                        var ext = Path.GetExtension(filename).TrimStart('.');
-                        if (!VideoExtensions.Contains(ext))
-                        {
-                            continue;
-                        }
-                        var subfolder = file["subfolder"]?.GetValue<string>() ?? "";
-                        var type = file["type"]?.GetValue<string>() ?? "output";
-                        var viewUrl = $"{Base(config)}/view?filename={Uri.EscapeDataString(filename)}" +
-                            $"&subfolder={Uri.EscapeDataString(subfolder)}&type={Uri.EscapeDataString(type)}";
-                        videos.Add(new VideoResult(await GetBytesAsync(viewUrl, config, ct), ext));
-                    }
-                }
-            }
+            await CollectOutputsAsync(outputs, config, videos, ct);
             return videos;
         }
         throw new TaskCanceledException("ComfyUI excedeu o tempo limite.");
+    }
+
+    /// <summary>Baixa as saídas de vídeo dos nós (videos/gifs/images por extensão).</summary>
+    private async Task CollectOutputsAsync(
+        JsonObject outputs, ImagesConfig config,
+        List<VideoResult> videos, CancellationToken ct)
+    {
+        foreach (var node in outputs)
+        {
+            foreach (var key in new[] { "videos", "gifs", "images" })
+            {
+                foreach (var file in node.Value?[key]?.AsArray() ?? [])
+                {
+                    var filename = file!["filename"]?.GetValue<string>();
+                    if (filename is null)
+                    {
+                        continue;
+                    }
+                    var ext = Path.GetExtension(filename).TrimStart('.');
+                    if (!VideoExtensions.Contains(ext))
+                    {
+                        continue;
+                    }
+                    var subfolder = file["subfolder"]?.GetValue<string>() ?? "";
+                    var type = file["type"]?.GetValue<string>() ?? "output";
+                    var viewUrl = $"{Base(config)}/view?filename={Uri.EscapeDataString(filename)}" +
+                        $"&subfolder={Uri.EscapeDataString(subfolder)}&type={Uri.EscapeDataString(type)}";
+                    videos.Add(new VideoResult(await GetBytesAsync(viewUrl, config, ct), ext));
+                }
+            }
+        }
     }
 
     /// <inheritdoc />

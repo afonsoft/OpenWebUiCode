@@ -117,28 +117,9 @@ public class SamlService(ConfigService config)
         }
 
         // 3. Janela de validade + audience
-        var conditions = assertion.GetElementsByTagName("Conditions", Saml2Ns)
-            .OfType<XmlElement>().FirstOrDefault();
-        if (conditions is not null)
+        if (!ValidateConditions(assertion, settings, expectedAudience))
         {
-            var now = DateTime.UtcNow;
-            var notBefore = ParseInstant(conditions.GetAttribute("NotBefore"));
-            var notOnOrAfter = ParseInstant(conditions.GetAttribute("NotOnOrAfter"));
-            if ((notBefore is not null && now < notBefore.Value.AddMinutes(-1))
-                || (notOnOrAfter is not null && now >= notOnOrAfter.Value.AddMinutes(1)))
-            {
-                return null;
-            }
-
-            var audiences = conditions.GetElementsByTagName("Audience", Saml2Ns)
-                .OfType<XmlElement>().Select(e => e.InnerText).ToList();
-            if (audiences.Count > 0
-                && !audiences.Any(a => string.Equals(
-                    a, expectedAudience, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(a, settings.SpEntityId, StringComparison.OrdinalIgnoreCase)))
-            {
-                return null;
-            }
+            return null;
         }
 
         var nameId = assertion.GetElementsByTagName("NameID", Saml2Ns)
@@ -148,6 +129,48 @@ public class SamlService(ConfigService config)
             return null;
         }
 
+        var attributes = ReadAttributes(assertion);
+
+        var email = FirstValue(attributes, "email", "mail", "emailaddress",
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress") ?? nameId;
+        var displayName = FirstValue(attributes, "name", "displayname", "displayName",
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name");
+        var role = string.IsNullOrEmpty(settings.RoleAttribute)
+            ? null : FirstValue(attributes, settings.RoleAttribute);
+
+        return new SamlAssertion(nameId, email, displayName, role);
+    }
+
+    /// <summary>Janela NotBefore/NotOnOrAfter (±1min skew) + AudienceRestriction.</summary>
+    private static bool ValidateConditions(
+        XmlElement assertion, SamlSettings settings, string expectedAudience)
+    {
+        var conditions = assertion.GetElementsByTagName("Conditions", Saml2Ns)
+            .OfType<XmlElement>().FirstOrDefault();
+        if (conditions is null)
+        {
+            return true;
+        }
+        var now = DateTime.UtcNow;
+        var notBefore = ParseInstant(conditions.GetAttribute("NotBefore"));
+        var notOnOrAfter = ParseInstant(conditions.GetAttribute("NotOnOrAfter"));
+        if ((notBefore is not null && now < notBefore.Value.AddMinutes(-1))
+            || (notOnOrAfter is not null && now >= notOnOrAfter.Value.AddMinutes(1)))
+        {
+            return false;
+        }
+
+        var audiences = conditions.GetElementsByTagName("Audience", Saml2Ns)
+            .OfType<XmlElement>().Select(e => e.InnerText).ToList();
+        return audiences.Count == 0
+            || audiences.Any(a => string.Equals(
+                a, expectedAudience, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(a, settings.SpEntityId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>AttributeStatement → dicionário Name→primeiro AttributeValue.</summary>
+    private static Dictionary<string, string> ReadAttributes(XmlElement assertion)
+    {
         var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var attr in assertion.GetElementsByTagName("Attribute", Saml2Ns).OfType<XmlElement>())
         {
@@ -159,15 +182,7 @@ public class SamlService(ConfigService config)
                 attributes[name] = value;
             }
         }
-
-        var email = FirstValue(attributes, "email", "mail", "emailaddress",
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress") ?? nameId;
-        var displayName = FirstValue(attributes, "name", "displayname", "displayName",
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name");
-        var role = string.IsNullOrEmpty(settings.RoleAttribute)
-            ? null : FirstValue(attributes, settings.RoleAttribute);
-
-        return new SamlAssertion(nameId, email, displayName, role);
+        return attributes;
     }
 
     private static bool ValidateSignature(XmlDocument doc, string certPem)

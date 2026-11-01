@@ -385,31 +385,9 @@ public class ChatStreamService(HttpClient http, AuthService auth)
 
             var evt = eventName;
             eventName = null;
-            List<ChatStreamEvent>? produced = null;
-            string? error = null;
-            try
+            var (produced, error, parsed) = ParseDataPayload(payload, evt);
+            if (!parsed)
             {
-                var node = JsonNode.Parse(payload);
-                if (node is null)
-                {
-                    continue;
-                }
-
-                // Gateways podem emitir `data:` com JSON não-objeto (string
-                // solta, número, bool — keepalive/erro de provider). Indexar
-                // JsonValue por nome lança InvalidOperationException ("requires
-                // an element of type 'Object'") e derrubava o stream inteiro.
-                if (node is JsonValue)
-                {
-                    continue;
-                }
-
-                produced = ParseEventPayload(node, evt, out error);
-            }
-            catch (Exception e) when (e is JsonException or InvalidOperationException or ArgumentException)
-            {
-                // Evento individual malformado/divergente não deve derrubar o
-                // stream — a próxima linha `data:` segue o consumo.
                 continue;
             }
 
@@ -424,6 +402,34 @@ public class ChatStreamService(HttpClient http, AuthService auth)
                     yield return item with { Seq = lastSeq };
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Parse de uma linha `data:` — retorna <c>(produced, error, parsed)</c>.
+    /// Evento individual malformado/divergente não deve derrubar o stream —
+    /// <c>parsed=false</c> e a próxima linha segue o consumo.
+    /// </summary>
+    private (List<ChatStreamEvent>?, string?, bool) ParseDataPayload(
+        string payload, string? evt)
+    {
+        try
+        {
+            var node = JsonNode.Parse(payload);
+            // Gateways podem emitir `data:` com JSON não-objeto (string
+            // solta, número, bool — keepalive/erro de provider). Indexar
+            // JsonValue por nome lança InvalidOperationException ("requires
+            // an element of type 'Object'") e derrubava o stream inteiro.
+            if (node is null || node is JsonValue)
+            {
+                return (null, null, false);
+            }
+            var produced = ParseEventPayload(node, evt, out var error);
+            return (produced, error, true);
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException or ArgumentException)
+        {
+            return (null, null, false);
         }
     }
 

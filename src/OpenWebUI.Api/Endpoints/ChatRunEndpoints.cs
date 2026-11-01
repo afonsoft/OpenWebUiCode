@@ -72,39 +72,18 @@ public static class ChatRunEndpoints
         // servidor expande o template (a mensagem persistida mostra o texto
         // final) e aplica overrides de agent/mode/model declarados no
         // frontmatter. Erros de validação voltam 400; command ausente, 404.
-        AgentDefinition? commandAgentDef = null;
-        string? commandMode = null;
-        var commandSubagent = false;
-        if (!string.IsNullOrWhiteSpace(request.Command))
+        var (command, cmdFail) = await ExpandCommandAsync(deps, user, chat, request, ct);
+        if (cmdFail is not null)
         {
-            var workdir = await deps.Repos.ResolveWorkdirAsync(user.Id, chat.Id, ct);
-            var (expanded, cmdError) = await deps.Commands.ExpandAsync(
-                user.Id, workdir, request.Command, request.CommandArgs, ct);
-            if (expanded is null)
-            {
-                return cmdError is null
-                    ? Results.NotFound(new
-                        { detail = $"Command '{request.Command}' não encontrado." })
-                    : Results.BadRequest(new { detail = cmdError });
-            }
-            if (cmdError is not null)
-            {
-                return Results.BadRequest(new { detail = cmdError });
-            }
-
-            if (expanded.Agent is { } agentName)
-            {
-                commandAgentDef = await deps.AgentDefs.FindAsync(
-                    user.Id, workdir, agentName, ct);
-            }
-            request = request with
-            {
-                Content = expanded.Prompt,
-                Model = expanded.Model ?? commandAgentDef?.Model ?? request.Model,
-            };
-            commandMode = expanded.Mode;
-            commandSubagent = expanded.Subagent;
+            return cmdFail;
         }
+        if (command is not null)
+        {
+            request = command.Request;
+        }
+        var commandAgentDef = command?.AgentDef;
+        var commandMode = command?.Mode;
+        var commandSubagent = command?.Subagent == true;
 
         // Ramificação atômica (RF-004): ativa o alvo como leaf — resumindo o
         // ramo abandonado — antes de pendurar a nova mensagem nele.
@@ -119,27 +98,7 @@ public static class ChatRunEndpoints
 
         // SPEC-20261013-chat-media-attachments RF-003: metadados dos anexos
         // do envio (somente arquivos do dono) viram FilesJson da mensagem.
-        List<ChatMessageFileModel>? attached = null;
-        if (request.FileIds is { Count: > 0 })
-        {
-            var owned = await deps.Db.Files.AsNoTracking()
-                .Where(f => request.FileIds.Contains(f.Id) && f.UserId == user.Id)
-                .ToListAsync(ct);
-            var byId = owned.ToDictionary(f => f.Id);
-            attached = request.FileIds
-                .Where(byId.ContainsKey)
-                .Select(fid =>
-                {
-                    var f = byId[fid];
-                    return ChatMessageFileModel.Of(
-                        f.Id, f.Filename, f.ContentType, f.Size);
-                })
-                .ToList();
-            if (attached.Count == 0)
-            {
-                attached = null;
-            }
-        }
+        var attached = await ResolveAttachmentsAsync(deps, user, request, ct);
 
         if (!string.IsNullOrWhiteSpace(request.Content))
         {
@@ -186,26 +145,8 @@ public static class ChatRunEndpoints
             .ToList();
         // Overrides do command viram marcadores no request serializado —
         // o executor resolve mode/agent/subagent por run (chat intocado).
-        var runParams = request.Params;
-        if (commandMode is not null || commandAgentDef is not null || commandSubagent)
-        {
-            var p = runParams is null
-                ? new Dictionary<string, object>()
-                : new Dictionary<string, object>(runParams);
-            if (commandMode is not null)
-            {
-                p["mode"] = commandMode;
-            }
-            if (commandAgentDef is not null)
-            {
-                p["agent"] = commandAgentDef.Name;
-            }
-            if (commandSubagent)
-            {
-                p["subagent"] = true;
-            }
-            runParams = p;
-        }
+        var runParams = MergeCommandParams(
+            request.Params, commandMode, commandAgentDef, commandSubagent);
 
         var completionRequest = new ChatCompletionRequest(
             request.Model, history, Stream: true,
@@ -252,6 +193,100 @@ public static class ChatRunEndpoints
 
         deps.Dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: ToResponse(run));
+    }
+
+    /// <summary>Command expandido + overrides resolvidos (RF-003/RF-004).</summary>
+    private sealed record ExpandedCommand(
+        EnqueueChatRunRequest Request, AgentDefinition? AgentDef,
+        string? Mode, bool Subagent);
+
+    /// <summary>Submit via command: expande o template e resolve os overrides
+    /// de agent/mode/model do frontmatter. Erros → 400/404.</summary>
+    private static async Task<(ExpandedCommand? Command, IResult? Fail)> ExpandCommandAsync(
+        EnqueueRunDeps deps, User user, Chat chat,
+        EnqueueChatRunRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Command))
+        {
+            return (null, null);
+        }
+        var workdir = await deps.Repos.ResolveWorkdirAsync(user.Id, chat.Id, ct);
+        var (expanded, cmdError) = await deps.Commands.ExpandAsync(
+            user.Id, workdir, request.Command, request.CommandArgs, ct);
+        if (expanded is null)
+        {
+            return (null, cmdError is null
+                ? Results.NotFound(new
+                    { detail = $"Command '{request.Command}' não encontrado." })
+                : Results.BadRequest(new { detail = cmdError }));
+        }
+        if (cmdError is not null)
+        {
+            return (null, Results.BadRequest(new { detail = cmdError }));
+        }
+
+        var agentDef = expanded.Agent is { } agentName
+            ? await deps.AgentDefs.FindAsync(user.Id, workdir, agentName, ct)
+            : null;
+        return (new ExpandedCommand(
+            request with
+            {
+                Content = expanded.Prompt,
+                Model = expanded.Model ?? agentDef?.Model ?? request.Model,
+            },
+            agentDef, expanded.Mode, expanded.Subagent), null);
+    }
+
+    /// <summary>Metadados dos anexos do envio — só arquivos do dono (RF-003).</summary>
+    private static async Task<List<ChatMessageFileModel>?> ResolveAttachmentsAsync(
+        EnqueueRunDeps deps, User user,
+        EnqueueChatRunRequest request, CancellationToken ct)
+    {
+        if (request.FileIds is not { Count: > 0 })
+        {
+            return null;
+        }
+        var owned = await deps.Db.Files.AsNoTracking()
+            .Where(f => request.FileIds.Contains(f.Id) && f.UserId == user.Id)
+            .ToListAsync(ct);
+        var byId = owned.ToDictionary(f => f.Id);
+        var attached = request.FileIds
+            .Where(byId.ContainsKey)
+            .Select(fid =>
+            {
+                var f = byId[fid];
+                return ChatMessageFileModel.Of(
+                    f.Id, f.Filename, f.ContentType, f.Size);
+            })
+            .ToList();
+        return attached.Count == 0 ? null : attached;
+    }
+
+    /// <summary>Mescla os overrides do command nos params serializados da run.</summary>
+    private static IReadOnlyDictionary<string, object>? MergeCommandParams(
+        IReadOnlyDictionary<string, object>? runParams, string? commandMode,
+        AgentDefinition? commandAgentDef, bool commandSubagent)
+    {
+        if (commandMode is null && commandAgentDef is null && !commandSubagent)
+        {
+            return runParams;
+        }
+        var p = runParams is null
+            ? new Dictionary<string, object>()
+            : new Dictionary<string, object>(runParams);
+        if (commandMode is not null)
+        {
+            p["mode"] = commandMode;
+        }
+        if (commandAgentDef is not null)
+        {
+            p["agent"] = commandAgentDef.Name;
+        }
+        if (commandSubagent)
+        {
+            p["subagent"] = true;
+        }
+        return p;
     }
 
     /// <summary>Lista as runs mais recentes do chat (máx. 20).</summary>

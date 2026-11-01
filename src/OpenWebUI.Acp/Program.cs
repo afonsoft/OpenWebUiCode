@@ -65,6 +65,58 @@ string Detail(JsonElement? resultOrError) =>
     resultOrError is { ValueKind: JsonValueKind.Object } el
     && el.TryGetProperty("detail", out var d) ? d.GetString() ?? "" : "";
 
+async Task NewSessionAsync(JsonElement? id)
+{
+    var created = await RpcAsync("chats.create",
+        new { title = "ACP session" }, CancellationToken.None);
+    var sessionId = created is { } c
+        && c.TryGetProperty("chatId", out var cid)
+        ? cid.GetString() : null;
+    if (sessionId is null)
+    {
+        ReplyError(id, -32603, "falha ao criar sessão");
+        return;
+    }
+    Reply(id, new { sessionId });
+}
+
+async Task PromptAsync(JsonElement? id, JsonElement? parms)
+{
+    var sessionId = parms is { } p1
+        && p1.TryGetProperty("sessionId", out var s)
+        ? s.GetString() : null;
+    var prompt = ExtractPrompt(parms);
+    if (sessionId is null || prompt is null)
+    {
+        ReplyError(id, -32602,
+            "params: sessionId e prompt são obrigatórios");
+        return;
+    }
+    // Modelo vem do chat; RPC exige params.model — usa
+    // o primeiro modelo do chat via runs.start é
+    // simplificado: o cliente ACP pode passar
+    // params.model opcional.
+    var model = parms is { } p2
+        && p2.TryGetProperty("model", out var mm)
+        && mm.ValueKind == JsonValueKind.String
+        ? mm.GetString() : "default";
+    var started = await RpcAsync("runs.start",
+        new { chatId = sessionId, prompt, model },
+        CancellationToken.None);
+    var runId = started is { } sr
+        && sr.TryGetProperty("runId", out var rid)
+        ? rid.GetString() : null;
+    if (runId is null)
+    {
+        ReplyError(id, -32603,
+            $"run não iniciada{Detail(started)}");
+        return;
+    }
+    var stop = await RelayRunAsync(
+        sessionId, runId, CancellationToken.None);
+    Reply(id, new { stopReason = stop });
+}
+
 string? line;
 while ((line = await Console.In.ReadLineAsync()) is not null)
 {
@@ -119,58 +171,12 @@ while ((line = await Console.In.ReadLineAsync()) is not null)
                     break;
 
                 case "session/new":
-                    {
-                        var created = await RpcAsync("chats.create",
-                            new { title = "ACP session" }, CancellationToken.None);
-                        var sessionId = created is { } c
-                            && c.TryGetProperty("chatId", out var cid)
-                            ? cid.GetString() : null;
-                        if (sessionId is null)
-                        {
-                            ReplyError(id, -32603, "falha ao criar sessão");
-                            break;
-                        }
-                        Reply(id, new { sessionId });
-                        break;
-                    }
+                    await NewSessionAsync(id);
+                    break;
 
                 case "session/prompt":
-                    {
-                        var sessionId = parms is { } p1
-                            && p1.TryGetProperty("sessionId", out var s)
-                            ? s.GetString() : null;
-                        var prompt = ExtractPrompt(parms);
-                        if (sessionId is null || prompt is null)
-                        {
-                            ReplyError(id, -32602,
-                                "params: sessionId e prompt são obrigatórios");
-                            break;
-                        }
-                        // Modelo vem do chat; RPC exige params.model — usa
-                        // o primeiro modelo do chat via runs.start é
-                        // simplificado: o cliente ACP pode passar
-                        // params.model opcional.
-                        var model = parms is { } p2
-                            && p2.TryGetProperty("model", out var mm)
-                            && mm.ValueKind == JsonValueKind.String
-                            ? mm.GetString() : "default";
-                        var started = await RpcAsync("runs.start",
-                            new { chatId = sessionId, prompt, model },
-                            CancellationToken.None);
-                        var runId = started is { } sr
-                            && sr.TryGetProperty("runId", out var rid)
-                            ? rid.GetString() : null;
-                        if (runId is null)
-                        {
-                            ReplyError(id, -32603,
-                                $"run não iniciada{Detail(started)}");
-                            break;
-                        }
-                        var stop = await RelayRunAsync(
-                            sessionId, runId, CancellationToken.None);
-                        Reply(id, new { stopReason = stop });
-                        break;
-                    }
+                    await PromptAsync(id, parms);
+                    break;
 
                 case "session/cancel":
                 case "cancel":

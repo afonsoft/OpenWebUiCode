@@ -137,23 +137,34 @@ public sealed class RunAdvisorService(
 
             messages.Add(new ChatCompletionMessage(
                 "assistant", step.Content, ToolCallsJson: step.ToolCallsJson));
-            foreach (var call in step.ToolCalls)
-            {
-                if (toolCalls >= MaxToolCalls)
-                {
-                    break;
-                }
-                toolCalls++;
-                var outcome = IsAdvisorTool(BareName(call.Name))
-                    ? await executeTool(
-                        advisorTools, call.Name, call.ArgumentsJson, builtinContext, ct)
-                    : new ToolExecutionOutcome(
-                        $"Erro: a tool '{call.Name}' não está disponível ao advisor.");
-                messages.Add(new ChatCompletionMessage(
-                    "tool", outcome.Text, ToolCallId: call.Id));
-            }
+            toolCalls = await ExecuteAdvisorCallsAsync(
+                step, advisorTools, builtinContext, messages, toolCalls, ct);
         }
         return null;
+    }
+
+    /// <summary>Executa as tool calls do round (allowlist RF-002) e anexa os results.</summary>
+    private async Task<int> ExecuteAdvisorCallsAsync(
+        ProviderCompletion step, List<Tool> advisorTools,
+        BuiltinToolContext? builtinContext,
+        List<ChatCompletionMessage> messages, int toolCalls, CancellationToken ct)
+    {
+        foreach (var call in step.ToolCalls)
+        {
+            if (toolCalls >= MaxToolCalls)
+            {
+                break;
+            }
+            toolCalls++;
+            var outcome = IsAdvisorTool(BareName(call.Name))
+                ? await executeTool(
+                    advisorTools, call.Name, call.ArgumentsJson, builtinContext, ct)
+                : new ToolExecutionOutcome(
+                    $"Erro: a tool '{call.Name}' não está disponível ao advisor.");
+            messages.Add(new ChatCompletionMessage(
+                "tool", outcome.Text, ToolCallId: call.Id));
+        }
+        return toolCalls;
     }
 
     /// <summary>

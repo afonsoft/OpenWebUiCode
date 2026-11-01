@@ -255,16 +255,7 @@
         }
         if (preview)
         {
-            // VS Code: uma única aba preview por vez — substitui a anterior limpa.
-            var prevPreview = _tabs.FirstOrDefault(t => t.Preview && !t.Dirty);
-            if (prevPreview is not null)
-            {
-                _tabs.Remove(prevPreview);
-                if (prevPreview.LspOpened)
-                {
-                    _ = Api.PostLspDocAsync(prevPreview.Path, "close", null, ChatId);
-                }
-            }
+            await DropPrevPreviewAsync();
         }
         var tab = new IdeTab { Path = path, Loading = true, Preview = preview };
         _tabs.Add(tab);
@@ -272,33 +263,57 @@
 
         var r = await Api.GetWorkspaceFileStatusAsync(path, chatId: ChatId);
         tab.Loading = false;
-        if (r.Body is { } body)
+        if (!await ApplyFileStatusAsync(tab, r))
         {
-            tab.Doc = body.Content;
-            tab.ETag = body.ETag;
-            tab.ReadOnly = false;
-        }
-        else if (r.Status == 415 || r.Status == 413)
-        {
-            tab.Doc = "";
-            tab.ReadOnly = true;
-            tab.Notice = r.Status == 415 ? L["ide.binary_readonly"] : L["ide.too_big_readonly"];
-        }
-        else
-        {
-            _tabs.Remove(tab);
-            if (_active == tab)
-            {
-                _active = _tabs.LastOrDefault();
-                await PushActiveToJsAsync();
-            }
-            StateHasChanged();
             return;
         }
         await PushActiveToJsAsync();
         // OpenFileAsync é chamada de fora via @ref — Blazor não re-renderiza
         // o componente nesse caminho (evento foi do explorer, params inalterados).
         StateHasChanged();
+    }
+
+    /// <summary>VS Code: uma única aba preview por vez — substitui a anterior limpa.</summary>
+    private async Task DropPrevPreviewAsync()
+    {
+        var prevPreview = _tabs.FirstOrDefault(t => t.Preview && !t.Dirty);
+        if (prevPreview is null)
+        {
+            return;
+        }
+        _tabs.Remove(prevPreview);
+        if (prevPreview.LspOpened)
+        {
+            _ = Api.PostLspDocAsync(prevPreview.Path, "close", null, ChatId);
+        }
+        await Task.CompletedTask;
+    }
+
+    /// <summary>Aplica o status do arquivo à aba — false = aba removida (erro).</summary>
+    private async Task<bool> ApplyFileStatusAsync(IdeTab tab, ApiService.IdeFileResult r)
+    {
+        if (r.Body is { } body)
+        {
+            tab.Doc = body.Content;
+            tab.ETag = body.ETag;
+            tab.ReadOnly = false;
+            return true;
+        }
+        if (r.Status is 415 or 413)
+        {
+            tab.Doc = "";
+            tab.ReadOnly = true;
+            tab.Notice = r.Status == 415 ? L["ide.binary_readonly"] : L["ide.too_big_readonly"];
+            return true;
+        }
+        _tabs.Remove(tab);
+        if (_active == tab)
+        {
+            _active = _tabs.LastOrDefault();
+            await PushActiveToJsAsync();
+        }
+        StateHasChanged();
+        return false;
     }
 
     private async Task ActivateAsync(IdeTab tab)
@@ -773,44 +788,49 @@
         _conflict = null;
         switch (choice)
         {
-            case ConflictChoice.Reload:
-                {
-                    var r = await Api.GetWorkspaceFileStatusAsync(t.Path, chatId: ChatId);
-                    if (r.Body is { } body)
-                    {
-                        t.Doc = body.Content;
-                        t.ETag = body.ETag;
-                        t.Dirty = false;
-                        if (_active == t)
-                        {
-                            await JS.InvokeVoidAsync("owuiIde.setDoc", "ide-cm-host", t.Doc, t.Path);
-                        }
-                    }
-                    break;
-                }
-            case ConflictChoice.Overwrite:
-                {
-                    var r = await Api.PutWorkspaceFileAsync(t.Path, t.Doc, "*", ChatId);
-                    if (r.Ok)
-                    {
-                        t.ETag = r.ETag;
-                        t.Dirty = false;
-                        await OnSaved.InvokeAsync();
-                    }
-                    break;
-                }
-            case ConflictChoice.CopyAs:
-                {
-                    var to = await Dialog.PromptAsync(L["ide.conflict_copyas"], t.Path + ".copy");
-                    if (string.IsNullOrWhiteSpace(to))
-                    {
-                        return;
-                    }
-                    await Api.PutWorkspaceFileAsync(to, t.Doc, chatId: ChatId);
-                    await OnSaved.InvokeAsync();
-                    break;
-                }
+            case ConflictChoice.Reload: await ReloadConflictAsync(t); break;
+            case ConflictChoice.Overwrite: await OverwriteConflictAsync(t); break;
+            case ConflictChoice.CopyAs: await CopyAsConflictAsync(t); break;
         }
+    }
+
+    private async Task ReloadConflictAsync(IdeTab t)
+    {
+        var r = await Api.GetWorkspaceFileStatusAsync(t.Path, chatId: ChatId);
+        if (r.Body is not { } body)
+        {
+            return;
+        }
+        t.Doc = body.Content;
+        t.ETag = body.ETag;
+        t.Dirty = false;
+        if (_active == t)
+        {
+            await JS.InvokeVoidAsync("owuiIde.setDoc", "ide-cm-host", t.Doc, t.Path);
+        }
+    }
+
+    private async Task OverwriteConflictAsync(IdeTab t)
+    {
+        var r = await Api.PutWorkspaceFileAsync(t.Path, t.Doc, "*", ChatId);
+        if (!r.Ok)
+        {
+            return;
+        }
+        t.ETag = r.ETag;
+        t.Dirty = false;
+        await OnSaved.InvokeAsync();
+    }
+
+    private async Task CopyAsConflictAsync(IdeTab t)
+    {
+        var to = await Dialog.PromptAsync(L["ide.conflict_copyas"], t.Path + ".copy");
+        if (string.IsNullOrWhiteSpace(to))
+        {
+            return;
+        }
+        await Api.PutWorkspaceFileAsync(to, t.Doc, chatId: ChatId);
+        await OnSaved.InvokeAsync();
     }
 
     // ---------- LSP (SPEC-20261009-lsp-diagnostics, S8) ----------

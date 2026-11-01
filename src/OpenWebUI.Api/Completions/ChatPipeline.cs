@@ -102,32 +102,83 @@ public static class ChatPipeline
         string? chatId = null,
         Microsoft.Extensions.Logging.ILogger? log = null)
     {
-        var model = request.Model;
         var messages = request.Messages.ToList();
-        var parameters = request.Params?.ToDictionary(kv => kv.Key, kv => kv.Value);
-        var systemParts = new List<string>();
+        var pctx = BuildPromptContext(request, user, messages, deps, agentMode, chatId, ct);
+        var systemParts = await CollectSystemPartsAsync(pctx, deps, log);
 
-        // SPEC-20261021-harness-seams RF-B1/B2: as seções do system
-        // prompt são produzidas por ISystemPromptContributor ordenados —
-        // mesma ordem/conteúdo do systemParts hardcoded original
-        // (paridade verificada pelo teste golden). Um contributor que
-        // lança exceção é pulado com LogWarning — a tolerância a falha é
-        // a mesma dos blocos inline.
-        var lastUserText = messages.LastOrDefault(m => m.Role == "user")?.Content ?? string.Empty;
-        var pctx = new OpenWebUI.Infrastructure.SystemPrompt.PromptContext
+        var model = pctx.Model;
+        var parameters = pctx.Parameters;
+
+        // 4. Mescla partes de sistema numa única mensagem inicial.
+        if (systemParts.Count > 0)
+        {
+            var merged = string.Join("\n\n", systemParts);
+            var existing = messages.FindIndex(m => m.Role == "system");
+            if (existing >= 0)
+            {
+                messages[existing] = messages[existing] with { Content = $"{merged}\n\n{messages[existing].Content}" };
+            }
+            else
+            {
+                messages.Insert(0, new ChatCompletionMessage("system", merged));
+            }
+        }
+
+        messages = await InjectMediaAsync(messages, request, user, deps, log, ct);
+
+        var built = request with
+        {
+            Model = model,
+            Messages = messages,
+            Params = parameters,
+            FileIds = null,
+            ExtraHeaders = pctx.ExtraHeaders ?? request.ExtraHeaders,
+            ExtraBody = pctx.ExtraBody ?? request.ExtraBody,
+            CacheFormat = pctx.CacheFormat ?? request.CacheFormat,
+            AttachedRefs = pctx.AttachedRefs.Count > 0
+                ? pctx.AttachedRefs.ToList()
+                : null,
+        };
+
+        // 5. Filtros declarativos do modelo custom (inlet) em ordem estável.
+        var inletFilters = ModelFilterService.Parse(pctx.CustomModel?.MetaJson);
+        return inletFilters.Count > 0
+            ? ModelFilterService.ApplyInlet(built, inletFilters)
+            : built;
+    }
+
+    /// <summary>Monta o PromptContext compartilhado pelos contributors.</summary>
+    private static OpenWebUI.Infrastructure.SystemPrompt.PromptContext BuildPromptContext(
+        ChatCompletionRequest request, User user,
+        List<ChatCompletionMessage> messages, EnrichDeps deps,
+        string? agentMode, string? chatId, CancellationToken ct) =>
+        new()
         {
             Request = request,
             User = user,
             ChatId = chatId,
             AgentMode = agentMode,
             Ct = ct,
-            LastUserText = lastUserText,
-            Model = model,
-            Parameters = parameters,
+            LastUserText = messages.LastOrDefault(m => m.Role == "user")?.Content ?? string.Empty,
+            Model = request.Model,
+            Parameters = request.Params?.ToDictionary(kv => kv.Key, kv => kv.Value),
             BindingFactory = async t =>
                 (await deps.Repos.ResolveBindingAsync(user.Id, chatId, t)).Binding,
             WorkdirFactory = t => deps.Repos.ResolveWorkdirAsync(user.Id, chatId, t),
         };
+
+    /// <summary>
+    /// SPEC-20261021-harness-seams RF-B1/B2: as seções do system prompt
+    /// são produzidas por ISystemPromptContributor ordenados — mesma
+    /// ordem/conteúdo do systemParts hardcoded original (paridade
+    /// verificada pelo teste golden). Um contributor que lança exceção é
+    /// pulado com LogWarning — mesma tolerância dos blocos inline.
+    /// </summary>
+    private static async Task<List<string>> CollectSystemPartsAsync(
+        OpenWebUI.Infrastructure.SystemPrompt.PromptContext pctx,
+        EnrichDeps deps, Microsoft.Extensions.Logging.ILogger? log)
+    {
+        var systemParts = new List<string>();
         var orderedContributors = deps.PromptContributors.OrderBy(c => c.Order).ToList();
         if (orderedContributors.Count == 0)
         {
@@ -153,34 +204,26 @@ public static class ChatPipeline
                     contributor.GetType().Name);
             }
         }
-        model = pctx.Model;
-        parameters = pctx.Parameters;
+        return systemParts;
+    }
 
-        // 4. Mescla partes de sistema numa única mensagem inicial.
-        if (systemParts.Count > 0)
-        {
-            var merged = string.Join("\n\n", systemParts);
-            var existing = messages.FindIndex(m => m.Role == "system");
-            if (existing >= 0)
-            {
-                messages[existing] = messages[existing] with { Content = $"{merged}\n\n{messages[existing].Content}" };
-            }
-            else
-            {
-                messages.Insert(0, new ChatCompletionMessage("system", merged));
-            }
-        }
-
-        // 4.6. Mídia anexada → conteúdo multimodal (SPEC-20261013-chat-media-
-        // attachments RF-006 + SPEC-20261018-attachments-v2): FileIds por
-        // mensagem (do FilesJson persistido) + FileIds do request (última
-        // msg do usuário). Só arquivos do dono; arquivo apagado/não legível
-        // é omitido (não derruba a run).
-        //  - image/* → bytes no payload multimodal; arquivos > 20 MiB ou
-        //    > 8192 px são redimensionados para ≤ 2048 px JPEG q85 antes
-        //    (RF-003) — o original fica intacto no storage.
-        //  - texto/código → blocos <file name="…"> no fim do Content da
-        //    mensagem dona (RF-001), 256 KB/arquivo e 1 MB/mensagem.
+    /// <summary>
+    /// 4.6. Mídia anexada → conteúdo multimodal (SPEC-20261013-chat-media-
+    /// attachments RF-006 + SPEC-20261018-attachments-v2): FileIds por
+    /// mensagem (do FilesJson persistido) + FileIds do request (última
+    /// msg do usuário). Só arquivos do dono; arquivo apagado/não legível
+    /// é omitido (não derruba a run).
+    ///  - image/* → bytes no payload multimodal; arquivos &gt; 20 MiB ou
+    ///    &gt; 8192 px são redimensionados para ≤ 2048 px JPEG q85 antes
+    ///    (RF-003) — o original fica intacto no storage.
+    ///  - texto/código → blocos &lt;file name="…"&gt; no fim do Content da
+    ///    mensagem dona (RF-001), 256 KB/arquivo e 1 MB/mensagem.
+    /// </summary>
+    private static async Task<List<ChatCompletionMessage>> InjectMediaAsync(
+        List<ChatCompletionMessage> messages, ChatCompletionRequest request,
+        User user, EnrichDeps deps,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
         var imageIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var m in messages)
         {
@@ -193,82 +236,78 @@ public static class ChatPipeline
         {
             imageIds.UnionWith(topFileIds);
         }
-        if (imageIds.Count > 0)
+        if (imageIds.Count == 0)
         {
-            var entries = await deps.Db.Files.AsNoTracking()
-                .Where(f => imageIds.Contains(f.Id) && f.UserId == user.Id)
-                .ToListAsync(ct);
-            if (entries.Count > 0)
+            return messages;
+        }
+
+        var entries = await deps.Db.Files.AsNoTracking()
+            .Where(f => imageIds.Contains(f.Id) && f.UserId == user.Id)
+            .ToListAsync(ct);
+        if (entries.Count == 0)
+        {
+            return messages;
+        }
+
+        var byId = entries.ToDictionary(f => f.Id);
+        var lastUserIdx = messages.FindLastIndex(m => m.Role == "user");
+        for (var i = 0; i < messages.Count; i++)
+        {
+            var ids = messages[i].FileIds?.ToList() ?? [];
+            if (i == lastUserIdx && request.FileIds is not null)
             {
-                var byId = entries.ToDictionary(f => f.Id);
-                var lastUserIdx = messages.FindLastIndex(m => m.Role == "user");
-                for (var i = 0; i < messages.Count; i++)
+                ids.AddRange(request.FileIds);
+            }
+            if (ids.Count == 0)
+            {
+                continue;
+            }
+
+            var images = new List<ChatImageData>();
+            foreach (var fid in ids.Distinct())
+            {
+                if (await LoadImageAsync(byId, fid, log, ct) is { } image)
                 {
-                    var ids = messages[i].FileIds?.ToList() ?? [];
-                    if (i == lastUserIdx && request.FileIds is not null)
-                    {
-                        ids.AddRange(request.FileIds);
-                    }
-                    if (ids.Count == 0)
-                    {
-                        continue;
-                    }
-
-                    var images = new List<ChatImageData>();
-                    foreach (var fid in ids.Distinct())
-                    {
-                        if (!byId.TryGetValue(fid, out var entry)
-                            || entry.ContentType is not { } mime
-                            || !mime.StartsWith("image/")
-                            || !File.Exists(entry.StoragePath))
-                        {
-                            continue;
-                        }
-                        try
-                        {
-                            var bytes = await File.ReadAllBytesAsync(entry.StoragePath, ct);
-                            var (data, derivedMime) =
-                                await MediaImageProcessor.PrepareForLlmAsync(bytes, mime, ct);
-                            images.Add(new ChatImageData(
-                                derivedMime, Convert.ToBase64String(data)));
-                        }
-                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                        {
-                            log?.LogDebug(ex,
-                                "Anexo {FileId} ilegível — imagem omitida da mensagem.", fid);
-                        }
-                    }
-                    if (images.Count > 0)
-                    {
-                        messages[i] = messages[i] with { Images = images };
-                    }
+                    images.Add(image);
                 }
-
-                messages = await AttachmentContentService.InjectTextFilesAsync(
-                    messages, byId, request.FileIds,
-                    (f, c) => AttachmentContentService.TryReadTextAsync(f, c), ct);
+            }
+            if (images.Count > 0)
+            {
+                messages[i] = messages[i] with { Images = images };
             }
         }
 
-        var built = request with
-        {
-            Model = model,
-            Messages = messages,
-            Params = parameters,
-            FileIds = null,
-            ExtraHeaders = pctx.ExtraHeaders ?? request.ExtraHeaders,
-            ExtraBody = pctx.ExtraBody ?? request.ExtraBody,
-            CacheFormat = pctx.CacheFormat ?? request.CacheFormat,
-            AttachedRefs = pctx.AttachedRefs.Count > 0
-                ? pctx.AttachedRefs.ToList()
-                : null,
-        };
+        return await AttachmentContentService.InjectTextFilesAsync(
+            messages, byId, request.FileIds,
+            (f, c) => AttachmentContentService.TryReadTextAsync(f, c), ct);
+    }
 
-        // 5. Filtros declarativos do modelo custom (inlet) em ordem estável.
-        var inletFilters = ModelFilterService.Parse(pctx.CustomModel?.MetaJson);
-        return inletFilters.Count > 0
-            ? ModelFilterService.ApplyInlet(built, inletFilters)
-            : built;
+    /// <summary>Imagem de um anexo — null quando não é imagem, não existe
+    /// ou falha de leitura (omitida sem derrubar a run).</summary>
+    private static async Task<ChatImageData?> LoadImageAsync(
+        Dictionary<string, FileEntry> byId, string fid,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        if (!byId.TryGetValue(fid, out var entry)
+            || entry.ContentType is not { } mime
+            || !mime.StartsWith("image/")
+            || !File.Exists(entry.StoragePath))
+        {
+            return null;
+        }
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(entry.StoragePath, ct);
+            var (data, derivedMime) =
+                await MediaImageProcessor.PrepareForLlmAsync(bytes, mime, ct);
+            return new ChatImageData(derivedMime, Convert.ToBase64String(data));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log?.LogDebug(ex,
+                "Anexo {FileId} ilegível — imagem omitida da mensagem.", fid);
+            return null;
+        }
     }
 
     /// <summary>Resolve referências #nome (arquivo ou coleção) para ids de arquivo.</summary>
@@ -485,560 +524,110 @@ public static class ChatPipeline
         // remove o modo de falha "pausou aos 25 steps esperando Continue".
         const int defaultMaxRounds = 99999;
         var maxRounds = Math.Clamp(maxSteps ?? defaultMaxRounds, 1, 99999);
-        // Rodadas vazias (só reasoning, sem content nem tool_calls) não
-        // encerram a run em silêncio: o modelo leva um nudge e tenta de
-        // novo — autonomia para continuar o pensamento sem esperar o
-        // usuário. Limitado para não virar loop infinito de nudges.
-        const int maxEmptyRounds = 3;
-        // Gateways com teto baixo de completion (ex.: rotas Cloudflare do
-        // OmniRoute ~256 tokens) deixam o modelo de raciocínio sem orçamento
-        // para responder — o retry de round vazio sobe o teto.
-        const int retryMaxTokens = 8192;
-        var emptyRounds = resume?.EmptyRounds ?? 0;
-        var stepCount = resume?.StepCount ?? 0;
-        var request = effective;
         // SPEC-20261016-run-recovery RF-003: com <paramref name="resume"/> a
         // janela, o tail de tools e os contadores vêm do estado reconstruído
         // — o turno entra direto no round indicado pelo planner.
-        var messages = (resume?.Messages ?? effective.Messages).ToList();
-        var toolMessages = resume?.ToolMessages.ToList()
-            ?? new List<ChatCompletionMessage>();
-        var stepUsages = resume?.StepUsages
-            .Select(u => new RoundUsage(
-                u.Step, u.PromptTokens, u.CompletionTokens, u.ReasoningTokens))
-            .ToList() ?? new List<RoundUsage>();
+        var state = new ToolLoopMutable
+        {
+            Request = effective,
+            Messages = (resume?.Messages ?? effective.Messages).ToList(),
+            ToolMessages = resume?.ToolMessages.ToList()
+                ?? new List<ChatCompletionMessage>(),
+            StepUsages = resume?.StepUsages
+                .Select(u => new RoundUsage(
+                    u.Step, u.PromptTokens, u.CompletionTokens,
+                    u.ReasoningTokens))
+                .ToList() ?? new List<RoundUsage>(),
+            ContinuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? ""),
+            StepCount = resume?.StepCount ?? 0,
+            EmptyRounds = resume?.EmptyRounds ?? 0,
+            LengthContinuations = resume?.LengthContinuations ?? 0,
+            // -1 = lista nunca escrita: a chain do executor usa como fallback
+            // ("sem lista populada em modo build, continua mesmo assim").
+            // A retomada restaura a contagem do snapshot — sem isso a run
+            // reiniciada voltaria ao fallback mesmo com trabalho pendente
+            // (Devin #458).
+            PendingTodos = resume?.PendingTodos ?? -1,
+            Round = resume?.Round ?? 0,
+        };
 
         // SPEC-20261016-provider-resilience: retry com backoff nas chamadas
         // de completion (RF-001/005), continuação em finish=length (RF-003,
         // até 3 seguidas) e overflow → compact → retry com tail progressivo
         // 70%/50%/35% (RF-004, até 3x por run).
-        const int maxLengthContinuations = 3;
-        var overflowRetries = 0;
-        var lengthContinuations = resume?.LengthContinuations ?? 0;
-        var continuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? "");
-        // Auto-continue por tarefas pendentes: quando a lista de tarefas
-        // tem itens pending/in_progress e o modelo encerra o turno com
-        // texto ("próximo passo sugerido: …" seguido de parada), o loop
-        // injeta um nudge e segue para a próxima tarefa em vez de esperar
-        // o usuário. Cap de nudges para o modelo insistente poder parar.
-        const int maxAutoContinues = 3;
-        var autoContinues = 0;
-        // -1 = lista nunca escrita: a chain do executor usa como fallback
-        // ("sem lista populada em modo build, continua mesmo assim").
-        // A retomada restaura a contagem do snapshot — sem isso a run
-        // reiniciada voltaria ao fallback mesmo com trabalho pendente
-        // (Devin #458).
-        var pendingTodos = resume?.PendingTodos ?? -1;
-
-        async Task<ProviderCompletion> CompleteResilientAsync(
-            Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
-            string? uid)
+        while (state.Round < maxRounds)
         {
-            var timeouts = 0;
-            var attempt = 0;
-            while (true)
+            if (await ApplyRoundBoundaryAsync(state, callbacks, ct))
             {
-                try
-                {
-                    return await CompleteRoundAsync(
-                        providers, makeRequest(messages), callbacks, ct, uid);
-                }
-                catch (Exception ex)
-                    when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
-                {
-                    if (ProviderRetryPolicy.IsContextOverflow(ex))
-                    {
-                        var compacted = overflowRetries < OverflowTargets.Length
-                            && callbacks?.OnOverflowCompactAsync is { } compact
-                            ? await compact(messages, OverflowTargets[overflowRetries], ct)
-                            : null;
-                        if (compacted is not { Count: > 0 })
-                        {
-                            throw new InvalidOperationException(
-                                "context-overflow: o provedor rejeitou o contexto "
-                                + "e a janela não pôde ser reduzida o suficiente.", ex);
-                        }
-                        overflowRetries++;
-                        messages.Clear();
-                        messages.AddRange(compacted);
-                        log?.LogWarning(
-                            ex,
-                            "Context-overflow do provider: janela compactada para "
-                            + "~{Tail}% do tail ({Attempt}/3) e retentando.",
-                            (int)(OverflowTargets[overflowRetries - 1] * 100),
-                            overflowRetries);
-                        attempt++;
-                        continue;
-                    }
-
-                    timeouts = ex is TaskCanceledException or TimeoutException
-                        ? timeouts + 1 : 0;
-                    var decision = ProviderRetryPolicy.Decide(
-                        ex, attempt, timeouts, options: providers.RetryOptions);
-                    if (!decision.Retry)
-                    {
-                        var code = decision.Reason switch
-                        {
-                            ProviderRetryReason.RateLimit => "rate-limit",
-                            ProviderRetryReason.Timeout => "provider-timeout",
-                            ProviderRetryReason.ServerError => "server-error",
-                            _ => null,
-                        };
-                        if (code is not null)
-                        {
-                            throw new InvalidOperationException(
-                                $"{code}: a chamada ao provedor falhou após "
-                                + $"{attempt + 1} tentativa(s).", ex);
-                        }
-                        throw;
-                    }
-                    log?.LogWarning(ex,
-                        "Completion falhou ({Reason}, tentativa {Attempt}/{Max}) — retry em {Delay}ms.",
-                        decision.Reason, attempt + 1, providers.RetryOptions.MaxAttempts,
-                        (int)decision.Delay.TotalMilliseconds);
-                    if (callbacks?.OnRetryingAsync is { } onRetry)
-                    {
-                        await onRetry(attempt + 1, decision.Delay,
-                            decision.Reason.ToString(), ct);
-                    }
-                    else
-                    {
-                        await Task.Delay(decision.Delay, ct);
-                    }
-                    attempt++;
-                }
+                continue;
             }
-        }
-
-        var round = resume?.Round ?? 0;
-        while (round < maxRounds)
-        {
-            if (callbacks?.OnRoundBoundaryAsync is not null)
+            await ApplyContextNotesAsync(state, callbacks, ct);
+            await SnapshotLoopAsync(state, callbacks, ct);
+            if (await CheckBudgetAsync(state, callbacks, ct) is { } vetoed)
             {
-                var steered = await callbacks.OnRoundBoundaryAsync(false, ct);
-                if (steered.Count > 0)
-                {
-                    messages.AddRange(steered);
-                    // Steer zera o teto: o turno recomeça do input novo.
-                    round = 0;
-                    lengthContinuations = 0;
-                    continue;
-                }
+                return vetoed;
             }
-            // Notas de contexto (advisor): entram sem zerar o teto — o
-            // conselho guia a rodada atual, não recomeça o turno.
-            if (callbacks?.OnContextNotesAsync is not null)
-            {
-                var notes = await callbacks.OnContextNotesAsync(ct);
-                if (notes.Count > 0)
-                {
-                    messages.AddRange(notes);
-                }
-            }
-            // RF-002 run-recovery: snapshot do estado do loop no topo do
-            // round (steers/notas já aplicados) — em restart a run retoma
-            // deste ponto, rediz o call do modelo e liquida calls órfãs.
-            if (callbacks?.OnCheckpointAsync is not null)
-            {
-                await callbacks.OnCheckpointAsync(new RunLoopCheckpoint(
-                    round, messages, toolMessages, stepCount,
-                    stepUsages.Select(u => new StepUsage(
-                        u.Step, u.PromptTokens, u.CompletionTokens,
-                        u.ReasoningTokens)).ToList(),
-                    emptyRounds, lengthContinuations,
-                    continuedAnswer.ToString(), pendingTodos), ct);
-            }
-            // Veto de budget por rodada (SPEC-20261023-run-cost-budgets
-            // RF-002/003): depois do snapshot (a retomada não repete a
-            // checagem) e antes da chamada ao provider — a run encerra
-            // com a razão em vez de gastar o próximo step.
-            if (callbacks?.OnBudgetCheckAsync is { } budgetCheck
-                && await budgetCheck(ct) is { } budgetReason)
-            {
-                return new ToolLoopOutcome(
-                    continuedAnswer.ToString(), toolMessages, stepUsages,
-                    stepCount, PendingTodos: pendingTodos,
-                    BudgetExceededReason: budgetReason);
-            }
-            if (callbacks?.OnStepAsync is not null)
-            {
-                await callbacks.OnStepAsync(round + 1, maxRounds, ct);
-            }
-            if (callbacks?.OnPhaseAsync is not null)
-            {
-                await callbacks.OnPhaseAsync("generating", null, ct);
-            }
+            await AnnounceRoundAsync(state, maxRounds, callbacks, ct);
             // Último step permitido (RF-002): round roda sem tools e com o
             // prompt de wrap-up — o modelo se encerra graciosamente em vez
             // de bater no teto sem aviso. A mensagem sintética não vira
             // ChatMessage persistida (só vive no request desta rodada).
-            var lastStep = round == maxRounds - 1;
+            var lastStep = state.Round == maxRounds - 1;
             Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRoundRequest =
                 lastStep
-                    ? msgs => request with
+                    ? msgs => state.Request with
                     {
                         Messages = [..msgs, new ChatCompletionMessage(
                             "user", MaxStepsPrompt)],
                         Tools = null,
                     }
-                    : msgs => request with { Messages = msgs };
+                    : msgs => state.Request with { Messages = msgs };
             var step = await CompleteResilientAsync(
-                makeRoundRequest, userId ?? builtinContext?.UserId);
-            stepCount++;
-            if (step.Usage is { } usage)
-            {
-                stepUsages.Add(new RoundUsage(stepCount,
-                    usage.PromptTokens, usage.CompletionTokens,
-                    usage.ReasoningTokens));
-            }
+                state, makeRoundRequest, userId ?? builtinContext?.UserId,
+                providers, callbacks, log, ct);
+            RecordStepUsage(state, step);
             // RF-001 run-recovery: o step_finished registra os ids das tool
             // calls — órfãs na retomada recebem resultado sintético.
             if (callbacks?.OnStepFinishedAsync is not null)
             {
-                await callbacks.OnStepFinishedAsync(round, step, ct);
+                await callbacks.OnStepFinishedAsync(state.Round, step, ct);
             }
+
 
             // RF-003: resposta truncada (finish_reason=length) recebe um
             // pedido sintético de continuação e o loop segue — até 3
             // continuações seguidas, depois erro output-limit. O texto
             // truncado vai como mensagem assistant para o modelo completar
             // sem repetir; só conta quando não há tool calls.
-            if (ProviderRetryPolicy.IsLengthFinish(step.FinishReason)
-                && step.ToolCalls.Count == 0)
+            if (await TryLengthContinuationAsync(state, step, callbacks, log, ct))
             {
-                if (lengthContinuations >= maxLengthContinuations)
-                {
-                    throw new InvalidOperationException(
-                        "output-limit: a resposta do modelo continua truncada "
-                        + $"após {maxLengthContinuations} continuações.");
-                }
-                lengthContinuations++;
-                continuedAnswer.Append(step.Content);
-                log?.LogWarning(
-                    "Round {Round} truncado (finish_reason={FinishReason}) — "
-                    + "continuação automática {N}/{Max} injetada.",
-                    round + 1, step.FinishReason,
-                    lengthContinuations, maxLengthContinuations);
-                var truncatedAssistant = new ChatCompletionMessage(
-                    RoleAssistant, step.Content);
-                messages.Add(truncatedAssistant);
-                toolMessages.Add(truncatedAssistant);
-                var continuePrompt = new ChatCompletionMessage(
-                    "user", LengthContinuePrompt);
-                messages.Add(continuePrompt);
-                if (callbacks?.OnMessagesAddedAsync is not null)
-                {
-                    await callbacks.OnMessagesAddedAsync(
-                        [truncatedAssistant, continuePrompt],
-                        [truncatedAssistant], ct);
-                }
-                round++;
                 continue;
             }
+
             if (step.ToolCalls.Count == 0)
             {
-                // Antes de ficar ociosa, promove mensagens queued (SPEC-20261010).
-                if (callbacks?.OnRoundBoundaryAsync is not null)
+                if (await HandleTextualRoundAsync(
+                    state, step, lastStep, callbacks, log, ct) is { } outcome)
                 {
-                    var queued = await callbacks.OnRoundBoundaryAsync(true, ct);
-                    if (queued.Count > 0)
-                    {
-                        // O texto da rodada permanece no histórico — sumir
-                        // com ele desincroniza stream × persistência.
-                        var interimQueued = string.IsNullOrWhiteSpace(step.Content)
-                            ? null
-                            : new ChatCompletionMessage(RoleAssistant, step.Content);
-                        if (interimQueued is not null)
-                        {
-                            messages.Add(interimQueued);
-                            toolMessages.Add(interimQueued);
-                        }
-                        messages.AddRange(queued);
-                        if (callbacks?.OnMessagesAddedAsync is not null)
-                        {
-                            await callbacks.OnMessagesAddedAsync(
-                                interimQueued is null ? queued
-                                    : [interimQueued, .. queued],
-                                interimQueued is null ? []
-                                    : [interimQueued], ct);
-                        }
-                        round = 0;
-                        continue;
-                    }
+                    return outcome;
                 }
-                if (pendingTodos > 0 && autoContinues < maxAutoContinues && !lastStep)
-                {
-                    // Turno encerrado com a lista aberta — o modo de falha
-                    // "parou e perguntou se era para continuar". O nudge
-                    // manda executar a próxima tarefa já. No lastStep o
-                    // próximo round já não tem tools — a continuação real
-                    // é a auto-chain do executor (SPEC-20261019 RF-002).
-                    autoContinues++;
-                    log?.LogInformation(
-                        "Turno encerrado com {Pending} tarefa(s) pendente(s) — "
-                        + "auto-continue {N}/{Max} injetado.",
-                        pendingTodos, autoContinues, maxAutoContinues);
-                    var nudge = new ChatCompletionMessage(
-                        "user", PendingTasksPrompt(pendingTodos));
-                    // Idem: preserva o texto da rodada no histórico antes
-                    // do nudge (senão ele só vive no stream efêmero).
-                    var interim = string.IsNullOrWhiteSpace(step.Content)
-                        ? null
-                        : new ChatCompletionMessage(RoleAssistant, step.Content);
-                    if (interim is not null)
-                    {
-                        messages.Add(interim);
-                        toolMessages.Add(interim);
-                    }
-                    messages.Add(nudge);
-                    if (callbacks?.OnMessagesAddedAsync is not null)
-                    {
-                        await callbacks.OnMessagesAddedAsync(
-                            interim is null ? [nudge] : [interim, nudge],
-                            interim is null ? [] : [interim], ct);
-                    }
-                    round++;
-                    continue;
-                }
-                if (string.IsNullOrWhiteSpace(step.Content) && emptyRounds < maxEmptyRounds)
-                {
-                    // Round vazio (ex.: gateway emitiu só reasoning, ou o
-                    // markup DSML veio truncado e não rendeu call): a run
-                    // continuava "concluída" com 0 chars — a UI congelava
-                    // depois do pensamento. O nudge reabre o turno para o
-                    // modelo produzir a resposta ou a tool call — e o retry
-                    // sobe o teto de tokens para backends que travam o
-                    // pensamento num orçamento pequeno demais.
-                    emptyRounds++;
-                    var bumped = BumpMaxTokens(request.Params, retryMaxTokens);
-                    if (bumped is not null)
-                    {
-                        request = request with { Params = bumped };
-                        log?.LogInformation(
-                            "Round vazio: max_tokens elevado para {MaxTokens} no retry.",
-                            retryMaxTokens);
-                    }
-                    log?.LogWarning(
-                        "Round {Round} retornou vazio (sem content nem tool calls) — "
-                        + "auto-continue {Empty}/{Max} injetado.",
-                        round + 1, emptyRounds, maxEmptyRounds);
-                    var nudge = new ChatCompletionMessage(
-                        "user",
-                        "Sua resposta anterior veio vazia (sem texto nem tool calls). "
-                        + "Responda agora de forma direta — ou chame a tool "
-                        + "apropriada — sem reiniciar o raciocínio.");
-                    messages.Add(nudge);
-                    if (callbacks?.OnMessagesAddedAsync is not null)
-                    {
-                        await callbacks.OnMessagesAddedAsync([nudge], [], ct);
-                    }
-                    round++;
-                    continue;
-                }
-                // lastStep = último round toolless (MaxStepsPrompt): a
-                // saída graciosa do cap passa por aqui — marcar HitStepCap
-                // igual ao caminho de exaustão do for (SPEC-20261019
-                // RF-001); steer/queued que recomeçam o turno zeram o
-                // round e não chegam com lastStep true.
-                return new ToolLoopOutcome(
-                    continuedAnswer + step.Content, toolMessages, stepUsages,
-                    stepCount, HitStepCap: lastStep, PendingTodos: pendingTodos);
+                continue;
             }
 
-            var assistantMessage = new ChatCompletionMessage(
-                RoleAssistant, step.Content, ToolCallsJson: step.ToolCallsJson);
-            messages.Add(assistantMessage);
-            toolMessages.Add(assistantMessage);
-            if (callbacks?.OnMessagesAddedAsync is not null)
-            {
-                await callbacks.OnMessagesAddedAsync(
-                    [assistantMessage], [assistantMessage], ct);
-            }
 
-            log?.LogInformation(
-                "Tool loop round {Round}/{Max}: {Count} call(s) ({Names}).",
-                round + 1, maxRounds, step.ToolCalls.Count,
-                string.Join(", ", step.ToolCalls.Select(c => c.Name)));
+            await PublishAssistantStepAsync(
+                state, step, callbacks, log, maxRounds, ct);
 
             // SPEC-20261016-parallel-tool-calls: o batch é partido em runs
             // contíguos de paralelizáveis. Cada grupo executa em 3 fases —
             // (1) fase/gate sequenciais na ordem, (2) execução concorrente
             // com cap, (3) publicação sequencial na ordem. Calls mutáveis
             // e grupos de 1 seguem o caminho sequencial de sempre.
-            async Task<ToolGateDecision> PrepareCallAsync(ProviderToolCall call)
-            {
-                if (callbacks?.OnPhaseAsync is not null)
-                {
-                    await callbacks.OnPhaseAsync("running_tool", call.Name, ct);
-                }
-                if (callbacks?.OnCallAsync is not null)
-                {
-                    await callbacks.OnCallAsync(call, ct);
-                }
-                return callbacks?.GateAsync is not null
-                    ? await callbacks.GateAsync(call, ct)
-                    : ToolGateDecision.Allow;
-            }
+            await RunToolCallsAsync(
+                state, step.ToolCalls, tools, toolExecutor, builtinContext,
+                maxParallelTools, callbacks, log, ct);
+            state.Round++;
 
-            async Task<ToolExecutionOutcome> ExecuteCallAsync(
-                ProviderToolCall call, ToolGateDecision gate, SemaphoreSlim? cap)
-            {
-                if (!gate.Approved)
-                {
-                    return new ToolExecutionOutcome(
-                        string.IsNullOrWhiteSpace(gate.DenyMessage)
-                            ? "Erro: execução negada pelo usuário."
-                            : $"Erro: execução negada pelo usuário: {gate.DenyMessage}");
-                }
-                // ask_user e gates parecidos podem devolver o resultado
-                // direto via ToolGateDecision.Output (RF-005).
-                if (gate.Output is { Length: > 0 } gateOutput)
-                {
-                    return new ToolExecutionOutcome(gateOutput);
-                }
-                if (cap is not null)
-                {
-                    await cap.WaitAsync(ct);
-                }
-                try
-                {
-                    // Exceção de execução (IO, rede, MCP): até 3 tentativas
-                    // com backoff curto antes de devolver o erro ao modelo —
-                    // uma exceção aqui nunca pode escapar e derrubar a run.
-                    // Tools mutáveis não são repetidas: a exceção pode ter
-                    // vindo depois do efeito aplicado e reexecutar duplicaria
-                    // a ação (Devin Review PR#458).
-                    var mutable = ToolExecutor.FindTool(tools, call.Name)
-                        is { } executedTool && ToolExecutor.IsMutable(executedTool);
-                    var maxAttempts = mutable ? 1 : 3;
-                    Exception? lastError = null;
-                    for (var attempt = 1; attempt <= maxAttempts; attempt++)
-                    {
-                        try
-                        {
-                            // RF-A2 harness-seams: gate aprovado pode ter
-                            // reescrito os args (interceptor tool.call).
-                            return await toolExecutor.ExecuteAsync(
-                                tools, call.Name,
-                                gate.RewriteArgsJson ?? call.ArgumentsJson,
-                                builtinContext, ct);
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            lastError = ex;
-                            log?.LogWarning(ex,
-                                "Tool {Name} lançou exceção (tentativa {Attempt}/{Max}).",
-                                call.Name, attempt, maxAttempts);
-                            if (attempt < maxAttempts)
-                            {
-                                await Task.Delay(
-                                    TimeSpan.FromMilliseconds(500 * attempt), ct);
-                            }
-                        }
-                    }
-                    return new ToolExecutionOutcome(
-                        $"Erro: execução falhou após {maxAttempts} tentativas: {lastError!.Message}");
-                }
-                finally
-                {
-                    cap?.Release();
-                }
-            }
-
-            async Task PublishCallResultAsync(
-                ProviderToolCall call, ToolGateDecision gate,
-                ToolExecutionOutcome outcome, TimeSpan elapsed)
-            {
-                var denied = !gate.Approved;
-                var output = outcome.Text;
-                log?.LogInformation(
-                    "Tool {Name}: {Elapsed}ms, denied={Denied}, output={Chars} chars.",
-                    call.Name, (int)elapsed.TotalMilliseconds, denied, output.Length);
-                if (outcome.Result is { } tasksEl
-                    && tasksEl.ValueKind == JsonValueKind.Object
-                    && tasksEl.TryGetProperty("tasks", out var tasks)
-                    && tasks.ValueKind == JsonValueKind.Array)
-                {
-                    // Estado mais recente da lista de tarefas — alimenta o
-                    // auto-continue quando o turno encerra com itens abertos.
-                    // Um novo plano reabre o budget de nudges: quem re-escreve
-                    // a lista está trabalhando, não parado.
-                    autoContinues = 0;
-                    pendingTodos = tasks.EnumerateArray().Count(t =>
-                        t.ValueKind == JsonValueKind.Object
-                        && t.TryGetProperty("status", out var st)
-                        && st.ValueKind == JsonValueKind.String
-                        && st.GetString() is "pending" or "in_progress");
-                }
-                if (callbacks?.OnResultAsync is not null)
-                {
-                    await callbacks.OnResultAsync(call, output, outcome.Result, denied, ct);
-                }
-                var toolMessage = new ChatCompletionMessage(
-                    "tool", output, ToolCallId: call.Id);
-                messages.Add(toolMessage);
-                toolMessages.Add(toolMessage);
-            }
-
-            var calls = step.ToolCalls;
-            for (var k = 0; k < calls.Count;)
-            {
-                // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
-                var end = k;
-                while (end < calls.Count
-                    && toolExecutor.IsSafeInParallel(tools, calls[end].Name))
-                {
-                    end++;
-                }
-                if (end - k >= 2)
-                {
-                    var count = end - k;
-                    var gates = new ToolGateDecision[count];
-                    for (var g = 0; g < count; g++)
-                    {
-                        gates[g] = await PrepareCallAsync(calls[k + g]);
-                    }
-                    var outcomes = new ToolExecutionOutcome[count];
-                    var elapsed = new TimeSpan[count];
-                    var cap = new SemaphoreSlim(maxParallelTools);
-                    var groupSw = Stopwatch.StartNew();
-                    await Task.WhenAll(Enumerable.Range(0, count).Select(
-                        async g =>
-                        {
-                            var callSw = Stopwatch.StartNew();
-                            try
-                            {
-                                outcomes[g] = await ExecuteCallAsync(
-                                    calls[k + g], gates[g], cap);
-                            }
-                            catch (Exception ex)
-                            {
-                                outcomes[g] = new ToolExecutionOutcome(
-                                    $"Erro: execução falhou: {ex.Message}");
-                            }
-                            elapsed[g] = callSw.Elapsed;
-                        }));
-                    for (var g = 0; g < count; g++)
-                    {
-                        await PublishCallResultAsync(
-                            calls[k + g], gates[g], outcomes[g], elapsed[g]);
-                    }
-                    log?.LogInformation(
-                        "Batch paralelo: {Count} tools em {Elapsed}ms.",
-                        count, groupSw.ElapsedMilliseconds);
-                    k = end;
-                    continue;
-                }
-                // Call sequencial (mutável ou paralelizável sozinha).
-                var call = calls[k];
-                var callSw = Stopwatch.StartNew();
-                var gate = await PrepareCallAsync(call);
-                var outcome = await ExecuteCallAsync(call, gate, null);
-                callSw.Stop();
-                await PublishCallResultAsync(call, gate, outcome, callSw.Elapsed);
-                k = Math.Max(k + 1, end);
-            }
-            round++;
         }
 
         // Teto de iterações atingido: o último round já rodou sem tools e
@@ -1049,19 +638,681 @@ public static class ChatPipeline
             "Tool loop atingiu o teto de {Max} rounds — resposta final sem tools.",
             maxRounds);
         var final = await CompleteResilientAsync(
-            msgs => request with { Messages = msgs, Tools = null },
-            userId ?? builtinContext?.UserId);
-        stepCount++;
-        if (final.Usage is { } finalUsage)
-        {
-            stepUsages.Add(new RoundUsage(stepCount,
-                finalUsage.PromptTokens, finalUsage.CompletionTokens,
-                finalUsage.ReasoningTokens));
-        }
+            state,
+            msgs => state.Request with { Messages = msgs, Tools = null },
+            userId ?? builtinContext?.UserId,
+            providers, callbacks, log, ct);
+        RecordStepUsage(state, final);
         return new ToolLoopOutcome(
-            continuedAnswer + final.Content, toolMessages, stepUsages,
-            stepCount, HitStepCap: true, PendingTodos: pendingTodos);
+            state.ContinuedAnswer + final.Content, state.ToolMessages,
+            state.StepUsages, state.StepCount,
+            HitStepCap: true, PendingTodos: state.PendingTodos);
+
     }
+
+    // Rodadas vazias (só reasoning, sem content nem tool_calls) não
+    // encerram a run em silêncio: o modelo leva um nudge e tenta de
+    // novo — autonomia para continuar o pensamento sem esperar o
+    // usuário. Limitado para não virar loop infinito de nudges.
+    private const int MaxEmptyRounds = 3;
+    // Gateways com teto baixo de completion (ex.: rotas Cloudflare do
+    // OmniRoute ~256 tokens) deixam o modelo de raciocínio sem orçamento
+    // para responder — o retry de round vazio sobe o teto.
+    private const int RetryMaxTokens = 8192;
+    // Auto-continue por tarefas pendentes: quando a lista de tarefas
+    // tem itens pending/in_progress e o modelo encerra o turno com
+    // texto ("próximo passo sugerido: …" seguido de parada), o loop
+    // injeta um nudge e segue para a próxima tarefa em vez de esperar
+    // o usuário. Cap de nudges para o modelo insistente poder parar.
+    private const int MaxAutoContinues = 3;
+    // Continuações sintéticas de resposta truncada (finish_reason=length)
+    // antes do erro output-limit (SPEC-20261016-provider-resilience RF-003).
+    private const int MaxLengthContinuations = 3;
+
+    /// <summary>Estado mutável compartilhado do tool loop — janela,
+    /// tail de tools, contadores de continuação e o request (reescrito
+    /// pelo bump de max_tokens) trafegam juntos entre os helpers.</summary>
+    private sealed class ToolLoopMutable
+    {
+        public required ChatCompletionRequest Request { get; set; }
+        public required List<ChatCompletionMessage> Messages { get; init; }
+        public required List<ChatCompletionMessage> ToolMessages { get; init; }
+        public required List<RoundUsage> StepUsages { get; init; }
+        public required StringBuilder ContinuedAnswer { get; init; }
+        public int Round;
+        public int StepCount;
+        public int EmptyRounds;
+        public int LengthContinuations;
+        public int OverflowRetries;
+        public int AutoContinues;
+        public int PendingTodos = -1;
+    }
+
+    /// <summary>Fronteira de rodada: promove steers pendentes — o turno
+    /// recomeça do input novo (teto zerado, continuações limpas).</summary>
+    private static async Task<bool> ApplyRoundBoundaryAsync(
+        ToolLoopMutable state, ToolLoopCallbacks? callbacks,
+        CancellationToken ct)
+    {
+        if (callbacks?.OnRoundBoundaryAsync is null)
+        {
+            return false;
+        }
+        var steered = await callbacks.OnRoundBoundaryAsync(false, ct);
+        if (steered.Count == 0)
+        {
+            return false;
+        }
+        state.Messages.AddRange(steered);
+        // Steer zera o teto: o turno recomeça do input novo.
+        state.Round = 0;
+        state.LengthContinuations = 0;
+        return true;
+    }
+
+    /// <summary>Notas de contexto (advisor): entram sem zerar o teto — o
+    /// conselho guia a rodada atual, não recomeça o turno.</summary>
+    private static async Task ApplyContextNotesAsync(
+        ToolLoopMutable state, ToolLoopCallbacks? callbacks,
+        CancellationToken ct)
+    {
+        if (callbacks?.OnContextNotesAsync is { } notes
+            && await notes(ct) is { Count: > 0 } added)
+        {
+            state.Messages.AddRange(added);
+        }
+    }
+
+    /// <summary>RF-002 run-recovery: snapshot do estado do loop no topo do
+    /// round (steers/notas já aplicados) — em restart a run retoma deste
+    /// ponto, rediz o call do modelo e liquida calls órfãs.</summary>
+    private static async Task SnapshotLoopAsync(
+        ToolLoopMutable state, ToolLoopCallbacks? callbacks,
+        CancellationToken ct)
+    {
+        if (callbacks?.OnCheckpointAsync is not null)
+        {
+            await callbacks.OnCheckpointAsync(new RunLoopCheckpoint(
+                state.Round, state.Messages, state.ToolMessages,
+                state.StepCount,
+                state.StepUsages.Select(u => new StepUsage(
+                    u.Step, u.PromptTokens, u.CompletionTokens,
+                    u.ReasoningTokens)).ToList(),
+                state.EmptyRounds, state.LengthContinuations,
+                state.ContinuedAnswer.ToString(), state.PendingTodos), ct);
+        }
+    }
+
+    /// <summary>Veto de budget por rodada (SPEC-20261023-run-cost-budgets
+    /// RF-002/003): depois do snapshot (a retomada não repete a checagem)
+    /// e antes da chamada ao provider — a run encerra com a razão em vez
+    /// de gastar o próximo step.</summary>
+    private static async Task<ToolLoopOutcome?> CheckBudgetAsync(
+        ToolLoopMutable state, ToolLoopCallbacks? callbacks,
+        CancellationToken ct)
+    {
+        if (callbacks?.OnBudgetCheckAsync is { } budgetCheck
+            && await budgetCheck(ct) is { } budgetReason)
+        {
+            return new ToolLoopOutcome(
+                state.ContinuedAnswer.ToString(), state.ToolMessages,
+                state.StepUsages, state.StepCount,
+                PendingTodos: state.PendingTodos,
+                BudgetExceededReason: budgetReason);
+        }
+        return null;
+    }
+
+    /// <summary>Anuncia o round: contador de step (RF-006) + fase
+    /// <c>generating</c>.</summary>
+    private static async Task AnnounceRoundAsync(
+        ToolLoopMutable state, int maxRounds,
+        ToolLoopCallbacks? callbacks, CancellationToken ct)
+    {
+        if (callbacks?.OnStepAsync is not null)
+        {
+            await callbacks.OnStepAsync(state.Round + 1, maxRounds, ct);
+        }
+        if (callbacks?.OnPhaseAsync is not null)
+        {
+            await callbacks.OnPhaseAsync("generating", null, ct);
+        }
+    }
+
+    /// <summary>Completion com retry/backoff, overflow→compact→retry com
+    /// tail progressivo (RF-001/005/004) e retry de round vazio.</summary>
+    private static async Task<ProviderCompletion> CompleteResilientAsync(
+        ToolLoopMutable state,
+        Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRequest,
+        string? uid, ProviderService providers,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        var timeouts = 0;
+        var attempt = 0;
+        while (true)
+        {
+            try
+            {
+                return await CompleteRoundAsync(
+                    providers, makeRequest(state.Messages), callbacks, ct, uid);
+            }
+            catch (Exception ex)
+                when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                if (ProviderRetryPolicy.IsContextOverflow(ex))
+                {
+                    var compacted = state.OverflowRetries < OverflowTargets.Length
+                        && callbacks?.OnOverflowCompactAsync is { } compact
+                        ? await compact(state.Messages,
+                            OverflowTargets[state.OverflowRetries], ct)
+                        : null;
+                    if (compacted is not { Count: > 0 })
+                    {
+                        throw new InvalidOperationException(
+                            "context-overflow: o provedor rejeitou o contexto "
+                            + "e a janela não pôde ser reduzida o suficiente.", ex);
+                    }
+                    state.OverflowRetries++;
+                    state.Messages.Clear();
+                    state.Messages.AddRange(compacted);
+                    log?.LogWarning(
+                        ex,
+                        "Context-overflow do provider: janela compactada para "
+                        + "~{Tail}% do tail ({Attempt}/3) e retentando.",
+                        (int)(OverflowTargets[state.OverflowRetries - 1] * 100),
+                        state.OverflowRetries);
+                    attempt++;
+                    continue;
+                }
+
+                timeouts = ex is TaskCanceledException or TimeoutException
+                    ? timeouts + 1 : 0;
+                var decision = ProviderRetryPolicy.Decide(
+                    ex, attempt, timeouts, options: providers.RetryOptions);
+                if (!decision.Retry)
+                {
+                    var code = decision.Reason switch
+                    {
+                        ProviderRetryReason.RateLimit => "rate-limit",
+                        ProviderRetryReason.Timeout => "provider-timeout",
+                        ProviderRetryReason.ServerError => "server-error",
+                        _ => null,
+                    };
+                    if (code is not null)
+                    {
+                        throw new InvalidOperationException(
+                            $"{code}: a chamada ao provedor falhou após "
+                            + $"{attempt + 1} tentativa(s).", ex);
+                    }
+                    throw;
+                }
+                log?.LogWarning(ex,
+                    "Completion falhou ({Reason}, tentativa {Attempt}/{Max}) — retry em {Delay}ms.",
+                    decision.Reason, attempt + 1, providers.RetryOptions.MaxAttempts,
+                    (int)decision.Delay.TotalMilliseconds);
+                if (callbacks?.OnRetryingAsync is { } onRetry)
+                {
+                    await onRetry(attempt + 1, decision.Delay,
+                        decision.Reason.ToString(), ct);
+                }
+                else
+                {
+                    await Task.Delay(decision.Delay, ct);
+                }
+                attempt++;
+            }
+        }
+    }
+
+    /// <summary>Registra usage do step (RF-004) — só steps com usage
+    /// reportado entram na lista; o contador total sempre avança.</summary>
+    private static void RecordStepUsage(
+        ToolLoopMutable state, ProviderCompletion step)
+    {
+        state.StepCount++;
+        if (step.Usage is { } usage)
+        {
+            state.StepUsages.Add(new RoundUsage(state.StepCount,
+                usage.PromptTokens, usage.CompletionTokens,
+                usage.ReasoningTokens));
+        }
+    }
+
+    /// <summary>RF-003: resposta truncada (finish_reason=length) recebe um
+    /// pedido sintético de continuação e o loop segue — até 3
+    /// continuações seguidas, depois erro output-limit. O texto truncado
+    /// vai como mensagem assistant para o modelo completar sem repetir;
+    /// só conta quando não há tool calls.</summary>
+    private static async Task<bool> TryLengthContinuationAsync(
+        ToolLoopMutable state, ProviderCompletion step,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        if (!ProviderRetryPolicy.IsLengthFinish(step.FinishReason)
+            || step.ToolCalls.Count != 0)
+        {
+            return false;
+        }
+        if (state.LengthContinuations >= MaxLengthContinuations)
+        {
+            throw new InvalidOperationException(
+                "output-limit: a resposta do modelo continua truncada "
+                + $"após {MaxLengthContinuations} continuações.");
+        }
+        state.LengthContinuations++;
+        state.ContinuedAnswer.Append(step.Content);
+        log?.LogWarning(
+            "Round {Round} truncado (finish_reason={FinishReason}) — "
+            + "continuação automática {N}/{Max} injetada.",
+            state.Round + 1, step.FinishReason,
+            state.LengthContinuations, MaxLengthContinuations);
+        var truncatedAssistant = new ChatCompletionMessage(
+            RoleAssistant, step.Content);
+        state.Messages.Add(truncatedAssistant);
+        state.ToolMessages.Add(truncatedAssistant);
+        var continuePrompt = new ChatCompletionMessage(
+            "user", LengthContinuePrompt);
+        state.Messages.Add(continuePrompt);
+        if (callbacks?.OnMessagesAddedAsync is not null)
+        {
+            await callbacks.OnMessagesAddedAsync(
+                [truncatedAssistant, continuePrompt],
+                [truncatedAssistant], ct);
+        }
+        state.Round++;
+        return true;
+    }
+
+    /// <summary>Turno sem tool calls: promove queued, injeta nudge de
+    /// tarefas pendentes ou de round vazio — null significa "segue o
+    /// loop" (state.Round já ajustado); outcome encerra a run.</summary>
+    private static async Task<ToolLoopOutcome?> HandleTextualRoundAsync(
+        ToolLoopMutable state, ProviderCompletion step, bool lastStep,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        if (await PromoteQueuedAsync(state, step, callbacks, ct))
+        {
+            return null;
+        }
+        if (state.PendingTodos > 0
+            && state.AutoContinues < MaxAutoContinues && !lastStep)
+        {
+            await InjectTodoNudgeAsync(state, step, callbacks, log, ct);
+            return null;
+        }
+        if (string.IsNullOrWhiteSpace(step.Content)
+            && state.EmptyRounds < MaxEmptyRounds)
+        {
+            await RetryEmptyRoundAsync(state, callbacks, log, ct);
+            return null;
+        }
+        // lastStep = último round toolless (MaxStepsPrompt): a saída
+        // graciosa do cap passa por aqui — marcar HitStepCap igual ao
+        // caminho de exaustão do for (SPEC-20261019 RF-001); steer/queued
+        // que recomeçam o turno zeram o round e não chegam com lastStep
+        // true.
+        return new ToolLoopOutcome(
+            state.ContinuedAnswer + step.Content, state.ToolMessages,
+            state.StepUsages, state.StepCount,
+            HitStepCap: lastStep, PendingTodos: state.PendingTodos);
+    }
+
+    /// <summary>Antes de ficar ociosa, promove mensagens queued
+    /// (SPEC-20261010) — o texto da rodada permanece no histórico como
+    /// interim assistant (sumir com ele desincroniza stream ×
+    /// persistência).</summary>
+    private static async Task<bool> PromoteQueuedAsync(
+        ToolLoopMutable state, ProviderCompletion step,
+        ToolLoopCallbacks? callbacks, CancellationToken ct)
+    {
+        if (callbacks?.OnRoundBoundaryAsync is null)
+        {
+            return false;
+        }
+        var queued = await callbacks.OnRoundBoundaryAsync(true, ct);
+        if (queued.Count == 0)
+        {
+            return false;
+        }
+        var interimQueued = string.IsNullOrWhiteSpace(step.Content)
+            ? null
+            : new ChatCompletionMessage(RoleAssistant, step.Content);
+        if (interimQueued is not null)
+        {
+            state.Messages.Add(interimQueued);
+            state.ToolMessages.Add(interimQueued);
+        }
+        state.Messages.AddRange(queued);
+        if (callbacks?.OnMessagesAddedAsync is not null)
+        {
+            await callbacks.OnMessagesAddedAsync(
+                interimQueued is null ? queued
+                    : [interimQueued, .. queued],
+                interimQueued is null ? []
+                    : [interimQueued], ct);
+        }
+        state.Round = 0;
+        return true;
+    }
+
+    /// <summary>Turno encerrado com a lista aberta — o modo de falha
+    /// "parou e perguntou se era para continuar". O nudge manda executar
+    /// a próxima tarefa já. No lastStep o próximo round já não tem tools —
+    /// a continuação real é a auto-chain do executor
+    /// (SPEC-20261019 RF-002).</summary>
+    private static async Task InjectTodoNudgeAsync(
+        ToolLoopMutable state, ProviderCompletion step,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        state.AutoContinues++;
+        log?.LogInformation(
+            "Turno encerrado com {Pending} tarefa(s) pendente(s) — "
+            + "auto-continue {N}/{Max} injetado.",
+            state.PendingTodos, state.AutoContinues, MaxAutoContinues);
+        var nudge = new ChatCompletionMessage(
+            "user", PendingTasksPrompt(state.PendingTodos));
+        // Idem: preserva o texto da rodada no histórico antes do nudge
+        // (senão ele só vive no stream efêmero).
+        var interim = string.IsNullOrWhiteSpace(step.Content)
+            ? null
+            : new ChatCompletionMessage(RoleAssistant, step.Content);
+        if (interim is not null)
+        {
+            state.Messages.Add(interim);
+            state.ToolMessages.Add(interim);
+        }
+        state.Messages.Add(nudge);
+        if (callbacks?.OnMessagesAddedAsync is not null)
+        {
+            await callbacks.OnMessagesAddedAsync(
+                interim is null ? [nudge] : [interim, nudge],
+                interim is null ? [] : [interim], ct);
+        }
+        state.Round++;
+    }
+
+    /// <summary>Round vazio (ex.: gateway emitiu só reasoning, ou o markup
+    /// DSML veio truncado e não rendeu call): a run continuava "concluída"
+    /// com 0 chars — a UI congelava depois do pensamento. O nudge reabre
+    /// o turno para o modelo produzir a resposta ou a tool call — e o
+    /// retry sobe o teto de tokens para backends que travam o pensamento
+    /// num orçamento pequeno demais.</summary>
+    private static async Task RetryEmptyRoundAsync(
+        ToolLoopMutable state, ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        state.EmptyRounds++;
+        var bumped = BumpMaxTokens(state.Request.Params, RetryMaxTokens);
+        if (bumped is not null)
+        {
+            state.Request = state.Request with { Params = bumped };
+            log?.LogInformation(
+                "Round vazio: max_tokens elevado para {MaxTokens} no retry.",
+                RetryMaxTokens);
+        }
+        log?.LogWarning(
+            "Round {Round} retornou vazio (sem content nem tool calls) — "
+            + "auto-continue {Empty}/{Max} injetado.",
+            state.Round + 1, state.EmptyRounds, MaxEmptyRounds);
+        var nudge = new ChatCompletionMessage(
+            "user",
+            "Sua resposta anterior veio vazia (sem texto nem tool calls). "
+            + "Responda agora de forma direta — ou chame a tool "
+            + "apropriada — sem reiniciar o raciocínio.");
+        state.Messages.Add(nudge);
+        if (callbacks?.OnMessagesAddedAsync is not null)
+        {
+            await callbacks.OnMessagesAddedAsync([nudge], [], ct);
+        }
+        state.Round++;
+    }
+
+    /// <summary>Persiste o step assistant (com ToolCallsJson) na janela e
+    /// no tail de tools e registra o round no log.</summary>
+    private static async Task PublishAssistantStepAsync(
+        ToolLoopMutable state, ProviderCompletion step,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log,
+        int maxRounds, CancellationToken ct)
+    {
+        var assistantMessage = new ChatCompletionMessage(
+            RoleAssistant, step.Content, ToolCallsJson: step.ToolCallsJson);
+        state.Messages.Add(assistantMessage);
+        state.ToolMessages.Add(assistantMessage);
+        if (callbacks?.OnMessagesAddedAsync is not null)
+        {
+            await callbacks.OnMessagesAddedAsync(
+                [assistantMessage], [assistantMessage], ct);
+        }
+        log?.LogInformation(
+            "Tool loop round {Round}/{Max}: {Count} call(s) ({Names}).",
+            state.Round + 1, maxRounds, step.ToolCalls.Count,
+            string.Join(", ", step.ToolCalls.Select(c => c.Name)));
+    }
+
+    /// <summary>Fase/gate sequenciais de uma call: fase
+    /// <c>running_tool</c>, evento de call e decisão do gate.</summary>
+    private static async Task<ToolGateDecision> PrepareCallAsync(
+        ProviderToolCall call, ToolLoopCallbacks? callbacks,
+        CancellationToken ct)
+    {
+        if (callbacks?.OnPhaseAsync is not null)
+        {
+            await callbacks.OnPhaseAsync("running_tool", call.Name, ct);
+        }
+        if (callbacks?.OnCallAsync is not null)
+        {
+            await callbacks.OnCallAsync(call, ct);
+        }
+        return callbacks?.GateAsync is not null
+            ? await callbacks.GateAsync(call, ct)
+            : ToolGateDecision.Allow;
+    }
+
+    /// <summary>Execução de uma call: deny/shortcut do gate, cap de
+    /// concorrência e retry com backoff (tools mutáveis não repetem —
+    /// Devin Review PR#458). Exceção aqui nunca escapa e derruba a run.</summary>
+    private static async Task<ToolExecutionOutcome> ExecuteCallAsync(
+        ProviderToolCall call, ToolGateDecision gate, SemaphoreSlim? cap,
+        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
+        BuiltinToolContext? builtinContext,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        if (!gate.Approved)
+        {
+            return new ToolExecutionOutcome(
+                string.IsNullOrWhiteSpace(gate.DenyMessage)
+                    ? "Erro: execução negada pelo usuário."
+                    : $"Erro: execução negada pelo usuário: {gate.DenyMessage}");
+        }
+        // ask_user e gates parecidos podem devolver o resultado
+        // direto via ToolGateDecision.Output (RF-005).
+        if (gate.Output is { Length: > 0 } gateOutput)
+        {
+            return new ToolExecutionOutcome(gateOutput);
+        }
+        if (cap is not null)
+        {
+            await cap.WaitAsync(ct);
+        }
+        try
+        {
+            // Exceção de execução (IO, rede, MCP): até 3 tentativas
+            // com backoff curto antes de devolver o erro ao modelo —
+            // uma exceção aqui nunca pode escapar e derrubar a run.
+            // Tools mutáveis não são repetidas: a exceção pode ter
+            // vindo depois do efeito aplicado e reexecutar duplicaria
+            // a ação (Devin Review PR#458).
+            var mutable = ToolExecutor.FindTool(tools, call.Name)
+                is { } executedTool && ToolExecutor.IsMutable(executedTool);
+            var maxAttempts = mutable ? 1 : 3;
+            Exception? lastError = null;
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    // RF-A2 harness-seams: gate aprovado pode ter
+                    // reescrito os args (interceptor tool.call).
+                    return await toolExecutor.ExecuteAsync(
+                        tools, call.Name,
+                        gate.RewriteArgsJson ?? call.ArgumentsJson,
+                        builtinContext, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    lastError = ex;
+                    log?.LogWarning(ex,
+                        "Tool {Name} lançou exceção (tentativa {Attempt}/{Max}).",
+                        call.Name, attempt, maxAttempts);
+                    if (attempt < maxAttempts)
+                    {
+                        await Task.Delay(
+                            TimeSpan.FromMilliseconds(500 * attempt), ct);
+                    }
+                }
+            }
+            return new ToolExecutionOutcome(
+                $"Erro: execução falhou após {maxAttempts} tentativas: {lastError!.Message}");
+        }
+        finally
+        {
+            cap?.Release();
+        }
+    }
+
+    /// <summary>Publicação sequencial do resultado: contagem de tarefas
+    /// pendentes (reabre o budget de nudges), evento OnResult e a
+    /// mensagem role=tool na janela e no tail.</summary>
+    private static async Task PublishCallResultAsync(
+        ToolLoopMutable state, ProviderToolCall call,
+        ToolGateDecision gate, ToolExecutionOutcome outcome,
+        TimeSpan elapsed, ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        var denied = !gate.Approved;
+        var output = outcome.Text;
+        log?.LogInformation(
+            "Tool {Name}: {Elapsed}ms, denied={Denied}, output={Chars} chars.",
+            call.Name, (int)elapsed.TotalMilliseconds, denied, output.Length);
+        if (outcome.Result is { } tasksEl
+            && tasksEl.ValueKind == JsonValueKind.Object
+            && tasksEl.TryGetProperty("tasks", out var tasks)
+            && tasks.ValueKind == JsonValueKind.Array)
+        {
+            // Estado mais recente da lista de tarefas — alimenta o
+            // auto-continue quando o turno encerra com itens abertos.
+            // Um novo plano reabre o budget de nudges: quem re-escreve
+            // a lista está trabalhando, não parado.
+            state.AutoContinues = 0;
+            state.PendingTodos = tasks.EnumerateArray().Count(t =>
+                t.ValueKind == JsonValueKind.Object
+                && t.TryGetProperty("status", out var st)
+                && st.ValueKind == JsonValueKind.String
+                && st.GetString() is "pending" or "in_progress");
+        }
+        if (callbacks?.OnResultAsync is not null)
+        {
+            await callbacks.OnResultAsync(call, output, outcome.Result, denied, ct);
+        }
+        var toolMessage = new ChatCompletionMessage(
+            "tool", output, ToolCallId: call.Id);
+        state.Messages.Add(toolMessage);
+        state.ToolMessages.Add(toolMessage);
+    }
+
+    /// <summary>Execução do batch de calls: grupos contíguos de
+    /// paralelizáveis (≥2) rodam gate→exec concorrente→publish na ordem;
+    /// calls mutáveis ou solitárias seguem o caminho sequencial.</summary>
+    private static async Task RunToolCallsAsync(
+        ToolLoopMutable state, IReadOnlyList<ProviderToolCall> calls,
+        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
+        BuiltinToolContext? builtinContext, int maxParallelTools,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        for (var k = 0; k < calls.Count;)
+        {
+            // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
+            var end = k;
+            while (end < calls.Count
+                && toolExecutor.IsSafeInParallel(tools, calls[end].Name))
+            {
+                end++;
+            }
+            if (end - k >= 2)
+            {
+                await RunParallelCallGroupAsync(
+                    state, calls, k, end - k, tools, toolExecutor,
+                    builtinContext, maxParallelTools, callbacks, log, ct);
+                k = end;
+                continue;
+            }
+            // Call sequencial (mutável ou paralelizável sozinha).
+            var call = calls[k];
+            var callSw = Stopwatch.StartNew();
+            var gate = await PrepareCallAsync(call, callbacks, ct);
+            var outcome = await ExecuteCallAsync(
+                call, gate, null, tools, toolExecutor,
+                builtinContext, log, ct);
+            callSw.Stop();
+            await PublishCallResultAsync(
+                state, call, gate, outcome, callSw.Elapsed,
+                callbacks, log, ct);
+            k = Math.Max(k + 1, end);
+        }
+    }
+
+    /// <summary>Grupo paralelo: (1) fase/gate sequenciais na ordem,
+    /// (2) execução concorrente com cap, (3) publicação sequencial na
+    /// ordem (SPEC-20261016-parallel-tool-calls).</summary>
+    private static async Task RunParallelCallGroupAsync(
+        ToolLoopMutable state, IReadOnlyList<ProviderToolCall> calls,
+        int start, int count,
+        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
+        BuiltinToolContext? builtinContext, int maxParallelTools,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        var gates = new ToolGateDecision[count];
+        for (var g = 0; g < count; g++)
+        {
+            gates[g] = await PrepareCallAsync(calls[start + g], callbacks, ct);
+        }
+        var outcomes = new ToolExecutionOutcome[count];
+        var elapsed = new TimeSpan[count];
+        var cap = new SemaphoreSlim(maxParallelTools);
+        var groupSw = Stopwatch.StartNew();
+        await Task.WhenAll(Enumerable.Range(0, count).Select(
+            async g =>
+            {
+                var callSw = Stopwatch.StartNew();
+                try
+                {
+                    outcomes[g] = await ExecuteCallAsync(
+                        calls[start + g], gates[g], cap,
+                        tools, toolExecutor, builtinContext, log, ct);
+                }
+                catch (Exception ex)
+                {
+                    outcomes[g] = new ToolExecutionOutcome(
+                        $"Erro: execução falhou: {ex.Message}");
+                }
+                elapsed[g] = callSw.Elapsed;
+            }));
+        for (var g = 0; g < count; g++)
+        {
+            await PublishCallResultAsync(
+                state, calls[start + g], gates[g], outcomes[g], elapsed[g],
+                callbacks, log, ct);
+        }
+        log?.LogInformation(
+            "Batch paralelo: {Count} tools em {Elapsed}ms.",
+            count, groupSw.ElapsedMilliseconds);
+    }
+
 
     /// <summary>
     /// Prompt sintético do último step (SPEC-20261016-agent-steps-usage

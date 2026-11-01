@@ -151,20 +151,10 @@ public sealed class GitHubService(
             var repos = new List<GitHubRepoResponse>();
             foreach (var el in doc.RootElement.EnumerateArray())
             {
-                var fullName = el.TryGetProperty("full_name", out var fn) ? fn.GetString() : null;
-                if (string.IsNullOrEmpty(fullName))
+                if (ParseRepo(el) is { } repo)
                 {
-                    continue;
+                    repos.Add(repo);
                 }
-
-                repos.Add(new GitHubRepoResponse(
-                    fullName,
-                    el.TryGetProperty("name", out var n) ? n.GetString() ?? fullName : fullName,
-                    el.TryGetProperty("private", out var p) && p.GetBoolean(),
-                    el.TryGetProperty("default_branch", out var db) ? db.GetString() ?? "main" : "main",
-                    el.TryGetProperty("html_url", out var h) ? h.GetString() ?? $"https://github.com/{fullName}" : $"https://github.com/{fullName}",
-                    el.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null,
-                    el.TryGetProperty("updated_at", out var u) ? u.GetString() : null));
             }
             return repos;
         }
@@ -172,6 +162,23 @@ public sealed class GitHubService(
         {
             return [];
         }
+    }
+
+    private static GitHubRepoResponse? ParseRepo(JsonElement el)
+    {
+        var fullName = el.TryGetProperty("full_name", out var fn) ? fn.GetString() : null;
+        if (string.IsNullOrEmpty(fullName))
+        {
+            return null;
+        }
+        return new GitHubRepoResponse(
+            fullName,
+            el.TryGetProperty("name", out var n) ? n.GetString() ?? fullName : fullName,
+            el.TryGetProperty("private", out var p) && p.GetBoolean(),
+            el.TryGetProperty("default_branch", out var db) ? db.GetString() ?? "main" : "main",
+            el.TryGetProperty("html_url", out var h) ? h.GetString() ?? $"https://github.com/{fullName}" : $"https://github.com/{fullName}",
+            el.TryGetProperty("description", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null,
+            el.TryGetProperty("updated_at", out var u) ? u.GetString() : null);
     }
 
     /// <summary>

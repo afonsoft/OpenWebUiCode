@@ -172,44 +172,62 @@ public class ToolExecutor(
 
         if (tool.Url?.StartsWith(BuiltinToolRegistry.UrlPrefix, StringComparison.OrdinalIgnoreCase) == true)
         {
-            if (builtinContext is null)
-            {
-                return new($"Erro: tool '{functionName}' requer contexto de execução built-in.");
-            }
-
-            var outcome = await builtins.ExecuteAsync(tool, argumentsJson, builtinContext, ct);
-            if (outcome is null)
-            {
-                return new($"Erro: tool '{functionName}' não é built-in registrada.");
-            }
-
-            var text = outcome.Refused
-                ? $"Erro: {outcome.RefuseReason ?? outcome.Text}"
-                : outcome.Text;
-            JsonElement? result = outcome.Result is null
-                ? null
-                : JsonSerializer.SerializeToElement(outcome.Result);
-
-            // Bound genérico pós-execução (SPEC-20261016-tool-output-bounding):
-            // output grande vai para {data}/tool-output/ e o modelo recebe
-            // head+tail com o path. Tool que já devolveu `truncated:true`
-            // (ex.: shell_exec com cap próprio) não é re-truncada.
-            if (!outcome.Refused
-                && toolOutputs is not null
-                && !AlreadyTruncated(result))
-            {
-                var bound = await toolOutputs.BoundAsync(
-                    text, functionName, ct);
-                if (bound.Truncated)
-                {
-                    result = WithBoundMetadata(result, bound);
-                    text = bound.Text;
-                }
-            }
-
-            return new(text, result);
+            return await ExecuteBuiltinAsync(
+                tool, functionName, argumentsJson, builtinContext, ct);
         }
 
+        return await PostHttpAsync(tool, functionName, argumentsJson, ct);
+    }
+
+    /// <summary>Caminho built-in: executa via
+    /// <see cref="BuiltinToolRegistry"/>, aplica o bound genérico de
+    /// output (SPEC-20261016-tool-output-bounding — tool que já devolveu
+    /// <c>truncated:true</c> não é re-truncada) e serializa o Result.</summary>
+    private async Task<ToolExecutionOutcome> ExecuteBuiltinAsync(
+        Tool tool, string functionName, string argumentsJson,
+        BuiltinToolContext? builtinContext, CancellationToken ct)
+    {
+        if (builtinContext is null)
+        {
+            return new($"Erro: tool '{functionName}' requer contexto de execução built-in.");
+        }
+
+        var outcome = await builtins.ExecuteAsync(tool, argumentsJson, builtinContext, ct);
+        if (outcome is null)
+        {
+            return new($"Erro: tool '{functionName}' não é built-in registrada.");
+        }
+
+        var text = outcome.Refused
+            ? $"Erro: {outcome.RefuseReason ?? outcome.Text}"
+            : outcome.Text;
+        JsonElement? result = outcome.Result is null
+            ? null
+            : JsonSerializer.SerializeToElement(outcome.Result);
+
+        if (!outcome.Refused
+            && toolOutputs is not null
+            && !AlreadyTruncated(result))
+        {
+            var bound = await toolOutputs.BoundAsync(
+                text, functionName, ct);
+            if (bound.Truncated)
+            {
+                result = WithBoundMetadata(result, bound);
+                text = bound.Text;
+            }
+        }
+
+        return new(text, result);
+    }
+
+    /// <summary>Caminho HTTP: POST do argumentsJson na Url da tool com
+    /// cap de saída — falhas de transporte viram texto de erro para o
+    /// modelo, nunca exceção.</summary>
+    private async Task<ToolExecutionOutcome> PostHttpAsync(
+        Tool tool, string functionName, string argumentsJson,
+        CancellationToken ct)
+    {
         try
         {
             using var http = httpClientFactory.CreateClient();

@@ -405,53 +405,69 @@ public static class WorkspaceFileEndpoints
         }
         var workdir = w!;
 
-        var from = WorkspaceFiles.ResolveInsideFinal(workdir, request.From, out var error);
-        if (from is null)
+        var (from, to, invalid) = ResolveRenamePaths(workdir, request);
+        if (invalid is not null)
         {
-            return Results.BadRequest(new { detail = error });
-        }
-        var to = WorkspaceFiles.ResolveInsideFinal(workdir, request.To, out error);
-        if (to is null)
-        {
-            return Results.BadRequest(new { detail = error });
-        }
-        if (IsRoot(workdir, from) || IsRoot(workdir, to))
-        {
-            return Results.BadRequest(new { detail = "A raiz do workspace não pode ser renomeada." });
-        }
-        if (!File.Exists(from) && !Directory.Exists(from))
-        {
-            return NotFoundResult();
-        }
-        if (File.Exists(to) || Directory.Exists(to))
-        {
-            return Results.Conflict(new { ok = false, error = "Destino já existe." });
-        }
-        if (Directory.Exists(from) &&
-            to.StartsWith(from.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
-                StringComparison.Ordinal))
-        {
-            return Results.Conflict(new { ok = false, error = "Não é possível mover um diretório para dentro de si mesmo." });
+            return invalid;
         }
 
-        var parent = Path.GetDirectoryName(to);
+        var parent = Path.GetDirectoryName(to!);
         if (!string.IsNullOrEmpty(parent))
         {
             Directory.CreateDirectory(parent);
         }
         if (File.Exists(from))
         {
-            File.Move(from, to);
+            File.Move(from!, to!);
         }
         else
         {
-            Directory.Move(from, to);
+            Directory.Move(from!, to!);
         }
 
         logger.LogInformation("workspace-file rename user={UserId} from={From} to={To}",
-            uid, WorkspaceFiles.RelativeOf(workdir, from),
-            WorkspaceFiles.RelativeOf(workdir, to));
-        return Results.Ok(new { ok = true, path = WorkspaceFiles.RelativeOf(workdir, to) });
+            uid, WorkspaceFiles.RelativeOf(workdir, from!),
+            WorkspaceFiles.RelativeOf(workdir, to!));
+        return Results.Ok(new { ok = true, path = WorkspaceFiles.RelativeOf(workdir, to!) });
+    }
+
+    /// <summary>Resolve e valida origem/destino do rename — jail, raiz,
+    /// existência e não-recursão de diretório.</summary>
+    private static (string? From, string? To, IResult? Error) ResolveRenamePaths(
+        string workdir, WorkspaceFileRenameRequest request)
+    {
+        var from = WorkspaceFiles.ResolveInsideFinal(workdir, request.From, out var error);
+        if (from is null)
+        {
+            return (null, null, Results.BadRequest(new { detail = error }));
+        }
+        var to = WorkspaceFiles.ResolveInsideFinal(workdir, request.To, out error);
+        if (to is null)
+        {
+            return (null, null, Results.BadRequest(new { detail = error }));
+        }
+        if (IsRoot(workdir, from) || IsRoot(workdir, to))
+        {
+            return (null, null, Results.BadRequest(
+                new { detail = "A raiz do workspace não pode ser renomeada." }));
+        }
+        if (!File.Exists(from) && !Directory.Exists(from))
+        {
+            return (null, null, NotFoundResult());
+        }
+        if (File.Exists(to) || Directory.Exists(to))
+        {
+            return (null, null, Results.Conflict(
+                new { ok = false, error = "Destino já existe." }));
+        }
+        if (Directory.Exists(from) &&
+            to.StartsWith(from.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                StringComparison.Ordinal))
+        {
+            return (null, null, Results.Conflict(
+                new { ok = false, error = "Não é possível mover um diretório para dentro de si mesmo." }));
+        }
+        return (from, to, null);
     }
 
     // ---------- POST /delete ----------
@@ -553,33 +569,43 @@ public static class WorkspaceFileEndpoints
                 truncated = true;
                 break;
             }
-            string[] lines;
-            try
-            {
-                lines = await File.ReadAllLinesAsync(file, ct);
-            }
-            catch (IOException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
-
-            var rel = WorkspaceFiles.RelativeOf(workdir, file);
-            for (var i = 0; i < lines.Length; i++)
-            {
-                var col = lines[i].IndexOf(q, StringComparison.OrdinalIgnoreCase);
-                if (col < 0)
-                {
-                    continue;
-                }
-                var text = lines[i].Trim();
-                matches.Add(new WorkspaceSearchMatchItem(
-                    rel, i, col, text.Length > 300 ? text[..300] : text));
-                if (matches.Count >= SearchMaxMatches)
-                {
-                    truncated = true;
-                    break;
-                }
-            }
+            truncated = await ScanFileForMatchAsync(
+                file, q, workdir, matches, ct) || truncated;
         }
         return Results.Ok(new WorkspaceSearchResponse(matches, truncated));
+    }
+
+    /// <summary>Escaneia um arquivo — true quando o cap de matches
+    /// estourou dentro dele.</summary>
+    private static async Task<bool> ScanFileForMatchAsync(
+        string file, string q, string workdir,
+        List<WorkspaceSearchMatchItem> matches, CancellationToken ct)
+    {
+        string[] lines;
+        try
+        {
+            lines = await File.ReadAllLinesAsync(file, ct);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+
+        var rel = WorkspaceFiles.RelativeOf(workdir, file);
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var col = lines[i].IndexOf(q, StringComparison.OrdinalIgnoreCase);
+            if (col < 0)
+            {
+                continue;
+            }
+            var text = lines[i].Trim();
+            matches.Add(new WorkspaceSearchMatchItem(
+                rel, i, col, text.Length > 300 ? text[..300] : text));
+            if (matches.Count >= SearchMaxMatches)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>DFS de arquivos pesquisáveis: pula dirs colapsados, symlinks,

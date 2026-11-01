@@ -72,6 +72,21 @@ public static class WorkspaceFiles
             return null;
         }
 
+        var resolved = ResolveFinalLink(full, workspace);
+        if (resolved is null || !AncestorsInside(resolved, workspace))
+        {
+            error = $"Caminho '{relative}' aponta para fora do workspace — negado.";
+            return null;
+        }
+
+        error = string.Empty;
+        return resolved;
+    }
+
+    /// <summary>Resolve o link do nó final quando ele é symlink —
+    /// <c>null</c> = o alvo real escapa do jail.</summary>
+    private static string? ResolveFinalLink(string full, string workspace)
+    {
         FileSystemInfo? node = null;
         if (Directory.Exists(full))
         {
@@ -81,17 +96,21 @@ public static class WorkspaceFiles
         {
             node = new FileInfo(full);
         }
-        if (node?.LinkTarget is not null)
+        if (node?.LinkTarget is null)
         {
-            var target = node.ResolveLinkTarget(returnFinalTarget: true);
-            if (target is null || !CommandRiskClassifier.PathInside(workspace, target.FullName))
-            {
-                error = $"Caminho '{relative}' aponta para fora do workspace — negado.";
-                return null;
-            }
-            full = target.FullName;
+            return full;
         }
+        var target = node.ResolveLinkTarget(returnFinalTarget: true);
+        return target is not null
+            && CommandRiskClassifier.PathInside(workspace, target.FullName)
+            ? target.FullName
+            : null;
+    }
 
+    /// <summary>Cada ancestral do alvo, até a raiz do workspace, não pode
+    /// ser um link que escape do jail.</summary>
+    private static bool AncestorsInside(string full, string workspace)
+    {
         var root = Path.GetFullPath(workspace)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
@@ -107,15 +126,12 @@ public static class WorkspaceFiles
                 var target = ancestor.ResolveLinkTarget(returnFinalTarget: true);
                 if (target is null || !CommandRiskClassifier.PathInside(workspace, target.FullName))
                 {
-                    error = $"Caminho '{relative}' aponta para fora do workspace — negado.";
-                    return null;
+                    return false;
                 }
             }
             ancestor = ancestor.Parent;
         }
-
-        error = string.Empty;
-        return full;
+        return true;
     }
 
     /// <summary>True quando o conteúdo parece binário (NUL nos primeiros 8KB).</summary>
@@ -144,83 +160,91 @@ public static class WorkspaceFiles
         var i = 0;
         while (i < pattern.Length)
         {
-            var c = pattern[i];
-            switch (c)
-            {
-                case '*':
-                    if (i + 1 < pattern.Length && pattern[i + 1] == '*')
-                    {
-                        // '**' atravessa diretórios; '**/' também casa raiz.
-                        sb.Append(".*");
-                        i += 2;
-                        if (i < pattern.Length && pattern[i] == '/')
-                        {
-                            sb.Append('?');
-                            i++;
-                        }
-                    }
-                    else
-                    {
-                        sb.Append("[^/]*");
-                        i++;
-                    }
-
-                    break;
-                case '?':
-                    sb.Append("[^/]");
-                    i++;
-                    break;
-                case '[':
-                    var end = pattern.IndexOf(']', i + 1);
-                    if (end < 0)
-                    {
-                        sb.Append("\\[");
-                        i++;
-                    }
-                    else
-                    {
-                        var cls = pattern[(i + 1)..end];
-                        sb.Append('[');
-                        if (cls.StartsWith('!'))
-                        {
-                            sb.Append('^').Append(cls[1..]);
-                        }
-                        else
-                        {
-                            sb.Append(cls);
-                        }
-
-                        sb.Append(']');
-                        i = end + 1;
-                    }
-
-                    break;
-                case '{':
-                    var close = pattern.IndexOf('}', i + 1);
-                    if (close < 0)
-                    {
-                        sb.Append("\\{");
-                        i++;
-                    }
-                    else
-                    {
-                        var alts = pattern[(i + 1)..close]
-                            .Split(',')
-                            .Select(Regex.Escape);
-                        sb.Append('(').Append(string.Join('|', alts)).Append(')');
-                        i = close + 1;
-                    }
-
-                    break;
-                default:
-                    sb.Append(Regex.Escape(c.ToString()));
-                    i++;
-                    break;
-            }
+            i = AppendGlobToken(sb, pattern, i);
         }
 
         sb.Append('$');
         return new Regex(sb.ToString(), RegexOptions.Compiled | RegexOptions.IgnoreCase, RegexDefaults.MatchTimeout);
+    }
+
+    /// <summary>Emite o regex do token em <paramref name="i"/> e devolve a
+    /// próxima posição do padrão.</summary>
+    private static int AppendGlobToken(StringBuilder sb, string pattern, int i)
+    {
+        return pattern[i] switch
+        {
+            '*' => AppendGlobStar(sb, pattern, i),
+            '?' => AppendAndNext(sb, "[^/]", i + 1),
+            '[' => AppendCharClass(sb, pattern, i),
+            '{' => AppendAlternation(sb, pattern, i),
+            var c => AppendAndNext(sb, Regex.Escape(c.ToString()), i + 1),
+        };
+    }
+
+    private static int AppendAndNext(StringBuilder sb, string text, int next)
+    {
+        sb.Append(text);
+        return next;
+    }
+
+    private static int AppendGlobStar(StringBuilder sb, string pattern, int i)
+    {
+        if (i + 1 < pattern.Length && pattern[i + 1] == '*')
+        {
+            // '**' atravessa diretórios; '**/' também casa raiz.
+            sb.Append(".*");
+            i += 2;
+            if (i < pattern.Length && pattern[i] == '/')
+            {
+                sb.Append('?');
+                i++;
+            }
+
+            return i;
+        }
+
+        sb.Append("[^/]*");
+        return i + 1;
+    }
+
+    private static int AppendCharClass(StringBuilder sb, string pattern, int i)
+    {
+        var end = pattern.IndexOf(']', i + 1);
+        if (end < 0)
+        {
+            sb.Append("\\[");
+            return i + 1;
+        }
+
+        var cls = pattern[(i + 1)..end];
+        sb.Append('[');
+        if (cls.StartsWith('!'))
+        {
+            sb.Append('^').Append(cls[1..]);
+        }
+        else
+        {
+            sb.Append(cls);
+        }
+
+        sb.Append(']');
+        return end + 1;
+    }
+
+    private static int AppendAlternation(StringBuilder sb, string pattern, int i)
+    {
+        var close = pattern.IndexOf('}', i + 1);
+        if (close < 0)
+        {
+            sb.Append("\\{");
+            return i + 1;
+        }
+
+        var alts = pattern[(i + 1)..close]
+            .Split(',')
+            .Select(Regex.Escape);
+        sb.Append('(').Append(string.Join('|', alts)).Append(')');
+        return close + 1;
     }
 
     /// <summary>Caminho relativo (separador '/') de <paramref name="full"/> ao workspace.</summary>
@@ -239,17 +263,7 @@ public static class WorkspaceFiles
         while (stack.Count > 0 && count < MaxEntries)
         {
             var (dir, depth) = stack.Pop();
-            IEnumerable<string> entries;
-            try
-            {
-                entries = Directory.EnumerateFileSystemEntries(dir);
-            }
-            catch (Exception) when (depth >= 0)
-            {
-                continue;
-            }
-
-            foreach (var entry in entries)
+            foreach (var entry in SafeList(dir))
             {
                 if (count >= MaxEntries)
                 {
@@ -258,17 +272,36 @@ public static class WorkspaceFiles
 
                 if (Directory.Exists(entry))
                 {
-                    if (depth < maxDepth && !entry.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
-                    {
-                        stack.Push((entry, depth + 1));
-                    }
-
+                    PushSubDir(stack, entry, depth, maxDepth);
                     continue;
                 }
 
                 count++;
                 yield return entry;
             }
+        }
+    }
+
+    /// <summary>Lista um diretório; falha de IO rende enumeração vazia —
+    /// a varredura segue com os demais ramos.</summary>
+    private static IEnumerable<string> SafeList(string dir)
+    {
+        try
+        {
+            return Directory.EnumerateFileSystemEntries(dir);
+        }
+        catch (Exception)
+        {
+            return [];
+        }
+    }
+
+    private static void PushSubDir(
+        Stack<(string Dir, int Depth)> stack, string entry, int depth, int maxDepth)
+    {
+        if (depth < maxDepth && !entry.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            stack.Push((entry, depth + 1));
         }
     }
 }

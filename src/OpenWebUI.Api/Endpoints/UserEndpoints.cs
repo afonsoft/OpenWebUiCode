@@ -48,29 +48,9 @@ public static class UserEndpoints
             return Results.Forbid();
         }
 
-        var users = db.Users.AsNoTracking();
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            var term = query.Trim().ToLowerInvariant();
-            users = users.Where(u => u.Name.ToLower().Contains(term) || u.Email.Contains(term));
-        }
-        if (!string.IsNullOrWhiteSpace(filter))
-        {
-            var role = filter.Trim().ToLowerInvariant();
-            users = users.Where(u => u.Role == role);
-        }
-
-        var ascending = string.Equals(direction, "asc", StringComparison.OrdinalIgnoreCase);
-        users = order_by?.ToLowerInvariant() switch
-        {
-            "name" => ascending ? users.OrderBy(u => u.Name) : users.OrderByDescending(u => u.Name),
-            "email" => ascending ? users.OrderBy(u => u.Email) : users.OrderByDescending(u => u.Email),
-            "role" => ascending ? users.OrderBy(u => u.Role) : users.OrderByDescending(u => u.Role),
-            "updated_at" or "last_active_at" => ascending
-                ? users.OrderBy(u => u.UpdatedAt)
-                : users.OrderByDescending(u => u.UpdatedAt),
-            _ => ascending ? users.OrderBy(u => u.CreatedAt) : users.OrderByDescending(u => u.CreatedAt),
-        };
+        var users = ApplyFilters(db.Users.AsNoTracking(), query, filter);
+        users = ApplyOrder(users, order_by,
+            string.Equals(direction, "asc", StringComparison.OrdinalIgnoreCase));
 
         var total = await users.CountAsync(ct);
         page = Math.Max(1, page);
@@ -85,6 +65,37 @@ public static class UserEndpoints
 
         return Results.Ok(new { users = list, total, page });
     }
+
+    /// <summary>Filtro por termo (nome/email) e role.</summary>
+    private static IQueryable<User> ApplyFilters(
+        IQueryable<User> users, string? query, string? filter)
+    {
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var term = query.Trim().ToLowerInvariant();
+            users = users.Where(u => u.Name.ToLower().Contains(term) || u.Email.Contains(term));
+        }
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            var role = filter.Trim().ToLowerInvariant();
+            users = users.Where(u => u.Role == role);
+        }
+        return users;
+    }
+
+    /// <summary>Ordenação por coluna de listagem (default created_at).</summary>
+    private static IQueryable<User> ApplyOrder(
+        IQueryable<User> users, string? orderBy, bool ascending) =>
+        orderBy?.ToLowerInvariant() switch
+        {
+            "name" => ascending ? users.OrderBy(u => u.Name) : users.OrderByDescending(u => u.Name),
+            "email" => ascending ? users.OrderBy(u => u.Email) : users.OrderByDescending(u => u.Email),
+            "role" => ascending ? users.OrderBy(u => u.Role) : users.OrderByDescending(u => u.Role),
+            "updated_at" or "last_active_at" => ascending
+                ? users.OrderBy(u => u.UpdatedAt)
+                : users.OrderByDescending(u => u.UpdatedAt),
+            _ => ascending ? users.OrderBy(u => u.CreatedAt) : users.OrderByDescending(u => u.CreatedAt),
+        };
 
     private static IResult ListActiveAsync(HttpContext http)
     {

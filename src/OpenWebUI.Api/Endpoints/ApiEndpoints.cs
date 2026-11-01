@@ -228,32 +228,52 @@ public static class ApiEndpoints
         var models = await providers.ListModelsAsync(ct);
 
         // Inclui modelos personalizados ativos do workspace (do usuário + públicos).
+        await AddCustomModelsAsync(models, user, db, ct);
+        // Pipes de servidores de pipelines registrados (expostos como pipeline:{id}).
+        await AddPipelineModelsAsync(models, db, pipelines, ct);
+
+        // Capacidades: override admin → reportado pelo provider → catálogo.
+        models = await capabilities.EnrichAsync(models, ct);
+        return new ModelListResponse(models);
+    }
+
+    /// <summary>Modelos custom do workspace — variants e aliases viram
+    /// entradas do seletor resolvendo ao entry real (SPEC-20261018).</summary>
+    private static async Task AddCustomModelsAsync(
+        List<ModelInfo> models, User user, AppDbContext db, CancellationToken ct)
+    {
         var custom = await db.ModelEntries.AsNoTracking()
             .Where(m => m.IsActive && (m.UserId == user.Id || m.UserId == "public"))
             .ToListAsync(ct);
 
         foreach (var entry in custom)
         {
-            if (await ModelEndpoints.HasModelAccessAsync(user, entry, db, ct))
+            if (!await ModelEndpoints.HasModelAccessAsync(user, entry, db, ct))
             {
-                models.Add(new ModelInfo(entry.Id, entry.Name, "custom", OpenWebUiScope));
-                // SPEC-20261018-model-variants RF-001/002/004: variants
-                // (declaradas ou sintéticas por reasoning.effort) e aliases
-                // aparecem como entradas do seletor resolvendo ao entry real.
-                foreach (var v in ModelVariantService.ListVariantIds(entry.MetaJson))
-                {
-                    models.Add(new ModelInfo(
-                        $"{entry.Id}#{v}", $"{entry.Name}#{v}", "custom", OpenWebUiScope));
-                }
-                foreach (var alias in ModelVariantService.ListAliases(entry.MetaJson))
-                {
-                    models.Add(new ModelInfo(
-                        alias, $"{entry.Name} ({alias})", "custom", OpenWebUiScope));
-                }
+                continue;
+            }
+            models.Add(new ModelInfo(entry.Id, entry.Name, "custom", OpenWebUiScope));
+            // SPEC-20261018-model-variants RF-001/002/004: variants
+            // (declaradas ou sintéticas por reasoning.effort) e aliases
+            // aparecem como entradas do seletor resolvendo ao entry real.
+            foreach (var v in ModelVariantService.ListVariantIds(entry.MetaJson))
+            {
+                models.Add(new ModelInfo(
+                    $"{entry.Id}#{v}", $"{entry.Name}#{v}", "custom", OpenWebUiScope));
+            }
+            foreach (var alias in ModelVariantService.ListAliases(entry.MetaJson))
+            {
+                models.Add(new ModelInfo(
+                    alias, $"{entry.Name} ({alias})", "custom", OpenWebUiScope));
             }
         }
+    }
 
-        // Pipes de servidores de pipelines registrados (expostos como pipeline:{id}).
+    /// <summary>Pipes dos servidores registrados → <c>pipeline:{id}</c>.</summary>
+    private static async Task AddPipelineModelsAsync(
+        List<ModelInfo> models, AppDbContext db,
+        PipelineClientService pipelines, CancellationToken ct)
+    {
         var servers = await db.PipelineServers.AsNoTracking().ToListAsync(ct);
         foreach (var server in servers)
         {
@@ -264,10 +284,6 @@ public static class ApiEndpoints
                     p => new ModelInfo($"pipeline:{p.Id}", p.Name, "pipeline", OpenWebUiScope)));
             }
         }
-
-        // Capacidades: override admin → reportado pelo provider → catálogo.
-        models = await capabilities.EnrichAsync(models, ct);
-        return new ModelListResponse(models);
     }
 
     private static async Task ChatCompletionsAsync(
@@ -303,33 +319,10 @@ public static class ApiEndpoints
         Task EmitAsync(string line) { writer.WriteLine(line); writer.WriteLine(); return writer.FlushAsync(http.RequestAborted); }
 
         // Modelos pipeline:{id} são roteados ao servidor de pipelines externo.
-        if (request.Model.StartsWith("pipeline:", StringComparison.Ordinal))
+        if (request.Model.StartsWith("pipeline:", StringComparison.Ordinal)
+            && await RoutePipelineModelAsync(
+                http, writer, request, db, pipelines, ct))
         {
-            var pipeId = request.Model["pipeline:".Length..];
-            var (server, body, valvesJson) = await ChatPipeline.PreparePipelineRouteAsync(
-                request, db, pipelines, ct);
-            if (server is null)
-            {
-                http.Response.StatusCode = 404;
-                await writer.WriteLineAsync(
-                    JsonSerializer.Serialize(new { error = $"Pipe '{pipeId}' não encontrado." }));
-                await writer.FlushAsync(http.RequestAborted);
-                return;
-            }
-
-            var proxied = await pipelines.RouteCompletionAsync(server, body, valvesJson, ct);
-            if (proxied.Response is null)
-            {
-                http.Response.StatusCode = proxied.StatusCode;
-                await writer.WriteLineAsync(
-                    JsonSerializer.Serialize(new { error = $"Falha no servidor de pipelines: {proxied.Error}" }));
-                await writer.FlushAsync(http.RequestAborted);
-                return;
-            }
-
-            using var upstream = proxied.Response;
-            http.Response.StatusCode = (int)upstream.StatusCode;
-            await upstream.Content.CopyToAsync(http.Response.Body, ct);
             return;
         }
 
@@ -374,48 +367,13 @@ public static class ApiEndpoints
             var tools = request.ToolIds is { Count: > 0 }
                 ? await toolExecutor.LoadEnabledAsync(user.Id, request.ToolIds, ct)
                 : null;
-            if (tools is { Count: > 0 })
+            if (tools is { Count: > 0 }
+                && await RunOpenApiToolLoopAsync(
+                    http, writer, effective, user, tools,
+                    toolExecutor, providers, config, repos, env,
+                    outletRules, ct))
             {
-                effective = effective with
-                {
-                    Tools = tools
-                        .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
-                        .ToList(),
-                };
-                var builtinContext = new BuiltinToolContext(
-                    user.Id,
-                    ChatId: null,
-                    RunId: null,
-                    // Com repo vinculado o workdir vira o checkout do repo (mesmo jail).
-                    await repos.ResolveWorkdirAsync(user.Id, ct),
-                    Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id),
-                    Model: effective.Model,
-                    AttachedRefs: effective.AttachedRefs);
-                var outcome = await ChatPipeline.RunToolLoopAsync(
-                    effective, tools, toolExecutor, providers, ct,
-                    new ChatPipeline.ToolLoopOptions(
-                        BuiltinContext: builtinContext, UserId: user.Id,
-                        MaxSteps: await config.GetAsync<int?>(
-                            $"u:{user.Id}:agentLoop.maxRounds", null, ct)
-                            ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct),
-                        MaxParallelTools: toolExecutor.MaxParallel));
-                if (outcome?.FinalContent is { } finished)
-                {
-                    foreach (var (regex, replacement) in outletRules)
-                    {
-                        finished = regex.Replace(finished, replacement);
-                    }
-                    var chunk = JsonSerializer.Serialize(new
-                    {
-                        choices = new[] { new { index = 0, delta = new { content = finished } } },
-                    });
-                    await writer.WriteLineAsync($"data: {chunk}");
-                    await writer.WriteLineAsync();
-                    await writer.WriteLineAsync("data: [DONE]");
-                    await writer.WriteLineAsync();
-                    await writer.FlushAsync(http.RequestAborted);
-                    return;
-                }
+                return;
             }
 
             await foreach (var line in providers.StreamCompletionAsync(effective, user.Id, ct))
@@ -439,6 +397,94 @@ public static class ApiEndpoints
             // timeout do HttpClient upstream; o da própria ct propaga.
             await WriteSseErrorAsync(writer, $"Falha ao contactar o provedor: {ex.Message}", http.RequestAborted);
         }
+    }
+
+    /// <summary>Rota <c>pipeline:{id}</c> — proxy ao servidor de pipelines;
+    /// true quando o request foi tratado (sucesso ou erro já escrito).</summary>
+    private static async Task<bool> RoutePipelineModelAsync(
+        HttpContext http, StreamWriter writer, ChatCompletionRequest request,
+        AppDbContext db, PipelineClientService pipelines, CancellationToken ct)
+    {
+        var pipeId = request.Model["pipeline:".Length..];
+        var (server, body, valvesJson) = await ChatPipeline.PreparePipelineRouteAsync(
+            request, db, pipelines, ct);
+        if (server is null)
+        {
+            http.Response.StatusCode = 404;
+            await writer.WriteLineAsync(
+                JsonSerializer.Serialize(new { error = $"Pipe '{pipeId}' não encontrado." }));
+            await writer.FlushAsync(http.RequestAborted);
+            return true;
+        }
+
+        var proxied = await pipelines.RouteCompletionAsync(server, body, valvesJson, ct);
+        if (proxied.Response is null)
+        {
+            http.Response.StatusCode = proxied.StatusCode;
+            await writer.WriteLineAsync(
+                JsonSerializer.Serialize(new { error = $"Falha no servidor de pipelines: {proxied.Error}" }));
+            await writer.FlushAsync(http.RequestAborted);
+            return true;
+        }
+
+        using var upstream = proxied.Response;
+        http.Response.StatusCode = (int)upstream.StatusCode;
+        await upstream.Content.CopyToAsync(http.Response.Body, ct);
+        return true;
+    }
+
+    /// <summary>Tool loop do /api/chat/completions — true quando o loop
+    /// produziu conteúdo final (já emitido com outlet rules + [DONE]).</summary>
+    private static async Task<bool> RunOpenApiToolLoopAsync(
+        HttpContext http, StreamWriter writer,
+        ChatCompletionRequest effective, User user,
+        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
+        ProviderService providers, ConfigService config,
+        WorkspaceRepoService repos, IWebHostEnvironment env,
+        List<(System.Text.RegularExpressions.Regex Regex, string Replacement)> outletRules,
+        CancellationToken ct)
+    {
+        effective = effective with
+        {
+            Tools = tools
+                .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
+                .ToList(),
+        };
+        var builtinContext = new BuiltinToolContext(
+            user.Id,
+            ChatId: null,
+            RunId: null,
+            // Com repo vinculado o workdir vira o checkout do repo (mesmo jail).
+            await repos.ResolveWorkdirAsync(user.Id, ct),
+            Path.Join(DataPaths.Root(env.ContentRootPath), "uploads", user.Id),
+            Model: effective.Model,
+            AttachedRefs: effective.AttachedRefs);
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            effective, tools, toolExecutor, providers, ct,
+            new ChatPipeline.ToolLoopOptions(
+                BuiltinContext: builtinContext, UserId: user.Id,
+                MaxSteps: await config.GetAsync<int?>(
+                    $"u:{user.Id}:agentLoop.maxRounds", null, ct)
+                    ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct),
+                MaxParallelTools: toolExecutor.MaxParallel));
+        if (outcome?.FinalContent is not { } finished)
+        {
+            return false;
+        }
+        foreach (var (regex, replacement) in outletRules)
+        {
+            finished = regex.Replace(finished, replacement);
+        }
+        var chunk = JsonSerializer.Serialize(new
+        {
+            choices = new[] { new { index = 0, delta = new { content = finished } } },
+        });
+        await writer.WriteLineAsync($"data: {chunk}");
+        await writer.WriteLineAsync();
+        await writer.WriteLineAsync("data: [DONE]");
+        await writer.WriteLineAsync();
+        await writer.FlushAsync(http.RequestAborted);
+        return true;
     }
 
     private static async Task WriteSseErrorAsync(StreamWriter writer, string message, CancellationToken ct)

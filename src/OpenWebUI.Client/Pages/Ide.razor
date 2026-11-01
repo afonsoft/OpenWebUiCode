@@ -352,7 +352,14 @@ else
                 files.Add(e.Path);
             }
         }
-        // Recursa só dirs na borda da janela de 3 níveis (filhos fora dela).
+        await RecurseEdgeDirsAsync(dir, tree, files, seen, visited, depth);
+    }
+
+    /// <summary>Recursa só dirs na borda da janela de 3 níveis (filhos fora dela).</summary>
+    private async Task RecurseEdgeDirsAsync(string dir,
+        WorkspaceFileTreeResponse tree, List<string> files,
+        HashSet<string> seen, HashSet<string> visited, int depth)
+    {
         var dirSeg = string.IsNullOrEmpty(dir) ? 0 : dir.Split('/').Length;
         foreach (var e in tree.Entries)
         {

@@ -289,15 +289,7 @@ public sealed class ContextCompactionService(
     {
         try
         {
-            var t = await ThresholdsAsync(ct);
-            if (tailScale < 1.0)
-            {
-                t = new Thresholds(
-                    t.TotalChars,
-                    Math.Max(4, (int)(t.TailMessages * tailScale)),
-                    Math.Max(2000, (int)(t.TailChars * tailScale)),
-                    t.ThresholdTokens);
-            }
+            var t = await ScaledThresholdsAsync(tailScale, ct);
             var total = history.Sum(m => (m.Content?.Length ?? 0) + (m.ToolCallsJson?.Length ?? 0));
             // RF-001: dispara quando tokens OU chars estouram o limiar —
             // a KV de chars sobrevive como override para compactar antes.
@@ -312,36 +304,9 @@ public sealed class ContextCompactionService(
             {
                 return false;
             }
+            var (turnPrefix, summaryEnd) = ComputeTurnSplit(history, headEnd, chatId);
 
-            // RF-004: quando o corte deixou mensagens tool órfãs no head
-            // (SplitIndex avançou por um bloco tool), o resumo cobre só
-            // até o início do turno; o trecho do turno já executado vira
-            // prefixo textual separado — par tool_call/tool_result nunca parte.
-            var turnStart = headEnd;
-            while (turnStart > 0 && history[turnStart - 1].Role == "tool")
-            {
-                turnStart--;
-            }
-            if (turnStart > 0 && turnStart < headEnd
-                && history[turnStart - 1].ToolCallsJson is not null)
-            {
-                turnStart--;
-            }
-            var turnPrefix = turnStart > 0 && turnStart < headEnd
-                ? RenderTurnPrefix(history, turnStart, headEnd, chatId)
-                : null;
-            var summaryEnd = turnPrefix is null ? headEnd : turnStart;
-
-            var prev = await config.GetAsync<CompactionState?>(KvKey(chatId), null, ct);
-            var newHeadStart = prev is { Cutoff: > 0 } && prev.Cutoff < summaryEnd
-                ? prev.Cutoff : 0;
-            // Poda mecânica do head antes do resumo (RF-001): tool results
-            // elidíveis viram marcadores — o summarizer não paga por lixo.
-            var head = ContextPruner.Prune(
-                history.Skip(newHeadStart).Take(summaryEnd - newHeadStart).ToList(), chatId);
-            var transcript = (prev is not null && newHeadStart > 0
-                    ? $"Resumo anterior já compactado: {prev.Summary}\n\n" : string.Empty)
-                + string.Join("\n\n", head.Select(m => $"{m.Role}: {m.Content}"));
+            var transcript = await BuildTranscriptAsync(chatId, history, summaryEnd, ct);
 
             // Papel "memory" (SPEC-20261013-model-roles): resumo roda no
             // modelo do papel quando configurado; senão no modelo da run.
@@ -363,6 +328,62 @@ public sealed class ContextCompactionService(
             logger.LogWarning(ex, "Compactação de contexto falhou para chat {ChatId}.", chatId);
             return false;
         }
+    }
+
+    /// <summary>Limiares com escala do tail (retry de overflow, RF-004).</summary>
+    private async Task<Thresholds> ScaledThresholdsAsync(
+        double tailScale, CancellationToken ct)
+    {
+        var t = await ThresholdsAsync(ct);
+        return tailScale >= 1.0
+            ? t
+            : new Thresholds(
+                t.TotalChars,
+                Math.Max(4, (int)(t.TailMessages * tailScale)),
+                Math.Max(2000, (int)(t.TailChars * tailScale)),
+                t.ThresholdTokens);
+    }
+
+    /// <summary>
+    /// RF-004: quando o corte deixou mensagens tool órfãs no head
+    /// (<see cref="SplitIndex"/> avançou por um bloco tool), o resumo cobre só
+    /// até o início do turno; o trecho do turno já executado vira prefixo
+    /// textual separado — par tool_call/tool_result nunca parte.
+    /// </summary>
+    private static (string? TurnPrefix, int SummaryEnd) ComputeTurnSplit(
+        IReadOnlyList<ChatCompletionMessage> history, int headEnd, string chatId)
+    {
+        var turnStart = headEnd;
+        while (turnStart > 0 && history[turnStart - 1].Role == "tool")
+        {
+            turnStart--;
+        }
+        if (turnStart > 0 && turnStart < headEnd
+            && history[turnStart - 1].ToolCallsJson is not null)
+        {
+            turnStart--;
+        }
+        var turnPrefix = turnStart > 0 && turnStart < headEnd
+            ? RenderTurnPrefix(history, turnStart, headEnd, chatId)
+            : null;
+        return (turnPrefix, turnPrefix is null ? headEnd : turnStart);
+    }
+
+    /// <summary>Transcript do head podado + resumo anterior (se houver).</summary>
+    private async Task<string> BuildTranscriptAsync(
+        string chatId, IReadOnlyList<ChatCompletionMessage> history,
+        int summaryEnd, CancellationToken ct)
+    {
+        var prev = await config.GetAsync<CompactionState?>(KvKey(chatId), null, ct);
+        var newHeadStart = prev is { Cutoff: > 0 } && prev.Cutoff < summaryEnd
+            ? prev.Cutoff : 0;
+        // Poda mecânica do head antes do resumo (RF-001): tool results
+        // elidíveis viram marcadores — o summarizer não paga por lixo.
+        var head = ContextPruner.Prune(
+            history.Skip(newHeadStart).Take(summaryEnd - newHeadStart).ToList(), chatId);
+        return (prev is not null && newHeadStart > 0
+                ? $"Resumo anterior já compactado: {prev.Summary}\n\n" : string.Empty)
+            + string.Join("\n\n", head.Select(m => $"{m.Role}: {m.Content}"));
     }
 
     /// <summary>

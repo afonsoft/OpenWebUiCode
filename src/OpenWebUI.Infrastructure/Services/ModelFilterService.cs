@@ -102,61 +102,71 @@ public static class ModelFilterService
             var i = 0;
             foreach (var item in filters.EnumerateArray())
             {
-                i++;
-                if (item.ValueKind != JsonValueKind.Object
-                    || !item.TryGetProperty("type", out var typeEl)
-                    || typeEl.ValueKind != JsonValueKind.String)
+                if (ValidateFilterItem(item, ++i) is { } itemError)
                 {
-                    return $"Filtro {i} inválido: \"type\" obrigatório.";
-                }
-                var type = typeEl.GetString()!;
-                var hasConfig = item.TryGetProperty("config", out var cfg)
-                    && cfg.ValueKind == JsonValueKind.Object;
-                switch (type)
-                {
-                    case SystemInject:
-                        if (!hasConfig
-                            || !cfg.TryGetProperty("text", out var text)
-                            || text.ValueKind != JsonValueKind.String
-                            || string.IsNullOrWhiteSpace(text.GetString()))
-                        {
-                            return $"Filtro {i} (system_inject) exige config.text.";
-                        }
-                        break;
-                    case RegexRedact:
-                        if (!hasConfig
-                            || !cfg.TryGetProperty("pattern", out var pattern)
-                            || pattern.ValueKind != JsonValueKind.String)
-                        {
-                            return $"Filtro {i} (regex_redact) exige config.pattern.";
-                        }
-                        try
-                        {
-                            _ = new Regex(pattern.GetString()!, RegexOptions.None, RegexDefaults.MatchTimeout);
-                        }
-                        catch (ArgumentException)
-                        {
-                            return $"Filtro {i} (regex_redact): regex inválida.";
-                        }
-                        break;
-                    case MaxTokensCap:
-                        if (!hasConfig
-                            || !cfg.TryGetProperty("max_tokens", out var cap)
-                            || cap.ValueKind != JsonValueKind.Number
-                            || cap.GetInt32() < 1)
-                        {
-                            return $"Filtro {i} (max_tokens_cap) exige config.max_tokens ≥ 1.";
-                        }
-                        break;
-                    case ParamsOverride:
-                        break;
-                    default:
-                        return $"Filtro {i}: tipo desconhecido \"{type}\".";
+                    return itemError;
                 }
             }
             return null;
         }
     }
+
+    /// <summary>Valida um item do array filters — erro ou null.</summary>
+    private static string? ValidateFilterItem(JsonElement item, int i)
+    {
+        if (item.ValueKind != JsonValueKind.Object
+            || !item.TryGetProperty("type", out var typeEl)
+            || typeEl.ValueKind != JsonValueKind.String)
+        {
+            return $"Filtro {i} inválido: \"type\" obrigatório.";
+        }
+        var type = typeEl.GetString()!;
+        var hasConfig = item.TryGetProperty("config", out var cfg)
+            && cfg.ValueKind == JsonValueKind.Object;
+        return type switch
+        {
+            SystemInject => ValidateSystemInject(hasConfig, cfg, i),
+            RegexRedact => ValidateRegexRedact(hasConfig, cfg, i),
+            MaxTokensCap => ValidateMaxTokensCap(hasConfig, cfg, i),
+            ParamsOverride => null,
+            _ => $"Filtro {i}: tipo desconhecido \"{type}\".",
+        };
+    }
+
+    private static string? ValidateSystemInject(bool hasConfig, JsonElement cfg, int i) =>
+        !hasConfig
+            || !cfg.TryGetProperty("text", out var text)
+            || text.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(text.GetString())
+            ? $"Filtro {i} (system_inject) exige config.text."
+            : null;
+
+    private static string? ValidateRegexRedact(bool hasConfig, JsonElement cfg, int i)
+    {
+        if (!hasConfig
+            || !cfg.TryGetProperty("pattern", out var pattern)
+            || pattern.ValueKind != JsonValueKind.String)
+        {
+            return $"Filtro {i} (regex_redact) exige config.pattern.";
+        }
+        try
+        {
+            _ = new Regex(pattern.GetString()!, RegexOptions.None, RegexDefaults.MatchTimeout);
+            return null;
+        }
+        catch (ArgumentException)
+        {
+            return $"Filtro {i} (regex_redact): regex inválida.";
+        }
+    }
+
+    private static string? ValidateMaxTokensCap(bool hasConfig, JsonElement cfg, int i) =>
+        !hasConfig
+            || !cfg.TryGetProperty("max_tokens", out var cap)
+            || cap.ValueKind != JsonValueKind.Number
+            || cap.GetInt32() < 1
+            ? $"Filtro {i} (max_tokens_cap) exige config.max_tokens ≥ 1."
+            : null;
 
     /// <summary>Aplica os filtros de inlet em ordem estável sobre a requisição:
     /// system_inject, params_override, max_tokens_cap e regex_redact
@@ -179,22 +189,11 @@ public static class ModelFilterService
             switch (filter.Type)
             {
                 case SystemInject:
-                    var text = filter.Config.TryGetProperty("text", out var t)
-                        ? t.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(text))
-                    {
-                        break;
-                    }
-                    var position = filter.Config.TryGetProperty("position", out var pos)
-                        ? pos.GetString() : null;
-                    (position == "prepend" ? prepend : append).Add(text);
+                    CollectSystemInject(filter, prepend, append);
                     break;
                 case ParamsOverride:
                     parameters ??= [];
-                    foreach (var prop in filter.Config.EnumerateObject())
-                    {
-                        parameters[prop.Name] = prop.Value;
-                    }
+                    OverrideParams(filter, parameters);
                     break;
                 case RegexRedact:
                     if (RedactRule(filter.Config, out var rule)
@@ -204,62 +203,111 @@ public static class ModelFilterService
                     }
                     break;
                 case MaxTokensCap:
-                    if (filter.Config.TryGetProperty("max_tokens", out var capEl)
-                        && capEl.ValueKind == JsonValueKind.Number)
-                    {
-                        var cap = capEl.GetInt32();
-                        parameters ??= [];
-                        foreach (var key in new[] { "max_tokens", "num_predict" })
-                        {
-                            parameters[key] = parameters.TryGetValue(key, out var existing)
-                                    && existing is JsonElement exEl
-                                    && exEl.ValueKind == JsonValueKind.Number
-                                ? Math.Min(exEl.GetInt32(), cap)
-                                : cap;
-                        }
-                    }
+                    parameters = CapMaxTokens(filter, parameters);
                     break;
             }
         }
 
         var messages = request.Messages.ToList();
-        if (redactRules.Count > 0)
-        {
-            for (var i = 0; i < messages.Count; i++)
-            {
-                var content = messages[i].Content;
-                foreach (var (regex, replacement) in redactRules)
-                {
-                    content = regex.Replace(content, replacement);
-                }
-                if (content != messages[i].Content)
-                {
-                    messages[i] = messages[i] with { Content = content };
-                }
-            }
-        }
-
-        var injects = prepend.Concat(append).ToList();
-        if (injects.Count > 0)
-        {
-            var merged = string.Join("\n\n", injects);
-            var existing = messages.FindIndex(m => m.Role == "system");
-            if (existing >= 0)
-            {
-                messages[existing] = messages[existing] with
-                {
-                    Content = prepend.Count > 0
-                        ? $"{merged}\n\n{messages[existing].Content}"
-                        : $"{messages[existing].Content}\n\n{merged}",
-                };
-            }
-            else
-            {
-                messages.Insert(0, new ChatCompletionMessage("system", merged));
-            }
-        }
+        ApplyMessageRedactions(messages, redactRules);
+        MergeSystemInjects(messages, prepend, append);
 
         return request with { Messages = messages, Params = parameters };
+    }
+
+    /// <summary>Coleta um system_inject em prepend/append conforme position.</summary>
+    private static void CollectSystemInject(
+        ParsedModelFilter filter, List<string> prepend, List<string> append)
+    {
+        var text = filter.Config.TryGetProperty("text", out var t)
+            ? t.GetString() : null;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+        var position = filter.Config.TryGetProperty("position", out var pos)
+            ? pos.GetString() : null;
+        (position == "prepend" ? prepend : append).Add(text);
+    }
+
+    /// <summary>Mescla as propriedades do config em Params.</summary>
+    private static void OverrideParams(
+        ParsedModelFilter filter, Dictionary<string, object> parameters)
+    {
+        foreach (var prop in filter.Config.EnumerateObject())
+        {
+            parameters[prop.Name] = prop.Value;
+        }
+    }
+
+    /// <summary>Aplica max_tokens_cap como teto (mínimo) sobre os campos
+    /// de limite de tokens do provider.</summary>
+    private static Dictionary<string, object>? CapMaxTokens(
+        ParsedModelFilter filter, Dictionary<string, object>? parameters)
+    {
+        if (!filter.Config.TryGetProperty("max_tokens", out var capEl)
+            || capEl.ValueKind != JsonValueKind.Number)
+        {
+            return parameters;
+        }
+        var cap = capEl.GetInt32();
+        parameters ??= [];
+        foreach (var key in new[] { "max_tokens", "num_predict" })
+        {
+            parameters[key] = parameters.TryGetValue(key, out var existing)
+                    && existing is JsonElement exEl
+                    && exEl.ValueKind == JsonValueKind.Number
+                ? Math.Min(exEl.GetInt32(), cap)
+                : cap;
+        }
+        return parameters;
+    }
+
+    /// <summary>Redige o conteúdo das mensagens com as regras de inlet.</summary>
+    private static void ApplyMessageRedactions(
+        List<ChatCompletionMessage> messages,
+        List<(Regex Regex, string Replacement)> redactRules)
+    {
+        for (var i = 0; i < messages.Count; i++)
+        {
+            var content = messages[i].Content;
+            foreach (var (regex, replacement) in redactRules)
+            {
+                content = regex.Replace(content, replacement);
+            }
+            if (content != messages[i].Content)
+            {
+                messages[i] = messages[i] with { Content = content };
+            }
+        }
+    }
+
+    /// <summary>Mescla os system_injects na mensagem system existente (ou
+    /// cria uma no início).</summary>
+    private static void MergeSystemInjects(
+        List<ChatCompletionMessage> messages,
+        List<string> prepend, List<string> append)
+    {
+        var injects = prepend.Concat(append).ToList();
+        if (injects.Count == 0)
+        {
+            return;
+        }
+        var merged = string.Join("\n\n", injects);
+        var existing = messages.FindIndex(m => m.Role == "system");
+        if (existing >= 0)
+        {
+            messages[existing] = messages[existing] with
+            {
+                Content = prepend.Count > 0
+                    ? $"{merged}\n\n{messages[existing].Content}"
+                    : $"{messages[existing].Content}\n\n{merged}",
+            };
+        }
+        else
+        {
+            messages.Insert(0, new ChatCompletionMessage("system", merged));
+        }
     }
 
     /// <summary>Regras de redação para o stage outlet (outlet/both).</summary>
@@ -312,30 +360,40 @@ public static class ModelFilterService
         {
             foreach (var choice in choices)
             {
-                foreach (var segment in new[] { "delta", "message" }
-                             .Select(k => choice?[k])
-                             .OfType<JsonObject>()
-                             .Where(s => s["content"] is JsonValue c
-                                         && c.TryGetValue<string>(out _)))
-                {
-                    var content = (JsonValue)segment["content"]!;
-                    content.TryGetValue<string>(out var text);
-                    // O Where acima garante TryGetValue — text é não-nulo aqui.
-                    var redacted = text!;
-                    foreach (var (regex, replacement) in rules)
-                    {
-                        redacted = regex.Replace(redacted, replacement);
-                    }
-                    if (redacted != text)
-                    {
-                        segment["content"] = redacted;
-                        changed = true;
-                    }
-                }
+                changed |= RedactChoiceContent(choice, rules);
             }
         }
 
         return changed ? $"data: {root.ToJsonString(JsonOptions)}" : line;
+    }
+
+    /// <summary>Redige delta.content / message.content de uma choice —
+    /// retorna true quando algo mudou.</summary>
+    private static bool RedactChoiceContent(
+        JsonNode? choice, IReadOnlyList<(Regex Regex, string Replacement)> rules)
+    {
+        var changed = false;
+        foreach (var segment in new[] { "delta", "message" }
+                     .Select(k => choice?[k])
+                     .OfType<JsonObject>()
+                     .Where(s => s["content"] is JsonValue c
+                                 && c.TryGetValue<string>(out _)))
+        {
+            var content = (JsonValue)segment["content"]!;
+            content.TryGetValue<string>(out var text);
+            // O Where acima garante TryGetValue — text é não-nulo aqui.
+            var redacted = text!;
+            foreach (var (regex, replacement) in rules)
+            {
+                redacted = regex.Replace(redacted, replacement);
+            }
+            if (redacted != text)
+            {
+                segment["content"] = redacted;
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /// <summary>Compila uma regra de redação a partir do config do filtro.</summary>

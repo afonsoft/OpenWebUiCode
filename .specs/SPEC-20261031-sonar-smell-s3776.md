@@ -96,12 +96,12 @@ N/A.
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** filtrar grupos `S3776` do board; mapear os métodos por arquivo (top 12 primeiro).
-- [ ] **T2 — Slice 1:** ProviderService (8) + ChatView (7) — testes relevantes verdes.
-- [ ] **T3 — Slice 2:** LspEndpoints (5) + ChatRunExecutor (4) + FileBuiltinTools/WorkspaceFiles/ModelFilterService/WebSearchService (12).
-- [ ] **T4 — Slice 3:** cauda (~74 issues nos demais ~50 arquivos).
-- [ ] **T5 — Validation por slice:** `dotnet test` + build; rescan local se `sonar-scanner` disponível.
-- [ ] **T6 — Done + PRs:** DoD por fatia → `Status = Done` ao final + PRs.
+- [x] **T1 — Discovery:** filtrar grupos `S3776` do board; mapear os métodos por arquivo (top 12 primeiro).
+- [x] **T2 — Slice 1:** ProviderService (8) + ChatView (7) — testes relevantes verdes.
+- [x] **T3 — Slice 2:** LspEndpoints (5) + ChatRunExecutor (4) + FileBuiltinTools/WorkspaceFiles/ModelFilterService/WebSearchService (12).
+- [x] **T4 — Slice 3:** cauda (~74 issues nos demais ~50 arquivos).
+- [x] **T5 — Validation por slice:** `dotnet test` + build; rescan local se `sonar-scanner` disponível.
+- [x] **T6 — Done + PRs:** DoD por fatia → `Status = Done` ao final + PRs.
 
 **7.1 Validation strategy**
 
@@ -118,9 +118,9 @@ N/A.
 
 ## 9. Definition of Done
 
-- [ ] As 106 issues `S3776` resolvidas (fixed ou supressão documentada).
-- [ ] Suite NUnit verde em todas as fatias; cobertura ≥ baseline.
-- [ ] Board atualizado (checkboxes) e rescan sem `S3776`.
+- [ ] As 106 issues `S3776` resolvidas (fixed ou supressão documentada). *(todos os métodos do findings map refatorados — confirmação autoritativa = análise SonarCloud do PR #590)*
+- [x] Suite NUnit verde em todas as fatias; cobertura ≥ baseline.
+- [ ] Board atualizado (checkboxes) e rescan sem `S3776`. *(pendente análise SonarCloud do PR)*
 
 **Next action after DoD is complete:** `Status = Done` + PRs por fatia na branch `fix/sonar-smell-s3776-20261031`.
 

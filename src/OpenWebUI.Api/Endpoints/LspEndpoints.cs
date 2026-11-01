@@ -85,30 +85,38 @@ public static class LspEndpoints
         }
         foreach (var s in node.EnumerateArray())
         {
-            var name = s.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
-            var detail = s.TryGetProperty("detail", out var d) && d.ValueKind == JsonValueKind.String
-                ? d.GetString() : null;
-            var kind = s.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.Number
-                ? k.GetInt32() : 0;
-            // DocumentSymbol: range+selectionRange; SymbolInformation: location.range.
-            var range = s.TryGetProperty(RangeKey, out var direct) ? direct : default;
-            if (range.ValueKind != JsonValueKind.Object
-                && s.TryGetProperty("location", out var loc))
+            if (ParseSymbol(s, depth) is { } item)
             {
-                loc.TryGetProperty(RangeKey, out range);
+                output.Add(item);
             }
-            if (range.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-            var (line, col) = Pos(range, StartKey);
-            var (endLine, endCol) = Pos(range, "end");
-            output.Add(new LspOutlineItem(name, detail, kind, line, col, endLine, endCol, depth));
             if (s.TryGetProperty("children", out var children))
             {
                 FlattenSymbols(children, depth + 1, output);
             }
         }
+    }
+
+    /// <summary>DocumentSymbol: range+selectionRange; SymbolInformation: location.range.</summary>
+    private static LspOutlineItem? ParseSymbol(JsonElement s, int depth)
+    {
+        var range = s.TryGetProperty(RangeKey, out var direct) ? direct : default;
+        if (range.ValueKind != JsonValueKind.Object
+            && s.TryGetProperty("location", out var loc))
+        {
+            loc.TryGetProperty(RangeKey, out range);
+        }
+        if (range.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        var name = s.TryGetProperty("name", out var n) ? n.GetString() ?? "?" : "?";
+        var detail = s.TryGetProperty("detail", out var d) && d.ValueKind == JsonValueKind.String
+            ? d.GetString() : null;
+        var kind = s.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.Number
+            ? k.GetInt32() : 0;
+        var (line, col) = Pos(range, StartKey);
+        var (endLine, endCol) = Pos(range, "end");
+        return new LspOutlineItem(name, detail, kind, line, col, endLine, endCol, depth);
     }
 
     private static (int Line, int Col) Pos(JsonElement range, string key)
@@ -264,30 +272,12 @@ public static class LspEndpoints
             var synced = false;
             try
             {
-                switch (request.Kind)
+                var (ok, syncError) = await SyncKindAsync(lsp, workdir, full, request, ct);
+                if (syncError is not null)
                 {
-                    case "open":
-                        synced = await lsp.OpenDocumentAsync(
-                            workdir, full, request.Text, ct) is not null;
-                        break;
-                    case "change":
-                        if (request.Text is null)
-                        {
-                            return Results.BadRequest(new { detail = "'text' é obrigatório." });
-                        }
-                        await lsp.ChangeDocumentAsync(workdir, full, request.Text, ct);
-                        synced = LspService.LanguageFor(full) is not null
-                            && lsp.StateOf(workdir, LspService.LanguageFor(full)!.ServerKey)
-                                == LspServerState.Running;
-                        break;
-                    case "close":
-                        await lsp.CloseDocumentAsync(workdir, full, ct);
-                        synced = true;
-                        break;
-                    default:
-                        return Results.BadRequest(
-                            new { detail = "'kind' deve ser open|change|close." });
+                    return syncError;
                 }
+                synced = ok;
             }
             catch (LspUnavailableException ex)
             {
@@ -295,6 +285,35 @@ public static class LspEndpoints
             }
             return Results.Ok(new { synced });
         });
+
+    /// <summary>Aplica <c>kind</c> open|change|close no servidor LSP.</summary>
+    private static async Task<(bool Synced, IResult? Error)> SyncKindAsync(
+        LspService lsp, string workdir, string full,
+        LspDocSyncRequest request, CancellationToken ct)
+    {
+        switch (request.Kind)
+        {
+            case "open":
+                return (await lsp.OpenDocumentAsync(
+                    workdir, full, request.Text, ct) is not null, null);
+            case "change":
+                if (request.Text is null)
+                {
+                    return (false, Results.BadRequest(new { detail = "'text' é obrigatório." }));
+                }
+                await lsp.ChangeDocumentAsync(workdir, full, request.Text, ct);
+                var synced = LspService.LanguageFor(full) is not null
+                    && lsp.StateOf(workdir, LspService.LanguageFor(full)!.ServerKey)
+                        == LspServerState.Running;
+                return (synced, null);
+            case "close":
+                await lsp.CloseDocumentAsync(workdir, full, ct);
+                return (true, null);
+            default:
+                return (false, Results.BadRequest(
+                    new { detail = "'kind' deve ser open|change|close." }));
+        }
+    }
 
     // ---------- GET /diagnostics?path= ----------
 
@@ -437,48 +456,8 @@ public static class LspEndpoints
                         items = arr;
                     }
                 }
-                var list = new List<LspCompletionItem>();
                 LspPosition? from = null;
-                if (items.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var it in items.EnumerateArray())
-                    {
-                        var label = it.TryGetProperty("label", out JsonElement l) ? l.GetString() : null;
-                        if (label is null)
-                        {
-                            continue;
-                        }
-                        var kind = it.TryGetProperty("kind", out JsonElement k) && k.ValueKind == JsonValueKind.Number
-                            ? k.GetInt32() : 0;
-                        var detail = it.TryGetProperty("detail", out JsonElement d) ? d.GetString() : null;
-                        string? info = null;
-                        if (it.TryGetProperty("documentation", out JsonElement doc))
-                        {
-                            if (doc.ValueKind == JsonValueKind.String)
-                            {
-                                info = doc.GetString();
-                            }
-                            else if (doc.TryGetProperty("value", out var dv))
-                            {
-                                info = dv.GetString();
-                            }
-                        }
-                        var apply = it.TryGetProperty("insertText", out JsonElement ins) ? ins.GetString() : label;
-                        // range explícito (textEdit) → from único; senão o client
-                        // usa a palavra sob o cursor.
-                        JsonElement textEdit = default, textRange = default;
-                        if (from is null
-                            && it.TryGetProperty("textEdit", out textEdit)
-                            && textEdit.ValueKind == JsonValueKind.Object
-                            && textEdit.TryGetProperty(RangeKey, out textRange))
-                        {
-                            var (sl, sc) = Pos(textRange, StartKey);
-                            from = new LspPosition(sl, sc);
-                        }
-                        list.Add(new LspCompletionItem(
-                            label, KindToCmType(kind), detail, info, apply));
-                    }
-                }
+                var list = ParseCompletionItems(items, ref from);
                 return Results.Ok(new LspCompletionResponse(
                     true, from ?? new LspPosition(request!.Line, Math.Max(0, request.Col - 1)), list));
             }
@@ -488,6 +467,57 @@ public static class LspEndpoints
                 return Results.Ok(new LspCompletionResponse(false, null, []));
             }
         });
+
+    /// <summary>Mapeia os itens LSP pro shape do CM autocomplete.</summary>
+    private static List<LspCompletionItem> ParseCompletionItems(
+        JsonElement items, ref LspPosition? from)
+    {
+        var list = new List<LspCompletionItem>();
+        if (items.ValueKind != JsonValueKind.Array)
+        {
+            return list;
+        }
+        foreach (var it in items.EnumerateArray())
+        {
+            var label = it.TryGetProperty("label", out JsonElement l) ? l.GetString() : null;
+            if (label is null)
+            {
+                continue;
+            }
+            var kind = it.TryGetProperty("kind", out JsonElement k) && k.ValueKind == JsonValueKind.Number
+                ? k.GetInt32() : 0;
+            var detail = it.TryGetProperty("detail", out JsonElement d) ? d.GetString() : null;
+            var info = CompletionDocInfo(it);
+            var apply = it.TryGetProperty("insertText", out JsonElement ins) ? ins.GetString() : label;
+            // range explícito (textEdit) → from único; senão o client
+            // usa a palavra sob o cursor.
+            if (from is null
+                && it.TryGetProperty("textEdit", out var textEdit)
+                && textEdit.ValueKind == JsonValueKind.Object
+                && textEdit.TryGetProperty(RangeKey, out var textRange))
+            {
+                var (sl, sc) = Pos(textRange, StartKey);
+                from = new LspPosition(sl, sc);
+            }
+            list.Add(new LspCompletionItem(
+                label, KindToCmType(kind), detail, info, apply));
+        }
+        return list;
+    }
+
+    /// <summary>documentation: string ou MarkupContent {value}.</summary>
+    private static string? CompletionDocInfo(JsonElement it)
+    {
+        if (!it.TryGetProperty("documentation", out var doc))
+        {
+            return null;
+        }
+        if (doc.ValueKind == JsonValueKind.String)
+        {
+            return doc.GetString();
+        }
+        return doc.TryGetProperty("value", out var dv) ? dv.GetString() : null;
+    }
 
     /// <summary>LSP CompletionItemKind → tipo do CM autocomplete.</summary>
     private static string? KindToCmType(int kind) => kind switch
@@ -589,26 +619,35 @@ public static class LspEndpoints
             : new[] { res }.AsEnumerable();
         foreach (var loc in arr)
         {
-            string? uri = null;
-            JsonElement range = default;
-            if (loc.TryGetProperty("uri", out var u))
+            if (ParseLocation(loc) is { } parsed)
             {
-                uri = u.GetString();
-                loc.TryGetProperty(RangeKey, out range);
+                yield return parsed;
             }
-            else if (loc.TryGetProperty("targetUri", out var tu))
-            {
-                uri = tu.GetString();
-                loc.TryGetProperty("targetRange", out range);
-            }
-            if (uri is null || range.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-            var (sl, sc) = Pos(range, StartKey);
-            var (el, ec) = Pos(range, "end");
-            yield return (uri, new LspRange(sl, sc, el, ec));
         }
+    }
+
+    /// <summary>Location {uri,range} ou LocationLink {targetUri,targetRange}.</summary>
+    private static (string Uri, LspRange Range)? ParseLocation(JsonElement loc)
+    {
+        string? uri = null;
+        JsonElement range = default;
+        if (loc.TryGetProperty("uri", out var u))
+        {
+            uri = u.GetString();
+            loc.TryGetProperty(RangeKey, out range);
+        }
+        else if (loc.TryGetProperty("targetUri", out var tu))
+        {
+            uri = tu.GetString();
+            loc.TryGetProperty("targetRange", out range);
+        }
+        if (uri is null || range.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        var (sl, sc) = Pos(range, StartKey);
+        var (el, ec) = Pos(range, "end");
+        return (uri, new LspRange(sl, sc, el, ec));
     }
 
     /// <summary>file:// uri → path relativo ao workdir (null se fora).</summary>
@@ -675,27 +714,8 @@ public static class LspEndpoints
                         clientEdits.Add(new LspRenameFileEdits(rel, edits));
                         continue;
                     }
-                    var full = WorkspaceFiles.ResolveInside(workdir, rel, out _);
-                    if (full is null || !File.Exists(full))
+                    if (await ApplyRenameToFileAsync(workdir, rel, edits, ct))
                     {
-                        continue;
-                    }
-                    var text = await File.ReadAllTextAsync(full, ct);
-                    var applied = text;
-                    var arr = JsonSerializer.SerializeToElement(
-                        edits.Select(e => new
-                        {
-                            range = new
-                            {
-                                start = new { line = e.Range.Line, character = e.Range.Col },
-                                end = new { line = e.Range.EndLine, character = e.Range.EndCol },
-                            },
-                            newText = e.NewText,
-                        }).ToArray(), JsonOptions);
-                    applied = ApplyTextEdits(applied, arr);
-                    if (applied != text)
-                    {
-                        await File.WriteAllTextAsync(full, applied, ct);
                         updated.Add(rel);
                     }
                 }
@@ -707,6 +727,35 @@ public static class LspEndpoints
                 return Results.Ok(new LspRenameResponse(false, [], [], ex.Message));
             }
         });
+
+    /// <summary>Aplica os edits do arquivo no disco (dentro do jail). Retorna true se mudou.</summary>
+    private static async Task<bool> ApplyRenameToFileAsync(
+        string workdir, string rel, List<LspRenameEdit> edits, CancellationToken ct)
+    {
+        var full = WorkspaceFiles.ResolveInside(workdir, rel, out _);
+        if (full is null || !File.Exists(full))
+        {
+            return false;
+        }
+        var text = await File.ReadAllTextAsync(full, ct);
+        var arr = JsonSerializer.SerializeToElement(
+            edits.Select(e => new
+            {
+                range = new
+                {
+                    start = new { line = e.Range.Line, character = e.Range.Col },
+                    end = new { line = e.Range.EndLine, character = e.Range.EndCol },
+                },
+                newText = e.NewText,
+            }).ToArray(), JsonOptions);
+        var applied = ApplyTextEdits(text, arr);
+        if (applied == text)
+        {
+            return false;
+        }
+        await File.WriteAllTextAsync(full, applied, ct);
+        return true;
+    }
 
     /// <summary>WorkspaceEdit: {changes:{uri:[edit]}} ou {documentChanges:[
     /// {textDocument:{uri}, edits:[...]}]} — só textDocument edits (ops de

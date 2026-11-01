@@ -299,9 +299,6 @@ public sealed class AgentDefinitionService(
             prompt = prompt[..MaxPromptChars];
         }
 
-        var tools = fm.TryGetValue("tools", out var toolsRaw)
-            ? ParseList(toolsRaw)?.Select(MapToolName).ToList()
-            : null;
         var model = fm.GetValueOrDefault("model");
         return new AgentDefinition(
             Name: name.Trim(),
@@ -311,24 +308,32 @@ public sealed class AgentDefinitionService(
             // (herda do pai); qualquer outro valor passa verbatim.
             Model: string.Equals(model, "inherit", StringComparison.OrdinalIgnoreCase)
                 ? null : model,
-            Tools: tools,
-            Spawns: fm.TryGetValue("spawns", out var spawnsRaw)
-                ? ParseList(spawnsRaw) ?? [] : [],
+            Tools: ListField(fm, "tools")?.Select(MapToolName).ToList(),
+            Spawns: ListField(fm, "spawns") ?? [],
             MaxDepth: fm.TryGetValue("maxDepth", out var depthRaw)
                 && int.TryParse(depthRaw, out var depth)
                 ? Math.Clamp(depth, 0, 3) : 1,
-            Skills: fm.TryGetValue("skills", out var skillsRaw)
-                ? ParseList(skillsRaw) ?? [] : [],
+            Skills: ListField(fm, "skills") ?? [],
             Blocking: !fm.TryGetValue("blocking", out var blockingRaw)
                 || !blockingRaw.Equals("false", StringComparison.OrdinalIgnoreCase),
             SystemPrompt: prompt,
             Source: source,
-            // `steps` por agent (SPEC-20261016-agent-steps-usage RF-001):
-            // inteiro positivo; 0/negativo/inválido → null (default).
-            Steps: fm.TryGetValue("steps", out var stepsRaw)
-                && int.TryParse(stepsRaw, out var steps) && steps > 0
-                ? steps : null);
+            Steps: StepsField(fm));
     }
+
+    /// <summary>Lista de um campo frontmatter — <c>[a, b]</c> ou CSV.</summary>
+    private static List<string>? ListField(
+        Dictionary<string, string> fm, string key) =>
+        fm.TryGetValue(key, out var raw) ? ParseList(raw) : null;
+
+    /// <summary>
+    /// <c>steps</c> por agent (SPEC-20261016-agent-steps-usage RF-001):
+    /// inteiro positivo; 0/negativo/inválido → null (default).
+    /// </summary>
+    private static int? StepsField(Dictionary<string, string> fm) =>
+        fm.TryGetValue("steps", out var raw)
+            && int.TryParse(raw, out var steps) && steps > 0
+            ? steps : null;
 
     /// <summary>
     /// Frontmatter mínimo: <c>---\nkey: value\n---</c> no topo — copiado do
@@ -372,30 +377,7 @@ public sealed class AgentDefinitionService(
             var value = line[(colon + 1)..].Trim().Trim('"', '\'');
             if (value is ">" or "|")
             {
-                // Block scalar YAML (estilo Claude Code): linhas seguintes
-                // mais indentadas que a chave compõem o valor — ">" junta
-                // com espaço, "|" preserva quebras.
-                var keyIndent = line.TakeWhile(c => c is ' ' or '\t').Count();
-                var block = new List<string>();
-                while (i + 1 < fmLines.Length)
-                {
-                    var next = fmLines[i + 1];
-                    var indent = next.TakeWhile(c => c is ' ' or '\t').Count();
-                    if (next.Trim().Length == 0)
-                    {
-                        i++;
-                        continue;
-                    }
-                    if (indent <= keyIndent)
-                    {
-                        break;
-                    }
-                    block.Add(next.Trim());
-                    i++;
-                }
-                value = value == "|"
-                    ? string.Join('\n', block)
-                    : string.Join(' ', block);
+                value = ReadBlockScalar(fmLines, ref i, line, value);
             }
             if (key.Length > 0 && value.Length > 0)
             {
@@ -408,6 +390,38 @@ public sealed class AgentDefinitionService(
         var nl = rest.IndexOf('\n');
         body = nl >= 0 ? rest[(nl + 1)..] : string.Empty;
         return map;
+    }
+
+    /// <summary>
+    /// Block scalar YAML (estilo Claude Code): linhas seguintes mais
+    /// indentadas que a chave compõem o valor — <c>&gt;</c> junta com
+    /// espaço, <c>|</c> preserva quebras. Avança <paramref name="i"/> até
+    /// a última linha consumida.
+    /// </summary>
+    private static string ReadBlockScalar(
+        string[] fmLines, ref int i, string keyLine, string marker)
+    {
+        var keyIndent = keyLine.TakeWhile(c => c is ' ' or '\t').Count();
+        var block = new List<string>();
+        while (i + 1 < fmLines.Length)
+        {
+            var next = fmLines[i + 1];
+            var indent = next.TakeWhile(c => c is ' ' or '\t').Count();
+            if (next.Trim().Length == 0)
+            {
+                i++;
+                continue;
+            }
+            if (indent <= keyIndent)
+            {
+                break;
+            }
+            block.Add(next.Trim());
+            i++;
+        }
+        return marker == "|"
+            ? string.Join('\n', block)
+            : string.Join(' ', block);
     }
 
     /// <summary>Mapeia alias de tool estilo Claude Code → nome builtin.</summary>

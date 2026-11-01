@@ -87,32 +87,7 @@ public sealed class InstinctContributor(
                 {
                     break;
                 }
-                var name = Path.GetFileName(file);
-                var domain = name.ToLowerInvariant() switch
-                {
-                    "package.json" or "tsconfig.json" => "web",
-                    "pyproject.toml" or "requirements.txt" or "pipfile" => "python",
-                    "go.mod" => "go",
-                    "cargo.toml" => "rust",
-                    "pom.xml" or "build.gradle" or "build.gradle.kts" => "jvm",
-                    "gemfile" => "ruby",
-                    "composer.json" => "php",
-                    "dockerfile" or "docker-compose.yaml" or "docker-compose.yml" => "docker",
-                    _ => Path.GetExtension(name).ToLowerInvariant() switch
-                    {
-                        ".cs" or ".razor" or ".csproj" or ".sln" or ".slnx" => "dotnet",
-                        ".py" => "python",
-                        ".ts" or ".tsx" or ".js" or ".jsx" or ".vue" or ".svelte" => "web",
-                        ".go" => "go",
-                        ".rs" => "rust",
-                        ".java" or ".kt" or ".scala" => "jvm",
-                        ".rb" => "ruby",
-                        ".php" => "php",
-                        ".sql" => "sql",
-                        ".tf" => "terraform",
-                        _ => null,
-                    },
-                };
+                var domain = ClassifyFile(Path.GetFileName(file));
                 if (domain is not null)
                 {
                     domains.Add(domain);
@@ -125,4 +100,31 @@ public sealed class InstinctContributor(
         }
         return domains;
     }
+
+    private static string? ClassifyFile(string name) =>
+        name.ToLowerInvariant() switch
+        {
+            "package.json" or "tsconfig.json" => "web",
+            "pyproject.toml" or "requirements.txt" or "pipfile" => "python",
+            "go.mod" => "go",
+            "cargo.toml" => "rust",
+            "pom.xml" or "build.gradle" or "build.gradle.kts" => "jvm",
+            "gemfile" => "ruby",
+            "composer.json" => "php",
+            "dockerfile" or "docker-compose.yaml" or "docker-compose.yml" => "docker",
+            _ => Path.GetExtension(name).ToLowerInvariant() switch
+            {
+                ".cs" or ".razor" or ".csproj" or ".sln" or ".slnx" => "dotnet",
+                ".py" => "python",
+                ".ts" or ".tsx" or ".js" or ".jsx" or ".vue" or ".svelte" => "web",
+                ".go" => "go",
+                ".rs" => "rust",
+                ".java" or ".kt" or ".scala" => "jvm",
+                ".rb" => "ruby",
+                ".php" => "php",
+                ".sql" => "sql",
+                ".tf" => "terraform",
+                _ => null,
+            },
+        };
 }

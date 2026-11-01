@@ -60,37 +60,50 @@ public static class ContextPruner
             {
                 var callIdx = ResolveCallIndex(m, calls, resultIndex++);
                 var call = callIdx >= 0 ? calls[callIdx] : null;
-                var content = m.Content ?? string.Empty;
-
-                if (call?.Path is { } path && callIdx < lastWrite.GetValueOrDefault(path, -1))
+                if (ElideToolResult(m, call, callIdx, lastWrite, chatId)
+                        is { } elided)
                 {
-                    result.Add(m with
-                    {
-                        Content = $"[resultado elidido — '{path}' reescrito por chamada posterior]",
-                    });
-                    continue;
-                }
-                if (content.Length <= 120 && s_ack.IsMatch(content.Trim()))
-                {
-                    result.Add(m with { Content = OkMarker });
-                    continue;
-                }
-                if (content.Length > ElideBytes)
-                {
-                    var pointer = call?.Id is { } id
-                        ? $"history://{chatId}/call:{id}"
-                        : $"history://{chatId}";
-                    result.Add(m with
-                    {
-                        Content = $"[resultado de {content.Length} bytes elidido — "
-                            + $"recupere com file_read {pointer}]",
-                    });
+                    result.Add(elided);
                     continue;
                 }
             }
             result.Add(m);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Aplica as três regras de RF-001 a um tool result — supersession de
+    /// path, ack curto e payload grande. Null = manter como está.
+    /// </summary>
+    private static ChatCompletionMessage? ElideToolResult(
+        ChatCompletionMessage m, CallRef? call, int callIdx,
+        Dictionary<string, int> lastWrite, string chatId)
+    {
+        var content = m.Content ?? string.Empty;
+        if (call?.Path is { } path && callIdx < lastWrite.GetValueOrDefault(path, -1))
+        {
+            return m with
+            {
+                Content = $"[resultado elidido — '{path}' reescrito por chamada posterior]",
+            };
+        }
+        if (content.Length <= 120 && s_ack.IsMatch(content.Trim()))
+        {
+            return m with { Content = OkMarker };
+        }
+        if (content.Length > ElideBytes)
+        {
+            var pointer = call?.Id is { } id
+                ? $"history://{chatId}/call:{id}"
+                : $"history://{chatId}";
+            return m with
+            {
+                Content = $"[resultado de {content.Length} bytes elidido — "
+                    + $"recupere com file_read {pointer}]",
+            };
+        }
+        return null;
     }
 
     private sealed record CallRef(string? Id, string? Path);
@@ -105,40 +118,7 @@ public static class ContextPruner
             {
                 foreach (var el in JsonDocument.Parse(m.ToolCallsJson!).RootElement.EnumerateArray())
                 {
-                    var id = el.TryGetProperty("id", out var i) ? i.GetString() : null;
-                    var fn = el.TryGetProperty("function", out var f) ? f : default;
-                    var name = fn.ValueKind == JsonValueKind.Object
-                        && fn.TryGetProperty("name", out var n) ? n.GetString() : null;
-                    string? path = null;
-                    if (name is not null && s_writeTools.Contains(name)
-                        && fn.TryGetProperty("arguments", out var a))
-                    {
-                        // arguments pode vir como string (padrão), objeto
-                        // embutido ou string "double-encoded" (Gemini) —
-                        // GetString()/TryGetProperty no kind errado lançava
-                        // InvalidOperationException e derrubava a run.
-                        var argsJson = a.ValueKind switch
-                        {
-                            JsonValueKind.String => a.GetString(),
-                            JsonValueKind.Object => a.GetRawText(),
-                            _ => null,
-                        };
-                        if (argsJson is not null)
-                        {
-                            try
-                            {
-                                var args = BuiltinToolRegistry.NormalizeArgs(argsJson);
-                                path = args.ValueKind == JsonValueKind.Object
-                                    && args.TryGetProperty("path", out var p)
-                                        ? p.GetString() : null;
-                            }
-                            catch (JsonException)
-                            {
-                                // arguments malformado — ignora o alvo.
-                            }
-                        }
-                    }
-                    calls.Add(new CallRef(id, path));
+                    calls.Add(ParseCallElement(el));
                 }
             }
             catch (JsonException)
@@ -147,6 +127,52 @@ public static class ContextPruner
             }
         }
         return calls;
+    }
+
+    /// <summary>Extrai id + alvo de escrita de um elemento tool_calls.</summary>
+    private static CallRef ParseCallElement(JsonElement el)
+    {
+        var id = el.TryGetProperty("id", out var i) ? i.GetString() : null;
+        var fn = el.TryGetProperty("function", out var f) ? f : default;
+        var name = fn.ValueKind == JsonValueKind.Object
+            && fn.TryGetProperty("name", out var n) ? n.GetString() : null;
+        var path = name is not null && s_writeTools.Contains(name)
+            && fn.TryGetProperty("arguments", out var a)
+                ? ExtractWritePath(a)
+                : null;
+        return new CallRef(id, path);
+    }
+
+    /// <summary>
+    /// Path reescrito pela chamada — <c>arguments</c> pode vir como string
+    /// (padrão), objeto embutido ou string "double-encoded" (Gemini);
+    /// GetString()/TryGetProperty no kind errado lançava
+    /// InvalidOperationException e derrubava a run.
+    /// </summary>
+    private static string? ExtractWritePath(JsonElement arguments)
+    {
+        var argsJson = arguments.ValueKind switch
+        {
+            JsonValueKind.String => arguments.GetString(),
+            JsonValueKind.Object => arguments.GetRawText(),
+            _ => null,
+        };
+        if (argsJson is null)
+        {
+            return null;
+        }
+        try
+        {
+            var args = BuiltinToolRegistry.NormalizeArgs(argsJson);
+            return args.ValueKind == JsonValueKind.Object
+                && args.TryGetProperty("path", out var p)
+                    ? p.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            // arguments malformado — ignora o alvo.
+            return null;
+        }
     }
 
     /// <summary>

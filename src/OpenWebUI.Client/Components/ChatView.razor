@@ -1209,42 +1209,9 @@
     {
         if (firstRender)
         {
-            try
-            {
-                _voiceSupported = await JS.InvokeAsync<bool>("openwebui.audio.sttSupported");
-                _ttsSupported = await JS.InvokeAsync<bool>("openwebui.audio.ttsSupported");
-                // Listener de "perto do fim" para o auto-scroll do stream.
-                await JS.InvokeVoidAsync("openwebui.initPinnedScroll", _scrollContainer);
-                // attachments-v2 RF-004: hook de paste — texto grande vira
-                // anexo pasted-*.txt; texto pequeno insere na posição do cursor.
-                _selfRef ??= DotNetObjectReference.Create(this);
-                await JS.InvokeVoidAsync("openwebui.hookPaste", _composerEl, _selfRef);
-            }
-            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
-            {
-                // Interop indisponível: áudio/scroll degradam sem derrubar a página.
-                await Console.Error.WriteLineAsync($"[ChatView] js init falhou: {ex.Message}");
-            }
-            if (_voiceSupported || _ttsSupported)
-            {
-                StateHasChanged();
-            }
+            await InitFirstRenderInteropAsync();
         }
-        if (!_sentinelInit && _hasMoreMessages)
-        {
-            // Sentinel da janela deslizante (RF-002): instala o listener uma
-            // única vez — HasMore pode ligar depois do primeiro render.
-            _sentinelInit = true;
-            _selfRef ??= DotNetObjectReference.Create(this);
-            try
-            {
-                await JS.InvokeVoidAsync("openwebui.initTopSentinel", _scrollContainer, _selfRef);
-            }
-            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
-            {
-                await Console.Error.WriteLineAsync($"[ChatView] sentinel falhou: {ex.Message}");
-            }
-        }
+        await InitTopSentinelOnceAsync();
         if (_pendingPrepend)
         {
             _pendingPrepend = false;
@@ -1257,6 +1224,60 @@
             _needsInitialScroll = false;
             await ScrollToEndAsync();
         }
+        await FlushPendingMenuFocusAsync();
+        await SyncPanelAndDrawerAsync();
+        await ApplyComposerAutoSizeAsync();
+    }
+
+    /// <summary>Interop do primeiro render: capacidades de áudio, pinned-scroll e hook de paste.</summary>
+    private async Task InitFirstRenderInteropAsync()
+    {
+        try
+        {
+            _voiceSupported = await JS.InvokeAsync<bool>("openwebui.audio.sttSupported");
+            _ttsSupported = await JS.InvokeAsync<bool>("openwebui.audio.ttsSupported");
+            // Listener de "perto do fim" para o auto-scroll do stream.
+            await JS.InvokeVoidAsync("openwebui.initPinnedScroll", _scrollContainer);
+            // attachments-v2 RF-004: hook de paste — texto grande vira
+            // anexo pasted-*.txt; texto pequeno insere na posição do cursor.
+            _selfRef ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("openwebui.hookPaste", _composerEl, _selfRef);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+        {
+            // Interop indisponível: áudio/scroll degradam sem derrubar a página.
+            await Console.Error.WriteLineAsync($"[ChatView] js init falhou: {ex.Message}");
+        }
+        if (_voiceSupported || _ttsSupported)
+        {
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Instala o sentinel da janela deslizante uma única vez.</summary>
+    private async Task InitTopSentinelOnceAsync()
+    {
+        if (_sentinelInit || !_hasMoreMessages)
+        {
+            return;
+        }
+        // Sentinel da janela deslizante (RF-002): instala o listener uma
+        // única vez — HasMore pode ligar depois do primeiro render.
+        _sentinelInit = true;
+        _selfRef ??= DotNetObjectReference.Create(this);
+        try
+        {
+            await JS.InvokeVoidAsync("openwebui.initTopSentinel", _scrollContainer, _selfRef);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] sentinel falhou: {ex.Message}");
+        }
+    }
+
+    /// <summary>Aplica o foco inicial pendente dos menus tools/mode.</summary>
+    private async Task FlushPendingMenuFocusAsync()
+    {
         if (_focusToolsMenu)
         {
             _focusToolsMenu = false;
@@ -1267,6 +1288,11 @@
             _focusModeMenu = false;
             await JS.InvokeVoidAsync("openwebui.focusFirst", _modeMenu);
         }
+    }
+
+    /// <summary>Sincroniza o resizer do painel e o focus-trap do drawer.</summary>
+    private async Task SyncPanelAndDrawerAsync()
+    {
         if (_showPanel)
         {
             // Divisor arrastável da coluna (idempotente via flag no elemento).
@@ -1282,22 +1308,27 @@
             _drawerTrapped = false;
             await JS.InvokeVoidAsync("openwebui.releaseFocus", _drawerEl);
         }
+    }
 
+    /// <summary>Auto-grow do composer quando o texto muda.</summary>
+    private async Task ApplyComposerAutoSizeAsync()
+    {
         // Auto-grow do composer: textarea não cresce sozinho (rows=1 travava
         // em 1 linha e o texto "sumia" no scroll). Mede depois de qualquer
         // mudança de _input — digitação via @bind e sets programáticos
         // (draft restaurado, histórico ↑/↓, prompt/skill, EditAt, envio).
-        if (_composerSized != _input)
+        if (_composerSized == _input)
         {
-            _composerSized = _input;
-            try
-            {
-                await JS.InvokeVoidAsync("openwebui.autoResize", _composerEl);
-            }
-            catch (Exception ex) when (ex is JSException or InvalidOperationException)
-            {
-                // Interop indisponível — o composer segue em altura fixa.
-            }
+            return;
+        }
+        _composerSized = _input;
+        try
+        {
+            await JS.InvokeVoidAsync("openwebui.autoResize", _composerEl);
+        }
+        catch (Exception ex) when (ex is JSException or InvalidOperationException)
+        {
+            // Interop indisponível — o composer segue em altura fixa.
         }
     }
 
@@ -1428,34 +1459,7 @@
         }
         if (ChatId is null)
         {
-            _loadedChatId = null;
-            _chatTitle = "New Chat";
-            _parentChatId = null;
-            _parentTitle = null;
-            _messages.Clear();
-            _viewSource = false;
-            // SPEC-15: conversa nova nasce sem repo — qualquer seleção
-            // feita depois fica pendente até o primeiro envio.
-            _repo = null;
-            _repoSource = null;
-            _scratch = null;
-            _pendingRepo = null;
-            _repoSkills = [];
-            _repoCommands = [];
-            // Chat novo: só as tools genéricas vêm selecionadas por padrão.
-            _toolIds = DefaultToolIds();
-            // Modo de permissão volta ao padrão do composer (última escolha).
-            try
-            {
-                _approvalPreset = await StoredPresetAsync();
-                _agentMode = await StoredAgentModeAsync();
-                await LoadComposerStateAsync(null);
-            }
-            catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
-            {
-                // Interop indisponível: segue com defaults (lifecycle nunca propaga).
-                await Console.Error.WriteLineAsync($"[ChatView] composer state falhou: {ex.Message}");
-            }
+            await ResetForNewChatAsync();
             return;
         }
 
@@ -1490,39 +1494,7 @@
             _viewSource =
                 await Storage.GetAsync($"chat:viewSource:{chat.Id}") == "true";
 
-        // Binding por chat (SPEC-15 estrito): só o repo vinculado a ESTA
-        // conversa — seleção pendente de chat novo não atravessa.
-        _pendingRepo = null;
-        try
-        {
-            var chatRepo = await Api.GetChatWorkspaceRepoAsync(chat.Id);
-            _repo = chatRepo?.Binding;
-            _repoSource = chatRepo?.Source;
-        }
-        catch (Exception ex) when (ClientErrors.IsTransient(ex))
-        {
-            // Sem o binding o chat abre sem contexto de repo — degradado, não crash.
-            await Console.Error.WriteLineAsync($"[ChatView] repo binding falhou: {ex.Message}");
-        }
-        if (_repo?.Repo is not null)
-        {
-            try
-            {
-                _repoSkills = await Api.GetRepoSkillsAsync(chat.Id);
-                _repoCommands = await Api.GetRepoCommandsAsync(chat.Id);
-            }
-            catch (Exception ex) when (ClientErrors.IsTransient(ex))
-            {
-                _repoSkills = [];
-                _repoCommands = [];
-                await Console.Error.WriteLineAsync($"[ChatView] repo skills falhou: {ex.Message}");
-            }
-        }
-        else
-        {
-            _repoSkills = [];
-            _repoCommands = [];
-        }
+            await LoadWorkspaceContextAsync(chat.Id);
             _parentTitle = chat.ParentTitle;
             // Chat sem ToolIds persistidos (legado/nunca tocado): default genérico.
             _toolIds = chat.ToolIds.Count > 0
@@ -1547,39 +1519,119 @@
                 _model = chat.Models[0];
             }
 
-            // Run ainda em execução (aba fechou/reload): anexa ao stream e mostra a geração ao vivo.
-            ChatRunResponse? activeRun = null;
-            try
-            {
-                activeRun = await ChatStream.GetActiveRunAsync(chat.Id);
-            }
-            catch (Exception ex) when (ClientErrors.IsTransient(ex))
-            {
-                await Console.Error.WriteLineAsync($"[ChatView] active run falhou: {ex.Message}");
-                // Falha transitória de fetch (proxy/CF — visto em produção):
-                // sem retry o chat ficava sem attach e a run parecia parada
-                // até um reload manual. Uma segunda tentativa curta cobre
-                // a maioria das quedas de borda.
-                try
-                {
-                    await Task.Delay(1_000);
-                    activeRun = await ChatStream.GetActiveRunAsync(chat.Id);
-                }
-                catch (Exception retryEx) when (ClientErrors.IsTransient(retryEx))
-                {
-                    await Console.Error.WriteLineAsync(
-                        $"[ChatView] active run retry falhou: {retryEx.Message}");
-                }
-            }
-            _ = activeRun is not null
-                ? AttachActiveRunAsync(activeRun)
-                // Git bar: snapshot do workspace quando há runs anteriores.
-                : RefreshGitAsync();
+            await AttachOrRefreshGitAsync(chat.Id);
         }
         finally
         {
             _loading = false;
         }
+    }
+
+    /// <summary>Reseta o estado para conversa nova (sem ChatId).</summary>
+    private async Task ResetForNewChatAsync()
+    {
+        _loadedChatId = null;
+        _chatTitle = "New Chat";
+        _parentChatId = null;
+        _parentTitle = null;
+        _messages.Clear();
+        _viewSource = false;
+        // SPEC-15: conversa nova nasce sem repo — qualquer seleção
+        // feita depois fica pendente até o primeiro envio.
+        _repo = null;
+        _repoSource = null;
+        _scratch = null;
+        _pendingRepo = null;
+        _repoSkills = [];
+        _repoCommands = [];
+        // Chat novo: só as tools genéricas vêm selecionadas por padrão.
+        _toolIds = DefaultToolIds();
+        // Modo de permissão volta ao padrão do composer (última escolha).
+        try
+        {
+            _approvalPreset = await StoredPresetAsync();
+            _agentMode = await StoredAgentModeAsync();
+            await LoadComposerStateAsync(null);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
+        {
+            // Interop indisponível: segue com defaults (lifecycle nunca propaga).
+            await Console.Error.WriteLineAsync($"[ChatView] composer state falhou: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Binding por chat (SPEC-15 estrito): só o repo vinculado a ESTA
+    /// conversa — seleção pendente de chat novo não atravessa.
+    /// </summary>
+    private async Task LoadWorkspaceContextAsync(string chatId)
+    {
+        _pendingRepo = null;
+        try
+        {
+            var chatRepo = await Api.GetChatWorkspaceRepoAsync(chatId);
+            _repo = chatRepo?.Binding;
+            _repoSource = chatRepo?.Source;
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            // Sem o binding o chat abre sem contexto de repo — degradado, não crash.
+            await Console.Error.WriteLineAsync($"[ChatView] repo binding falhou: {ex.Message}");
+        }
+        if (_repo?.Repo is not null)
+        {
+            try
+            {
+                _repoSkills = await Api.GetRepoSkillsAsync(chatId);
+                _repoCommands = await Api.GetRepoCommandsAsync(chatId);
+            }
+            catch (Exception ex) when (ClientErrors.IsTransient(ex))
+            {
+                _repoSkills = [];
+                _repoCommands = [];
+                await Console.Error.WriteLineAsync($"[ChatView] repo skills falhou: {ex.Message}");
+            }
+        }
+        else
+        {
+            _repoSkills = [];
+            _repoCommands = [];
+        }
+    }
+
+    /// <summary>
+    /// Run ainda em execução (aba fechou/reload): anexa ao stream e mostra
+    /// a geração ao vivo; senão, snapshot do workspace para a git bar.
+    /// </summary>
+    private async Task AttachOrRefreshGitAsync(string chatId)
+    {
+        ChatRunResponse? activeRun = null;
+        try
+        {
+            activeRun = await ChatStream.GetActiveRunAsync(chatId);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] active run falhou: {ex.Message}");
+            // Falha transitória de fetch (proxy/CF — visto em produção):
+            // sem retry o chat ficava sem attach e a run parecia parada
+            // até um reload manual. Uma segunda tentativa curta cobre
+            // a maioria das quedas de borda.
+            try
+            {
+                await Task.Delay(1_000);
+                activeRun = await ChatStream.GetActiveRunAsync(chatId);
+            }
+            catch (Exception retryEx) when (ClientErrors.IsTransient(retryEx))
+            {
+                await Console.Error.WriteLineAsync(
+                    $"[ChatView] active run retry falhou: {retryEx.Message}");
+            }
+        }
+        _ = activeRun is not null
+            ? AttachActiveRunAsync(activeRun)
+            // Git bar: snapshot do workspace quando há runs anteriores.
+            : RefreshGitAsync();
     }
 
     private void OnModelChanged(string? model) => _model = model;
@@ -1707,61 +1759,84 @@
     private async Task SelectPrompt(SlashItem item)
     {
         _promptSuggestions = [];
-        // SPEC-20261015-plan-spec-sdd RF-003: builtin /plan liga o modo plan
-        // e o texto já digitado depois do comando permanece como requisito.
-        if (item.Source == "builtin")
+        switch (item.Source)
         {
-            var builtinArgs = RepoSlashCommands.ArgsAfter(_input);
-            if (item.Command == "plan")
-            {
-                await SetAgentModeAsync("plan");
-                _input = builtinArgs;
-            }
-            else if (item.Command == "compact")
-            {
-                // RF-004 (SPEC-20261018-agent-polish): /compact força a
-                // compactação do histórico — o resultado vira toast.
-                await CompactNowAsync();
-            }
-            _pendingCommand = null;
-            return;
+            case "builtin":
+                await SelectBuiltinAsync(item);
+                break;
+            case "prompt":
+                SelectStoredPrompt(item);
+                break;
+            case "skill":
+                var detail = await Api.GetRepoSkillAsync(item.Command);
+                _input = detail?.Content ?? _input;
+                _pendingCommand = null;
+                break;
+            case "mcp":
+                await SelectMcpPromptAsync(item);
+                break;
+            default:
+                await SelectRepoCommandAsync(item);
+                break;
         }
-        if (item.Source == "prompt")
-        {
-            var prompt = _prompts.FirstOrDefault(
-                p => p.Command.Equals(item.Command, StringComparison.OrdinalIgnoreCase));
-            if (prompt is not null)
-            {
-                _input = prompt.Content;
-            }
-            _pendingCommand = null;
-            return;
-        }
-        if (item.Source == "skill")
-        {
-            var detail = await Api.GetRepoSkillAsync(item.Command);
-            _input = detail?.Content ?? _input;
-            _pendingCommand = null;
-            return;
-        }
-        // RF-003 (SPEC-20261018-agent-polish): `{server}:{prompt}` resolve
-        // via prompts/get — o texto retornado vira o input.
-        if (item.Source == "mcp")
-        {
-            var colon = item.Command.IndexOf(':');
-            if (colon > 0)
-            {
-                var resolved = await Api.ResolveMcpPromptAsync(
-                    item.Command[..colon], item.Command[(colon + 1)..],
-                    RepoSlashCommands.ArgsAfter(_input));
-                _input = resolved?.Text ?? _input;
-            }
-            _pendingCommand = null;
-            return;
-        }
+    }
 
-        // command → o servidor é a fonte canônica da expansão (suporta
-        // !`shell`, rest-capture e devolve os overrides declarados).
+    /// <summary>
+    /// SPEC-20261015-plan-spec-sdd RF-003: builtin /plan liga o modo plan
+    /// e o texto já digitado depois do comando permanece como requisito.
+    /// </summary>
+    private async Task SelectBuiltinAsync(SlashItem item)
+    {
+        var builtinArgs = RepoSlashCommands.ArgsAfter(_input);
+        if (item.Command == "plan")
+        {
+            await SetAgentModeAsync("plan");
+            _input = builtinArgs;
+        }
+        else if (item.Command == "compact")
+        {
+            // RF-004 (SPEC-20261018-agent-polish): /compact força a
+            // compactação do histórico — o resultado vira toast.
+            await CompactNowAsync();
+        }
+        _pendingCommand = null;
+    }
+
+    /// <summary>Slash command de prompt armazenado — o conteúdo vira input.</summary>
+    private void SelectStoredPrompt(SlashItem item)
+    {
+        var prompt = _prompts.FirstOrDefault(
+            p => p.Command.Equals(item.Command, StringComparison.OrdinalIgnoreCase));
+        if (prompt is not null)
+        {
+            _input = prompt.Content;
+        }
+        _pendingCommand = null;
+    }
+
+    /// <summary>
+    /// RF-003 (SPEC-20261018-agent-polish): `{server}:{prompt}` resolve
+    /// via prompts/get — o texto retornado vira o input.
+    /// </summary>
+    private async Task SelectMcpPromptAsync(SlashItem item)
+    {
+        var colon = item.Command.IndexOf(':');
+        if (colon > 0)
+        {
+            var resolved = await Api.ResolveMcpPromptAsync(
+                item.Command[..colon], item.Command[(colon + 1)..],
+                RepoSlashCommands.ArgsAfter(_input));
+            _input = resolved?.Text ?? _input;
+        }
+        _pendingCommand = null;
+    }
+
+    /// <summary>
+    /// command → o servidor é a fonte canônica da expansão (suporta
+    /// !`shell`, rest-capture e devolve os overrides declarados).
+    /// </summary>
+    private async Task SelectRepoCommandAsync(SlashItem item)
+    {
         var args = RepoSlashCommands.ArgsAfter(_input);
         var expanded = await Api.ExpandRepoCommandAsync(item.Command, args, _loadedChatId);
         if (expanded is not null)
@@ -1883,8 +1958,20 @@
             return;
         }
 
-        // Histórico do composer (RF-006): ↑/↓ no input vazio (ou navegando)
-        // percorre os prompts enviados deste chat.
+        if (NavigateInputHistory(e))
+        {
+            return;
+        }
+
+        UpdatePromptSuggestions();
+    }
+
+    /// <summary>
+    /// Histórico do composer (RF-006): ↑/↓ no input vazio (ou navegando)
+    /// percorre os prompts enviados deste chat. Retorna true se a tecla foi consumida.
+    /// </summary>
+    private bool NavigateInputHistory(KeyboardEventArgs e)
+    {
         if (e.Key == "ArrowUp" && _inputHistory.Count > 0
             && (string.IsNullOrEmpty(_input) || _historyIndex >= 0))
         {
@@ -1892,7 +1979,7 @@
                 ? _inputHistory.Count - 1
                 : Math.Max(0, _historyIndex - 1);
             _input = _inputHistory[_historyIndex];
-            return;
+            return true;
         }
         if (e.Key == "ArrowDown" && _historyIndex >= 0)
         {
@@ -1906,10 +1993,9 @@
             {
                 _input = _inputHistory[_historyIndex];
             }
-            return;
+            return true;
         }
-
-        UpdatePromptSuggestions();
+        return false;
     }
 
     /// <summary>
@@ -2373,33 +2459,8 @@
         _ = PushHistoryAsync(text);
         _ = GuardedAsync(Storage.RemoveAsync($"chat:draft:{_loadedChatId ?? "new"}").AsTask(), "limpar rascunho");
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var content = text;
-        if (text.Length == 0 && _attachedFiles.Count > 0)
-        {
-            content = L["chat.files_attached"];
-        }
-        if (_attachedFiles.Count > 0 && text.Length > 0)
-        {
-            content += "\n\n📎 " + string.Join(", ", _attachedFiles.Select(f => f.Filename));
-        }
-        // Os chips @path viram marcadores 📄 na mensagem persistida — o conteúdo
-        // real é expandido server-side via MentionPaths (o usuário vê o chip, não o dump).
-        if (mentionPaths is not null)
-        {
-            content += (content.Length > 0 ? "\n\n" : "") + "📄 " + string.Join(", ", mentionPaths);
-        }
-
-        // RF-003/RF-004: a bolha local já mostra os anexos; o servidor
-        // persiste FilesJson no enqueue (os ids viajam em FileIds).
-        var attached = _attachedFiles
-            .Select(f => ChatMessageFileModel.Of(f.Id, f.Filename, f.ContentType, f.Size))
-            .ToList();
-        _messages.Add(new ChatMessageModel(
-            Guid.NewGuid().ToString(), "user", content, null, now,
-            Files: attached.Count > 0 ? attached : null));
-        _attachedFiles.Clear();
-        _mentionPaths.Clear();
+        var content = BuildUserMessageContent(text, mentionPaths);
+        AddLocalUserMessage(content, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
         // Envio sempre ancora no fim: mesmo quem subiu para ler mensagens
         // antigas volta para a última ao mandar (e o pin re-armado faz o
@@ -2408,64 +2469,9 @@
         await ScrollToEndAsync();
 
         var isNew = _loadedChatId is null && !Playground;
-        if (isNew)
+        if (isNew && !await CreateChatForSendAsync(text))
         {
-            var title = text.Length > 60 ? text[..60] : text;
-            if (string.IsNullOrEmpty(title))
-            {
-                title = "New Chat";
-            }
-
-            // Chat criado vazio: a mensagem do usuário é persistida pelo enqueue da run.
-            var created = await Api.CreateChatAsync(
-                new ChatUpsertRequest(title, [_model!], [],
-                    _toolIds.Count > 0 ? _toolIds.ToList() : []));
-            if (created is null)
-            {
-                _error = L["chat.create_failed"];
-                _messages.RemoveAt(_messages.Count - 1);
-                return;
-            }
-
-            _loadedChatId = created.Id;
-            _chatTitle = created.Title;
-            _pendingNavigateId = created.Id;
-            ChatList.NotifyChanged();
-            // Repo escolhido antes do primeiro envio (SPEC-15): materializa
-            // o binding por chat — build só é válido depois dele.
-            if (_pendingRepo is { Repo: { } pendingSlug })
-            {
-                var bound = await Api.PutChatWorkspaceRepoAsync(
-                    created.Id, pendingSlug, _pendingRepo.Branch ?? "main");
-                if (bound?.Binding is null)
-                {
-                    _repo = null;
-                    _repoSource = null;
-                    _error = L["chat.repo_open_error"];
-                }
-                else
-                {
-                    _repo = bound.Binding;
-                    _repoSource = bound.Source;
-                }
-                _pendingRepo = null;
-            }
-            // Modo escolhido antes do primeiro envio: aplica no chat criado
-            // (o gate relê o preset por call — vale já na primeira tool).
-            // Awaitado: o fire-and-forget deixava a run começar antes do
-            // patch aterrissar e escondia a falha como exceção não observada.
-            if (_approvalPreset != "approve-mutations" || EffectiveAgentMode != "chat")
-            {
-                try
-                {
-                    await Api.PatchChatAsync(created.Id, _approvalPreset, mode: EffectiveAgentMode);
-                }
-                catch (Exception ex) when (ClientErrors.IsTransient(ex))
-                {
-                    await Console.Error.WriteLineAsync(
-                        $"[ChatView] patch preset/modo falhou: {ex.Message}");
-                }
-            }
+            return;
         }
 
         // Chats persistidos usam runs desacopladas (a geração sobrevive a fechar a aba);
@@ -2491,6 +2497,123 @@
         }
 
         _ = LoadFollowUpsAsync();
+    }
+
+    /// <summary>
+    /// Conteúdo visível da mensagem do usuário: anexos viram marcadores 📎 e
+    /// os chips @path viram marcadores 📄 — o conteúdo real é expandido
+    /// server-side via MentionPaths (o usuário vê o chip, não o dump).
+    /// </summary>
+    private string BuildUserMessageContent(string text, List<string>? mentionPaths)
+    {
+        var content = text;
+        if (text.Length == 0 && _attachedFiles.Count > 0)
+        {
+            content = L["chat.files_attached"];
+        }
+        if (_attachedFiles.Count > 0 && text.Length > 0)
+        {
+            content += "\n\n📎 " + string.Join(", ", _attachedFiles.Select(f => f.Filename));
+        }
+        if (mentionPaths is not null)
+        {
+            content += (content.Length > 0 ? "\n\n" : "") + "📄 " + string.Join(", ", mentionPaths);
+        }
+        return content;
+    }
+
+    /// <summary>
+    /// RF-003/RF-004: a bolha local já mostra os anexos; o servidor
+    /// persiste FilesJson no enqueue (os ids viajam em FileIds).
+    /// </summary>
+    private void AddLocalUserMessage(string content, long now)
+    {
+        var attached = _attachedFiles
+            .Select(f => ChatMessageFileModel.Of(f.Id, f.Filename, f.ContentType, f.Size))
+            .ToList();
+        _messages.Add(new ChatMessageModel(
+            Guid.NewGuid().ToString(), "user", content, null, now,
+            Files: attached.Count > 0 ? attached : null));
+        _attachedFiles.Clear();
+        _mentionPaths.Clear();
+    }
+
+    /// <summary>Cria o chat no servidor no primeiro envio. Retorna false se falhou.</summary>
+    private async Task<bool> CreateChatForSendAsync(string text)
+    {
+        var title = text.Length > 60 ? text[..60] : text;
+        if (string.IsNullOrEmpty(title))
+        {
+            title = "New Chat";
+        }
+
+        // Chat criado vazio: a mensagem do usuário é persistida pelo enqueue da run.
+        var created = await Api.CreateChatAsync(
+            new ChatUpsertRequest(title, [_model!], [],
+                _toolIds.Count > 0 ? _toolIds.ToList() : []));
+        if (created is null)
+        {
+            _error = L["chat.create_failed"];
+            _messages.RemoveAt(_messages.Count - 1);
+            return false;
+        }
+
+        _loadedChatId = created.Id;
+        _chatTitle = created.Title;
+        _pendingNavigateId = created.Id;
+        ChatList.NotifyChanged();
+        await BindPendingRepoAsync(created.Id);
+        await PatchInitialModeAsync(created.Id);
+        return true;
+    }
+
+    /// <summary>
+    /// Repo escolhido antes do primeiro envio (SPEC-15): materializa
+    /// o binding por chat — build só é válido depois dele.
+    /// </summary>
+    private async Task BindPendingRepoAsync(string chatId)
+    {
+        if (_pendingRepo is not { Repo: { } pendingSlug })
+        {
+            return;
+        }
+        var bound = await Api.PutChatWorkspaceRepoAsync(
+            chatId, pendingSlug, _pendingRepo.Branch ?? "main");
+        if (bound?.Binding is null)
+        {
+            _repo = null;
+            _repoSource = null;
+            _error = L["chat.repo_open_error"];
+        }
+        else
+        {
+            _repo = bound.Binding;
+            _repoSource = bound.Source;
+        }
+        _pendingRepo = null;
+    }
+
+    /// <summary>
+    /// Modo escolhido antes do primeiro envio: aplica no chat criado
+    /// (o gate relê o preset por call — vale já na primeira tool).
+    /// Awaitado: o fire-and-forget deixava a run começar antes do
+    /// patch aterrissar e escondia a falha como exceção não observada.
+    /// </summary>
+    private async Task PatchInitialModeAsync(string chatId)
+    {
+        if (_approvalPreset == "approve-mutations" && EffectiveAgentMode == "chat")
+        {
+            return;
+        }
+        try
+        {
+            await Api.PatchChatAsync(chatId, _approvalPreset, mode: EffectiveAgentMode);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            await Console.Error.WriteLineAsync(
+                $"[ChatView] patch preset/modo falhou: {ex.Message}");
+        }
     }
 
     private async Task SendFollowUpAsync(string text)
@@ -3077,6 +3200,28 @@
         }
     }
 
+    // 45s = ~4 heartbeats perdidos (10s) + margem para jitter de proxy —
+    // antes 35s/15s marcava stall em hiccup curto e re-anexava à toa.
+    private const int StallMs = 45_000;
+    // Cadência de retry: até SoftEmptyAttaches o backoff exponencial é
+    // rápido (0,5–4s); depois disso o attach continua em ~8s enquanto a
+    // run estiver viva — proxies corporativos derrubam todo attach antes
+    // do primeiro evento, e desistir cedo congelava a UI até o F5.
+    private const int SoftEmptyAttaches = 5;
+    // ~40 attaches vazios (~35min de stall de 45s + 8s cada) sem ver a
+    // run morrer: só então desiste — run viva demais já é anômalo.
+    private const int HardEmptyAttaches = 40;
+
+    /// <summary>Estado mutável do loop de resume do stream da run.</summary>
+    private sealed class RunConsumeState
+    {
+        public int LastSeq;
+        public int EmptyAttaches;
+        public bool SawEvent;
+        public DateTime LastRender = DateTime.MinValue;
+        public bool Dirty;
+    }
+
     /// <summary>
     /// Consome o stream tipado de uma run (SPEC-20261007-chat-tool-streaming):
     /// deltas viram conteúdo do placeholder; tool_call/tool_result viram
@@ -3088,88 +3233,19 @@
         System.Text.StringBuilder content,
         ChatMessageModel placeholder, int index, CancellationToken ct)
     {
-        _liveToolCalls.Clear();
-        _runTasks = [];
-        _runChanges = [];
-        _runCheckpoints = [];
-        _reasoning.Clear();
-        _thinkingOpen = null;
-        _thinkingElapsed = default;
-        _tpsWindow.Clear();
-        _tps = null;
+        ResetRunUiState();
 
         // Resume loop (SPEC-20261007-chat-tool-streaming): se o stream cair
         // no meio da run (proxy derrubando SSE ocioso, troca de rede, aba
         // em background), re-anexa com lastSeq — sem isso a UI congela e
         // só um refresh manual a destrava. O stall watchdog re-anexa quando
         // nada (nem heartbeat) chega por StallMs.
-        var lastSeq = 0;
-        var emptyAttaches = 0;
-        var sawEvent = false;
-        // 45s = ~4 heartbeats perdidos (10s) + margem para jitter de proxy —
-        // antes 35s/15s marcava stall em hiccup curto e re-anexava à toa.
-        const int StallMs = 45_000;
-        // Cadência de retry: até SoftEmptyAttaches o backoff exponencial é
-        // rápido (0,5–4s); depois disso o attach continua em ~8s enquanto a
-        // run estiver viva — proxies corporativos derrubam todo attach antes
-        // do primeiro evento, e desistir cedo congelava a UI até o F5.
-        const int SoftEmptyAttaches = 5;
-        // ~40 attaches vazios (~35min de stall de 45s + 8s cada) sem ver a
-        // run morrer: só então desiste — run viva demais já é anômalo.
-        const int HardEmptyAttaches = 40;
-        var lastRender = DateTime.MinValue;
-        var dirty = false;
+        var state = new RunConsumeState();
 
         while (true)
         {
-            var terminal = false;
-            using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            stall.CancelAfter(StallMs);
-            try
-            {
-                await foreach (var evt in ChatStream.StreamRunEventsAsync(
-                    chatId, runId, lastSeq, stall.Token))
-                {
-                    stall.CancelAfter(StallMs);
-                    if (evt.Seq > 0)
-                    {
-                        lastSeq = evt.Seq;
-                    }
-                    sawEvent = true;
-                    terminal = await ApplyRunEventAsync(
-                        evt, content, placeholder, index);
-                    if (terminal)
-                    {
-                        break;
-                    }
-                    // Deltas chegam em rajada: o conteúdo é sempre aplicado
-                    // acima, mas a tela só re-renderiza na cadência
-                    // RenderIntervalMs (eventos de tool/fase renderizam já).
-                    dirty |= evt is ChatStreamService.ChatStreamEvent.Delta
-                        or ChatStreamService.ChatStreamEvent.Reasoning;
-                    if (evt is ChatStreamService.ChatStreamEvent.Delta
-                        or ChatStreamService.ChatStreamEvent.Reasoning
-                        or ChatStreamService.ChatStreamEvent.Heartbeat
-                        && (!dirty
-                            || (DateTime.UtcNow - lastRender).TotalMilliseconds < RenderIntervalMs))
-                    {
-                        continue;
-                    }
-                    dirty = false;
-                    lastRender = DateTime.UtcNow;
-                    await InvokeAsync(StateHasChanged);
-                    await ScrollToEndIfPinnedAsync();
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // Falha de transporte no meio do stream → tenta re-anexar.
-                Console.WriteLine($"stream da run {runId} caiu: {ex.Message}");
-            }
+            var terminal = await StreamAttachOnceAsync(
+                chatId, runId, content, placeholder, index, state, ct);
 
             if (terminal || ct.IsCancellationRequested)
             {
@@ -3179,59 +3255,145 @@
             // Attach que não rendeu nenhum evento: a run pode já ter
             // finalizado (close sem fase terminal) — confere o status antes
             // de gastar backoff re-anexando.
-            if (!sawEvent)
+            if (!state.SawEvent)
             {
-                emptyAttaches++;
-                // O status check cai na mesma queda de rede que derrubou o
-                // attach — tratar como "run viva" e seguir o backoff em vez
-                // de abortar o resume com erro.
-                ChatRunResponse? polled = null;
-                var pollFailed = false;
-                try
+                state.EmptyAttaches++;
+                if (await HandleEmptyAttachAsync(chatId, runId, state, ct))
                 {
-                    polled = await ChatStream.GetRunAsync(chatId, runId, ct);
-                }
-                catch (Exception ex) when (ClientErrors.IsTransient(ex))
-                {
-                    pollFailed = true;
-                }
-                // Sem resposta: transitório → run viva; mas GET respondido
-                // com null (404) → run sumiu, encerra como antes.
-                var status = polled?.Status ?? (pollFailed ? "running" : null);
-                if (status is null or "completed" or "failed" or "stopped" or "interrupted")
-                {
-                    return;
-                }
-                // Polling-fallback (SPEC-20261030): o GET da run devolve
-                // aprovação/pergunta pendente — o attach SSE que o proxy
-                // mata antes do 1º evento não esconde mais o card até o F5.
-                if (polled is not null
-                    && (polled.PendingApproval is not null || polled.PendingQuestion is not null
-                        || _pendingApproval is not null || _pendingQuestion is not null))
-                {
-                    _pendingApproval = polled.PendingApproval;
-                    _pendingQuestion = polled.PendingQuestion;
-                    lastRender = DateTime.UtcNow;
-                    await InvokeAsync(StateHasChanged);
-                }
-                if (emptyAttaches >= HardEmptyAttaches)
-                {
-                    Console.WriteLine(
-                        $"stream da run {runId}: {emptyAttaches} attaches vazios, desistindo.");
                     return;
                 }
             }
             else
             {
-                sawEvent = false;
-                emptyAttaches = 0;
+                state.SawEvent = false;
+                state.EmptyAttaches = 0;
             }
 
             await Task.Delay(
-                emptyAttaches >= SoftEmptyAttaches
+                state.EmptyAttaches >= SoftEmptyAttaches
                     ? 8_000
-                    : Math.Min(500 * (1 << emptyAttaches), 4_000), ct);
+                    : Math.Min(500 * (1 << state.EmptyAttaches), 4_000), ct);
         }
+    }
+
+    /// <summary>Zera o estado visual da run antes de anexar o stream.</summary>
+    private void ResetRunUiState()
+    {
+        _liveToolCalls.Clear();
+        _runTasks = [];
+        _runChanges = [];
+        _runCheckpoints = [];
+        _reasoning.Clear();
+        _thinkingOpen = null;
+        _thinkingElapsed = default;
+        _tpsWindow.Clear();
+        _tps = null;
+    }
+
+    /// <summary>
+    /// Um attach SSE da run: aplica eventos até o terminal, o stall watchdog
+    /// ou uma queda de transporte. Retorna true na fase terminal.
+    /// </summary>
+    private async Task<bool> StreamAttachOnceAsync(
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
+    {
+        using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stall.CancelAfter(StallMs);
+        try
+        {
+            await foreach (var evt in ChatStream.StreamRunEventsAsync(
+                chatId, runId, state.LastSeq, stall.Token))
+            {
+                stall.CancelAfter(StallMs);
+                if (evt.Seq > 0)
+                {
+                    state.LastSeq = evt.Seq;
+                }
+                state.SawEvent = true;
+                if (await ApplyRunEventAsync(evt, content, placeholder, index))
+                {
+                    return true;
+                }
+                // Deltas chegam em rajada: o conteúdo é sempre aplicado
+                // acima, mas a tela só re-renderiza na cadência
+                // RenderIntervalMs (eventos de tool/fase renderizam já).
+                state.Dirty |= evt is ChatStreamService.ChatStreamEvent.Delta
+                    or ChatStreamService.ChatStreamEvent.Reasoning;
+                if (evt is ChatStreamService.ChatStreamEvent.Delta
+                    or ChatStreamService.ChatStreamEvent.Reasoning
+                    or ChatStreamService.ChatStreamEvent.Heartbeat
+                    && (!state.Dirty
+                        || (DateTime.UtcNow - state.LastRender).TotalMilliseconds < RenderIntervalMs))
+                {
+                    continue;
+                }
+                state.Dirty = false;
+                state.LastRender = DateTime.UtcNow;
+                await InvokeAsync(StateHasChanged);
+                await ScrollToEndIfPinnedAsync();
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Falha de transporte no meio do stream → tenta re-anexar.
+            Console.WriteLine($"stream da run {runId} caiu: {ex.Message}");
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Attach vazio: confere o status da run antes de re-anexar.
+    /// Retorna true quando o consumo deve encerrar.
+    /// </summary>
+    private async Task<bool> HandleEmptyAttachAsync(
+        string chatId, string runId, RunConsumeState state, CancellationToken ct)
+    {
+        // O status check cai na mesma queda de rede que derrubou o
+        // attach — tratar como "run viva" e seguir o backoff em vez
+        // de abortar o resume com erro.
+        ChatRunResponse? polled = null;
+        var pollFailed = false;
+        try
+        {
+            polled = await ChatStream.GetRunAsync(chatId, runId, ct);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            pollFailed = true;
+        }
+        // Sem resposta: transitório → run viva; mas GET respondido
+        // com null (404) → run sumiu, encerra como antes.
+        var status = polled?.Status ?? (pollFailed ? "running" : null);
+        if (status is null or "completed" or "failed" or "stopped" or "interrupted")
+        {
+            return true;
+        }
+        // Polling-fallback (SPEC-20261030): o GET da run devolve
+        // aprovação/pergunta pendente — o attach SSE que o proxy
+        // mata antes do 1º evento não esconde mais o card até o F5.
+        if (polled is not null
+            && (polled.PendingApproval is not null || polled.PendingQuestion is not null
+                || _pendingApproval is not null || _pendingQuestion is not null))
+        {
+            _pendingApproval = polled.PendingApproval;
+            _pendingQuestion = polled.PendingQuestion;
+            state.LastRender = DateTime.UtcNow;
+            await InvokeAsync(StateHasChanged);
+        }
+        if (state.EmptyAttaches >= HardEmptyAttaches)
+        {
+            Console.WriteLine(
+                $"stream da run {runId}: {state.EmptyAttaches} attaches vazios, desistindo.");
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -3245,196 +3407,232 @@
     {
         switch (evt)
         {
-                case ChatStreamService.ChatStreamEvent.Delta delta:
-                    content.Append(delta.Text);
-                    {
-                        var updated = placeholder with { Content = content.ToString() };
-                        // Replay/reattach: a lista pode ter sido reconstruída
-                        // (reload, mensagens duráveis) e o índice capturado no
-                        // attach ficar obsoleto — resolve a posição viva do
-                        // placeholder em vez de indexar às cegas (loop de
-                        // ArgumentOutOfRange visto atrás de proxy).
-                        var liveIdx = _streamingEntry is null
-                            ? -1
-                            : _messages.FindIndex(m => ReferenceEquals(m, _streamingEntry));
-                        if (liveIdx >= 0)
-                        {
-                            _messages[liveIdx] = updated;
-                        }
-                        else if (index < _messages.Count
-                                 && _messages[index].Id == placeholder.Id)
-                        {
-                            _messages[index] = updated;
-                        }
-                        else
-                        {
-                            _messages.Add(updated);
-                        }
-                        _streamingEntry = updated;
-                    }
-                    _hasDeltas = true;
-                    TrackTps(delta.Text.Length);
-                    // O auto-colapso do pensamento é derivado em
-                    // ThinkingExpanded (hasDeltas=true) — aqui só o chip
-                    // vira "Escrevendo resposta…".
-                    if (_statusLabel == _thinkingLabel)
-                    {
-                        _statusLabel = L["chat.status_writing"];
-                    }
-                    break;
-                case ChatStreamService.ChatStreamEvent.Reasoning reasoning:
-                    // Canal separado do content (SPEC-20261015): acumula no
-                    // buffer de pensamento — aberto por padrão no modo
-                    // automático (ThinkingExpanded deriva de _hasDeltas).
-                    if (_reasoning.Length == 0)
-                    {
-                        _thinkingStartUtc = DateTime.UtcNow;
-                    }
-                    _reasoning.Append(reasoning.Text);
-                    _thinkingElapsed = DateTime.UtcNow - _thinkingStartUtc;
-                    break;
-                case ChatStreamService.ChatStreamEvent.ToolCall call:
-                    _liveToolCalls.Add(new ToolCallView { Call = call.Call });
-                    break;
-                case ChatStreamService.ChatStreamEvent.ToolResult result:
+            case ChatStreamService.ChatStreamEvent.Delta delta:
+                ApplyDelta(delta, content, placeholder, index);
+                break;
+            case ChatStreamService.ChatStreamEvent.Reasoning reasoning:
+                // Canal separado do content (SPEC-20261015): acumula no
+                // buffer de pensamento — aberto por padrão no modo
+                // automático (ThinkingExpanded deriva de _hasDeltas).
+                if (_reasoning.Length == 0)
                 {
-                    var entry = _liveToolCalls.FindLast(t => t.Call.Id == result.Result.Id)
-                        ?? _liveToolCalls.FindLast(t => t.Call.Name == result.Result.Name);
-                    if (entry is null)
-                    {
-                        entry = new ToolCallView
-                        {
-                            Call = new RunToolCallEvent(
-                                result.Result.Id, result.Result.Name, null),
-                        };
-                        _liveToolCalls.Add(entry);
-                    }
-                    entry.Result = result.Result;
-                    // Job criado/atualizado por job_* ou shell_exec background
-                    // reflete na aba Jobs do painel, se aberto.
-                    if (_showPanel
-                        && result.Result.Name.Contains("job", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _ = RefreshPanelAsync();
-                    }
-                    break;
+                    _thinkingStartUtc = DateTime.UtcNow;
                 }
-                case ChatStreamService.ChatStreamEvent.Tasks tasks:
-                    _runTasks = tasks.Snapshot.Tasks.ToList();
-                    break;
-                case ChatStreamService.ChatStreamEvent.Changes changes:
-                    _runChanges = changes.Snapshot.Changes.ToList();
-                    // file_* escreveu no workdir — a git bar/aba Changes atualiza.
-                    await RefreshGitAsync();
-                    break;
-                case ChatStreamService.ChatStreamEvent.Checkpoint checkpoint:
-                    _runCheckpoints.Add(new WorkspaceCheckpointItem(
-                        checkpoint.Snapshot.Hash, checkpoint.Snapshot.Turn,
-                        DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
-                    break;
-                case ChatStreamService.ChatStreamEvent.Phase phase:
-                    switch (phase.Status.Phase)
-                    {
-                        case "auto_approved":
-                            _statusLabel = L.T("chat.status_auto_approved",
-                                ("name", phase.Status.Label ?? ""));
-                            break;
-                        case "paused":
-                            _paused = true;
-                            _statusLabel = L["chat.status_paused"];
-                            break;
-                        case "resumed":
-                            _paused = false;
-                            _statusLabel = null;
-                            break;
-                        case "completed" or "failed" or "stopped" or "interrupted":
-                            // Estado terminal da run: encerra sem depender do
-                            // fechamento do SSE (proxies podem segurar o FIN).
-                            return true;
-                        case "generating":
-                            _statusLabel = _hasDeltas
-                                ? L["chat.status_writing"]
-                                : _thinkingLabel;
-                            // Badge N/M do tool loop (SPEC-20261016-agent-
-                            // steps-usage RF-006): step atual / teto da run.
-                            if (phase.Status.Step is { } step
-                                && phase.Status.MaxSteps is { } max)
-                            {
-                                _statusLabel += " · " + L.T("chat.status_step",
-                                    ("step", step.ToString()),
-                                    ("max", max.ToString()));
-                            }
-                            break;
-                        case "answering":
-                            _statusLabel = L["chat.status_writing"];
-                            break;
-                        case "preparing_context":
-                        case "compacting":
-                        case "searching_web":
-                        case "consulting_memory":
-                        case "loading_tools":
-                        case "connecting_model":
-                            // RF-005: fases de progresso pré-provider — chip
-                            // amigável (chat.progress.*) + label do evento
-                            // quando houver (ex.: query da busca web).
-                            _statusLabel = phase.Status.Label is { Length: > 0 } lbl
-                                ? $"{L[$"chat.progress.{phase.Status.Phase}"]} — {lbl}"
-                                : L[$"chat.progress.{phase.Status.Phase}"];
-                            break;
-                        case "running_tool":
-                            // Chip acompanha a atividade amigável da call atual.
-                            _statusLabel = _liveToolCalls.LastOrDefault(t => t.Result is null)
-                                is { } live
-                                ? L[ToolActivityMap.KeyFor(live.Call.Name)]
-                                : L["chat.activity.tool"];
-                            break;
-                        case "awaiting_approval":
-                            _statusLabel = L["chat.status_approval"];
-                            break;
-                        default:
-                            _paused = false;
-                            _statusLabel = phase.Status.Label;
-                            break;
-                    }
-                    break;
-                case ChatStreamService.ChatStreamEvent.ApprovalAsked asked:
-                    _pendingApproval = asked.Asked;
-                    _ = Attention.RefreshAsync();
-                    break;
-                case ChatStreamService.ChatStreamEvent.QuestionAsked question:
-                    _pendingQuestion = question.Asked;
-                    _ = Attention.RefreshAsync();
-                    break;
-                case ChatStreamService.ChatStreamEvent.DecisionAuto auto:
-                    // SPEC-15 RF-003: escolha automática vira linha auditável
-                    // no feed de atividade (já resolvida — check direto).
-                    _liveToolCalls.Add(new ToolCallView
-                    {
-                        Call = new RunToolCallEvent(
-                            auto.Info.CallId, "decision_auto", auto.Info.Source),
-                        Result = new RunToolResultEvent(
-                            auto.Info.CallId, "decision_auto", true,
-                            auto.Info.Chosen),
-                    });
-                    break;
-                case ChatStreamService.ChatStreamEvent.Mode modeEvt:
-                    // plan_exit aprovado promoveu o chat a build mid-run.
-                    _agentMode = AgentModeVisuals.Normalize(modeEvt.Info.Mode);
-                    break;
-                case ChatStreamService.ChatStreamEvent.Advisor advice:
-                    // Conselho do revisor (SPEC-20261013-run-advisor): linha
-                    // de atividade já resolvida — clique abre o texto cheio.
-                    _liveToolCalls.Add(new ToolCallView
-                    {
-                        Call = new RunToolCallEvent(
-                            $"advisor-{_liveToolCalls.Count}", "advisor", null),
-                        Result = new RunToolResultEvent(
-                            $"advisor-{_liveToolCalls.Count}", "advisor", true,
-                            advice.Event.Text),
-                    });
-                    break;
-            }
+                _reasoning.Append(reasoning.Text);
+                _thinkingElapsed = DateTime.UtcNow - _thinkingStartUtc;
+                break;
+            case ChatStreamService.ChatStreamEvent.ToolCall call:
+                _liveToolCalls.Add(new ToolCallView { Call = call.Call });
+                break;
+            case ChatStreamService.ChatStreamEvent.ToolResult result:
+                ApplyToolResult(result);
+                break;
+            case ChatStreamService.ChatStreamEvent.Tasks tasks:
+                _runTasks = tasks.Snapshot.Tasks.ToList();
+                break;
+            case ChatStreamService.ChatStreamEvent.Changes changes:
+                _runChanges = changes.Snapshot.Changes.ToList();
+                // file_* escreveu no workdir — a git bar/aba Changes atualiza.
+                await RefreshGitAsync();
+                break;
+            case ChatStreamService.ChatStreamEvent.Checkpoint checkpoint:
+                _runCheckpoints.Add(new WorkspaceCheckpointItem(
+                    checkpoint.Snapshot.Hash, checkpoint.Snapshot.Turn,
+                    DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                break;
+            case ChatStreamService.ChatStreamEvent.Phase phase:
+                if (ApplyPhaseStatus(phase))
+                {
+                    return true;
+                }
+                break;
+            case ChatStreamService.ChatStreamEvent.ApprovalAsked asked:
+                _pendingApproval = asked.Asked;
+                _ = Attention.RefreshAsync();
+                break;
+            case ChatStreamService.ChatStreamEvent.QuestionAsked question:
+                _pendingQuestion = question.Asked;
+                _ = Attention.RefreshAsync();
+                break;
+            case ChatStreamService.ChatStreamEvent.DecisionAuto auto:
+                AddDecisionAutoActivity(auto);
+                break;
+            case ChatStreamService.ChatStreamEvent.Mode modeEvt:
+                // plan_exit aprovado promoveu o chat a build mid-run.
+                _agentMode = AgentModeVisuals.Normalize(modeEvt.Info.Mode);
+                break;
+            case ChatStreamService.ChatStreamEvent.Advisor advice:
+                AddAdvisorActivity(advice);
+                break;
+        }
         return false;
+    }
+
+    /// <summary>
+    /// Delta: atualiza a bolha de stream — a lista pode ter sido reconstruída
+    /// (reload, mensagens duráveis) e o índice capturado no attach ficar
+    /// obsoleto, então resolve a posição viva do placeholder em vez de
+    /// indexar às cegas (loop de ArgumentOutOfRange visto atrás de proxy).
+    /// </summary>
+    private void ApplyDelta(
+        ChatStreamService.ChatStreamEvent.Delta delta,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index)
+    {
+        content.Append(delta.Text);
+        var updated = placeholder with { Content = content.ToString() };
+        var liveIdx = _streamingEntry is null
+            ? -1
+            : _messages.FindIndex(m => ReferenceEquals(m, _streamingEntry));
+        if (liveIdx >= 0)
+        {
+            _messages[liveIdx] = updated;
+        }
+        else if (index < _messages.Count
+                 && _messages[index].Id == placeholder.Id)
+        {
+            _messages[index] = updated;
+        }
+        else
+        {
+            _messages.Add(updated);
+        }
+        _streamingEntry = updated;
+        _hasDeltas = true;
+        TrackTps(delta.Text.Length);
+        // O auto-colapso do pensamento é derivado em
+        // ThinkingExpanded (hasDeltas=true) — aqui só o chip
+        // vira "Escrevendo resposta…".
+        if (_statusLabel == _thinkingLabel)
+        {
+            _statusLabel = L["chat.status_writing"];
+        }
+    }
+
+    /// <summary>
+    /// ToolResult: casa com a call ao vivo (id → nome); job criado/atualizado
+    /// por job_* ou shell_exec background reflete na aba Jobs do painel.
+    /// </summary>
+    private void ApplyToolResult(ChatStreamService.ChatStreamEvent.ToolResult result)
+    {
+        var entry = _liveToolCalls.FindLast(t => t.Call.Id == result.Result.Id)
+            ?? _liveToolCalls.FindLast(t => t.Call.Name == result.Result.Name);
+        if (entry is null)
+        {
+            entry = new ToolCallView
+            {
+                Call = new RunToolCallEvent(
+                    result.Result.Id, result.Result.Name, null),
+            };
+            _liveToolCalls.Add(entry);
+        }
+        entry.Result = result.Result;
+        if (_showPanel
+            && result.Result.Name.Contains("job", StringComparison.OrdinalIgnoreCase))
+        {
+            _ = RefreshPanelAsync();
+        }
+    }
+
+    /// <summary>Fase da run → chip de status. Retorna true na fase terminal.</summary>
+    private bool ApplyPhaseStatus(ChatStreamService.ChatStreamEvent.Phase phase)
+    {
+        switch (phase.Status.Phase)
+        {
+            case "auto_approved":
+                _statusLabel = L.T("chat.status_auto_approved",
+                    ("name", phase.Status.Label ?? ""));
+                break;
+            case "paused":
+                _paused = true;
+                _statusLabel = L["chat.status_paused"];
+                break;
+            case "resumed":
+                _paused = false;
+                _statusLabel = null;
+                break;
+            case "completed" or "failed" or "stopped" or "interrupted":
+                // Estado terminal da run: encerra sem depender do
+                // fechamento do SSE (proxies podem segurar o FIN).
+                return true;
+            case "generating":
+                _statusLabel = _hasDeltas
+                    ? L["chat.status_writing"]
+                    : _thinkingLabel;
+                // Badge N/M do tool loop (SPEC-20261016-agent-
+                // steps-usage RF-006): step atual / teto da run.
+                if (phase.Status.Step is { } step
+                    && phase.Status.MaxSteps is { } max)
+                {
+                    _statusLabel += " · " + L.T("chat.status_step",
+                        ("step", step.ToString()),
+                        ("max", max.ToString()));
+                }
+                break;
+            case "answering":
+                _statusLabel = L["chat.status_writing"];
+                break;
+            case "preparing_context":
+            case "compacting":
+            case "searching_web":
+            case "consulting_memory":
+            case "loading_tools":
+            case "connecting_model":
+                // RF-005: fases de progresso pré-provider — chip
+                // amigável (chat.progress.*) + label do evento
+                // quando houver (ex.: query da busca web).
+                _statusLabel = phase.Status.Label is { Length: > 0 } lbl
+                    ? $"{L[$"chat.progress.{phase.Status.Phase}"]} — {lbl}"
+                    : L[$"chat.progress.{phase.Status.Phase}"];
+                break;
+            case "running_tool":
+                // Chip acompanha a atividade amigável da call atual.
+                _statusLabel = _liveToolCalls.LastOrDefault(t => t.Result is null)
+                    is { } live
+                    ? L[ToolActivityMap.KeyFor(live.Call.Name)]
+                    : L["chat.activity.tool"];
+                break;
+            case "awaiting_approval":
+                _statusLabel = L["chat.status_approval"];
+                break;
+            default:
+                _paused = false;
+                _statusLabel = phase.Status.Label;
+                break;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// SPEC-15 RF-003: escolha automática vira linha auditável
+    /// no feed de atividade (já resolvida — check direto).
+    /// </summary>
+    private void AddDecisionAutoActivity(ChatStreamService.ChatStreamEvent.DecisionAuto auto)
+    {
+        _liveToolCalls.Add(new ToolCallView
+        {
+            Call = new RunToolCallEvent(
+                auto.Info.CallId, "decision_auto", auto.Info.Source),
+            Result = new RunToolResultEvent(
+                auto.Info.CallId, "decision_auto", true,
+                auto.Info.Chosen),
+        });
+    }
+
+    /// <summary>
+    /// Conselho do revisor (SPEC-20261013-run-advisor): linha
+    /// de atividade já resolvida — clique abre o texto cheio.
+    /// </summary>
+    private void AddAdvisorActivity(ChatStreamService.ChatStreamEvent.Advisor advice)
+    {
+        _liveToolCalls.Add(new ToolCallView
+        {
+            Call = new RunToolCallEvent(
+                $"advisor-{_liveToolCalls.Count}", "advisor", null),
+            Result = new RunToolResultEvent(
+                $"advisor-{_liveToolCalls.Count}", "advisor", true,
+                advice.Event.Text),
+        });
     }
 
     /// <summary>

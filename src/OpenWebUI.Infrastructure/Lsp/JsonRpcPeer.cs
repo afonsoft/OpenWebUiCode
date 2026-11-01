@@ -166,28 +166,7 @@ public sealed class JsonRpcPeer : IAsyncDisposable
 
             if (hasId && !hasMethod)
             {
-                // Resposta (result | error) — correlaciona pelo id.
-                if (idEl.ValueKind is JsonValueKind.Number
-                    && idEl.TryGetInt64(out var id)
-                    && _pending.TryGetValue(id, out var tcs))
-                {
-                    if (root.TryGetProperty("error", out var error))
-                    {
-                        var code = error.TryGetProperty("code", out var c) ? c.GetInt32() : 0;
-                        var message = error.TryGetProperty("message", out var m)
-                            ? m.GetString() ?? "erro" : "erro";
-                        tcs.TrySetException(new LspRequestException(
-                            $"id={id}", code, message));
-                    }
-                    else if (root.TryGetProperty("result", out var result))
-                    {
-                        tcs.TrySetResult(result.Clone());
-                    }
-                    else
-                    {
-                        tcs.TrySetResult(JsonDocument.Parse("null").RootElement.Clone());
-                    }
-                }
+                HandleResponse(root, idEl);
                 return;
             }
 
@@ -202,20 +181,53 @@ public sealed class JsonRpcPeer : IAsyncDisposable
 
             if (hasMethod)
             {
-                var method = methodEl.GetString() ?? string.Empty;
-                var @params = root.TryGetProperty("params", out var p)
-                    ? p.Clone()
-                    : JsonDocument.Parse("null").RootElement.Clone();
-                try
-                {
-                    Notification?.Invoke(method, @params);
-                }
-                catch (Exception ex) when (ex is JsonException or InvalidOperationException
-                    or ArgumentException or NotSupportedException)
-                {
-                    _logger?.LogWarning(ex, "LSP: handler de notificação {Method} falhou", method);
-                }
+                HandleNotification(methodEl, root);
             }
+        }
+    }
+
+    /// <summary>Resposta (result | error) — correlaciona pelo id no _pending.</summary>
+    private void HandleResponse(JsonElement root, JsonElement idEl)
+    {
+        if (idEl.ValueKind is not JsonValueKind.Number
+            || !idEl.TryGetInt64(out var id)
+            || !_pending.TryGetValue(id, out var tcs))
+        {
+            return;
+        }
+        if (root.TryGetProperty("error", out var error))
+        {
+            var code = error.TryGetProperty("code", out var c) ? c.GetInt32() : 0;
+            var message = error.TryGetProperty("message", out var m)
+                ? m.GetString() ?? "erro" : "erro";
+            tcs.TrySetException(new LspRequestException(
+                $"id={id}", code, message));
+        }
+        else if (root.TryGetProperty("result", out var result))
+        {
+            tcs.TrySetResult(result.Clone());
+        }
+        else
+        {
+            tcs.TrySetResult(JsonDocument.Parse("null").RootElement.Clone());
+        }
+    }
+
+    /// <summary>Notificação server→client — invoca o handler sem travar o pump.</summary>
+    private void HandleNotification(JsonElement methodEl, JsonElement root)
+    {
+        var method = methodEl.GetString() ?? string.Empty;
+        var @params = root.TryGetProperty("params", out var p)
+            ? p.Clone()
+            : JsonDocument.Parse("null").RootElement.Clone();
+        try
+        {
+            Notification?.Invoke(method, @params);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException
+            or ArgumentException or NotSupportedException)
+        {
+            _logger?.LogWarning(ex, "LSP: handler de notificação {Method} falhou", method);
         }
     }
 

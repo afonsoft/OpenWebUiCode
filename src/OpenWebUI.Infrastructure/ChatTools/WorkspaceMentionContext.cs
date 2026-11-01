@@ -56,42 +56,7 @@ public static class WorkspaceMentionContext
                 continue;
             }
 
-            string body;
-            var size = new FileInfo(full).Length;
-            if (WorkspaceFiles.LooksBinary(full))
-            {
-                body = "[binary file — content omitted]";
-            }
-            else if (size > MaxReadableBytes)
-            {
-                body = "[file too large — content omitted]";
-            }
-            else
-            {
-                var text = await File.ReadAllTextAsync(full, ct);
-                var truncated = false;
-                var content = text;
-                if (content.Length > MaxFileChars)
-                {
-                    content = content[..MaxFileChars];
-                    truncated = true;
-                }
-
-                var remaining = MaxTotalChars - total;
-                if (remaining <= 0)
-                {
-                    body = "[omitted — total context cap reached]";
-                }
-                else
-                {
-                    if (content.Length > remaining)
-                    {
-                        content = content[..remaining];
-                        truncated = true;
-                    }
-                    body = truncated ? content + "\n[… truncated]" : content;
-                }
-            }
+            var body = await ReadMentionBodyAsync(full, total, ct);
 
             sb.Append("<file path=\"").Append(EscapeAttr(rel)).Append("\">");
             sb.Append(body);
@@ -100,6 +65,45 @@ public static class WorkspaceMentionContext
         }
 
         return sb.Length == 0 ? null : sb.ToString();
+    }
+
+    /// <summary>Lê o corpo do bloco <c>&lt;file&gt;</c> de um arquivo
+    /// elegível: placeholders para binário/grande demais/cap total, com
+    /// truncamento por <see cref="MaxFileChars"/> e pelo restante de
+    /// <see cref="MaxTotalChars"/>.</summary>
+    private static async Task<string> ReadMentionBodyAsync(
+        string full, int usedChars, CancellationToken ct)
+    {
+        var size = new FileInfo(full).Length;
+        if (WorkspaceFiles.LooksBinary(full))
+        {
+            return "[binary file — content omitted]";
+        }
+        if (size > MaxReadableBytes)
+        {
+            return "[file too large — content omitted]";
+        }
+
+        var text = await File.ReadAllTextAsync(full, ct);
+        var truncated = false;
+        var content = text;
+        if (content.Length > MaxFileChars)
+        {
+            content = content[..MaxFileChars];
+            truncated = true;
+        }
+
+        var remaining = MaxTotalChars - usedChars;
+        if (remaining <= 0)
+        {
+            return "[omitted — total context cap reached]";
+        }
+        if (content.Length > remaining)
+        {
+            content = content[..remaining];
+            truncated = true;
+        }
+        return truncated ? content + "\n[… truncated]" : content;
     }
 
     /// <summary>Escapa o atributo <c>path</c> (&amp; &lt; &gt; &quot;) para não quebrar o XML do bloco.</summary>

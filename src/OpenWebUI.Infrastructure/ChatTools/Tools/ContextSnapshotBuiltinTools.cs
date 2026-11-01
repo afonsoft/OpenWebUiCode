@@ -244,38 +244,18 @@ public sealed class ContextCompactBuiltinTool(
                     "informe exatamente uma origem: 'items' ou 'fromVersion'."));
         }
 
-        List<ContextSnapshotService.SnapshotItem> items;
-        if (hasVersion)
+        var (items, loadError) = hasVersion
+            ? await LoadVersionItemsAsync(chatId, fromVersion, ct)
+            : ParseInlineItems(itemsEl, limits.MaxItems);
+        if (loadError is not null)
         {
-            var snap = await snapshots.GetAsync(chatId, fromVersion, ct);
-            if (snap is null)
-            {
-                return ContextSnapshotTools.Error(Name,
-                    new ContextSnapshotService.SnapshotError("context_not_found",
-                        $"versão {fromVersion} não existe neste chat."));
-            }
-            items = ContextSnapshotService.DeserializeItems(snap.PayloadJson);
-        }
-        else
-        {
-            var (parsed, parseError) = ContextSnapshotService.ParseItems(itemsEl, limits.MaxItems);
-            if (parseError is not null)
-            {
-                return ContextSnapshotTools.Error(Name, parseError);
-            }
-            // Itens inline não foram gravados ainda: valida segredos/
-            // control chars antes de mandar transcript ao provider (RF-004).
-            if (ContextSnapshotService.ValidateItems(parsed!) is { } vError)
-            {
-                return ContextSnapshotTools.Error(Name, vError);
-            }
-            items = parsed!;
+            return ContextSnapshotTools.Error(Name, loadError);
         }
 
         var model = await ContextSnapshotTools.SummaryModelAsync(roles, context, ct);
         var (compacted, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
             new ContextSnapshotCompactor.BudgetRequest(
-                items, strategy, budget, summarizer, model, context.UserId,
+                items!, strategy, budget, summarizer, model, context.UserId,
                 chatId, TimeSpan.FromSeconds(limits.SummaryTimeoutSeconds)), ct);
 
         int? savedVersion = null;
@@ -298,6 +278,39 @@ public sealed class ContextCompactBuiltinTool(
             savedVersion,
         };
         return new BuiltinToolResult(JsonSerializer.Serialize(payload), payload);
+    }
+
+    /// <summary>Origem <c>fromVersion</c>: carrega e desserializa o snapshot salvo.</summary>
+    private async Task<(List<ContextSnapshotService.SnapshotItem>? Items,
+        ContextSnapshotService.SnapshotError? Error)> LoadVersionItemsAsync(
+        string chatId, int fromVersion, CancellationToken ct)
+    {
+        var snap = await snapshots.GetAsync(chatId, fromVersion, ct);
+        if (snap is null)
+        {
+            return (null, new ContextSnapshotService.SnapshotError("context_not_found",
+                $"versão {fromVersion} não existe neste chat."));
+        }
+        return (ContextSnapshotService.DeserializeItems(snap.PayloadJson), null);
+    }
+
+    /// <summary>Origem <c>items</c>: parse + validação de segredos (RF-004).</summary>
+    private static (List<ContextSnapshotService.SnapshotItem>? Items,
+        ContextSnapshotService.SnapshotError? Error) ParseInlineItems(
+        JsonElement itemsEl, int maxItems)
+    {
+        var (parsed, parseError) = ContextSnapshotService.ParseItems(itemsEl, maxItems);
+        if (parseError is not null)
+        {
+            return (null, parseError);
+        }
+        // Itens inline não foram gravados ainda: valida segredos/
+        // control chars antes de mandar transcript ao provider (RF-004).
+        if (ContextSnapshotService.ValidateItems(parsed!) is { } vError)
+        {
+            return (null, vError);
+        }
+        return (parsed, null);
     }
 }
 

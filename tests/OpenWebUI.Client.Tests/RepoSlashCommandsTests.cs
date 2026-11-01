@@ -97,6 +97,31 @@ public class RepoSlashCommandsTests
             Is.EqualTo("[a][]"));
     }
 
+    /// <summary>SPEC-20261031-sonar-smell-s3776: placeholders que não casam
+    /// (<c>$</c> solto, <c>$0</c>, <c>$x</c>, dígito no fim da string) são
+    /// emitidos literalmente — regressão do helper TryPlaceholder.</summary>
+    [Test]
+    public void Interpolate_PlaceholdersLiterais_NaoConsomem()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RepoSlashCommands.Interpolate("a $ b", "x"), Is.EqualTo("a $ b"),
+                "$ seguido de espaço é literal");
+            Assert.That(RepoSlashCommands.Interpolate("custo $0 real", "x"), Is.EqualTo("custo $0 real"),
+                "$0 não é posicional válido (n>=1)");
+            Assert.That(RepoSlashCommands.Interpolate("$foo bar", "x"), Is.EqualTo("$foo bar"),
+                "$ seguido de letra é literal");
+            Assert.That(RepoSlashCommands.Interpolate("fim $1", "arg"), Is.EqualTo("fim arg"),
+                "posicional no fim da string funciona");
+            Assert.That(RepoSlashCommands.Interpolate("v$2x", "a b"), Is.EqualTo("vbx"),
+                "$2 no meio consome só o dígito");
+            Assert.That(RepoSlashCommands.Interpolate("$", "a"), Is.EqualTo("$"),
+                "$ terminal é literal");
+            Assert.That(RepoSlashCommands.Interpolate("$10", "a b"), Is.EqualTo(""),
+                "posicional além dos args vira vazio");
+        });
+    }
+
     [Test]
     public void ArgsAfter_PegaTextoAposNome()
     {

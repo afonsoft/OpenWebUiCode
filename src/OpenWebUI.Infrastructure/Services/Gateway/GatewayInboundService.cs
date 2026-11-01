@@ -81,6 +81,47 @@ public sealed class GatewayInboundService(
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var peer = await ResolvePeerAsync(channel, inbound, now, ct);
+        if (peer.Blocked)
+        {
+            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "blocked", inbound.MessageId, null, Excerpt(inbound.Text), null), ct);
+            return GatewayInboundResult.Ok;
+        }
+
+        var botToken = await ResolveBotTokenAsync(channel, ct);
+        if (peer.PairedUserId is null)
+        {
+            await HandlePairingAsync(channel, peer, inbound, adapter, botToken, ct);
+            return GatewayInboundResult.Ok;
+        }
+
+        var chat = await ResolveChatAsync(channel, peer, now, ct);
+        var content = await BuildContentAsync(channel, inbound, ct);
+        await AppendMessageAsync(chat, content, now, ct);
+
+        var model = channel.DefaultModelId ?? FirstModel(chat.ModelsJson);
+        if (model is null)
+        {
+            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "failed", inbound.MessageId, null, Excerpt(inbound.Text), "sem modelo: configure defaultModelId no canal"), ct);
+            if (botToken is not null)
+            {
+                await adapter.SendReplyAsync(channel, peer,
+                    "Este canal ainda não tem modelo configurado — peça ao "
+                    + "dono para definir defaultModelId em Settings → Gateway.",
+                    botToken, ct);
+            }
+            return GatewayInboundResult.Ok;
+        }
+
+        await EnqueueRunAsync(channel, peer, chat, model, content, inbound, now, ct);
+        return GatewayInboundResult.Ok;
+    }
+
+    /// <summary>Peer por (channel, chat externo, usuário externo) — cria ou atualiza o nome.</summary>
+    private async Task<GatewayPeer> ResolvePeerAsync(
+        GatewayChannel channel, GatewayInboundMessage inbound,
+        long now, CancellationToken ct)
+    {
         var peer = await db.GatewayPeers.FirstOrDefaultAsync(p =>
             p.ChannelId == channel.Id
             && p.ExternalChatId == inbound.ExternalChatId
@@ -103,32 +144,34 @@ public sealed class GatewayInboundService(
         {
             peer.ExternalName = inbound.ExternalName;
         }
+        return peer;
+    }
 
-        if (peer.Blocked)
+    /// <summary>Peer não pareado: garante código, responde pelo canal e audita.</summary>
+    private async Task HandlePairingAsync(
+        GatewayChannel channel, GatewayPeer peer,
+        GatewayInboundMessage inbound, IGatewayAdapter adapter,
+        string? botToken, CancellationToken ct)
+    {
+        var code = await pairing.EnsureCodeAsync(peer, ct);
+        await db.SaveChangesAsync(ct);
+        string? sendError = null;
+        if (botToken is not null && code is not null)
         {
-            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "blocked", inbound.MessageId, null, Excerpt(inbound.Text), null), ct);
-            return GatewayInboundResult.Ok;
+            var send = await adapter.SendReplyAsync(channel, peer,
+                $"Seu código de pareamento é {code} (válido por "
+                + $"{await config.GetAsync("agent.gateway.pairingTtlMinutes", GatewayPairingService.DefaultTtlMinutes, ct)} min). "
+                + "Informe-o em Settings → Gateway na web UI.",
+                botToken, ct);
+            sendError = send.Ok ? null : send.Error;
         }
+        await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "pairing", inbound.MessageId, null, Excerpt(inbound.Text), sendError), ct);
+    }
 
-        var botToken = await ResolveBotTokenAsync(channel, ct);
-        if (peer.PairedUserId is null)
-        {
-            var code = await pairing.EnsureCodeAsync(peer, ct);
-            await db.SaveChangesAsync(ct);
-            string? sendError = null;
-            if (botToken is not null && code is not null)
-            {
-                var send = await adapter.SendReplyAsync(channel, peer,
-                    $"Seu código de pareamento é {code} (válido por "
-                    + $"{await config.GetAsync("agent.gateway.pairingTtlMinutes", GatewayPairingService.DefaultTtlMinutes, ct)} min). "
-                    + "Informe-o em Settings → Gateway na web UI.",
-                    botToken, ct);
-                sendError = send.Ok ? null : send.Error;
-            }
-            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "pairing", inbound.MessageId, null, Excerpt(inbound.Text), sendError), ct);
-            return GatewayInboundResult.Ok;
-        }
-
+    /// <summary>Chat da sessão do peer — cria chat+session na primeira mensagem.</summary>
+    private async Task<Chat> ResolveChatAsync(
+        GatewayChannel channel, GatewayPeer peer, long now, CancellationToken ct)
+    {
         var session = await db.GatewaySessions
             .FirstOrDefaultAsync(s => s.PeerId == peer.Id, ct);
         Chat? chat = null;
@@ -141,7 +184,7 @@ public sealed class GatewayInboundService(
         {
             chat = new Chat
             {
-                UserId = peer.PairedUserId,
+                UserId = peer.PairedUserId!,
                 Title = $"gateway:{channel.Platform}:{peer.ExternalName ?? peer.ExternalUserId}",
                 TagsJson = JsonSerializer.Serialize(
                     new[] { "gateway", channel.Platform }, JsonOptions),
@@ -166,18 +209,29 @@ public sealed class GatewayInboundService(
             }
         }
         session!.LastInboundAt = now;
+        return chat;
+    }
 
+    /// <summary>Cap de caracteres + envelope <c>&lt;untrusted_input&gt;</c>.</summary>
+    private async Task<string> BuildContentAsync(
+        GatewayChannel channel, GatewayInboundMessage inbound, CancellationToken ct)
+    {
         var maxChars = await config.GetAsync(
             "agent.gateway.maxInboundChars", DefaultMaxInboundChars, ct);
         var text = inbound.Text.Length > maxChars
             ? inbound.Text[..maxChars] : inbound.Text;
         // Doutrina <untrusted_input>: conteúdo de terceiros é dado, nunca
         // instrução — fecha aspas duplas no escape para não reabrir a tag.
-        var content = $"<untrusted_input source=\"gateway:{channel.Platform}\" field=\"text\">"
+        return $"<untrusted_input source=\"gateway:{channel.Platform}\" field=\"text\">"
             + text.Replace("</untrusted_input>", "<\\/untrusted_input>",
                 StringComparison.OrdinalIgnoreCase)
             + "</untrusted_input>";
+    }
 
+    /// <summary>Anexa a mensagem do usuário na folha e atualiza o chat.</summary>
+    private async Task AppendMessageAsync(
+        Chat chat, string content, long now, CancellationToken ct)
+    {
         var leaf = await db.ChatMessages
             .Where(m => m.ChatId == chat.Id)
             .OrderByDescending(m => m.Position)
@@ -204,21 +258,14 @@ public sealed class GatewayInboundService(
         db.ChatMessages.Add(message);
         chat.LeafMessageId = message.Id;
         chat.UpdatedAt = now;
+    }
 
-        var model = channel.DefaultModelId ?? FirstModel(chat.ModelsJson);
-        if (model is null)
-        {
-            await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "failed", inbound.MessageId, null, Excerpt(inbound.Text), "sem modelo: configure defaultModelId no canal"), ct);
-            if (botToken is not null)
-            {
-                await adapter.SendReplyAsync(channel, peer,
-                    "Este canal ainda não tem modelo configurado — peça ao "
-                    + "dono para definir defaultModelId em Settings → Gateway.",
-                    botToken, ct);
-            }
-            return GatewayInboundResult.Ok;
-        }
-
+    /// <summary>Persona do canal + persistência do run + enqueue no dispatcher.</summary>
+    private async Task EnqueueRunAsync(
+        GatewayChannel channel, GatewayPeer peer, Chat chat, string model,
+        string content, GatewayInboundMessage inbound,
+        long now, CancellationToken ct)
+    {
         string? personaPrompt = null;
         if (channel.PersonaId is { Length: > 0 } personaSlug)
         {
@@ -232,7 +279,7 @@ public sealed class GatewayInboundService(
         var run = new ChatRun
         {
             ChatId = chat.Id,
-            UserId = peer.PairedUserId,
+            UserId = peer.PairedUserId!,
             Model = model,
             RequestJson = JsonSerializer.Serialize(
                 new ChatCompletionRequest(
@@ -256,7 +303,6 @@ public sealed class GatewayInboundService(
         await AuditAsync(new AuditInfo(channel.Id, peer.Id, "in", "accepted", inbound.MessageId, run.Id, Excerpt(inbound.Text), null), ct);
 
         dispatcher.Enqueue(run.Id);
-        return GatewayInboundResult.Ok;
     }
 
     /// <summary>Resolve o token do bot a partir do <c>SecretRef</c> no cofre do dono.</summary>

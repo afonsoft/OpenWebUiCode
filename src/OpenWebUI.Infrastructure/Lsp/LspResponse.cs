@@ -143,25 +143,8 @@ public static class LspResponse
         var kind = sym.TryGetProperty("kind", out var k) && k.TryGetInt32(out var kv) ? kv : 0;
 
         // DocumentSymbol: {range|selectionRange}; SymbolInformation: {location:{uri,range}}
-        (int Line, int Col) pos = (0, 0);
         var itemPath = path;
-        if (sym.TryGetProperty("location", out var loc)
-            && loc.ValueKind == JsonValueKind.Object)
-        {
-            if (loc.TryGetProperty("uri", out var lu))
-            {
-                itemPath = LspClient.PathForUri(lu.GetString()) ?? path;
-            }
-            if (loc.TryGetProperty(RangeKey, out var lr))
-            {
-                pos = StartPos(lr);
-            }
-        }
-        else if (sym.TryGetProperty("selectionRange", out var sr)
-            || sym.TryGetProperty(RangeKey, out sr))
-        {
-            pos = StartPos(sr);
-        }
+        var pos = ResolveSymbolPos(sym, ref itemPath);
         var childContainer = sym.TryGetProperty("containerName", out var cn)
             ? cn.GetString() : container;
         list.Add(new LspSymbolItem(name, kind, itemPath, pos.Line, pos.Col, childContainer));
@@ -174,6 +157,26 @@ public static class LspResponse
                 FlattenSymbol(child, itemPath, name, list, cap);
             }
         }
+    }
+
+    /// <summary>Posição do símbolo — <c>location.{uri,range}</c> quando
+    /// presente (SymbolInformation), senão <c>selectionRange|range</c>
+    /// (DocumentSymbol). Ajusta <paramref name="itemPath"/> ao uri.</summary>
+    private static (int Line, int Col) ResolveSymbolPos(
+        JsonElement sym, ref string itemPath)
+    {
+        if (sym.TryGetProperty("location", out var loc)
+            && loc.ValueKind == JsonValueKind.Object)
+        {
+            if (loc.TryGetProperty("uri", out var lu))
+            {
+                itemPath = LspClient.PathForUri(lu.GetString()) ?? itemPath;
+            }
+            return loc.TryGetProperty(RangeKey, out var lr) ? StartPos(lr) : (0, 0);
+        }
+        return sym.TryGetProperty("selectionRange", out var sr)
+            || sym.TryGetProperty(RangeKey, out sr)
+                ? StartPos(sr) : (0, 0);
     }
 
     /// <summary>workspace/symbol → lista plana (SymbolInformation[]).</summary>
@@ -191,31 +194,41 @@ public static class LspResponse
             {
                 break;
             }
-            if (sym.ValueKind != JsonValueKind.Object)
+            if (ParseWorkspaceSymbol(sym, workdir) is { } item)
             {
-                continue;
+                list.Add(item);
             }
-            var name = sym.TryGetProperty("name", out var n) ? n.GetString() : null;
-            if (name is null
-                || !sym.TryGetProperty("location", out var loc)
-                || loc.ValueKind != JsonValueKind.Object
-                || !loc.TryGetProperty("uri", out var u))
-            {
-                continue;
-            }
-            var raw = LspClient.PathForUri(u.GetString());
-            if (raw is null)
-            {
-                continue;
-            }
-            var (line, col) = loc.TryGetProperty(RangeKey, out var r) ? StartPos(r) : (0, 0);
-            var kind = sym.TryGetProperty("kind", out var k) && k.TryGetInt32(out var kv) ? kv : 0;
-            var container = sym.TryGetProperty("containerName", out var cn)
-                ? cn.GetString() : null;
-            list.Add(new LspSymbolItem(
-                name, kind, RelPath(workdir, raw), line, col, container));
         }
         return list;
+    }
+
+    /// <summary>Parse de um SymbolInformation — null quando inválido.</summary>
+    private static LspSymbolItem? ParseWorkspaceSymbol(
+        JsonElement sym, string workdir)
+    {
+        if (sym.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+        var name = sym.TryGetProperty("name", out var n) ? n.GetString() : null;
+        if (name is null
+            || !sym.TryGetProperty("location", out var loc)
+            || loc.ValueKind != JsonValueKind.Object
+            || !loc.TryGetProperty("uri", out var u))
+        {
+            return null;
+        }
+        var raw = LspClient.PathForUri(u.GetString());
+        if (raw is null)
+        {
+            return null;
+        }
+        var (line, col) = loc.TryGetProperty(RangeKey, out var r) ? StartPos(r) : (0, 0);
+        var kind = sym.TryGetProperty("kind", out var k) && k.TryGetInt32(out var kv) ? kv : 0;
+        var container = sym.TryGetProperty("containerName", out var cn)
+            ? cn.GetString() : null;
+        return new LspSymbolItem(
+            name, kind, RelPath(workdir, raw), line, col, container);
     }
 
     /// <summary>Hover → texto (MarkupContent|MarkedString|MarkedString[]).</summary>

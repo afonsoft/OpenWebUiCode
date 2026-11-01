@@ -49,39 +49,53 @@ public class ProviderProxyService(IHttpClientFactory httpClientFactory, ConfigSe
         var index = r.Index; var body = r.Body; var contentType = r.ContentType;
         var queryString = r.QueryString;
         var allowed = provider == "ollama" ? OllamaAllowed : OpenAiAllowed;
-        var key = $"{path}:{method.Method}";
-        var ok = allowed.Contains(key) || allowed.Any(entry =>
-            entry.Split('*') is [var prefix, var suffix]
-            && key.StartsWith(prefix, StringComparison.Ordinal)
-            && key.EndsWith(suffix, StringComparison.Ordinal));
-        if (!ok)
+        if (!IsAllowed(allowed, $"{path}:{method.Method}"))
         {
             return new ProxiedResponse(404, null, "Endpoint não suportado pelo proxy.");
         }
 
         var connections = await config.GetConnectionsAsync(ct);
-        string? baseUrl;
-        string? apiKey = null;
-        if (provider == "ollama")
-        {
-            baseUrl = Pick(connections.OllamaBaseUrls, index);
-        }
-        else
-        {
-            var i = index ?? 0;
-            baseUrl = Pick(connections.OpenAiBaseUrls, index);
-            if (baseUrl is not null && i >= 0 && i < connections.OpenAiApiKeys.Count)
-            {
-                apiKey = connections.OpenAiApiKeys[i];
-            }
-        }
-
+        var (baseUrl, apiKey) = ResolveConnection(provider, index, connections);
         if (baseUrl is null)
         {
             return new ProxiedResponse(503, null, $"Nenhuma conexão {provider} configurada.");
         }
 
-        using var request = new HttpRequestMessage(method, $"{baseUrl.TrimEnd('/')}/{path}{queryString}");
+        using var request = BuildRequest(method, baseUrl, path, queryString, body, contentType, apiKey);
+        var (upstream, error) = await SendUpstreamAsync(provider, request, ct);
+        return upstream is not null
+            ? new ProxiedResponse((int)upstream.StatusCode, upstream, null)
+            : new ProxiedResponse(502, null, error);
+    }
+
+    /// <summary>Allowlist: match exato ou wildcard <c>prefix*suffix</c>.</summary>
+    private static bool IsAllowed(HashSet<string> allowed, string key) =>
+        allowed.Contains(key) || allowed.Any(entry =>
+            entry.Split('*') is [var prefix, var suffix]
+            && key.StartsWith(prefix, StringComparison.Ordinal)
+            && key.EndsWith(suffix, StringComparison.Ordinal));
+
+    /// <summary>Base URL + API key da conexão indexada (OpenAI pareia a key).</summary>
+    private static (string? BaseUrl, string? ApiKey) ResolveConnection(
+        string provider, int? index, ConnectionsConfig connections)
+    {
+        if (provider == "ollama")
+        {
+            return (Pick(connections.OllamaBaseUrls, index), null);
+        }
+        var i = index ?? 0;
+        var baseUrl = Pick(connections.OpenAiBaseUrls, index);
+        var apiKey = baseUrl is not null && i >= 0 && i < connections.OpenAiApiKeys.Count
+            ? connections.OpenAiApiKeys[i]
+            : null;
+        return (baseUrl, apiKey);
+    }
+
+    private static HttpRequestMessage BuildRequest(
+        HttpMethod method, string baseUrl, string path, string? queryString,
+        byte[]? body, string? contentType, string? apiKey)
+    {
+        var request = new HttpRequestMessage(method, $"{baseUrl.TrimEnd('/')}/{path}{queryString}");
         if (body is not null)
         {
             request.Content = new ByteArrayContent(body);
@@ -95,23 +109,25 @@ public class ProviderProxyService(IHttpClientFactory httpClientFactory, ConfigSe
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
+        return request;
+    }
 
-        HttpResponseMessage upstream;
+    private async Task<(HttpResponseMessage? Upstream, string? Error)> SendUpstreamAsync(
+        string provider, HttpRequestMessage request, CancellationToken ct)
+    {
         try
         {
-            upstream = await httpClientFactory.CreateClient()
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            return (await httpClientFactory.CreateClient()
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct), null);
         }
         catch (HttpRequestException)
         {
-            return new ProxiedResponse(502, null, $"Provedor {provider} indisponível.");
+            return (null, $"Provedor {provider} indisponível.");
         }
         catch (TaskCanceledException)
         {
-            return new ProxiedResponse(502, null, $"Provedor {provider} indisponível.");
+            return (null, $"Provedor {provider} indisponível.");
         }
-
-        return new ProxiedResponse((int)upstream.StatusCode, upstream, null);
     }
 
     private static string? Pick(IReadOnlyList<string> urls, int? index)

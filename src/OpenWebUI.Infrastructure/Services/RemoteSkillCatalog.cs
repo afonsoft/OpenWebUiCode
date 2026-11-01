@@ -195,45 +195,57 @@ public sealed class RemoteSkillCatalog(
 
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         var items = new List<IndexItem>();
-        JsonElement array;
-        if (doc.RootElement.ValueKind == JsonValueKind.Array)
-        {
-            array = doc.RootElement;
-        }
-        else if (doc.RootElement.ValueKind == JsonValueKind.Object
-            && doc.RootElement.TryGetProperty("skills", out var skills)
-            && skills.ValueKind == JsonValueKind.Array)
-        {
-            array = skills;
-        }
-        else
+        if (!TryGetItemsArray(doc.RootElement, out var array))
         {
             return items;
         }
 
         foreach (var item in array.EnumerateArray())
         {
-            string? name = null;
-            if (item.ValueKind == JsonValueKind.String)
+            if (ParseItem(item) is { } parsed)
             {
-                name = item.GetString();
-            }
-            else if (item.ValueKind == JsonValueKind.Object
-                && item.TryGetProperty("name", out var n)
-                && n.ValueKind == JsonValueKind.String)
-            {
-                name = n.GetString();
-            }
-            var description = item.ValueKind == JsonValueKind.Object
-                && item.TryGetProperty("description", out var d)
-                && d.ValueKind == JsonValueKind.String
-                ? d.GetString()
-                : null;
-            if (!string.IsNullOrWhiteSpace(name))
-            {
-                items.Add(new IndexItem(name.Trim(), description));
+                items.Add(parsed);
             }
         }
         return items;
+    }
+
+    private static bool TryGetItemsArray(JsonElement root, out JsonElement array)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            array = root;
+            return true;
+        }
+        if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("skills", out var skills)
+            && skills.ValueKind == JsonValueKind.Array)
+        {
+            array = skills;
+            return true;
+        }
+        array = default;
+        return false;
+    }
+
+    private static IndexItem? ParseItem(JsonElement item)
+    {
+        var name = item.ValueKind == JsonValueKind.String
+            ? item.GetString()
+            : item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("name", out var n)
+                && n.ValueKind == JsonValueKind.String
+                ? n.GetString()
+                : null;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+        var description = item.ValueKind == JsonValueKind.Object
+            && item.TryGetProperty("description", out var d)
+            && d.ValueKind == JsonValueKind.String
+            ? d.GetString()
+            : null;
+        return new IndexItem(name.Trim(), description);
     }
 }

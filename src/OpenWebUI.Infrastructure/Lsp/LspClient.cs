@@ -401,31 +401,37 @@ public sealed class LspClient : IAsyncDisposable
             return;
         }
 
-        var list = new List<LspDiagnostic>();
-        if (@params.TryGetProperty("diagnostics", out var diags)
-            && diags.ValueKind == JsonValueKind.Array)
-        {
-            var path = PathForUri(uri) ?? uri;
-            foreach (var d in diags.EnumerateArray())
-            {
-                list.Add(new LspDiagnostic(
-                    path,
-                    ReadPos(d, "start", "line"),
-                    ReadPos(d, "start", "character"),
-                    ReadPos(d, "end", "line"),
-                    ReadPos(d, "end", "character"),
-                    d.TryGetProperty("severity", out var s) && s.TryGetInt32(out var sev) ? sev : 3,
-                    d.TryGetProperty("code", out var c) ? c.ToString() : null,
-                    d.TryGetProperty("source", out var so) ? so.GetString() : null,
-                    d.TryGetProperty("message", out var m) ? m.GetString() ?? "" : ""));
-            }
-        }
-        _diagnostics[uri] = list;
+        _diagnostics[uri] = ParseDiagnostics(@params, uri);
         // Acorda quem espera publishDiagnostics desse URI (lsp_diagnostics/tool).
         if (_diagWaiters.TryRemove(uri, out var waiter))
         {
             waiter.TrySetResult();
         }
+    }
+
+    private List<LspDiagnostic> ParseDiagnostics(JsonElement @params, string uri)
+    {
+        var list = new List<LspDiagnostic>();
+        if (!@params.TryGetProperty("diagnostics", out var diags)
+            || diags.ValueKind != JsonValueKind.Array)
+        {
+            return list;
+        }
+        var path = PathForUri(uri) ?? uri;
+        foreach (var d in diags.EnumerateArray())
+        {
+            list.Add(new LspDiagnostic(
+                path,
+                ReadPos(d, "start", "line"),
+                ReadPos(d, "start", "character"),
+                ReadPos(d, "end", "line"),
+                ReadPos(d, "end", "character"),
+                d.TryGetProperty("severity", out var s) && s.TryGetInt32(out var sev) ? sev : 3,
+                d.TryGetProperty("code", out var c) ? c.ToString() : null,
+                d.TryGetProperty("source", out var so) ? so.GetString() : null,
+                d.TryGetProperty("message", out var m) ? m.GetString() ?? "" : ""));
+        }
+        return list;
     }
 
     /// <summary>

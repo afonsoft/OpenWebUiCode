@@ -68,16 +68,7 @@ internal static class ContextSnapshotCompactor
         if (strategy is "elision" or "elision+summary"
             && ContextSnapshotService.EstimateTokens(work) > tokenBudget)
         {
-            var projected = work.Select(ToMessage).ToList();
-            var pruned = ContextPruner.Prune(projected, chatId);
-            for (var i = 0; i < work.Count; i++)
-            {
-                if (!string.Equals(pruned[i].Content, projected[i].Content, StringComparison.Ordinal))
-                {
-                    work[i] = work[i] with { Content = pruned[i].Content, Elided = true };
-                    elided++;
-                }
-            }
+            elided = ApplyElision(work, chatId);
         }
 
         // 2) Sumarização (RF-005/RF-002): falha do provider vira fallback,
@@ -86,38 +77,8 @@ internal static class ContextSnapshotCompactor
             && ContextSnapshotService.EstimateTokens(work) > tokenBudget
             && summarizer is not null && !string.IsNullOrWhiteSpace(model))
         {
-            var (transcript, covered) = BuildTranscript(work);
-            if (covered.Count > 0)
-            {
-                try
-                {
-                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    cts.CancelAfter(summaryTimeout);
-                    var s = await summarizer.SummarizeAsync(
-                        model, transcript, userId, cts.Token);
-                    if (s is null)
-                    {
-                        summaryFallback = true;
-                    }
-                    else
-                    {
-                        // Remove só os itens que entraram no transcript e
-                        // insere o resumo na posição do primeiro deles.
-                        var insertAt = work.IndexOf(covered[0]);
-                        foreach (var c in covered)
-                        {
-                            work.Remove(c);
-                        }
-                        work.Insert(insertAt, new ContextSnapshotService.SnapshotItem(
-                            "summary", "resumo", FormatSummary(s)));
-                        summaryUsed = true;
-                    }
-                }
-                catch (Exception)
-                {
-                    summaryFallback = true;
-                }
-            }
+            (summaryUsed, summaryFallback) = await TrySummarizeAsync(
+                work, summarizer, model, userId, summaryTimeout, ct);
         }
 
         // 3) Corte ordenado (RF-006): passage de menor score primeiro,
@@ -141,6 +102,62 @@ internal static class ContextSnapshotCompactor
         return (work, new CompactionStats(
             tokensBefore, tokensAfter, dropped, elided,
             summaryUsed, summaryFallback, tokensAfter <= tokenBudget));
+    }
+
+    /// <summary>Passa de elision via <see cref="ContextPruner"/>; devolve quantos mudaram.</summary>
+    private static int ApplyElision(
+        List<ContextSnapshotService.SnapshotItem> work, string chatId)
+    {
+        var projected = work.Select(ToMessage).ToList();
+        var pruned = ContextPruner.Prune(projected, chatId);
+        var elided = 0;
+        for (var i = 0; i < work.Count; i++)
+        {
+            if (!string.Equals(pruned[i].Content, projected[i].Content, StringComparison.Ordinal))
+            {
+                work[i] = work[i] with { Content = pruned[i].Content, Elided = true };
+                elided++;
+            }
+        }
+        return elided;
+    }
+
+    /// <summary>Sumarização com timeout; devolve (usou resumo, caiu em fallback).</summary>
+    private static async Task<(bool Used, bool Fallback)> TrySummarizeAsync(
+        List<ContextSnapshotService.SnapshotItem> work,
+        IContextSummarizer summarizer, string model, string? userId,
+        TimeSpan summaryTimeout, CancellationToken ct)
+    {
+        var (transcript, covered) = BuildTranscript(work);
+        if (covered.Count == 0)
+        {
+            return (false, false);
+        }
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(summaryTimeout);
+            var s = await summarizer.SummarizeAsync(
+                model, transcript, userId, cts.Token);
+            if (s is null)
+            {
+                return (false, true);
+            }
+            // Remove só os itens que entraram no transcript e
+            // insere o resumo na posição do primeiro deles.
+            var insertAt = work.IndexOf(covered[0]);
+            foreach (var c in covered)
+            {
+                work.Remove(c);
+            }
+            work.Insert(insertAt, new ContextSnapshotService.SnapshotItem(
+                "summary", "resumo", FormatSummary(s)));
+            return (true, false);
+        }
+        catch (Exception)
+        {
+            return (false, true);
+        }
     }
 
     private static ChatCompletionMessage ToMessage(

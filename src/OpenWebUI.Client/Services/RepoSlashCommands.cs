@@ -76,35 +76,48 @@ public static class RepoSlashCommands
         var i = 0;
         while (i < template.Length)
         {
-            if (template[i] == '$')
+            var consumed = template[i] == '$'
+                ? TryPlaceholder(template, i, args, tokens, sb)
+                : 0;
+            if (consumed > 0)
             {
-                if (template.AsSpan(i).StartsWith("$ARGUMENTS", StringComparison.Ordinal))
-                {
-                    sb.Append(args);
-                    i += "$ARGUMENTS".Length;
-                    continue;
-                }
-
-                var j = i + 1;
-                while (j < template.Length && char.IsDigit(template[j]))
-                {
-                    j++;
-                }
-
-                if (j > i + 1
-                    && int.TryParse(template[(i + 1)..j], out var n)
-                    && n >= 1)
-                {
-                    sb.Append(n <= tokens.Length ? tokens[n - 1] : string.Empty);
-                    i = j;
-                    continue;
-                }
+                i += consumed;
+                continue;
             }
-
             sb.Append(template[i]);
             i++;
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Tenta um placeholder na posição <paramref name="i"/> (<c>$ARGUMENTS</c>
+    /// ou <c>$N</c>) e escreve o valor em <paramref name="sb"/>. Retorna os
+    /// chars consumidos (0 = não era placeholder).
+    /// </summary>
+    private static int TryPlaceholder(string template, int i,
+        string args, string[] tokens, StringBuilder sb)
+    {
+        if (template.AsSpan(i).StartsWith("$ARGUMENTS", StringComparison.Ordinal))
+        {
+            sb.Append(args);
+            return "$ARGUMENTS".Length;
+        }
+
+        var j = i + 1;
+        while (j < template.Length && char.IsDigit(template[j]))
+        {
+            j++;
+        }
+
+        if (j > i + 1
+            && int.TryParse(template[(i + 1)..j], out var n)
+            && n >= 1)
+        {
+            sb.Append(n <= tokens.Length ? tokens[n - 1] : string.Empty);
+            return j - i;
+        }
+        return 0;
     }
 }

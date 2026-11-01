@@ -75,62 +75,14 @@ public class RetentionService(
 
         if (!dryRun)
         {
-            var runs = await db.AutomationRuns
-                .Where(r => r.FinishedAt < now - AutomationRunDays * Day)
-                .ExecuteDeleteAsync(ct);
-            var notifications = await db.Notifications
-                .Where(n => n.CreatedAt < now - NotificationDays * Day)
-                .ExecuteDeleteAsync(ct);
-            var terminalRunIds = db.ChatRuns
-                .Where(r => r.Status == ChatRunStatus.Completed
-                    || r.Status == ChatRunStatus.Failed
-                    || r.Status == ChatRunStatus.Stopped
-                    || r.Status == ChatRunStatus.Interrupted)
-                .Select(r => r.Id);
-            var steers = await db.ChatRunSteers
-                .Where(s => s.Timestamp < now - SteerDays * Day
-                    && terminalRunIds.Contains(s.RunId))
-                .ExecuteDeleteAsync(ct);
-            opsPurged = runs + notifications + steers;
-            if (opsPurged > 0)
-            {
-                logger.LogInformation(
-                    "Retenção: {Runs} automation-runs, {Notifications} notificações, "
-                        + "{Steers} steers expurgados.",
-                    runs, notifications, steers);
-            }
+            opsPurged = await PurgeOperationalAsync(now, ct);
         }
 
         // Poda de chats por idade — opt-in via retention.chatDays (RF-001).
         var chatDays = Math.Clamp(
             await config.GetAsync(ChatDaysKey, 0, ct), 0, 3650);
-        var eligible = chatDays > 0
-            ? await EligibleChatsAsync(now - (long)chatDays * Day, ct)
-            : [];
-        foreach (var chat in eligible)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (dryRun)
-            {
-                chatsPurged++;
-                continue;
-            }
-
-            // RF-002: destila antes de apagar; falha no provider → skip
-            // (o chat retenta no próximo ciclo).
-            if (!await memorySync.DistillChatAsync(chat.UserId, chat, ct))
-            {
-                continue;
-            }
-
-            memoriesSynthesized++;
-            db.Chats.Remove(chat);
-            chatsPurged++;
-        }
-        if (!dryRun && chatsPurged > 0)
-        {
-            await db.SaveChangesAsync(ct);
-        }
+        (chatsPurged, memoriesSynthesized) = await PruneChatsAsync(
+            now, chatDays, dryRun, ct);
 
         var vacuumed = false;
         if (!dryRun)
@@ -156,6 +108,72 @@ public class RetentionService(
             await config.SetAsync(LastCycleKey, result, ct);
         }
         return result;
+    }
+
+    /// <summary>Expurgo operacional: automation-runs, notificações e steers de runs terminais.</summary>
+    private async Task<int> PurgeOperationalAsync(long now, CancellationToken ct)
+    {
+        var runs = await db.AutomationRuns
+            .Where(r => r.FinishedAt < now - AutomationRunDays * Day)
+            .ExecuteDeleteAsync(ct);
+        var notifications = await db.Notifications
+            .Where(n => n.CreatedAt < now - NotificationDays * Day)
+            .ExecuteDeleteAsync(ct);
+        var terminalRunIds = db.ChatRuns
+            .Where(r => r.Status == ChatRunStatus.Completed
+                || r.Status == ChatRunStatus.Failed
+                || r.Status == ChatRunStatus.Stopped
+                || r.Status == ChatRunStatus.Interrupted)
+            .Select(r => r.Id);
+        var steers = await db.ChatRunSteers
+            .Where(s => s.Timestamp < now - SteerDays * Day
+                && terminalRunIds.Contains(s.RunId))
+            .ExecuteDeleteAsync(ct);
+        var purged = runs + notifications + steers;
+        if (purged > 0)
+        {
+            logger.LogInformation(
+                "Retenção: {Runs} automation-runs, {Notifications} notificações, "
+                    + "{Steers} steers expurgados.",
+                runs, notifications, steers);
+        }
+        return purged;
+    }
+
+    /// <summary>Poda por idade: destila (RF-002) e remove; dry-run só conta.</summary>
+    private async Task<(int Purged, int Synthesized)> PruneChatsAsync(
+        long now, int chatDays, bool dryRun, CancellationToken ct)
+    {
+        var eligible = chatDays > 0
+            ? await EligibleChatsAsync(now - (long)chatDays * Day, ct)
+            : [];
+        var purged = 0;
+        var synthesized = 0;
+        foreach (var chat in eligible)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (dryRun)
+            {
+                purged++;
+                continue;
+            }
+
+            // RF-002: destila antes de apagar; falha no provider → skip
+            // (o chat retenta no próximo ciclo).
+            if (!await memorySync.DistillChatAsync(chat.UserId, chat, ct))
+            {
+                continue;
+            }
+
+            synthesized++;
+            db.Chats.Remove(chat);
+            purged++;
+        }
+        if (!dryRun && purged > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        return (purged, synthesized);
     }
 
     /// <summary>
