@@ -58,9 +58,7 @@ public static class ChatProcessRunner
         RunOptions? options = null,
         CancellationToken ct = default)
     {
-        var maxOutputChars = options?.MaxOutputChars ?? DefaultMaxOutputChars;
         var stdin = options?.Stdin;
-        var secretsToScrub = options?.SecretsToScrub;
         if (stdin is not null)
         {
             psi.RedirectStandardInput = true;

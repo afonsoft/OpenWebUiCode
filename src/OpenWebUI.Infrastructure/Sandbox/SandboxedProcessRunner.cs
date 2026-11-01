@@ -107,7 +107,7 @@ public static class SandboxedProcessRunner
                 return new SandboxedOutcome(fallback, false, []);
             }
             return new SandboxedOutcome(
-                outcome, true, proxy?.DeniedHosts.ToArray() ?? []);
+                outcome, true, proxy?.DeniedHosts().ToArray() ?? []);
         }
         finally
         {

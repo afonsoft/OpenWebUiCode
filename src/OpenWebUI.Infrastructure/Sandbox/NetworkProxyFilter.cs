@@ -65,7 +65,7 @@ public sealed class SandboxProxyServer : IAsyncDisposable
         .ConcurrentDictionary<string, byte> _deniedHosts = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Hosts negados nesta instância (sandbox.network.denied).</summary>
-    public IReadOnlyCollection<string> DeniedHosts =>
+    public IReadOnlyCollection<string> DeniedHosts() =>
         _deniedHosts.Keys.ToArray();
 
     public int Port { get; }
@@ -114,7 +114,7 @@ public sealed class SandboxProxyServer : IAsyncDisposable
                 // Lê até \r\n\r\n.
                 while (header.Count < 64 * 1024)
                 {
-                    var n = await stream.ReadAsync(buf);
+                    var n = await stream.ReadAsync(buf.AsMemory(), _stop.Token);
                     if (n <= 0) { return; }
                     header.Add(buf[0]);
                     var count = header.Count;
@@ -153,7 +153,7 @@ public sealed class SandboxProxyServer : IAsyncDisposable
 
             if (parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
             {
-                await TunnelConnectAsync(stream, host, request);
+                await TunnelConnectAsync(stream, host, request, _stop.Token);
             }
             else
             {
@@ -183,7 +183,8 @@ public sealed class SandboxProxyServer : IAsyncDisposable
     }
 
     private static async Task TunnelConnectAsync(
-        NetworkStream clientStream, string host, string request)
+        NetworkStream clientStream, string host, string request,
+        CancellationToken ct)
     {
         var parts = request.Split(' ')[1].Split(':');
         var port = parts.Length > 1 && int.TryParse(parts[1], out var p)
@@ -205,8 +206,8 @@ public sealed class SandboxProxyServer : IAsyncDisposable
             await WriteAsync(clientStream,
                 "HTTP/1.1 200 Connection Established\r\n\r\n");
             var up = upstream.GetStream();
-            var t1 = clientStream.CopyToAsync(up);
-            var t2 = up.CopyToAsync(clientStream);
+            var t1 = clientStream.CopyToAsync(up, ct);
+            var t2 = up.CopyToAsync(clientStream, ct);
             try
             {
                 await Task.WhenAny(t1, t2);
