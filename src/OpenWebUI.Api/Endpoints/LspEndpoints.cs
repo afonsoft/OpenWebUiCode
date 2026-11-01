@@ -18,6 +18,9 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class LspEndpoints
 {
+    private const string RangeKey = "range";
+    private const string StartKey = "start";
+    private const string ConstantKind = "constant";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>Mapeia as rotas LSP do workspace.</summary>
@@ -88,14 +91,14 @@ public static class LspEndpoints
             var kind = s.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.Number
                 ? k.GetInt32() : 0;
             // DocumentSymbol: range+selectionRange; SymbolInformation: location.range.
-            var range = s.TryGetProperty("range", out var r) ? r
-                : s.TryGetProperty("location", out var loc) && loc.TryGetProperty("range", out r) ? r
+            var range = s.TryGetProperty(RangeKey, out var r) ? r
+                : s.TryGetProperty("location", out var loc) && loc.TryGetProperty(RangeKey, out r) ? r
                 : default;
             if (range.ValueKind != JsonValueKind.Object)
             {
                 continue;
             }
-            var (line, col) = Pos(range, "start");
+            var (line, col) = Pos(range, StartKey);
             var (endLine, endCol) = Pos(range, "end");
             output.Add(new LspOutlineItem(name, detail, kind, line, col, endLine, endCol, depth));
             if (s.TryGetProperty("children", out var children))
@@ -177,11 +180,11 @@ public static class LspEndpoints
             line >= lineStart.Count ? text.Length : Math.Min(lineStart[line] + col, text.Length);
 
         var ordered = edits.EnumerateArray()
-            .Where(e => e.TryGetProperty("range", out var r) && r.ValueKind == JsonValueKind.Object)
+            .Where(e => e.TryGetProperty(RangeKey, out var r) && r.ValueKind == JsonValueKind.Object)
             .Select(e =>
             {
-                var r = e.GetProperty("range");
-                var (sl, sc) = Pos(r, "start");
+                var r = e.GetProperty(RangeKey);
+                var (sl, sc) = Pos(r, StartKey);
                 var (el, ec) = Pos(r, "end");
                 return (Start: Off(sl, sc), End: Off(el, ec),
                     Text: e.TryGetProperty("newText", out var nt) ? nt.GetString() ?? "" : "");
@@ -446,9 +449,9 @@ public static class LspEndpoints
                         if (from is null
                             && it.TryGetProperty("textEdit", out textEdit)
                             && textEdit.ValueKind == JsonValueKind.Object
-                            && textEdit.TryGetProperty("range", out textRange))
+                            && textEdit.TryGetProperty(RangeKey, out textRange))
                         {
-                            var (sl, sc) = Pos(textRange, "start");
+                            var (sl, sc) = Pos(textRange, StartKey);
                             from = new LspPosition(sl, sc);
                         }
                         list.Add(new LspCompletionItem(
@@ -475,14 +478,14 @@ public static class LspEndpoints
         8 => "interface",
         9 => "namespace",   // module
         10 => "property",
-        11 => "constant",   // unit → enum member-ish
+        11 => ConstantKind,   // unit → enum member-ish
         12 or 13 => "variable",
-        14 => "constant",   // keyword → enum
+        14 => ConstantKind,   // keyword → enum
         15 => "text",
-        17 => "constant",   // file
+        17 => ConstantKind,   // file
         18 => "namespace",  // reference
-        19 => "constant",   // folder
-        20 or 21 or 22 or 23 => "constant",
+        19 => ConstantKind,   // folder
+        20 or 21 or 22 or 23 => ConstantKind,
         24 => "type",
         25 => "keyword",
         _ => null,
@@ -567,7 +570,7 @@ public static class LspEndpoints
             if (loc.TryGetProperty("uri", out var u))
             {
                 uri = u.GetString();
-                loc.TryGetProperty("range", out range);
+                loc.TryGetProperty(RangeKey, out range);
             }
             else if (loc.TryGetProperty("targetUri", out var tu))
             {
@@ -578,7 +581,7 @@ public static class LspEndpoints
             {
                 continue;
             }
-            var (sl, sc) = Pos(range, "start");
+            var (sl, sc) = Pos(range, StartKey);
             var (el, ec) = Pos(range, "end");
             yield return (uri, new LspRange(sl, sc, el, ec));
         }
@@ -728,11 +731,11 @@ public static class LspEndpoints
         }
         foreach (var e in arr.EnumerateArray())
         {
-            if (!e.TryGetProperty("range", out var r) || r.ValueKind != JsonValueKind.Object)
+            if (!e.TryGetProperty(RangeKey, out var r) || r.ValueKind != JsonValueKind.Object)
             {
                 continue;
             }
-            var (sl, sc) = Pos(r, "start");
+            var (sl, sc) = Pos(r, StartKey);
             var (el, ec) = Pos(r, "end");
             var nt = e.TryGetProperty("newText", out var n) ? n.GetString() ?? "" : "";
             list.Add(new LspRenameEdit(new LspRange(sl, sc, el, ec), nt));

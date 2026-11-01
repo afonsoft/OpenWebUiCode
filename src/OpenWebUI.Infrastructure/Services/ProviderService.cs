@@ -108,7 +108,7 @@ public class ProviderService(
     /// Lista modelos de uma única conexão cadastrada (por tipo e índice).
     /// Usado pela UI admin para combos de modelos por conexão.
     /// </summary>
-    /// <param name="type">"ollama" ou "openai".</param>
+    /// <param name="type">ProviderTypes.Ollama ou ProviderTypes.OpenAi.</param>
     /// <param name="index">Índice da conexão na lista configurada.</param>
     /// <param name="ct">Token de cancelamento.</param>
     public async Task<List<ModelInfo>> ListModelsForConnectionAsync(
@@ -125,7 +125,7 @@ public class ProviderService(
                 : [];
         }
 
-        return type == "ollama"
+        return type == ProviderTypes.Ollama
             ? index >= 0 && index < connections.OllamaBaseUrls.Count
                 ? await FetchOllamaModelsAsync(connections.OllamaBaseUrls[index], ct)
                 : []
@@ -157,7 +157,7 @@ public class ProviderService(
             // vez de InvalidOperationException.
             foreach (var model in Prop(node, "models") as JsonArray ?? [])
             {
-                var id = Str(Prop(model, "model")) ?? Str(Prop(model, "name"));
+                var id = Str(Prop(model, ModelKey)) ?? Str(Prop(model, "name"));
                 if (!string.IsNullOrEmpty(id))
                 {
                     // Ollama recente reporta capabilities no /api/tags (SPEC-20261013-model-roles).
@@ -166,7 +166,7 @@ public class ProviderService(
                         .OfType<string>()
                         .Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
                     models.Add(new ModelInfo(
-                        id, Str(Prop(model, "name")) ?? id, "ollama", "ollama",
+                        id, Str(Prop(model, "name")) ?? id, ProviderTypes.Ollama, ProviderTypes.Ollama,
                         caps is { Count: > 0 } ? caps : null));
                 }
             }
@@ -199,7 +199,7 @@ public class ProviderService(
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{TrimSlash(baseUrl)}/models");
             if (!string.IsNullOrEmpty(apiKey))
             {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                request.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, apiKey);
             }
 
             using var response = await httpClientFactory.CreateClient().SendAsync(request, ct);
@@ -218,7 +218,7 @@ public class ProviderService(
                     models.Add(new ModelInfo(
                         id,
                         id,
-                        "openai",
+                        ProviderTypes.OpenAi,
                         Str(Prop(model, "owned_by"))));
                 }
             }
@@ -269,8 +269,8 @@ public class ProviderService(
                     models.Add(new ModelInfo(
                         id,
                         Str(Prop(model, "display_name")) ?? id,
-                        "anthropic",
-                        "anthropic"));
+                        ProviderTypes.Anthropic,
+                        ProviderTypes.Anthropic));
                 }
             }
         }
@@ -325,8 +325,8 @@ public class ProviderService(
                 models.Add(new ModelInfo(
                     id,
                     Str(Prop(model, "displayName")) ?? id,
-                    "google",
-                    "google"));
+                    ProviderTypes.Google,
+                    ProviderTypes.Google));
             }
         }
         catch (HttpRequestException ex)
@@ -396,10 +396,10 @@ public class ProviderService(
 
         return provider switch
         {
-            "ollama" => await CompleteOllamaAsync(request, connections, ct),
-            "openai" => await CompleteOpenAiAsync(request, connections, ct),
-            "anthropic" => await CompleteAnthropicAsync(request, connections, ct),
-            "google" => await CompleteGoogleAsync(request, connections, ct),
+            ProviderTypes.Ollama => await CompleteOllamaAsync(request, connections, ct),
+            ProviderTypes.OpenAi => await CompleteOpenAiAsync(request, connections, ct),
+            ProviderTypes.Anthropic => await CompleteAnthropicAsync(request, connections, ct),
+            ProviderTypes.Google => await CompleteGoogleAsync(request, connections, ct),
             _ => throw new InvalidOperationException(
                 $"Nenhuma conexão configurada atende ao modelo '{request.Model}'."),
         };
@@ -440,10 +440,10 @@ public class ProviderService(
         request = ApplyProviderOverlay(request, provider, connections);
         var lines = provider switch
         {
-            "ollama" => StreamOllamaAsync(request, connections, ct),
-            "openai" => StreamOpenAiAsync(request, connections, ct),
-            "anthropic" => StreamAnthropicAsync(request, connections, ct),
-            "google" => StreamGoogleAsync(request, connections, ct),
+            ProviderTypes.Ollama => StreamOllamaAsync(request, connections, ct),
+            ProviderTypes.OpenAi => StreamOpenAiAsync(request, connections, ct),
+            ProviderTypes.Anthropic => StreamAnthropicAsync(request, connections, ct),
+            ProviderTypes.Google => StreamGoogleAsync(request, connections, ct),
             _ => throw new InvalidOperationException(
                 $"Nenhuma conexão configurada atende ao modelo '{request.Model}'."),
         };
@@ -470,7 +470,7 @@ public class ProviderService(
         request = ApplyProviderOverlay(request, provider, connections);
         var payload = BuildPayload(request, stream: false, provider);
         JsonNode? json;
-        bool openAi = provider == "openai";
+        bool openAi = provider == ProviderTypes.OpenAi;
 
         if (provider is ProviderTypes.Anthropic)
         {
@@ -489,13 +489,13 @@ public class ProviderService(
                 HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
             {
                 Content = new StringContent(
-                    payload.ToJsonString(), Encoding.UTF8, "application/json"),
+                    payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
             };
             var apiKey = connections.OpenAiApiKeys.ElementAtOrDefault(index);
             if (!string.IsNullOrEmpty(apiKey))
             {
                 httpRequest.Headers.Authorization =
-                    new AuthenticationHeaderValue("Bearer", apiKey);
+                    new AuthenticationHeaderValue(BearerScheme, apiKey);
             }
             ApplyExtraHeaders(httpRequest, request);
             using var response = await httpClientFactory.CreateClient()
@@ -506,12 +506,12 @@ public class ProviderService(
         else
         {
             var baseUrl = FirstBaseUrl(connections)
-                ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
+                ?? throw new InvalidOperationException(NoOllamaUrlMessage);
             using var httpRequest = new HttpRequestMessage(
                 HttpMethod.Post, $"{TrimSlash(baseUrl)}/api/chat")
             {
                 Content = new StringContent(
-                    payload.ToJsonString(), Encoding.UTF8, "application/json"),
+                    payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
             };
             ApplyExtraHeaders(httpRequest, request);
             using var response = await httpClientFactory.CreateClient()
@@ -535,7 +535,7 @@ public class ProviderService(
         {
             return s;
         }
-        if (Str(Prop(node, "reasoning")) is { Length: > 0 } r)
+        if (Str(Prop(node, ReasoningKey)) is { Length: > 0 } r)
         {
             return r;
         }
@@ -766,9 +766,9 @@ public class ProviderService(
         {
             return provider switch
             {
-                "openai" => await StreamOpenAiToolsAsync(request, connections, payload, onDelta, onReasoning, ct),
-                "anthropic" => await StreamAnthropicToolsAsync(request, connections, onDelta, onReasoning, ct),
-                "google" => await StreamGoogleToolsAsync(request, connections, onDelta, onReasoning, ct),
+                ProviderTypes.OpenAi => await StreamOpenAiToolsAsync(request, connections, payload, onDelta, onReasoning, ct),
+                ProviderTypes.Anthropic => await StreamAnthropicToolsAsync(request, connections, onDelta, onReasoning, ct),
+                ProviderTypes.Google => await StreamGoogleToolsAsync(request, connections, onDelta, onReasoning, ct),
                 _ => await StreamOllamaToolsAsync(request, connections, payload, onDelta, onReasoning, ct),
             };
         }
@@ -818,13 +818,13 @@ public class ProviderService(
             HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
         {
             Content = new StringContent(
-                payload.ToJsonString(), Encoding.UTF8, "application/json"),
+                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
         var apiKey = connections.OpenAiApiKeys.ElementAtOrDefault(index);
         if (!string.IsNullOrEmpty(apiKey))
         {
             httpRequest.Headers.Authorization =
-                new AuthenticationHeaderValue("Bearer", apiKey);
+                new AuthenticationHeaderValue(BearerScheme, apiKey);
         }
         ApplyExtraHeaders(httpRequest, request);
 
@@ -880,12 +880,12 @@ public class ProviderService(
 
         while (await reader.ReadLineAsync(ct) is { } line)
         {
-            if (!line.StartsWith("data:", StringComparison.Ordinal))
+            if (!line.StartsWith(SseDataPrefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var data = line["data:".Length..].Trim();
+            var data = line[SseDataPrefix.Length..].Trim();
             if (data == "[DONE]")
             {
                 break;
@@ -924,7 +924,7 @@ public class ProviderService(
             // explica diferenças de comportamento (tool calling, tetos).
             // Chunks de heartbeat chegam com model="keepalive": ignorar.
             if (upstreamModel is null
-                && Str(Prop(node, "model")) is { } m
+                && Str(Prop(node, ModelKey)) is { } m
                 && m != "keepalive")
             {
                 upstreamModel = m;
@@ -1074,8 +1074,8 @@ public class ProviderService(
                 + "{NonArrayToolCalls} tool_calls fora de array, "
                 + "{NonObjectChunks} chunks escalares, finish_reason={FinishReason}, "
                 + "dsmlMarker={DsmlSeen}, content={ContentChars} chars, reasoning={ReasoningChars} chars.",
-                upstreamModel ?? "(none)", chunks, toolCallParts, nonArrayToolCalls,
-                nonObjectChunks, finishReason ?? "(none)", sawDsmlMarker,
+                upstreamModel ?? NonePlaceholder, chunks, toolCallParts, nonArrayToolCalls,
+                nonObjectChunks, finishReason ?? NonePlaceholder, sawDsmlMarker,
                 content.Length, reasoningChars);
         }
         if (calls.Count == 0 && content.Length == 0)
@@ -1086,8 +1086,8 @@ public class ProviderService(
                 + "finish_reason={FinishReason}, dsmlMarker={DsmlSeen}, "
                 + "tool_call_parts={ToolCallParts}, tool_calls_fora_de_array={NonArray}, "
                 + "chunks_escalares={NonObject}.",
-                upstreamModel ?? "(none)", chunks, reasoningChars,
-                finishReason ?? "(none)", sawDsmlMarker, toolCallParts,
+                upstreamModel ?? NonePlaceholder, chunks, reasoningChars,
+                finishReason ?? NonePlaceholder, sawDsmlMarker, toolCallParts,
                 nonArrayToolCalls, nonObjectChunks);
         }
         else if (nonArrayToolCalls > 0)
@@ -1282,13 +1282,13 @@ public class ProviderService(
         CancellationToken ct)
     {
         var baseUrl = FirstBaseUrl(connections)
-            ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
+            ?? throw new InvalidOperationException(NoOllamaUrlMessage);
 
         // Ollama aceita "options" em vez de parâmetros de topo (mesmo remap de StreamOllamaAsync).
         if (request.Params is { Count: > 0 })
         {
             var options = new JsonObject();
-            foreach (var key in new[] { "temperature", "top_p", "top_k", "num_predict", "repeat_penalty", "seed", "stop" }
+            foreach (var key in new[] { TemperatureKey, TopPKey, TopKKey, "num_predict", "repeat_penalty", "seed", "stop" }
                          .Where(k => payload.ContainsKey(k)))
             {
                 options[MapOllamaParam(key)] = payload[key];
@@ -1305,7 +1305,7 @@ public class ProviderService(
             HttpMethod.Post, $"{TrimSlash(baseUrl)}/api/chat")
         {
             Content = new StringContent(
-                payload.ToJsonString(), Encoding.UTF8, "application/json"),
+                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
         ApplyExtraHeaders(httpRequest, request);
 
@@ -1463,7 +1463,7 @@ public class ProviderService(
             }
         }
 
-        return connections.OpenAiBaseUrls.Count > 0 ? "openai" : "ollama";
+        return connections.OpenAiBaseUrls.Count > 0 ? ProviderTypes.OpenAi : ProviderTypes.Ollama;
     }
 
     // ---------------- Anthropic (Messages API) ----------------
@@ -1482,6 +1482,24 @@ public class ProviderService(
     private const string CandidatesKey = "candidates";
     private const string TextKey = "text";
     private const string PartsKey = "parts";
+    private const string ModelKey = "model";
+    private const string BearerScheme = "Bearer";
+    private const string JsonMediaType = "application/json";
+    private const string NoOllamaUrlMessage = "Nenhuma URL do Ollama configurada.";
+    private const string ReasoningKey = "reasoning";
+    private const string SseDataPrefix = "data:";
+    private const string NonePlaceholder = "(none)";
+    private const string TemperatureKey = "temperature";
+    private const string TopKKey = "top_k";
+    private const string TopPKey = "top_p";
+    private const string RoleSystem = "system";
+    private const string RoleAssistant = "assistant";
+    private const string MaxTokensKey = "max_tokens";
+    private const string DescriptionKey = "description";
+    private const string ObjectKey = "object";
+    private const string ToolsKey = "tools";
+    private const string CacheControlKey = "cache_control";
+    private const string SseDoneLine = "data: [DONE]";
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 
     private static ProviderConnection FindTypedConnection(
@@ -1498,7 +1516,7 @@ public class ProviderService(
             HttpMethod.Post, $"{TrimSlash(connection.BaseUrl)}/v1/messages")
         {
             Content = new StringContent(
-                payload.ToJsonString(), Encoding.UTF8, "application/json"),
+                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
         if (!string.IsNullOrEmpty(connection.ApiKey))
         {
@@ -1526,7 +1544,7 @@ public class ProviderService(
         var messages = new List<JsonObject>();
         foreach (var m in request.Messages)
         {
-            if (m.Role == "system")
+            if (m.Role == RoleSystem)
             {
                 if (!string.IsNullOrWhiteSpace(m.Content))
                 {
@@ -1562,7 +1580,7 @@ public class ProviderService(
                 continue;
             }
 
-            if (m.Role == "assistant" && m.ToolCallsJson is not null)
+            if (m.Role == RoleAssistant && m.ToolCallsJson is not null)
             {
                 var blocks = new JsonArray();
                 if (!string.IsNullOrEmpty(m.Content))
@@ -1599,7 +1617,7 @@ public class ProviderService(
                 }
                 messages.Add(new JsonObject
                 {
-                    ["role"] = "assistant",
+                    ["role"] = RoleAssistant,
                     [ContentKey] = blocks,
                 });
                 continue;
@@ -1636,21 +1654,21 @@ public class ProviderService(
 
             messages.Add(new JsonObject
             {
-                ["role"] = m.Role == "assistant" ? "assistant" : "user",
+                ["role"] = m.Role == RoleAssistant ? RoleAssistant : "user",
                 [ContentKey] = m.Content,
             });
         }
 
         var payload = new JsonObject
         {
-            ["model"] = request.Model,
-            ["max_tokens"] = 4096,
+            [ModelKey] = request.Model,
+            [MaxTokensKey] = 4096,
             ["messages"] = new JsonArray(messages.Cast<JsonNode>().ToArray()),
             ["stream"] = stream,
         };
         if (system.Count > 0)
         {
-            payload["system"] = string.Join("\n", system);
+            payload[RoleSystem] = string.Join("\n", system);
         }
 
         if (request.Tools is { Count: > 0 })
@@ -1667,14 +1685,14 @@ public class ProviderService(
                 tools.Add(new JsonObject
                 {
                     ["name"] = name,
-                    ["description"] = fn?["description"]?.GetValue<string>(),
+                    [DescriptionKey] = fn?[DescriptionKey]?.GetValue<string>(),
                     ["input_schema"] = fn?["parameters"]?.DeepClone()
-                        ?? new JsonObject { ["type"] = "object" },
+                        ?? new JsonObject { ["type"] = ObjectKey },
                 });
             }
             if (tools.Count > 0)
             {
-                payload["tools"] = tools;
+                payload[ToolsKey] = tools;
             }
         }
 
@@ -1684,14 +1702,14 @@ public class ProviderService(
             {
                 switch (key)
                 {
-                    case "temperature":
-                    case "top_p":
-                    case "top_k":
+                    case TemperatureKey:
+                    case TopPKey:
+                    case TopKKey:
                         payload[key] = ToJsonNode(value);
                         break;
-                    case "max_tokens":
+                    case MaxTokensKey:
                     case "max_completion_tokens":
-                        payload["max_tokens"] = ToJsonNode(value);
+                        payload[MaxTokensKey] = ToJsonNode(value);
                         break;
                     case "stop":
                         payload["stop_sequences"] = value is string s
@@ -1705,7 +1723,7 @@ public class ProviderService(
         // SPEC-20261018-model-variants RF-003: cache_format anthropic →
         // cache_control ephemeral em system/tools/última user text; e
         // overlay de body da variant por cima de tudo.
-        if (cacheAllowed && string.Equals(request.CacheFormat, "anthropic",
+        if (cacheAllowed && string.Equals(request.CacheFormat, ProviderTypes.Anthropic,
                 StringComparison.OrdinalIgnoreCase))
         {
             ApplyAnthropicCacheControl(payload);
@@ -1719,28 +1737,28 @@ public class ProviderService(
     }
 
     /// <summary>
-    /// cacheFormat:"anthropic" (RF-003): cache_control {type:"ephemeral"}
+    /// cacheFormat:ProviderTypes.Anthropic (RF-003): cache_control {type:"ephemeral"}
     /// no system, em cada tool e no último bloco text da última user msg —
     /// reaproveita o prefixo do prompt/tools entre turnos.
     /// </summary>
     private static void ApplyAnthropicCacheControl(JsonObject payload)
     {
         JsonObject Marker() => new() { ["type"] = "ephemeral" };
-        if (payload["system"] is JsonValue sys)
+        if (payload[RoleSystem] is JsonValue sys)
         {
             // System como array de blocos habilita cache_control por bloco.
-            payload["system"] = new JsonArray(
+            payload[RoleSystem] = new JsonArray(
                 new JsonObject
                 {
                     ["type"] = TextKey,
                     [TextKey] = sys.GetValue<string>(),
-                    ["cache_control"] = Marker(),
+                    [CacheControlKey] = Marker(),
                 });
         }
-        if (payload["tools"] is JsonArray tools && tools.Count > 0
+        if (payload[ToolsKey] is JsonArray tools && tools.Count > 0
             && tools[^1] is JsonObject lastTool)
         {
-            lastTool["cache_control"] = Marker();
+            lastTool[CacheControlKey] = Marker();
         }
         if (payload["messages"] is JsonArray msgs
             && msgs.LastOrDefault(m =>
@@ -1750,7 +1768,7 @@ public class ProviderService(
                 && blocks.LastOrDefault(b =>
                     b?["type"]?.GetValue<string>() == TextKey) is JsonObject textBlock)
             {
-                textBlock["cache_control"] = Marker();
+                textBlock[CacheControlKey] = Marker();
             }
             else if (lastUser[ContentKey] is JsonValue)
             {
@@ -1759,7 +1777,7 @@ public class ProviderService(
                     {
                         ["type"] = TextKey,
                         [TextKey] = lastUser[ContentKey]!.DeepClone(),
-                        ["cache_control"] = Marker(),
+                        [CacheControlKey] = Marker(),
                     });
             }
         }
@@ -1834,7 +1852,7 @@ public class ProviderService(
     private async Task<string> CompleteAnthropicAsync(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "anthropic");
+        var connection = FindTypedConnection(connections, ProviderTypes.Anthropic);
         var payload = BuildAnthropicPayload(request, stream: false,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
@@ -1847,7 +1865,7 @@ public class ProviderService(
     private async Task<ProviderCompletion> CompleteAnthropicWithToolsAsync(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "anthropic");
+        var connection = FindTypedConnection(connections, ProviderTypes.Anthropic);
         var payload = BuildAnthropicPayload(request, stream: false,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
@@ -1879,11 +1897,11 @@ public class ProviderService(
             {
                 eventName = line["event:".Length..].Trim();
             }
-            else if (line.StartsWith("data:", StringComparison.Ordinal))
+            else if (line.StartsWith(SseDataPrefix, StringComparison.Ordinal))
             {
                 try
                 {
-                    data = JsonNode.Parse(line["data:".Length..].Trim());
+                    data = JsonNode.Parse(line[SseDataPrefix.Length..].Trim());
                 }
                 catch (JsonException)
                 {
@@ -1906,7 +1924,7 @@ public class ProviderService(
         ConnectionsConfig connections,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "anthropic");
+        var connection = FindTypedConnection(connections, ProviderTypes.Anthropic);
         var payload = BuildAnthropicPayload(request, stream: true,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
@@ -1930,7 +1948,7 @@ public class ProviderService(
                 var (field, prop) = deltaType switch
                 {
                     "text_delta" => (ContentKey, TextKey),
-                    "thinking_delta" => ("reasoning", ThinkingKey),
+                    "thinking_delta" => (ReasoningKey, ThinkingKey),
                     _ => (null, null),
                 };
                 if (field is not null && prop is not null
@@ -1938,7 +1956,7 @@ public class ProviderService(
                 {
                     var chunk = new JsonObject
                     {
-                        ["object"] = "chat.completion.chunk",
+                        [ObjectKey] = "chat.completion.chunk",
                         [ChoicesKey] = new JsonArray(new JsonObject
                         {
                             [IndexKey] = 0,
@@ -1953,7 +1971,7 @@ public class ProviderService(
                 break;
             }
         }
-        yield return "data: [DONE]";
+        yield return SseDoneLine;
     }
 
     /// <summary>
@@ -1968,7 +1986,7 @@ public class ProviderService(
         Func<string, CancellationToken, Task>? onReasoning,
         CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "anthropic");
+        var connection = FindTypedConnection(connections, ProviderTypes.Anthropic);
         var payload = BuildAnthropicPayload(request, stream: true,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
@@ -2071,8 +2089,8 @@ public class ProviderService(
             else if (eventName == "message_delta"
                 && Str(Prop(Prop(data, DeltaKey), "stop_reason")) is { Length: > 0 } sr)
             {
-                // message_delta carrega stop_reason ("end_turn"/"max_tokens") —
-                // "max_tokens" sinaliza truncamento para a continuação RF-003.
+                // message_delta carrega stop_reason ("end_turn"/MaxTokensKey) —
+                // MaxTokensKey sinaliza truncamento para a continuação RF-003.
                 stopReason = sr;
             }
         }
@@ -2116,7 +2134,7 @@ public class ProviderService(
         var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new StringContent(
-                payload.ToJsonString(), Encoding.UTF8, "application/json"),
+                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
         if (!string.IsNullOrEmpty(connection.ApiKey))
         {
@@ -2142,7 +2160,7 @@ public class ProviderService(
         var toolNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var m in request.Messages)
         {
-            if (m.Role == "system")
+            if (m.Role == RoleSystem)
             {
                 if (!string.IsNullOrWhiteSpace(m.Content))
                 {
@@ -2184,7 +2202,7 @@ public class ProviderService(
                 continue;
             }
 
-            if (m.Role == "assistant")
+            if (m.Role == RoleAssistant)
             {
                 var parts = new JsonArray();
                 if (!string.IsNullOrEmpty(m.Content))
@@ -2227,7 +2245,7 @@ public class ProviderService(
                         });
                     }
                 }
-                contents.Add(new JsonObject { ["role"] = "model", [PartsKey] = parts });
+                contents.Add(new JsonObject { ["role"] = ModelKey, [PartsKey] = parts });
                 continue;
             }
 
@@ -2265,14 +2283,14 @@ public class ProviderService(
                 declarations.Add(new JsonObject
                 {
                     ["name"] = name,
-                    ["description"] = fn?["description"]?.GetValue<string>(),
+                    [DescriptionKey] = fn?[DescriptionKey]?.GetValue<string>(),
                     ["parameters"] = fn?["parameters"]?.DeepClone()
-                        ?? new JsonObject { ["type"] = "object" },
+                        ?? new JsonObject { ["type"] = ObjectKey },
                 });
             }
             if (declarations.Count > 0)
             {
-                payload["tools"] = new JsonArray(
+                payload[ToolsKey] = new JsonArray(
                     new JsonObject { ["functionDeclarations"] = declarations });
             }
         }
@@ -2284,16 +2302,16 @@ public class ProviderService(
             {
                 switch (key)
                 {
-                    case "temperature":
-                        config["temperature"] = ToJsonNode(value);
+                    case TemperatureKey:
+                        config[TemperatureKey] = ToJsonNode(value);
                         break;
-                    case "top_p":
+                    case TopPKey:
                         config["topP"] = ToJsonNode(value);
                         break;
-                    case "top_k":
+                    case TopKKey:
                         config["topK"] = ToJsonNode(value);
                         break;
-                    case "max_tokens":
+                    case MaxTokensKey:
                     case "max_completion_tokens":
                         config["maxOutputTokens"] = ToJsonNode(value);
                         break;
@@ -2377,7 +2395,7 @@ public class ProviderService(
     private async Task<string> CompleteGoogleAsync(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "google");
+        var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
@@ -2389,7 +2407,7 @@ public class ProviderService(
     private async Task<ProviderCompletion> CompleteGoogleWithToolsAsync(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "google");
+        var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
@@ -2404,7 +2422,7 @@ public class ProviderService(
         ConnectionsConfig connections,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "google");
+        var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
         using var response = await httpClientFactory.CreateClient()
@@ -2448,7 +2466,7 @@ public class ProviderService(
                     // mesmo canal.
                     if (filtered.Length + reasoning.Length > 0)
                     {
-                        delta["reasoning"] = filtered + reasoning;
+                        delta[ReasoningKey] = filtered + reasoning;
                     }
                 }
                 else
@@ -2459,7 +2477,7 @@ public class ProviderService(
                     }
                     if (reasoning.Length > 0)
                     {
-                        delta["reasoning"] = reasoning;
+                        delta[ReasoningKey] = reasoning;
                     }
                 }
                 if (delta.Count == 0)
@@ -2468,7 +2486,7 @@ public class ProviderService(
                 }
                 var chunk = new JsonObject
                 {
-                    ["object"] = "chat.completion.chunk",
+                    [ObjectKey] = "chat.completion.chunk",
                     [ChoicesKey] = new JsonArray(new JsonObject
                     {
                         [IndexKey] = 0,
@@ -2491,11 +2509,11 @@ public class ProviderService(
             }
             if (googleBridgeReasoning.Length > 0)
             {
-                tailDelta["reasoning"] = googleBridgeReasoning;
+                tailDelta[ReasoningKey] = googleBridgeReasoning;
             }
             var tailChunk = new JsonObject
             {
-                ["object"] = "chat.completion.chunk",
+                [ObjectKey] = "chat.completion.chunk",
                 [ChoicesKey] = new JsonArray(new JsonObject
                 {
                     [IndexKey] = 0,
@@ -2504,7 +2522,7 @@ public class ProviderService(
             };
             yield return $"data: {tailChunk.ToJsonString()}";
         }
-        yield return "data: [DONE]";
+        yield return SseDoneLine;
     }
 
     /// <summary>
@@ -2518,7 +2536,7 @@ public class ProviderService(
         Func<string, CancellationToken, Task>? onReasoning,
         CancellationToken ct)
     {
-        var connection = FindTypedConnection(connections, "google");
+        var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
         using var response = await httpClientFactory.CreateClient()
@@ -2640,14 +2658,14 @@ public class ProviderService(
     {
         var payload = new JsonObject
         {
-            ["model"] = request.Model,
+            [ModelKey] = request.Model,
             ["messages"] = new JsonArray(request.Messages
                 .Select(m =>
                 {
                     // Histórico pode conter markup DSML vazado de respostas
                     // antigas (pré-filtro): devolvê-lo ao modelo induz a
                     // re-emissão do formato — sanitiza o texto do assistant.
-                    var content = m.Role == "assistant"
+                    var content = m.Role == RoleAssistant
                         && m.Content.Contains("<｜DSML｜", StringComparison.Ordinal)
                         ? DsmlToolCallFilter.Extract(m.Content).Text
                         : m.Content;
@@ -2710,7 +2728,7 @@ public class ProviderService(
 
         if (request.Tools is { Count: > 0 })
         {
-            payload["tools"] = new JsonArray(request.Tools
+            payload[ToolsKey] = new JsonArray(request.Tools
                 .Select(t => JsonNode.Parse(t.GetRawText()))
                 .ToArray());
         }
@@ -2843,14 +2861,14 @@ public class ProviderService(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
         var baseUrl = FirstBaseUrl(connections)
-            ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
+            ?? throw new InvalidOperationException(NoOllamaUrlMessage);
 
         var payload = BuildPayload(request, stream: false, ProviderTypes.Ollama);
         using var httpRequest = new HttpRequestMessage(
             HttpMethod.Post, $"{TrimSlash(baseUrl)}/api/chat")
         {
             Content = new StringContent(
-                payload.ToJsonString(), Encoding.UTF8, "application/json"),
+                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
         ApplyExtraHeaders(httpRequest, request);
         using var response = await httpClientFactory.CreateClient()
@@ -2870,12 +2888,12 @@ public class ProviderService(
         using var httpRequest = new HttpRequestMessage(
             HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
         {
-            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
         var apiKey = connections.OpenAiApiKeys.ElementAtOrDefault(index);
         if (!string.IsNullOrEmpty(apiKey))
         {
-            httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            httpRequest.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, apiKey);
         }
         ApplyExtraHeaders(httpRequest, request);
 
@@ -2894,14 +2912,14 @@ public class ProviderService(
         [EnumeratorCancellation] CancellationToken ct)
     {
         var baseUrl = FirstBaseUrl(connections)
-            ?? throw new InvalidOperationException("Nenhuma URL do Ollama configurada.");
+            ?? throw new InvalidOperationException(NoOllamaUrlMessage);
 
         var payload = BuildPayload(request, stream: true, ProviderTypes.Ollama);
         // Ollama aceita "options" em vez de parâmetros de topo: move extras para lá.
         if (request.Params is { Count: > 0 })
         {
             var options = new JsonObject();
-            foreach (var key in new[] { "temperature", "top_p", "top_k", "num_predict", "repeat_penalty", "seed", "stop" }
+            foreach (var key in new[] { TemperatureKey, TopPKey, TopKKey, "num_predict", "repeat_penalty", "seed", "stop" }
                 .Where(payload.ContainsKey))
             {
                 payload.Remove(key, out var value);
@@ -2916,7 +2934,7 @@ public class ProviderService(
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{TrimSlash(baseUrl)}/api/chat")
         {
-            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
         ApplyExtraHeaders(httpRequest, request);
 
@@ -2977,19 +2995,19 @@ public class ProviderService(
             }
             var delta = new JsonObject
             {
-                ["role"] = "assistant",
+                ["role"] = RoleAssistant,
                 [ContentKey] = visible,
             };
             if (reasoningText.Length > 0)
             {
-                delta["reasoning"] = reasoningText;
+                delta[ReasoningKey] = reasoningText;
             }
             var chunk = new JsonObject
             {
                 ["id"] = $"chatcmpl-{Guid.NewGuid():N}",
-                ["object"] = "chat.completion.chunk",
+                [ObjectKey] = "chat.completion.chunk",
                 ["created"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                ["model"] = request.Model,
+                [ModelKey] = request.Model,
                 [ChoicesKey] = new JsonArray(new JsonObject
                 {
                     [IndexKey] = 0,
@@ -3002,7 +3020,7 @@ public class ProviderService(
 
             if (done)
             {
-                yield return "data: [DONE]";
+                yield return SseDoneLine;
                 yield break;
             }
         }
@@ -3015,19 +3033,19 @@ public class ProviderService(
         {
             var tailDelta = new JsonObject
             {
-                ["role"] = "assistant",
+                ["role"] = RoleAssistant,
                 [ContentKey] = truncTail,
             };
             if (truncReasoning.Length > 0)
             {
-                tailDelta["reasoning"] = truncReasoning;
+                tailDelta[ReasoningKey] = truncReasoning;
             }
             var tailChunk = new JsonObject
             {
                 ["id"] = $"chatcmpl-{Guid.NewGuid():N}",
-                ["object"] = "chat.completion.chunk",
+                [ObjectKey] = "chat.completion.chunk",
                 ["created"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                ["model"] = request.Model,
+                [ModelKey] = request.Model,
                 [ChoicesKey] = new JsonArray(new JsonObject
                 {
                     [IndexKey] = 0,
@@ -3038,12 +3056,12 @@ public class ProviderService(
             yield return $"data: {tailChunk.ToJsonString()}";
         }
 
-        yield return "data: [DONE]";
+        yield return SseDoneLine;
     }
 
     private static string MapOllamaParam(string key) => key switch
     {
-        "max_tokens" => "num_predict",
+        MaxTokensKey => "num_predict",
         _ => key,
     };
 
@@ -3058,13 +3076,13 @@ public class ProviderService(
         using var httpRequest = new HttpRequestMessage(
             HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
         {
-            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
         };
 
         var apiKey = connections.OpenAiApiKeys.ElementAtOrDefault(index);
         if (!string.IsNullOrEmpty(apiKey))
         {
-            httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            httpRequest.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, apiKey);
         }
         ApplyExtraHeaders(httpRequest, request);
 
@@ -3087,7 +3105,7 @@ public class ProviderService(
                 continue;
             }
 
-            if (line == "data: [DONE]")
+            if (line == SseDoneLine)
             {
                 var tail = EmitDsmlTail(dsmlContent, dsmlReasoning);
                 if (tail is not null)
@@ -3147,14 +3165,14 @@ public class ProviderService(
     private static string FilterOpenAiDeltaLine(
         string line, DeltaFilterChain content, DeltaFilterChain reasoning)
     {
-        if (!line.StartsWith("data:", StringComparison.Ordinal))
+        if (!line.StartsWith(SseDataPrefix, StringComparison.Ordinal))
         {
             return line;
         }
         JsonNode? node;
         try
         {
-            node = JsonNode.Parse(line["data:".Length..]);
+            node = JsonNode.Parse(line[SseDataPrefix.Length..]);
         }
         catch (JsonException)
         {
@@ -3176,7 +3194,7 @@ public class ProviderService(
         }
         // reasoning_details[] é array de segmentos — bloco DSML dividido
         // entre elementos é raro; cobre os campos escalares (deepseek/omniroute).
-        foreach (var field in new[] { "reasoning_content", "reasoning" }
+        foreach (var field in new[] { "reasoning_content", ReasoningKey }
             .Where(f => delta[f] is JsonValue r
                 && r.TryGetValue<string>(out var rs) && rs.Length > 0))
         {
@@ -3186,8 +3204,8 @@ public class ProviderService(
         // próprio — merge com o reasoning já filtrado sem sobrescrever.
         if (extracted.Length > 0)
         {
-            var existing = Str(Prop(delta, "reasoning")) ?? string.Empty;
-            delta["reasoning"] = existing + extracted;
+            var existing = Str(Prop(delta, ReasoningKey)) ?? string.Empty;
+            delta[ReasoningKey] = existing + extracted;
         }
         return $"data: {node.ToJsonString(JsonOptions)}";
     }
@@ -3212,7 +3230,7 @@ public class ProviderService(
         }
         if (tailReasoning.Length > 0)
         {
-            delta["reasoning"] = tailReasoning;
+            delta[ReasoningKey] = tailReasoning;
         }
         var chunk = new JsonObject
         {

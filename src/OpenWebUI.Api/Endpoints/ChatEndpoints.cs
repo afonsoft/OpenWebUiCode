@@ -14,6 +14,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints de chats, espelhando <c>/api/v1/chats</c> do Open WebUI.</summary>
 public static class ChatEndpoints
 {
+    private const string ByIdRoute = "/{id}";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>Mapeia as rotas de chats.</summary>
@@ -42,16 +43,16 @@ public static class ChatEndpoints
         group.MapPost("/tags", ListChatsByTagAsync);
 
         group.MapGet("/all", ListAllChatsAdminAsync);
-        group.MapGet("/{id}", GetChatAsync);
+        group.MapGet(ByIdRoute, GetChatAsync);
         group.MapGet("/{id}/messages", GetChatMessagesAsync);
         group.MapGet("/{id}/children", ListChildrenAsync);
         group.MapGet("/{id}/workspace-repo", GetWorkspaceRepoAsync);
         group.MapPut("/{id}/workspace-repo", PutWorkspaceRepoAsync);
         group.MapGet("/{id}/workspace/scratch", GetScratchStatusAsync);
         group.MapPost("/{id}/workspace/publish", PublishWorkspaceAsync);
-        group.MapPost("/{id}", UpdateChatAsync);
-        group.MapPatch("/{id}", PatchChatAsync);
-        group.MapDelete("/{id}", DeleteChatAsync);
+        group.MapPost(ByIdRoute, UpdateChatAsync);
+        group.MapPatch(ByIdRoute, PatchChatAsync);
+        group.MapDelete(ByIdRoute, DeleteChatAsync);
         group.MapPost("/{id}/pin", TogglePinAsync);
         group.MapGet("/{id}/pinned", GetPinnedAsync);
         group.MapPost("/{id}/archive", ToggleArchiveAsync);

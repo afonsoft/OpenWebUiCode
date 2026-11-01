@@ -42,12 +42,13 @@ public sealed class WorktreeService(
     IServiceScopeFactory scopeFactory,
     ILogger<WorktreeService> logger)
 {
+    private const string WorktreeArg = "worktree";
     private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(1);
     private const int MaxErrorChars = 240;
 
     /// <summary>True quando o isolamento por run está ligado (default: <c>shared</c>).</summary>
     public bool IsolationEnabled => string.Equals(
-        configuration["Workspace:RunIsolation"], "worktree", StringComparison.OrdinalIgnoreCase);
+        configuration["Workspace:RunIsolation"], WorktreeArg, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Horas até um worktree órfão/encerrado ser removido (default 7 dias).</summary>
     private int OrphanTtlHours => configuration.GetValue("Workspace:WorktreeTtlHours", 168);
@@ -95,7 +96,7 @@ public sealed class WorktreeService(
 
         Directory.CreateDirectory(Path.GetDirectoryName(dir)!);
         var error = await RunGitLoggedAsync(
-            mainWorkdir, ct, "worktree", "add", "--detach", dir, "HEAD");
+            mainWorkdir, ct, WorktreeArg, "add", "--detach", dir, "HEAD");
         if (error is not null)
         {
             logger.LogWarning(
@@ -133,13 +134,13 @@ public sealed class WorktreeService(
     public async Task RemoveAsync(string mainWorkdir, string worktreePath, CancellationToken ct)
     {
         var error = await RunGitLoggedAsync(
-            mainWorkdir, ct, "worktree", "remove", "--force", worktreePath);
+            mainWorkdir, ct, WorktreeArg, "remove", "--force", worktreePath);
         if (error is not null && Directory.Exists(worktreePath))
         {
             TryDelete(worktreePath);
         }
 
-        _ = await RunGitAsync(mainWorkdir, ct, "worktree", "prune");
+        _ = await RunGitAsync(mainWorkdir, ct, WorktreeArg, "prune");
     }
 
     /// <summary>

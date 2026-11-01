@@ -14,6 +14,7 @@ using System.Text.Json;
 var baseUrl = (Environment.GetEnvironmentVariable("OPENWEBUI_URL")
     ?? "http://localhost:8080").TrimEnd('/');
 var token = Environment.GetEnvironmentVariable("OPENWEBUI_ACP_TOKEN");
+const string EndTurnReason = "end_turn";
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var http = new HttpClient { BaseAddress = new Uri(baseUrl) };
 if (!string.IsNullOrEmpty(token))
@@ -266,7 +267,7 @@ async Task<string> RelayRunAsync(
                 }
                 else if (type is "run.completed" or "completed")
                 {
-                    return "end_turn";
+                    return EndTurnReason;
                 }
                 else if (type is "run.failed" or "failed")
                 {
@@ -282,7 +283,7 @@ async Task<string> RelayRunAsync(
                 // linha não-JSON — ignora
             }
         }
-        return "end_turn";
+        return EndTurnReason;
     }
     catch (Exception)
     {
@@ -297,7 +298,7 @@ async Task<string> RelayRunAsync(
                 var status = r is { } el
                     && el.TryGetProperty("status", out var s)
                     ? s.GetString() : null;
-                if (status is "completed") return "end_turn";
+                if (status is "completed") return EndTurnReason;
                 if (status is "failed") return "error";
                 if (status is "stopped" or "interrupted") return "cancelled";
             }
@@ -306,6 +307,6 @@ async Task<string> RelayRunAsync(
                 // tenta de novo no próximo tick
             }
         }
-        return "end_turn";
+        return EndTurnReason;
     }
 }

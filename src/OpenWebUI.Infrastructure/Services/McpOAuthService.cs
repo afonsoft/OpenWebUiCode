@@ -27,6 +27,8 @@ public sealed class McpOAuthService(
     IHttpClientFactory httpFactory,
     ILogger<McpOAuthService> logger)
 {
+    private const string ClientIdKey = "client_id";
+    private const string RefreshTokenKey = "refresh_token";
     /// <summary>Nome do HttpClient registrado no DI para chamadas OAuth.</summary>
     public const string HttpClientName = "mcp-oauth";
 
@@ -122,7 +124,7 @@ public sealed class McpOAuthService(
         var query = new Dictionary<string, string?>
         {
             ["response_type"] = "code",
-            ["client_id"] = clientId,
+            [ClientIdKey] = clientId,
             ["redirect_uri"] = callbackUrl,
             ["code_challenge"] = challenge,
             ["code_challenge_method"] = "S256",
@@ -159,7 +161,7 @@ public sealed class McpOAuthService(
                 ["grant_type"] = "authorization_code",
                 ["code"] = code,
                 ["redirect_uri"] = pending.CallbackUrl,
-                ["client_id"] = pending.ClientId,
+                [ClientIdKey] = pending.ClientId,
                 ["code_verifier"] = pending.Verifier,
             }), ct);
         var token = resp.IsSuccessStatusCode
@@ -264,9 +266,9 @@ public sealed class McpOAuthService(
         var http = httpFactory.CreateClient(HttpClientName);
         var fields = new Dictionary<string, string>
         {
-            ["grant_type"] = "refresh_token",
-            ["refresh_token"] = stored.RefreshToken!,
-            ["client_id"] = stored.ClientId,
+            ["grant_type"] = RefreshTokenKey,
+            [RefreshTokenKey] = stored.RefreshToken!,
+            [ClientIdKey] = stored.ClientId,
         };
         if (stored.ClientSecret is { Length: > 0 })
         {
@@ -302,7 +304,7 @@ public sealed class McpOAuthService(
     {
         var expiresIn = token.TryGetProperty("expires_in", out var ex)
             && ex.TryGetInt32(out var secs) ? secs : 3600;
-        var refresh = token.TryGetProperty("refresh_token", out var rt)
+        var refresh = token.TryGetProperty(RefreshTokenKey, out var rt)
             ? rt.GetString() : previous?.RefreshToken;
         var stored = new StoredToken(
             access, refresh,
@@ -344,7 +346,7 @@ public sealed class McpOAuthService(
         {
             client_name = "open-webui",
             redirect_uris = new[] { callbackUrl },
-            grant_types = new[] { "authorization_code", "refresh_token" },
+            grant_types = new[] { "authorization_code", RefreshTokenKey },
             response_types = new[] { "code" },
             token_endpoint_auth_method = "none",
         }, JsonOptions, ct);
@@ -352,7 +354,7 @@ public sealed class McpOAuthService(
             ? await resp.Content.ReadFromJsonAsync<JsonElement?>(JsonOptions, ct)
             : null;
         if (regBody is not { } reg
-            || !reg.TryGetProperty("client_id", out var cid)
+            || !reg.TryGetProperty(ClientIdKey, out var cid)
             || cid.GetString() is not { Length: > 0 } clientId)
         {
             return (null, null);

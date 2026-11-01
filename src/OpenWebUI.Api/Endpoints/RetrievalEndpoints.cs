@@ -14,6 +14,9 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class RetrievalEndpoints
 {
+    private const string NoIndexTextMessage = "Não foi possível indexar — sem texto ou provider de embedding.";
+    private const string PlainTextMediaType = "text/plain";
+    private const string MaskedSecret = "********";
     /// <summary>Mapeia o grupo /api/v1/retrieval.</summary>
     public static void MapRetrievalEndpoints(this WebApplication app)
     {
@@ -49,7 +52,7 @@ public static class RetrievalEndpoints
         if (!ok)
         {
             return Results.BadRequest(
-                new { detail = "Não foi possível indexar — sem texto ou provider de embedding." });
+                new { detail = NoIndexTextMessage });
         }
         await LinkCollectionAsync(request.CollectionId, file.Id, user.Id, db, ct);
         var chunks = await db.EmbeddingChunks.CountAsync(c => c.FileId == file.Id, ct);
@@ -76,7 +79,7 @@ public static class RetrievalEndpoints
             Filename = string.IsNullOrWhiteSpace(request.Name)
                 ? $"texto-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.txt"
                 : request.Name.Trim(),
-            ContentType = "text/plain",
+            ContentType = PlainTextMediaType,
             ExtractedText = request.Content,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         };
@@ -87,7 +90,7 @@ public static class RetrievalEndpoints
         if (!ok)
         {
             return Results.BadRequest(
-                new { detail = "Não foi possível indexar — sem texto ou provider de embedding." });
+                new { detail = NoIndexTextMessage });
         }
         await LinkCollectionAsync(request.CollectionId, file.Id, user.Id, db, ct);
         var chunks = await db.EmbeddingChunks.CountAsync(c => c.FileId == file.Id, ct);
@@ -123,7 +126,7 @@ public static class RetrievalEndpoints
         {
             UserId = user.Id,
             Filename = new Uri(request.Url).Host + ".txt",
-            ContentType = "text/plain",
+            ContentType = PlainTextMediaType,
             ExtractedText = text,
             SourceUrl = request.Url,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
@@ -135,7 +138,7 @@ public static class RetrievalEndpoints
         if (!ok)
         {
             return Results.BadRequest(
-                new { detail = "Não foi possível indexar — sem texto ou provider de embedding." });
+                new { detail = NoIndexTextMessage });
         }
         await LinkCollectionAsync(request.CollectionId, file.Id, user.Id, db, ct);
         var chunks = await db.EmbeddingChunks.CountAsync(c => c.FileId == file.Id, ct);
@@ -167,7 +170,7 @@ public static class RetrievalEndpoints
         {
             UserId = user.Id,
             Filename = $"youtube-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.txt",
-            ContentType = "text/plain",
+            ContentType = PlainTextMediaType,
             ExtractedText = text,
             SourceUrl = request.Url,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
@@ -179,7 +182,7 @@ public static class RetrievalEndpoints
         if (!ok)
         {
             return Results.BadRequest(
-                new { detail = "Não foi possível indexar — sem texto ou provider de embedding." });
+                new { detail = NoIndexTextMessage });
         }
         await LinkCollectionAsync(request.CollectionId, file.Id, user.Id, db, ct);
         var chunks = await db.EmbeddingChunks.CountAsync(c => c.FileId == file.Id, ct);
@@ -239,7 +242,7 @@ public static class RetrievalEndpoints
             {
                 UserId = user.Id,
                 Filename = $"web-search-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.txt",
-                ContentType = "text/plain",
+                ContentType = PlainTextMediaType,
                 ExtractedText = content,
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             };
@@ -287,18 +290,18 @@ public static class RetrievalEndpoints
             return Results.BadRequest(new { detail = "Configuração de retrieval inválida." });
         }
 
-        // Chave mascarada ("********") ou nula mantém o valor já persistido.
+        // Chave mascarada (MaskedSecret) ou nula mantém o valor já persistido.
         var current = await config.GetAsync("retrieval.config", RetrievalConfig.Default, ct);
         var merged = request with
         {
-            BraveApiKey = request.BraveApiKey is null or "********" ? current.BraveApiKey : request.BraveApiKey,
-            TavilyApiKey = request.TavilyApiKey is null or "********" ? current.TavilyApiKey : request.TavilyApiKey,
-            GooglePseApiKey = request.GooglePseApiKey is null or "********" ? current.GooglePseApiKey : request.GooglePseApiKey,
-            JinaApiKey = request.JinaApiKey is null or "********" ? current.JinaApiKey : request.JinaApiKey,
-            ExaApiKey = request.ExaApiKey is null or "********" ? current.ExaApiKey : request.ExaApiKey,
-            KagiApiKey = request.KagiApiKey is null or "********" ? current.KagiApiKey : request.KagiApiKey,
-            PerplexityApiKey = request.PerplexityApiKey is null or "********" ? current.PerplexityApiKey : request.PerplexityApiKey,
-            RerankExternalApiKey = request.RerankExternalApiKey is null or "********" ? current.RerankExternalApiKey : request.RerankExternalApiKey,
+            BraveApiKey = request.BraveApiKey is null or MaskedSecret ? current.BraveApiKey : request.BraveApiKey,
+            TavilyApiKey = request.TavilyApiKey is null or MaskedSecret ? current.TavilyApiKey : request.TavilyApiKey,
+            GooglePseApiKey = request.GooglePseApiKey is null or MaskedSecret ? current.GooglePseApiKey : request.GooglePseApiKey,
+            JinaApiKey = request.JinaApiKey is null or MaskedSecret ? current.JinaApiKey : request.JinaApiKey,
+            ExaApiKey = request.ExaApiKey is null or MaskedSecret ? current.ExaApiKey : request.ExaApiKey,
+            KagiApiKey = request.KagiApiKey is null or MaskedSecret ? current.KagiApiKey : request.KagiApiKey,
+            PerplexityApiKey = request.PerplexityApiKey is null or MaskedSecret ? current.PerplexityApiKey : request.PerplexityApiKey,
+            RerankExternalApiKey = request.RerankExternalApiKey is null or MaskedSecret ? current.RerankExternalApiKey : request.RerankExternalApiKey,
         };
         await config.SetAsync("retrieval.config", merged, ct);
         return Results.Ok(merged.Masked());

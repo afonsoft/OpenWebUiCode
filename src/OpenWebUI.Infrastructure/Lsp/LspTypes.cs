@@ -53,7 +53,16 @@ public sealed record LspHoverInfo(
 public sealed class LspRequestException(string method, int code, string message)
     : InvalidOperationException($"LSP '{method}' falhou ({code}): {message}");
 
-/// <summary>Servidor indisponível (binário ausente / init falhou / restarts esgotados).</summary>
+/// <summary>IDs de linguagem LSP suportados pelo mapa extensão→servidor.</summary>
+internal static class LspLanguageIds
+{
+    internal const string CSharp = "csharp";
+    internal const string TypeScript = "typescript";
+    internal const string JavaScript = "javascript";
+    internal const string Python = "python";
+}
+
+/// <summary>Servidor indisponível (binário ausente / init falhou ou restarts esgotados).</summary>
 public sealed class LspUnavailableException(string detail)
     : InvalidOperationException(detail);
 
@@ -84,10 +93,10 @@ public sealed class LspOptions
     public static IReadOnlyDictionary<string, LspServerSpec> Defaults() =>
         new Dictionary<string, LspServerSpec>(StringComparer.OrdinalIgnoreCase)
         {
-            ["csharp"] = new("csharp-ls", []),
-            ["typescript"] = new("typescript-language-server", ["--stdio"]),
-            ["javascript"] = new("typescript-language-server", ["--stdio"]),
-            ["python"] = new("pylsp", []),
+            [LspLanguageIds.CSharp] = new("csharp-ls", []),
+            [LspLanguageIds.TypeScript] = new("typescript-language-server", ["--stdio"]),
+            [LspLanguageIds.JavaScript] = new("typescript-language-server", ["--stdio"]),
+            [LspLanguageIds.Python] = new("pylsp", []),
             ["json"] = new("vscode-json-languageserver", ["--stdio"]),
         };
 
@@ -157,18 +166,18 @@ public static class LspLanguageMap
     private static readonly IReadOnlyDictionary<string, LspLanguage> ByExtension =
         new Dictionary<string, LspLanguage>(StringComparer.OrdinalIgnoreCase)
         {
-            [".cs"] = new("csharp", "csharp"),
-            [".csx"] = new("csharp", "csharp"),
-            [".ts"] = new("typescript", "typescript"),
-            [".mts"] = new("typescript", "typescript"),
-            [".cts"] = new("typescript", "typescript"),
-            [".tsx"] = new("typescript", "typescriptreact"),
-            [".js"] = new("javascript", "javascript"),
-            [".mjs"] = new("javascript", "javascript"),
-            [".cjs"] = new("javascript", "javascript"),
-            [".jsx"] = new("javascript", "javascriptreact"),
-            [".py"] = new("python", "python"),
-            [".pyi"] = new("python", "python"),
+            [".cs"] = new(LspLanguageIds.CSharp, LspLanguageIds.CSharp),
+            [".csx"] = new(LspLanguageIds.CSharp, LspLanguageIds.CSharp),
+            [".ts"] = new(LspLanguageIds.TypeScript, LspLanguageIds.TypeScript),
+            [".mts"] = new(LspLanguageIds.TypeScript, LspLanguageIds.TypeScript),
+            [".cts"] = new(LspLanguageIds.TypeScript, LspLanguageIds.TypeScript),
+            [".tsx"] = new(LspLanguageIds.TypeScript, "typescriptreact"),
+            [".js"] = new(LspLanguageIds.JavaScript, LspLanguageIds.JavaScript),
+            [".mjs"] = new(LspLanguageIds.JavaScript, LspLanguageIds.JavaScript),
+            [".cjs"] = new(LspLanguageIds.JavaScript, LspLanguageIds.JavaScript),
+            [".jsx"] = new(LspLanguageIds.JavaScript, "javascriptreact"),
+            [".py"] = new(LspLanguageIds.Python, LspLanguageIds.Python),
+            [".pyi"] = new(LspLanguageIds.Python, LspLanguageIds.Python),
             [".json"] = new("json", "json"),
             [".jsonc"] = new("json", "jsonc"),
         };

@@ -9,6 +9,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints de grupos/RBAC, espelhando <c>/api/v1/groups</c> do upstream.</summary>
 public static class GroupEndpoints
 {
+    private const string AdminRole = "admin";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>Mapeia as rotas de grupos.</summary>
@@ -164,7 +165,7 @@ public static class GroupEndpoints
             return error;
         }
 
-        var role = request.Role is "admin" ? "admin" : "member";
+        var role = request.Role is AdminRole ? AdminRole : "member";
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var userId in request.UserIds.Distinct())
         {
@@ -233,7 +234,7 @@ public static class GroupEndpoints
             return Results.NotFound();
         }
 
-        member.Role = request.Role is "admin" ? "admin" : "member";
+        member.Role = request.Role is AdminRole ? AdminRole : "member";
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToResponse(group, db));
     }
@@ -248,7 +249,7 @@ public static class GroupEndpoints
             return (user, group, Results.NotFound());
         }
 
-        var groupAdmin = group.Members.Any(m => m.UserId == user.Id && m.Role == "admin");
+        var groupAdmin = group.Members.Any(m => m.UserId == user.Id && m.Role == AdminRole);
         return user.Role == UserRoles.Admin || groupAdmin
             ? (user, group, null)
             : (user, group, Results.Forbid());

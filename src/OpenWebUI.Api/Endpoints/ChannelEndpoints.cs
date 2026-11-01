@@ -13,6 +13,9 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints REST de canais (/api/v1/channels) com difusão SignalR.</summary>
 public static class ChannelEndpoints
 {
+    private const string AdminRole = "admin";
+    private const string ChannelNotFoundMessage = "Canal não encontrado.";
+    private const string ModelAuthorName = "modelo";
     /// <summary>Mapeia o grupo /api/v1/channels.</summary>
     public static void MapChannelEndpoints(this WebApplication app)
     {
@@ -117,7 +120,7 @@ public static class ChannelEndpoints
         };
         channel.Members.Add(new ChannelMember
         {
-            ChannelId = channel.Id, UserId = user.Id, Role = "admin", CreatedAt = now,
+            ChannelId = channel.Id, UserId = user.Id, Role = AdminRole, CreatedAt = now,
         });
 
         var wantedIds = (request.MemberIds ?? []).Where(id => id != user.Id).Distinct().ToList();
@@ -136,7 +139,7 @@ public static class ChannelEndpoints
 
         return Results.Ok(new ChannelResponse(
             channel.Id, channel.Name, channel.Description, channel.Type,
-            channel.Members.Count, "admin", 0, channel.CreatedAt));
+            channel.Members.Count, AdminRole, 0, channel.CreatedAt));
     }
 
     private static async Task<IResult> GetChannelAsync(
@@ -149,7 +152,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
 
         var membership = await db.ChannelMembers.AsNoTracking()
@@ -175,7 +178,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
         if (!IsChannelAdmin(user, role))
         {
@@ -205,7 +208,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
         if (!IsChannelAdmin(user, role))
         {
@@ -228,7 +231,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
 
         var messages = await db.ChannelMessages.AsNoTracking()
@@ -242,7 +245,7 @@ public static class ChannelEndpoints
                 m.ChannelId,
                 m.UserId,
                 m.ModelId,
-                AuthorName = m.UserId == null ? m.ModelId ?? "modelo" : m.User!.Name,
+                AuthorName = m.UserId == null ? m.ModelId ?? ModelAuthorName : m.User!.Name,
                 m.User!.ProfileImageUrl,
                 m.Content,
                 m.IsPinned,
@@ -278,7 +281,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
         if (string.IsNullOrWhiteSpace(request.Content))
         {
@@ -336,7 +339,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
         if (!IsChannelAdmin(user, role) || channel.Type == "dm")
         {
@@ -344,7 +347,7 @@ public static class ChannelEndpoints
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var memberRole = request.Role == "admin" ? "admin" : "member";
+        var memberRole = request.Role == AdminRole ? AdminRole : "member";
         foreach (var memberId in (request.UserIds ?? []).Distinct())
         {
             var exists = await db.ChannelMembers
@@ -372,7 +375,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
         if ((!IsChannelAdmin(user, role) && user.Id != userId) || channel.Type == "dm")
         {
@@ -459,7 +462,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
 
         var member = await db.ChannelMembers
@@ -480,7 +483,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
 
         var replies = await db.ChannelMessages.AsNoTracking()
@@ -492,7 +495,7 @@ public static class ChannelEndpoints
                 m.ChannelId,
                 m.UserId,
                 m.ModelId,
-                AuthorName = m.UserId == null ? m.ModelId ?? "modelo" : m.User!.Name,
+                AuthorName = m.UserId == null ? m.ModelId ?? ModelAuthorName : m.User!.Name,
                 m.User!.ProfileImageUrl,
                 m.Content,
                 m.IsPinned,
@@ -519,7 +522,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
         if (string.IsNullOrWhiteSpace(emoji) || emoji.Length > 32)
         {
@@ -580,7 +583,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
 
         var message = await db.ChannelMessages
@@ -618,7 +621,7 @@ public static class ChannelEndpoints
         }
         if (channel is null)
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
 
         var pinned = await db.ChannelMessages.AsNoTracking()
@@ -630,7 +633,7 @@ public static class ChannelEndpoints
                 m.ChannelId,
                 m.UserId,
                 m.ModelId,
-                AuthorName = m.UserId == null ? m.ModelId ?? "modelo" : m.User!.Name,
+                AuthorName = m.UserId == null ? m.ModelId ?? ModelAuthorName : m.User!.Name,
                 m.User!.ProfileImageUrl,
                 m.Content,
                 m.ParentId,
@@ -727,7 +730,7 @@ public static class ChannelEndpoints
             "message:new",
             new ChannelMessageResponse(
                 message.Id, channelId, null, resolvedModel,
-                resolvedModel ?? "modelo", null, content, null, 0, false,
+                resolvedModel ?? ModelAuthorName, null, content, null, 0, false,
                 [], message.CreatedAt),
             ct);
     }
@@ -812,7 +815,7 @@ public static class ChannelEndpoints
         var channel = await db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
         if (channel is null || (channel.CreatedByUserId != user.Id && user.Role != UserRoles.Admin))
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
 
         return Results.Ok(new { access_grants = AccessControlService.Parse(channel.AccessGrantsJson) });
@@ -831,7 +834,7 @@ public static class ChannelEndpoints
         var channel = await db.Channels.FirstOrDefaultAsync(c => c.Id == id, ct);
         if (channel is null || (channel.CreatedByUserId != user.Id && user.Role != UserRoles.Admin))
         {
-            return Results.NotFound(new { detail = "Canal não encontrado." });
+            return Results.NotFound(new { detail = ChannelNotFoundMessage });
         }
         if (request.AccessGrants.Any(g =>
                 g.PrincipalType is not ("user" or "group")
@@ -857,7 +860,7 @@ public static class ChannelEndpoints
     }
 
     private static bool IsChannelAdmin(User user, string? role) =>
-        user.Role == "admin" || role == "admin";
+        user.Role == AdminRole || role == AdminRole;
 
     private static async Task<User?> CurrentUserAsync(
         HttpContext http, AppDbContext db, CancellationToken ct) =>

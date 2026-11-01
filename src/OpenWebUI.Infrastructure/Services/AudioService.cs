@@ -16,6 +16,9 @@ namespace OpenWebUI.Infrastructure.Services;
 /// </summary>
 public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
 {
+    private const string ProviderKey = "provider";
+    private const string ElevenLabsProvider = "elevenlabs";
+    private const string DeepgramProvider = "deepgram";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>Config ativa.</summary>
@@ -40,7 +43,7 @@ public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
 
     private async Task<AudioConfig> ResolveProvidersAsync(AudioConfig cfg, CancellationToken ct)
     {
-        if (cfg.SttEngine != "provider" && cfg.TtsEngine != "provider")
+        if (cfg.SttEngine != ProviderKey && cfg.TtsEngine != ProviderKey)
         {
             return cfg;
         }
@@ -62,13 +65,13 @@ public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
                     connections.OpenAiApiKeys.ElementAtOrDefault(index));
         }
 
-        if (cfg.SttEngine == "provider")
+        if (cfg.SttEngine == ProviderKey)
         {
             cfg = Find(cfg.SttProvider) is { } stt
                 ? cfg with { SttEngine = "openai", SttBaseUrl = stt.Url, SttApiKey = stt.Key }
                 : cfg with { SttEngine = "none" };
         }
-        if (cfg.TtsEngine == "provider")
+        if (cfg.TtsEngine == ProviderKey)
         {
             cfg = Find(cfg.TtsProvider) is { } tts
                 ? cfg with { TtsEngine = "openai", TtsBaseUrl = tts.Url, TtsApiKey = tts.Key }
@@ -99,7 +102,7 @@ public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
         http.Timeout = TimeSpan.FromSeconds(60);
         using var request = cfg.TtsEngine switch
         {
-            "elevenlabs" => ElevenLabsRequest(cfg, input, voice, model),
+            ElevenLabsProvider => ElevenLabsRequest(cfg, input, voice, model),
             "azure" => AzureRequest(cfg, input, voice),
             _ => OpenAiSpeechRequest(cfg, input, voice, model),
         };
@@ -193,13 +196,13 @@ public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
         var engine = isStt ? cfg.SttEngine : cfg.TtsEngine;
         switch (engine)
         {
-            case "elevenlabs":
+            case ElevenLabsProvider:
                 request.Headers.TryAddWithoutValidation("xi-api-key", key);
                 break;
             case "azure":
                 request.Headers.TryAddWithoutValidation("Ocp-Apim-Subscription-Key", key);
                 break;
-            case "deepgram":
+            case DeepgramProvider:
                 request.Headers.Authorization = new AuthenticationHeaderValue("Token", key);
                 break;
             default:
@@ -234,21 +237,21 @@ public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
         form.Add(file, "file", fileName);
         form.Add(new StringContent(cfg.SttModel ?? "whisper-1"), "model");
 
-        var url = cfg.SttEngine == "deepgram"
+        var url = cfg.SttEngine == DeepgramProvider
             ? $"{cfg.SttBaseUrl!.TrimEnd('/')}/v1/listen?model={cfg.SttModel ?? "nova-2"}"
             : $"{cfg.SttBaseUrl!.TrimEnd('/')}/audio/transcriptions";
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         if (!string.IsNullOrEmpty(cfg.SttApiKey))
         {
-            request.Headers.Authorization = cfg.SttEngine == "deepgram"
+            request.Headers.Authorization = cfg.SttEngine == DeepgramProvider
                 ? new AuthenticationHeaderValue("Token", cfg.SttApiKey)
                 : new AuthenticationHeaderValue("Bearer", cfg.SttApiKey);
         }
-        request.Content = cfg.SttEngine == "deepgram"
+        request.Content = cfg.SttEngine == DeepgramProvider
             ? new StreamContent(stream)
             : form;
-        if (cfg.SttEngine == "deepgram")
+        if (cfg.SttEngine == DeepgramProvider)
         {
             request.Content.Headers.ContentType =
                 new MediaTypeHeaderValue("application/octet-stream");
@@ -291,7 +294,7 @@ public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
         var http = httpFactory.CreateClient(nameof(AudioService));
         using var request = cfg.TtsEngine switch
         {
-            "elevenlabs" => new HttpRequestMessage(HttpMethod.Get,
+            ElevenLabsProvider => new HttpRequestMessage(HttpMethod.Get,
                 $"{ElevenLabsBase(cfg)}/v1/voices"),
             "azure" => new HttpRequestMessage(HttpMethod.Get,
                 $"{AzureBase(cfg)}/cognitiveservices/voices/list"),
@@ -313,7 +316,7 @@ public class AudioService(IHttpClientFactory httpFactory, ConfigService config)
             ? $"{cfg.SttBaseUrl!.TrimEnd('/')}/models"
             : cfg.TtsEngine switch
             {
-                "elevenlabs" when cfg.TtsEnabled => $"{ElevenLabsBase(cfg)}/v1/models",
+                ElevenLabsProvider when cfg.TtsEnabled => $"{ElevenLabsBase(cfg)}/v1/models",
                 "openai" or "transformers" when cfg.TtsEnabled =>
                     $"{cfg.TtsBaseUrl!.TrimEnd('/')}/models",
                 _ => null,

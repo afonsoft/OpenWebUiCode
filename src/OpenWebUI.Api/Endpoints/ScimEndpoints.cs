@@ -12,6 +12,8 @@ namespace OpenWebUI.Api.Endpoints;
 /// </summary>
 public static class ScimEndpoints
 {
+    private const string UsersByIdRoute = "/Users/{id}";
+    private const string UserNotFoundMessage = "User não encontrado";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public static RouteGroupBuilder MapScimEndpoints(this IEndpointRouteBuilder app)
@@ -24,19 +26,19 @@ public static class ScimEndpoints
         group.MapGet("/Users",
             (HttpContext http, ScimService scim, CancellationToken ct) =>
                 ListUsersAsync(http, scim, ct));
-        group.MapGet("/Users/{id}",
+        group.MapGet(UsersByIdRoute,
             (HttpContext http, string id, ScimService scim, CancellationToken ct) =>
                 GetUserAsync(http, id, scim, ct));
         group.MapPost("/Users",
             (HttpContext http, ScimService scim, CancellationToken ct) =>
                 CreateUserAsync(http, scim, ct));
-        group.MapPut("/Users/{id}",
+        group.MapPut(UsersByIdRoute,
             (HttpContext http, string id, ScimService scim, CancellationToken ct) =>
                 ReplaceUserAsync(http, id, scim, ct));
-        group.MapMethods("/Users/{id}", ["PATCH"],
+        group.MapMethods(UsersByIdRoute, ["PATCH"],
             (HttpContext http, string id, ScimService scim, CancellationToken ct) =>
                 PatchUserAsync(http, id, scim, ct));
-        group.MapDelete("/Users/{id}",
+        group.MapDelete(UsersByIdRoute,
             (HttpContext http, string id, ScimService scim, CancellationToken ct) =>
                 DeleteUserAsync(http, id, scim, ct));
         group.MapGet("/Groups",
@@ -99,7 +101,7 @@ public static class ScimEndpoints
 
         var user = await scim.GetUserAsync(id, BaseUrl(http), ct);
         return user is null
-            ? ScimJson(ScimError.Of(404, "User não encontrado"), 404)
+            ? ScimJson(ScimError.Of(404, UserNotFoundMessage), 404)
             : ScimJson(user);
     }
 
@@ -139,7 +141,7 @@ public static class ScimEndpoints
 
         var user = await scim.ReplaceUserAsync(id, input, BaseUrl(http), ct);
         return user is null
-            ? ScimJson(ScimError.Of(404, "User não encontrado"), 404)
+            ? ScimJson(ScimError.Of(404, UserNotFoundMessage), 404)
             : ScimJson(user);
     }
 
@@ -159,7 +161,7 @@ public static class ScimEndpoints
 
         var user = await scim.PatchUserAsync(id, patch, BaseUrl(http), ct);
         return user is null
-            ? ScimJson(ScimError.Of(404, "User não encontrado"), 404)
+            ? ScimJson(ScimError.Of(404, UserNotFoundMessage), 404)
             : ScimJson(user);
     }
 
@@ -173,7 +175,7 @@ public static class ScimEndpoints
 
         return await scim.DeleteUserAsync(id, ct)
             ? Results.NoContent()
-            : ScimJson(ScimError.Of(404, "User não encontrado"), 404);
+            : ScimJson(ScimError.Of(404, UserNotFoundMessage), 404);
     }
 
     private static async Task<IResult> ListGroupsAsync(

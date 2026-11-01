@@ -38,6 +38,8 @@ public partial class McpClientService(
     /// <summary>Prefixo de id de servidor declarado em <c>.agents/mcp.json</c> (não cadastrado via UI).</summary>
     public const string EnvServerIdPrefix = "env:";
 
+    private const string FunctionType = "function";
+
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ToolsCacheTtl = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan EnvSyncTtl = TimeSpan.FromSeconds(120);
@@ -406,8 +408,8 @@ public partial class McpClientService(
     {
         var spec = new Dictionary<string, object?>
         {
-            ["type"] = "function",
-            ["function"] = new Dictionary<string, object?>
+            ["type"] = FunctionType,
+            [FunctionType] = new Dictionary<string, object?>
             {
                 ["name"] = VirtualFunctionName(server, ReadResourceToolName),
                 ["description"] = $"Lê um resource exposto pelo servidor MCP {server.Name} por URI.",
@@ -534,8 +536,8 @@ public partial class McpClientService(
     {
         var spec = new Dictionary<string, object?>
         {
-            ["type"] = "function",
-            ["function"] = new Dictionary<string, object?>
+            ["type"] = FunctionType,
+            [FunctionType] = new Dictionary<string, object?>
             {
                 ["name"] = VirtualFunctionName(server, tool.Name),
                 ["description"] = tool.Description ?? $"Tool {tool.Name} do servidor MCP {server.Name}",

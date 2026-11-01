@@ -19,14 +19,16 @@ public class ThemeService(
 {
     private const string ThemeKey = "webui.theme";
     private const string ThemeIdKey = "webui.theme.id"; // cache escrito pelo boot em app.js
+    private const string LightTheme = "light";
+    private const string DefaultTheme = "default";
 
     private bool _serverSynced;
 
-    /// <summary>Modo atual: "system", "dark" ou "light" (default claro).</summary>
-    public string Current { get; private set; } = "light";
+    /// <summary>Modo atual: "system", "dark" ou LightTheme (default claro).</summary>
+    public string Current { get; private set; } = LightTheme;
 
-    /// <summary>Paleta ativa ("default", "midnight", … ou id de tema custom).</summary>
-    public string ThemeId { get; private set; } = "default";
+    /// <summary>Paleta ativa (DefaultTheme, "midnight", … ou id de tema custom).</summary>
+    public string ThemeId { get; private set; } = DefaultTheme;
 
     /// <summary>Presets builtin carregados de <c>wwwroot/themes/builtin.json</c>.</summary>
     public List<CustomThemeDefinition> Presets { get; private set; } = [];
@@ -46,9 +48,9 @@ public class ThemeService(
         try
         {
             var saved = await storage.GetAsync(ThemeKey);
-            Current = saved is "light" or "dark" or "system" ? saved : "light";
+            Current = saved is LightTheme or "dark" or "system" ? saved : LightTheme;
             var savedId = await storage.GetAsync(ThemeIdKey);
-            ThemeId = ThemeValidator.IsValidThemeId(savedId) ? savedId! : "default";
+            ThemeId = ThemeValidator.IsValidThemeId(savedId) ? savedId! : DefaultTheme;
             await ApplyModeAsync();
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
@@ -82,11 +84,11 @@ public class ThemeService(
         Instance = catalog.Instance;
 
         var serverId = catalog.Active.ThemeId;
-        if (!string.Equals(serverId, "default", StringComparison.Ordinal) &&
+        if (!string.Equals(serverId, DefaultTheme, StringComparison.Ordinal) &&
             ThemeValidator.IsValidThemeId(serverId))
         {
             ThemeId = serverId;
-            if (catalog.Active.Mode is "system" or "dark" or "light")
+            if (catalog.Active.Mode is "system" or "dark" or LightTheme)
             {
                 Current = catalog.Active.Mode;
             }
@@ -94,7 +96,7 @@ public class ThemeService(
             await ApplyModeAsync();
             await ApplyThemeAsync();
         }
-        else if (ThemeId != "default")
+        else if (ThemeId != DefaultTheme)
         {
             // Escolha local anterior ao sync — leva ao servidor.
             _ = api.SetActiveThemeAsync(ThemeId, Current);
@@ -192,7 +194,7 @@ public class ThemeService(
             Customs.RemoveAll(c => c.Id == id);
             if (victim is not null && victim.ThemeId == ThemeId)
             {
-                await SetThemeAsync("default");
+                await SetThemeAsync(DefaultTheme);
             }
 
             Changed?.Invoke();
@@ -204,10 +206,10 @@ public class ThemeService(
     private async Task ApplyThemeAsync()
     {
         var theme = Catalog().FirstOrDefault(t => t.Id == ThemeId);
-        var css = theme is null || theme.Id == "default"
+        var css = theme is null || theme.Id == DefaultTheme
             ? ""
             : ThemeCssBuilder.Build(theme);
-        await js.InvokeVoidAsync("openwebui.setCustomTheme", theme?.Id ?? "default", css);
+        await js.InvokeVoidAsync("openwebui.setCustomTheme", theme?.Id ?? DefaultTheme, css);
     }
 
     private Task ApplyModeAsync() =>

@@ -56,6 +56,7 @@ public sealed class ChatRunExecutor(
 
     /// <summary>Role das notas de sistema injetadas no histórico do loop.</summary>
     private const string RoleSystem = "system";
+    private const string SseDoneLine = "data: [DONE]";
 
     /// <summary>Tamanho máximo do preview de args/resultado publicado no SSE.</summary>
     private const int PreviewChars = 2048;
@@ -172,7 +173,7 @@ public sealed class ChatRunExecutor(
             await db.SaveChangesAsync(CancellationToken.None);
             broadcaster.Publish(run.Id,
                 $"data: {JsonSerializer.Serialize(new { error = run.Error })}");
-            broadcaster.Publish(run.Id, "data: [DONE]");
+            broadcaster.Publish(run.Id, SseDoneLine);
             return;
         }
 
@@ -244,7 +245,7 @@ public sealed class ChatRunExecutor(
                 broadcaster.Publish(run.Id,
                     $"data: {JsonSerializer.Serialize(new { error = comboError })}");
                 await FailAsync(run, comboError, ct);
-                broadcaster.Publish(run.Id, "data: [DONE]");
+                broadcaster.Publish(run.Id, SseDoneLine);
                 return;
             }
 
@@ -262,7 +263,7 @@ public sealed class ChatRunExecutor(
                 await RunPipelineAsync(request, run, ct);
                 // [DONE] só depois do FinishAsync — ver caminho principal.
                 await FinishAsync(run, string.Empty, ct);
-                broadcaster.Publish(run.Id, "data: [DONE]");
+                broadcaster.Publish(run.Id, SseDoneLine);
                 return;
             }
 
@@ -275,7 +276,7 @@ public sealed class ChatRunExecutor(
                 line =>
                 {
                     // O [DONE] do arena é retido: sai depois do FinishAsync.
-                    if (line != "data: [DONE]")
+                    if (line != SseDoneLine)
                     {
                         broadcaster.Publish(run.Id, line);
                     }
@@ -284,7 +285,7 @@ public sealed class ChatRunExecutor(
                 ct))
             {
                 await FinishAsync(run, string.Empty, ct);
-                broadcaster.Publish(run.Id, "data: [DONE]");
+                broadcaster.Publish(run.Id, SseDoneLine);
                 return;
             }
 
@@ -818,7 +819,7 @@ public sealed class ChatRunExecutor(
             {
                 await TryChainContinuationAsync(run, request, user, loopOutcome, ct);
             }
-            broadcaster.Publish(run.Id, "data: [DONE]");
+            broadcaster.Publish(run.Id, SseDoneLine);
             if (comboRef is not null)
             {
                 await combos.ReportAsync(comboRef, request.Model, ok: true,
@@ -833,7 +834,7 @@ public sealed class ChatRunExecutor(
         {
             approvals.Cancel(run.Id);
             await FinishAsync(run, content.ToString(), ct, ChatRunStatus.Stopped, toolMessages);
-            broadcaster.Publish(run.Id, "data: [DONE]");
+            broadcaster.Publish(run.Id, SseDoneLine);
             logger.LogWarning(
                 "Run {RunId} cancelada após {Elapsed}ms com {Chars} chars parciais.",
                 run.Id, sw.ElapsedMilliseconds, content.Length);
@@ -877,7 +878,7 @@ public sealed class ChatRunExecutor(
             broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error = message })}");
             run.Error = message;
             await FinishAsync(run, content.ToString(), ct, ChatRunStatus.Failed, toolMessages);
-            broadcaster.Publish(run.Id, "data: [DONE]");
+            broadcaster.Publish(run.Id, SseDoneLine);
         }
     }
 
@@ -1290,7 +1291,7 @@ public sealed class ChatRunExecutor(
             .Enqueue(childRun.Id);
         await FinishAsync(
             run, $"Sub-agente enfileirado para o command — run `{childRun.Id}`.", ct);
-        broadcaster.Publish(run.Id, "data: [DONE]");
+        broadcaster.Publish(run.Id, SseDoneLine);
     }
 
     /// <summary>Prompt sintético de retomada da auto-chain: vive só no
@@ -2175,7 +2176,7 @@ public sealed class ChatRunExecutor(
     /// <summary>Extrai o delta de texto de uma linha SSE `data: {...}`.</summary>
     private static void AccumulateDelta(string line, StringBuilder into)
     {
-        if (!line.StartsWith("data: ", StringComparison.Ordinal) || line == "data: [DONE]")
+        if (!line.StartsWith("data: ", StringComparison.Ordinal) || line == SseDoneLine)
         {
             return;
         }
@@ -2499,7 +2500,7 @@ public sealed class ChatRunExecutor(
         run.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         await db.SaveChangesAsync(CancellationToken.None);
         broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error })}");
-        broadcaster.Publish(run.Id, "data: [DONE]");
+        broadcaster.Publish(run.Id, SseDoneLine);
         await runBus.PublishAsync(
             new OpenWebUI.Application.Interfaces.AgentRunEvent(
                 run.Id, run.ChatId, run.UserId, "run.failed",

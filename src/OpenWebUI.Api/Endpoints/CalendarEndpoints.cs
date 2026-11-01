@@ -10,6 +10,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints de calendários e eventos (/api/v1/calendars) com access grants.</summary>
 public static class CalendarEndpoints
 {
+    private const string CalendarNotFoundMessage = "Calendário não encontrado.";
     /// <summary>Mapeia o grupo /api/v1/calendars.</summary>
     public static void MapCalendarEndpoints(this WebApplication app)
     {
@@ -86,7 +87,7 @@ public static class CalendarEndpoints
             || await access.LevelAsync(user, calendar.UserId, calendar.AccessGrantsJson, ct)
                 is AccessControlService.None)
         {
-            return Results.NotFound(new { detail = "Calendário não encontrado." });
+            return Results.NotFound(new { detail = CalendarNotFoundMessage });
         }
 
         return Results.Ok(ToResponse(calendar));
@@ -106,7 +107,7 @@ public static class CalendarEndpoints
             || await access.LevelAsync(user, calendar.UserId, calendar.AccessGrantsJson, ct)
                 is not AccessControlService.Write)
         {
-            return Results.NotFound(new { detail = "Calendário não encontrado." });
+            return Results.NotFound(new { detail = CalendarNotFoundMessage });
         }
 
         if (!string.IsNullOrWhiteSpace(request.Name))
@@ -133,7 +134,7 @@ public static class CalendarEndpoints
         if (calendar is null
             || (calendar.UserId != user.Id && user.Role != UserRoles.Admin))
         {
-            return Results.NotFound(new { detail = "Calendário não encontrado." });
+            return Results.NotFound(new { detail = CalendarNotFoundMessage });
         }
 
         var events = db.CalendarEvents.Where(e => e.CalendarId == calendar.Id);
@@ -155,7 +156,7 @@ public static class CalendarEndpoints
         if (calendar is null
             || (calendar.UserId != user.Id && user.Role != UserRoles.Admin))
         {
-            return Results.NotFound(new { detail = "Calendário não encontrado." });
+            return Results.NotFound(new { detail = CalendarNotFoundMessage });
         }
         if (!ValidGrants(request.AccessGrants))
         {
@@ -226,7 +227,7 @@ public static class CalendarEndpoints
             || await access.LevelAsync(user, calendar.UserId, calendar.AccessGrantsJson, ct)
                 is not AccessControlService.Write)
         {
-            return Results.NotFound(new { detail = "Calendário não encontrado." });
+            return Results.NotFound(new { detail = CalendarNotFoundMessage });
         }
         if (string.IsNullOrWhiteSpace(request.Title) || request.EndTs <= request.StartTs)
         {
