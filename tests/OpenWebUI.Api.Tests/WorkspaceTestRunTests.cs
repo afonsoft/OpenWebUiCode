@@ -108,6 +108,23 @@ public class WorkspaceTestRunTests
     }
 
     [Test]
+    public void Parse_DotnetTotalTests_Com_Sem_Skipped()
+    {
+        var s = TestRunOutputParser.Parse("dotnet test",
+            "Total tests: 55\nPassed: 50\nFailed: 3\nSkipped: 2\n");
+        Assert.Multiple(() =>
+        {
+            Assert.That(s!.Passed, Is.EqualTo(50));
+            Assert.That(s.Failed, Is.EqualTo(3));
+            Assert.That(s.Skipped, Is.EqualTo(2));
+        });
+
+        var s2 = TestRunOutputParser.Parse("dotnet test",
+            "Total tests: 10 Passed: 9 Failed: 1");
+        Assert.That(s2!.Skipped, Is.Null);
+    }
+
+    [Test]
     public void Parse_JestSummary_ExtraiContagens()
     {
         var output = "Tests:       1 failed, 9 passed, 10 total\nTime: 2.1s\n";

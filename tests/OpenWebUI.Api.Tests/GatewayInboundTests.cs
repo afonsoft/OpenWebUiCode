@@ -306,6 +306,32 @@ public class GatewayInboundTests
     }
 
     [Test]
+    public async Task Inbound_Sem_Modelo_Falha_E_Avisa_Peer()
+    {
+        var channel = await CreateChannelAsync(model: null);
+        await using (var db = NewDb())
+        {
+            db.GatewayPeers.Add(new GatewayPeer
+            {
+                ChannelId = channel.Id, ExternalChatId = "555",
+                ExternalUserId = "777", PairedUserId = _user.User.Id,
+                PairedAt = 1, CreatedAt = 1,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var res = await _client.SendAsync(
+            Inbound(channel, Update, channel.WebhookSecret));
+        Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+        await using var db2 = NewDb();
+        Assert.That(await db2.GatewayDeliveries.AnyAsync(
+            d => d.ChannelId == channel.Id && d.Status == "failed"),
+            Is.True);
+        Assert.That(_sentBodies.Any(b => b.Contains("modelo")), Is.True);
+    }
+
+    [Test]
     public async Task Peer_Bloqueado_Silencioso_Sem_Run()
     {
         var channel = await CreateChannelAsync();
