@@ -38,11 +38,18 @@ public sealed class RunUsageLedgerService(
     /// Grava o record da run; idempotente por <paramref name="runId"/> —
     /// re-tentativas de gravação (retomada, double-finish) não duplicam.
     /// </summary>
-    public async Task RecordAsync(
-        string runId, string chatId, string userId, string? parentRunId,
-        string? modelId, int steps, long promptTokens, long completionTokens,
-        long reasoningTokens, double? costUsd, CancellationToken ct)
+    public sealed record UsageEntry(
+        string RunId, string ChatId, string UserId, string? ParentRunId,
+        string? ModelId, int Steps, long PromptTokens, long CompletionTokens,
+        long ReasoningTokens, double? CostUsd);
+
+    public async Task RecordAsync(UsageEntry e, CancellationToken ct)
     {
+        var runId = e.RunId; var chatId = e.ChatId; var userId = e.UserId;
+        var parentRunId = e.ParentRunId; var modelId = e.ModelId;
+        var steps = e.Steps; var promptTokens = e.PromptTokens;
+        var completionTokens = e.CompletionTokens;
+        var reasoningTokens = e.ReasoningTokens; var costUsd = e.CostUsd;
         try
         {
             if (await db.RunUsageRecords.AnyAsync(r => r.RunId == runId, ct))

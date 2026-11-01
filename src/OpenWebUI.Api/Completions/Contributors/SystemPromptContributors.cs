@@ -24,30 +24,29 @@ public static class SystemPromptContributors
     /// que montam contributors manualmente (DI resolve via
     /// <see cref="IEnumerable{ISystemPromptContributor}"/>).
     /// </summary>
+    public sealed record ContributorDeps(
+        AppDbContext Db, ConfigService Config, RagService Rag,
+        WebSearchService WebSearch, WorkspaceRepoService Repos,
+        AgentDefinitionService Agents, IConfiguration Configuration,
+        InstinctService? Instincts = null);
+
     public static IReadOnlyList<ISystemPromptContributor> Default(
-        AppDbContext db,
-        ConfigService config,
-        RagService rag,
-        WebSearchService webSearch,
-        WorkspaceRepoService repos,
-        AgentDefinitionService agents,
-        IConfiguration configuration,
-        InstinctService? instincts = null) =>
+        ContributorDeps d) =>
     [
         new BaseAgentContributor(),
-        new AlwaysAllowContributor(db),
-        new SddWorkflowContributor(configuration),
-        new CustomModelContributor(db),
-        new ModelSkillsContributor(db),
-        new FileContextContributor(db, rag),
-        new WebSearchContributor(webSearch),
-        new MemoriesContributor(db, config),
+        new AlwaysAllowContributor(d.Db),
+        new SddWorkflowContributor(d.Configuration),
+        new CustomModelContributor(d.Db),
+        new ModelSkillsContributor(d.Db),
+        new FileContextContributor(d.Db, d.Rag),
+        new WebSearchContributor(d.WebSearch),
+        new MemoriesContributor(d.Db, d.Config),
         new RepoBindingContributor(),
-        new AgentMemoryContributor(db, config),
-        .. (IEnumerable<ISystemPromptContributor>)(instincts is null
+        new AgentMemoryContributor(d.Db, d.Config),
+        .. (IEnumerable<ISystemPromptContributor>)(d.Instincts is null
             ? []
-            : [new InstinctContributor(instincts, config)]),
-        new DelegationPolicyContributor(agents, db),
+            : [new InstinctContributor(d.Instincts, d.Config)]),
+        new DelegationPolicyContributor(d.Agents, d.Db),
         new MentionsContributor(),
         new AgentModeContributor(),
     ];

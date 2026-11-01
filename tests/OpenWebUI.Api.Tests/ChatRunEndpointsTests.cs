@@ -661,6 +661,47 @@ public class ChatRunEndpointsTests
     }
 
     [Test]
+    public async Task Enqueue_ComAgentSteps_GravaConstraintsEmKv()
+    {
+        var auth = await SignUpAsync("CS", "cs2@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+        var cmdDir = Path.Join(TestHomeIsolation.Home, ".agents", "commands");
+        var agentDir = Path.Join(TestInfra.IsolatedHome, ".agents", "agents");
+        Directory.CreateDirectory(cmdDir);
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Join(cmdDir, "zz-steps.md"),
+            "---\nagent: zz-steps\n---\nRode $ARGUMENTS\n");
+        File.WriteAllText(Path.Join(agentDir, "zz-steps.agent.md"),
+            "---\nname: zz-steps\ndescription: t\nsteps: 7\n---\nVocê é um agente.\n");
+        SkillDiscoveryService.Invalidate("");
+        try
+        {
+            var res = await _client.PostAsJsonAsync(
+                $"/api/v1/chats/{chat.Id}/messages",
+                new EnqueueChatRunRequest(
+                    "x", "llama3", Command: "zz-steps", CommandArgs: "tarefa y"));
+            Assert.That(res.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
+                await res.Content.ReadAsStringAsync());
+            var mae = (await res.Content
+                .ReadFromJsonAsync<ChatRunResponse>())!;
+
+            using var scope = _factory.Services.CreateScope();
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            var steps = await config.GetAsync<int?>(
+                $"r:{mae.Id}:agent.steps", null, CancellationToken.None);
+            Assert.That(steps, Is.EqualTo(7));
+        }
+        finally
+        {
+            File.Delete(Path.Join(cmdDir, "zz-steps.md"));
+            File.Delete(Path.Join(agentDir, "zz-steps.agent.md"));
+            SkillDiscoveryService.Invalidate("");
+        }
+    }
+
+    [Test]
     public async Task Enqueue_ComSubagent_SpawnaRunFilha()
     {
         var auth = await SignUpAsync("CS", "cs@runs.local");

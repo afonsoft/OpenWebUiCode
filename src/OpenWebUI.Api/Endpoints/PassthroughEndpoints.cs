@@ -159,8 +159,10 @@ public static class PassthroughEndpoints
         }
 
         var result = await proxy.ForwardAsync(
-            new HttpMethod(http.Request.Method), provider, path, index,
-            body, http.Request.ContentType, http.Request.QueryString.Value, http.RequestAborted);
+            new ProviderProxyService.ForwardRequest(
+                new HttpMethod(http.Request.Method), provider, path, index,
+                body, http.Request.ContentType, http.Request.QueryString.Value),
+            http.RequestAborted);
         return result.Response is null
             ? Results.Problem(result.Error, statusCode: result.StatusCode)
             : new ProxiedResult(result.Response);
@@ -172,8 +174,10 @@ public static class PassthroughEndpoints
         string provider, string path, int? index)
     {
         var result = await proxy.ForwardAsync(
-            HttpMethod.Get, provider, path, index,
-            null, null, http.Request.QueryString.Value, http.RequestAborted);
+            new ProviderProxyService.ForwardRequest(
+                HttpMethod.Get, provider, path, index,
+                null, null, http.Request.QueryString.Value),
+            http.RequestAborted);
         if (result.Response is null)
         {
             throw new ProxyFailureException(result.StatusCode, result.Error);

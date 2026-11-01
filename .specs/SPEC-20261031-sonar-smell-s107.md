@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s107-20261031` |
 | Ticket | `GH#568` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-10-31 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -128,3 +128,14 @@ N/A — **o contrato existente não muda**: `[AsParameters]` preserva binding de
 ## Open Questions / Pending Ambiguity
 
 - `[A DEFINIR]` Nome dos records deps por endpoint (seguir padrão `{Endpoint}Deps` do RF-A2 — confirmar em T1).
+
+
+## 10. Implementation Log (2026-10-31)
+
+- 53 issues `csharpsquid:S107` em `src/**` refatorados.
+- Endpoints: records `[AsParameters]` (`*Deps`) — contrato HTTP e binding preservados (precedente `ModelCatalogDeps`).
+- Métodos internos/estáticos: parameter objects (`AuditInfo`, `UsageEntry`, `InstinctCandidate`, `BudgetRequest`, `RunOptions`, `ToolLoopOptions`, `EnrichDeps`, `ArenaDeps`, `ForwardRequest`, `EnqueueOptions`, `ContributorDeps`, `DeliveryInfo`, `ResumeRequest`, `ChildWait`, `ExtractTarget`, `ResultInfo`, `ProviderSpec`).
+- `ChatRunExecutor` (30 deps) → `ChatRunPipelineDeps`/`ChatRunToolsDeps`/`ChatRunLifecycleDeps` registradas scoped no DI; campos preservam nomes (zero churn no corpo).
+- `ContextCompactionService` opcionais → `CompactionDeps` (registrado; defaults preservados).
+- Query records (`ChatListQuery`, `UserListQuery`, `LocationQuery`) preservam os nomes do contrato de query string.
+- Testes atualizados para as novas assinaturas (sem mudança de expectativa).

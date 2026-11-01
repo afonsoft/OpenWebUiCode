@@ -348,17 +348,16 @@ public static class GatewayEndpoints
     /// assinatura antes de qualquer efeito. Resposta imediata.
     /// </summary>
     private static async Task<IResult> InboundAsync(
-        HttpContext http, ConfigService config, RateLimitService limits,
-        GatewayInboundService inbound, IEnumerable<IGatewayAdapter> adapters,
+        HttpContext http, [AsParameters] GatewayDeps deps,
         string platform, string token, CancellationToken ct)
     {
         // Rate limit sempre ativo no webhook anônimo — não depende do
         // toggle global (default off): sem ele, requests rejeitados ainda
         // gravam auditoria e acionam envios de pareamento.
-        var rateConfig = await config.GetAsync("ratelimit", RateLimitConfig.Default, ct);
+        var rateConfig = await deps.Config.GetAsync("ratelimit", RateLimitConfig.Default, ct);
         var effective = rateConfig.Enabled ? rateConfig : WebhookRateLimit;
         var key = $"gw:{http.Connection.RemoteIpAddress?.ToString() ?? "anon"}";
-        var retryAfter = limits.TryAcquire(
+        var retryAfter = deps.Limits.TryAcquire(
             key, effective, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         if (retryAfter is { } retry)
         {
@@ -382,11 +381,11 @@ public static class GatewayEndpoints
                 new { detail = "payload excede 256KB." }, statusCode: 413);
         }
 
-        var adapter = adapters.FirstOrDefault(a =>
+        var adapter = deps.Adapters.FirstOrDefault(a =>
             string.Equals(a.Platform, platform, StringComparison.OrdinalIgnoreCase));
         var adapterHeader = adapter is null ? null
             : http.Request.Headers[adapter.SignatureHeader].ToString();
-        var result = await inbound.HandleAsync(
+        var result = await deps.Inbound.HandleAsync(
             platform, token,
             string.IsNullOrEmpty(adapterHeader) ? null : adapterHeader,
             raw, ct);
@@ -447,3 +446,9 @@ public sealed record GatewayPeerUpdateRequest(bool? Blocked, bool? Unpair);
 
 /// <summary>Payload do pareamento por código.</summary>
 public sealed record GatewayPairRequest(string? Code);
+
+/// <summary>Bundle DI do inbound gateway (S107).</summary>
+internal sealed record GatewayDeps(
+    ConfigService Config, RateLimitService Limits,
+    GatewayInboundService Inbound,
+    IEnumerable<IGatewayAdapter> Adapters);

@@ -85,9 +85,7 @@ public class InstinctTests
     {
         using var db = NewDb();
         var svc = NewService(db);
-        var i = await svc.UpsertCandidateAsync(
-            "u1", "user", null, "dotnet", "when building", "run dotnet test",
-            "run-1", default);
+        var i = await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "dotnet", "when building", "run dotnet test", "run-1"), default);
 
         Assert.That(i, Is.Not.Null);
         Assert.That(i!.Status, Is.EqualTo("pending"));
@@ -100,12 +98,8 @@ public class InstinctTests
     {
         using var db = NewDb();
         var svc = NewService(db);
-        await svc.UpsertCandidateAsync(
-            "u1", "user", null, "dotnet", "when building!", "run tests",
-            "run-1", default);
-        var second = await svc.UpsertCandidateAsync(
-            "u1", "user", null, "dotnet", "  When   building ", "run tests again",
-            "run-2", default);
+        await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "dotnet", "when building!", "run tests", "run-1"), default);
+        var second = await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "dotnet", "  When   building ", "run tests again", "run-2"), default);
 
         var all = await db.Instincts.Where(i => i.UserId == "u1").ToListAsync();
         Assert.That(all, Has.Count.EqualTo(1),
@@ -121,10 +115,8 @@ public class InstinctTests
     {
         using var db = NewDb();
         var svc = NewService(db);
-        await svc.UpsertCandidateAsync(
-            "u1", "user", null, "dotnet", "when building", "x", "r1", default);
-        await svc.UpsertCandidateAsync(
-            "u1", "user", null, "git", "when building", "x", "r1", default);
+        await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "dotnet", "when building", "x", "r1"), default);
+        await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "git", "when building", "x", "r1"), default);
         Assert.That(
             await db.Instincts.CountAsync(i => i.UserId == "u1"),
             Is.EqualTo(2));
@@ -135,12 +127,9 @@ public class InstinctTests
     {
         using var db = NewDb();
         var svc = NewService(db);
-        Assert.That(await svc.UpsertCandidateAsync(
-            "u1", "user", null, "", "t", "b", "r", default), Is.Null);
-        Assert.That(await svc.UpsertCandidateAsync(
-            "u1", "user", null, "d", " ", "b", "r", default), Is.Null);
-        Assert.That(await svc.UpsertCandidateAsync(
-            "u1", "user", null, "d", "t", "", "r", default), Is.Null);
+        Assert.That(await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "", "t", "b", "r"), default), Is.Null);
+        Assert.That(await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "d", " ", "b", "r"), default), Is.Null);
+        Assert.That(await svc.UpsertCandidateAsync(new InstinctService.InstinctCandidate("u1", "user", null, "d", "t", "", "r"), default), Is.Null);
     }
 
     // ---------- lifecycle ----------

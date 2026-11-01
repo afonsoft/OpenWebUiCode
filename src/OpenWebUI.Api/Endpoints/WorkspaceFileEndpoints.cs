@@ -116,19 +116,20 @@ public static class WorkspaceFileEndpoints
     /// <summary>Snapshot git do workdir (S2: aba Changes do /ide — mesma
     /// carga de <c>GET /chats/{id}/runs/{runId}/diff</c>, sem run).</summary>
     private static async Task<IResult> GitAsync(
-        string? chatId, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        WorkspaceGitService git, ConfigService config, IConfiguration configuration,
+        string? chatId, HttpContext http, [AsParameters] WorkspaceFileDeps deps,
         CancellationToken ct)
     {
-        var (_, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (_, w, reject) = await BoundWorkdirAsync(
+            http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
         }
         var workdir = w!;
 
-        var info = await git.GetInfoAsync(workdir, ct);
-        var gitWrite = await GitWriteEnabledAsync(config, configuration, ct);
+        var info = await deps.Git.GetInfoAsync(workdir, ct);
+        var gitWrite = await GitWriteEnabledAsync(
+            deps.Config, deps.Configuration, ct);
         return Results.Ok(new WorkspaceGitResponse(
             info.IsRepo, info.Branch, info.Added, info.Removed,
             info.Files.Select(f => new WorkspaceGitFileResponse(
@@ -153,9 +154,10 @@ public static class WorkspaceFileEndpoints
 
     private static async Task<IResult> TreeAsync(
         string? path, int? depth, string? cursor, string? chatId,
-        HttpContext http, AppDbContext db, WorkspaceRepoService repos, CancellationToken ct)
+        HttpContext http, [AsParameters] WorkspaceFileDeps deps, CancellationToken ct)
     {
-        var (uid, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (uid, w, reject) = await BoundWorkdirAsync(
+            http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
@@ -251,10 +253,10 @@ public static class WorkspaceFileEndpoints
 
     private static async Task<IResult> ReadAsync(
         string? path, int? startLine, int? maxLines, string? chatId,
-        HttpContext http, AppDbContext db, WorkspaceRepoService repos, HttpResponse response,
-        CancellationToken ct)
+        HttpContext http, [AsParameters] WorkspaceFileDeps deps, CancellationToken ct)
     {
-        var (uid, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (uid, w, reject) = await BoundWorkdirAsync(
+            http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
@@ -291,8 +293,8 @@ public static class WorkspaceFileEndpoints
 
         var etag = ETagOf(full, size);
         var lastModified = File.GetLastWriteTimeUtc(full);
-        response.Headers.ETag = etag;
-        response.Headers.LastModified = lastModified.ToString("R");
+        http.Response.Headers.ETag = etag;
+        http.Response.Headers.LastModified = lastModified.ToString("R");
 
         return Results.Ok(new WorkspaceFileReadResponse(
             WorkspaceFiles.RelativeOf(workdir, full),
@@ -304,11 +306,10 @@ public static class WorkspaceFileEndpoints
 
     private static async Task<IResult> WriteAsync(
         WorkspaceFileWriteRequest request, [FromQuery] string? chatId,
-        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        OpenWebUI.Infrastructure.Lsp.LspService lsp,
-        ILogger<Program> logger, CancellationToken ct)
+        HttpContext http, [AsParameters] WorkspaceFileDeps deps, CancellationToken ct)
     {
-        var (uid, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (uid, w, reject) = await BoundWorkdirAsync(
+            http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
@@ -349,11 +350,11 @@ public static class WorkspaceFileEndpoints
         }
         await File.WriteAllTextAsync(full, content, ct);
         // LSP didSave — best-effort, nunca falha o PUT (SPEC S8).
-        await lsp.NotifyFileSavedAsync(workdir, full, ct);
+        await deps.Lsp.NotifyFileSavedAsync(workdir, full, ct);
 
         var etag = ETagOf(full, new FileInfo(full).Length);
         var lastModified = File.GetLastWriteTimeUtc(full);
-        logger.LogInformation(
+        deps.Logger.LogInformation(
             "workspace-file write user={UserId} path={Path} bytes={Bytes}",
             uid, WorkspaceFiles.RelativeOf(workdir, full), content.Length);
         return Results.Ok(new WorkspaceFileWriteResponse(
@@ -633,16 +634,15 @@ public static class WorkspaceFileEndpoints
     /// (default off). <c>git add -A + commit -m</c> no workdir.</summary>
     private static async Task<IResult> CommitAsync(
         WorkspaceCommitRequest? request, string? chatId,
-        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        WorkspaceGitService git, ConfigService config, IConfiguration configuration,
-        ILogger<Program> logger, CancellationToken ct)
+        HttpContext http, [AsParameters] WorkspaceFileDeps deps, CancellationToken ct)
     {
-        var (uid, w, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (uid, w, reject) = await BoundWorkdirAsync(
+            http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
         }
-        if (!await GitWriteEnabledAsync(config, configuration, ct))
+        if (!await GitWriteEnabledAsync(deps.Config, deps.Configuration, ct))
         {
             return Results.Json(
                 new WorkspaceCommitResponse(false, null,
@@ -656,13 +656,20 @@ public static class WorkspaceFileEndpoints
                 new WorkspaceCommitResponse(false, null, "Mensagem de commit vazia."));
         }
 
-        var head = await git.CommitAsync(w!, message, ct);
+        var head = await deps.Git.CommitAsync(w!, message, ct);
         if (head is null)
         {
             return Results.Ok(new WorkspaceCommitResponse(
                 false, null, "Commit falhou (nada a commitar ou git indisponível)."));
         }
-        logger.LogInformation("workspace commit user={UserId} sha={Sha}", uid, head);
+        deps.Logger.LogInformation("workspace commit user={UserId} sha={Sha}", uid, head);
         return Results.Ok(new WorkspaceCommitResponse(true, head, null));
     }
+
+    /// <summary>Bundle DI dos endpoints de workspace-file — mantém as
+    /// assinaturas dentro do limite de parâmetros (S107).</summary>
+    internal sealed record WorkspaceFileDeps(
+        AppDbContext Db, WorkspaceRepoService Repos, WorkspaceGitService Git,
+        ConfigService Config, IConfiguration Configuration,
+        Infrastructure.Lsp.LspService Lsp, ILogger<Program> Logger);
 }

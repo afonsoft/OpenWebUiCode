@@ -46,8 +46,10 @@ public sealed class GatewayReplyService(
         // Peer bloqueado/canal desligado após o enqueue → não entrega.
         if (peer.Blocked || !channel.Enabled)
         {
-            await inbound.AuditAsync(channel.Id, peer.Id, "out", "skipped",
-                null, run.RunId, null, null, cancellationToken);
+            await inbound.AuditAsync(
+                new GatewayInboundService.AuditInfo(
+                    channel.Id, peer.Id, "out", "skipped",
+                    null, run.RunId, null, null), cancellationToken);
             return;
         }
 
@@ -65,9 +67,11 @@ public sealed class GatewayReplyService(
         var botToken = await inbound.ResolveBotTokenAsync(channel, cancellationToken);
         if (botToken is null)
         {
-            await inbound.AuditAsync(channel.Id, peer.Id, "out", "failed",
-                null, run.RunId, null,
-                "secretRef do bot não resolvido", cancellationToken);
+            await inbound.AuditAsync(
+                new GatewayInboundService.AuditInfo(
+                    channel.Id, peer.Id, "out", "failed",
+                    null, run.RunId, null,
+                    "secretRef do bot não resolvido"), cancellationToken);
             return;
         }
         var send = await adapter.SendReplyAsync(
@@ -78,10 +82,12 @@ public sealed class GatewayReplyService(
                 "Gateway reply falhou (canal {Channel}, run {Run}): {Error}",
                 channel.Id, run.RunId, send.Error);
         }
-        await inbound.AuditAsync(channel.Id, peer.Id, "out",
-            send.Ok ? "ok" : "failed", null, run.RunId,
-            text.Length <= 200 ? text : text[..200],
-            send.Error, cancellationToken);
+        await inbound.AuditAsync(
+            new GatewayInboundService.AuditInfo(
+                channel.Id, peer.Id, "out",
+                send.Ok ? "ok" : "failed", null, run.RunId,
+                text.Length <= 200 ? text : text[..200],
+                send.Error), cancellationToken);
     }
 
     private async Task<string?> LastAssistantTextAsync(

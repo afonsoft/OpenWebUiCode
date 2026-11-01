@@ -110,16 +110,15 @@ public static class CheckpointEndpoints
     /// </summary>
     private static async Task<IResult> RevertAsync(
         HttpContext http, string hash, WorkspaceCheckpointRevertRequest? body, [FromQuery] string? chatId,
-        AppDbContext db, WorkspaceRepoService repos,
-        CheckpointService checkpoints, CancellationToken ct)
+        [AsParameters] CheckpointRevertDeps deps, CancellationToken ct)
     {
-        var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (userId, workdir, reject) = await BoundWorkdirAsync(http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
         }
 
-        var active = await db.ChatRuns.AsNoTracking()
+        var active = await deps.Db.ChatRuns.AsNoTracking()
             .AnyAsync(r => r.UserId == userId
                 && (r.Status == ChatRunStatus.Queued
                     || r.Status == ChatRunStatus.Running
@@ -133,7 +132,7 @@ public static class CheckpointEndpoints
             });
         }
 
-        var result = await checkpoints.RevertAsync(
+        var result = await deps.Checkpoints.RevertAsync(
             workdir!, hash, body?.Force == true, ct);
         if (result.Reverted.Count == 0 && result.Conflicts.Count == 0)
         {
@@ -143,3 +142,7 @@ public static class CheckpointEndpoints
             new WorkspaceCheckpointRevertResponse(result.Reverted, result.Conflicts));
     }
 }
+
+/// <summary>Bundle DI do revert de checkpoint (S107).</summary>
+internal sealed record CheckpointRevertDeps(
+    AppDbContext Db, WorkspaceRepoService Repos, CheckpointService Checkpoints);

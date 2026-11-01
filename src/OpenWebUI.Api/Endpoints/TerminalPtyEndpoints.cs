@@ -34,13 +34,9 @@ public static class TerminalPtyEndpoints
             AppDbContext db, CancellationToken ct) =>
             ConfigPutAsync(http, config, db, ct));
 
-        group.MapPost("/sessions", (HttpContext http, TerminalSessionManager terminals,
-            AppDbContext db, ConfigService config, IConfiguration configuration,
-            AgentSecretsEnvService agentEnv, WorkspaceRepoService repos,
-            WorktreeService worktrees, IHostEnvironment env,
-            CancellationToken ct) =>
-            CreateSessionAsync(http, terminals, db, config, configuration,
-                agentEnv, repos, worktrees, env, ct));
+        group.MapPost("/sessions", (HttpContext http,
+            [AsParameters] TerminalDeps deps, CancellationToken ct) =>
+            CreateSessionAsync(http, deps, ct));
         group.MapGet("/sessions", (HttpContext http, TerminalSessionManager terminals,
             AppDbContext db, ConfigService config, IConfiguration configuration,
             string? chatId, CancellationToken ct) =>
@@ -70,13 +66,8 @@ public static class TerminalPtyEndpoints
     public static IEndpointConventionBuilder MapTerminalMultiplexWebSocket(
         this IEndpointRouteBuilder app) =>
         app.Map("/ws/terminal", (HttpContext http,
-            TerminalSessionManager terminals, AppDbContext db,
-            ConfigService config, IConfiguration configuration,
-            WorkspaceRepoService repos, WorktreeService worktrees,
-            IHostEnvironment env, AgentSecretsEnvService agentEnv,
-            CancellationToken ct) =>
-            TerminalMuxWsAsync(http, terminals, db, config, configuration,
-                repos, worktrees, env, agentEnv, ct))
+            [AsParameters] TerminalDeps deps, CancellationToken ct) =>
+            TerminalMuxWsAsync(http, deps, ct))
         .RequireAuthorization();
 
     private static async Task<IResult> ConfigGetAsync(
@@ -110,13 +101,10 @@ public static class TerminalPtyEndpoints
     }
 
     private static async Task<IResult> CreateSessionAsync(
-        HttpContext http, TerminalSessionManager terminals, AppDbContext db,
-        ConfigService config, IConfiguration configuration,
-        AgentSecretsEnvService agentEnv, WorkspaceRepoService repos,
-        WorktreeService worktrees, IHostEnvironment env,
-        CancellationToken ct)
+        HttpContext http, TerminalDeps deps, CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(
+            http, deps.Db, deps.Config, deps.Configuration, ct);
         if (error is not null)
         {
             return error;
@@ -131,8 +119,7 @@ public static class TerminalPtyEndpoints
         // workdir explícito (contido em DataPaths.Root) → worktree isolado
         // da run → workspace binding do chat → root do usuário (default).
         var (workdir, workdirError) = await ResolveBoundWorkdirAsync(
-            user!.Id, request?.Workdir, request?.RunId, request?.ChatId,
-            repos, worktrees, env, ct);
+            user!.Id, request?.Workdir, request?.RunId, request?.ChatId, deps, ct);
         if (workdirError is not null)
         {
             return workdirError;
@@ -140,10 +127,10 @@ public static class TerminalPtyEndpoints
 
         // Secrets do usuário ∪ global ∪ managed GitHub entram na env da PTY
         // (SPEC-20261017-agent-secrets-env RF-006) — sessão é por usuário.
-        var secrets = await agentEnv.BuildAsync(user!.Id, ct);
+        var secrets = await deps.AgentEnv.BuildAsync(user!.Id, ct);
         try
         {
-            var id = terminals.Create(
+            var id = deps.Terminals.Create(
                 user!.Id, request?.Cols ?? 120, request?.Rows ?? 30,
                 secrets.Vars, workdir, request?.ChatId, request?.RunId);
             return Results.Created($"/api/v1/terminal/sessions/{id}", new { id });
@@ -163,23 +150,22 @@ public static class TerminalPtyEndpoints
     private static async Task<(string? Workdir, IResult? Error)>
         ResolveBoundWorkdirAsync(
             string userId, string? workdir, string? runId, string? chatId,
-            WorkspaceRepoService repos, WorktreeService worktrees,
-            IHostEnvironment env, CancellationToken ct)
+            TerminalDeps deps, CancellationToken ct)
     {
         if (workdir is not null)
         {
-            return IsInsideDataRoot(workdir, env)
+            return IsInsideDataRoot(workdir, deps.Env)
                 ? (workdir, null)
                 : ((string?)null, Results.Problem(
                     "workdir deve ficar dentro de data/.", statusCode: 400));
         }
         if (runId is not null)
         {
-            workdir = worktrees.ResolveIsolated(userId, runId);
+            workdir = deps.Worktrees.ResolveIsolated(userId, runId);
         }
         if (workdir is null && chatId is not null)
         {
-            workdir = await repos.ResolveWorkdirAsync(userId, chatId, ct);
+            workdir = await deps.Repos.ResolveWorkdirAsync(userId, chatId, ct);
         }
         return (workdir, null);
     }
@@ -323,13 +309,10 @@ public static class TerminalPtyEndpoints
     /// sobrevivem para reattach (mesmo modelo do agent-harness).
     /// </summary>
     private static async Task<IResult> TerminalMuxWsAsync(
-        HttpContext http, TerminalSessionManager terminals, AppDbContext db,
-        ConfigService config, IConfiguration configuration,
-        WorkspaceRepoService repos, WorktreeService worktrees,
-        IHostEnvironment env, AgentSecretsEnvService agentEnv,
-        CancellationToken ct)
+        HttpContext http, TerminalDeps deps, CancellationToken ct)
     {
-        var (user, error) = await AuthorizedAsync(http, db, config, configuration, ct);
+        var (user, error) = await AuthorizedAsync(
+            http, deps.Db, deps.Config, deps.Configuration, ct);
         if (error is not null)
         {
             return error;
@@ -355,7 +338,7 @@ public static class TerminalPtyEndpoints
                 return;
             }
 
-            var h = terminals.Attach(
+            var h = deps.Terminals.Attach(
                 uid, sid,
                 chunk => Send(new { type = "output", sid, data = chunk }),
                 code => Send(new { type = "exit", sid, code }));
@@ -380,7 +363,7 @@ public static class TerminalPtyEndpoints
         await Send(new
         {
             type = "sessions",
-            items = terminals.List(uid).Select(s => new
+            items = deps.Terminals.List(uid).Select(s => new
             {
                 s.Id, s.IsRunning, s.ExitCode, s.ChatId, s.RunId, s.Workdir,
             }),
@@ -445,7 +428,7 @@ public static class TerminalPtyEndpoints
                         {
                             kh.Dispose();
                         }
-                        await terminals.KillAsync(uid, sid);
+                        await deps.Terminals.KillAsync(uid, sid);
                         break;
                     case "create":
                     {
@@ -467,18 +450,17 @@ public static class TerminalPtyEndpoints
 
                         var (resolved, resolveError) =
                             await ResolveBoundWorkdirAsync(
-                                uid, wdir, runId, chatId,
-                                repos, worktrees, env, ct);
+                                uid, wdir, runId, chatId, deps, ct);
                         if (resolveError is not null)
                         {
                             await Send(new { type = "error", detail = "workdir fora de data/." });
                             break;
                         }
 
-                        var secrets = await agentEnv.BuildAsync(uid, ct);
+                        var secrets = await deps.AgentEnv.BuildAsync(uid, ct);
                         try
                         {
-                            var newSid = terminals.Create(
+                            var newSid = deps.Terminals.Create(
                                 uid, cols, rows, secrets.Vars,
                                 resolved, chatId, runId);
                             await Send(new
@@ -626,4 +608,12 @@ public static class TerminalPtyEndpoints
         int? Cols, int? Rows, string? ChatId, string? RunId,
         string? Workdir);
     private sealed record TerminalConfigRequest(bool Enabled);
+
+    /// <summary>Bundle DI dos endpoints de terminal — mantém as
+    /// assinaturas dentro do limite de parâmetros (S107).</summary>
+    private sealed record TerminalDeps(
+        TerminalSessionManager Terminals, AppDbContext Db,
+        ConfigService Config, IConfiguration Configuration,
+        AgentSecretsEnvService AgentEnv, WorkspaceRepoService Repos,
+        WorktreeService Worktrees, IHostEnvironment Env);
 }

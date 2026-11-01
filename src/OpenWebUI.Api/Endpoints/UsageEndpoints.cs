@@ -110,9 +110,11 @@ public static class UsageEndpoints
 
     /// <summary>Agregado admin por usuário e top chats por custo na janela.</summary>
     private static async Task<IResult> AdminUsageAsync(
-        HttpContext http, AppDbContext db, RunUsageLedgerService ledger,
+        HttpContext http, [AsParameters] AdminUsageDeps deps,
         string? userId, string? from, string? to, int? top, CancellationToken ct)
     {
+        var db = deps.Db;
+        var ledger = deps.Ledger;
         if (await Admin(http, db, ct) is not { })
         {
             return Forbid();
@@ -307,3 +309,7 @@ public sealed record BudgetPolicyRequest(
     long? TokensPerMonth = null,
     int? MaxModelTier = null,
     string? Note = null);
+
+/// <summary>Bundle DI do uso admin (S107).</summary>
+internal sealed record AdminUsageDeps(
+    AppDbContext Db, RunUsageLedgerService Ledger);

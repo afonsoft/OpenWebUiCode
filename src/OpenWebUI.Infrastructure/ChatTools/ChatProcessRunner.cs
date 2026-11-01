@@ -30,16 +30,23 @@ public static class ChatProcessRunner
     /// usuário ∪ global ∪ managed GitHub — SPEC-20261017-agent-secrets-env);
     /// <paramref name="secretsToScrub"/> mascara os valores literais na saída.
     /// </summary>
+    public sealed record RunOptions(
+        int MaxOutputChars = DefaultMaxOutputChars,
+        string? Stdin = null,
+        IReadOnlyDictionary<string, string>? Env = null,
+        IReadOnlyCollection<string>? SecretsToScrub = null);
+
     public static async Task<ProcessOutcome> RunAsync(
         string command,
         string workingDirectory,
         TimeSpan timeout,
-        int maxOutputChars = DefaultMaxOutputChars,
-        string? stdin = null,
-        IReadOnlyDictionary<string, string>? env = null,
-        IReadOnlyCollection<string>? secretsToScrub = null,
+        RunOptions? options = null,
         CancellationToken ct = default)
     {
+        var maxOutputChars = options?.MaxOutputChars ?? DefaultMaxOutputChars;
+        var stdin = options?.Stdin;
+        var env = options?.Env;
+        var secretsToScrub = options?.SecretsToScrub;
         var psi = new ProcessStartInfo
         {
             FileName = "/bin/sh",

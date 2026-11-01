@@ -247,8 +247,8 @@ public sealed class DelegateTaskBuiltinTool(
         if (resumeChatId is not null)
         {
             return await ResumeInExistingChatAsync(
-                scope, db, context, parentRun, resumeChatId, fullPrompt,
-                waitExplicit ?? true, joinTeam, ct);
+                new ResumeRequest(scope, db, context, parentRun, resumeChatId,
+                    fullPrompt, waitExplicit ?? true, joinTeam), ct);
         }
 
         // Profundidade da cadeia pai (depth 0 = raiz). Runs de profundidade
@@ -530,7 +530,8 @@ public sealed class DelegateTaskBuiltinTool(
         }
 
         return await WaitForChildAsync(
-            db, scope, context, childChat, childRun, autoMerge, link, ct);
+            new ChildWait(db, scope, context, childChat, childRun,
+                autoMerge, link), ct);
     }
 
     /// <summary>
@@ -609,11 +610,18 @@ public sealed class DelegateTaskBuiltinTool(
     /// do mesmo usuário e (quando <paramref name="joinTeam"/>) entra no
     /// team do chamador.
     /// </summary>
+    private sealed record ResumeRequest(
+        IServiceScope Scope, AppDbContext Db, BuiltinToolContext Context,
+        ChatRun ParentRun, string ResumeChatId, string FullPrompt,
+        bool Wait, bool JoinTeam);
+
     private async Task<BuiltinToolResult> ResumeInExistingChatAsync(
-        IServiceScope scope, AppDbContext db, BuiltinToolContext context,
-        ChatRun parentRun, string resumeChatId, string fullPrompt,
-        bool wait, bool joinTeam, CancellationToken ct)
+        ResumeRequest r, CancellationToken ct)
     {
+        var scope = r.Scope; var db = r.Db; var context = r.Context;
+        var parentRun = r.ParentRun; var resumeChatId = r.ResumeChatId;
+        var fullPrompt = r.FullPrompt; var wait = r.Wait;
+        var joinTeam = r.JoinTeam;
         if (resumeChatId == context.ChatId)
         {
             return new BuiltinToolResult(
@@ -711,14 +719,20 @@ public sealed class DelegateTaskBuiltinTool(
                 });
         }
         return await WaitForChildAsync(
-            db, scope, context, target, childRun, autoMerge: false, link, ct);
+            new ChildWait(db, scope, context, target, childRun,
+                AutoMerge: false, link), ct);
     }
 
+    private sealed record ChildWait(
+        AppDbContext Db, IServiceScope Scope, BuiltinToolContext Context,
+        Chat ChildChat, ChatRun ChildRun, bool AutoMerge, string Link);
+
     private static async Task<BuiltinToolResult> WaitForChildAsync(
-        AppDbContext db, IServiceScope scope, BuiltinToolContext context,
-        Chat childChat, ChatRun childRun, bool autoMerge, string link,
-        CancellationToken ct)
+        ChildWait w, CancellationToken ct)
     {
+        var db = w.Db; var scope = w.Scope; var context = w.Context;
+        var childChat = w.ChildChat; var childRun = w.ChildRun;
+        var autoMerge = w.AutoMerge; var link = w.Link;
         var deadline = DateTimeOffset.UtcNow.AddSeconds(TimeoutSeconds);
         while (DateTimeOffset.UtcNow < deadline)
         {

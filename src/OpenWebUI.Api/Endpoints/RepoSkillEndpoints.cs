@@ -32,18 +32,18 @@ public static class RepoSkillEndpoints
     /// para si — deny admin é absoluto.
     /// </summary>
     private static async Task<IResult> ListSkillsAsync(
-        string? chatId, string? scope, HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        SkillDiscoveryService skills, UserConfigOverlayService overlay, CancellationToken ct)
+        string? chatId, string? scope, HttpContext http,
+        [AsParameters] RepoSkillDeps deps, CancellationToken ct)
     {
-        var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (userId, workdir, reject) = await BoundWorkdirAsync(http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
         }
 
-        var hidden = await overlay.HiddenSkillNamesAsync(userId!, ct);
-        var adminOff = await overlay.AdminDisabledSkillNamesAsync(ct);
-        var scan = skills.Scan(workdir!);
+        var hidden = await deps.Overlay.HiddenSkillNamesAsync(userId!, ct);
+        var adminOff = await deps.Overlay.AdminDisabledSkillNamesAsync(ct);
+        var scan = deps.Skills.Scan(workdir!);
         var items = scan.Skills
             .Where(s => scope is not ("global" or "project") || s.Scope == scope)
             .Select(s => new RepoSkillItemResponse(
@@ -60,22 +60,22 @@ public static class RepoSkillEndpoints
     /// </summary>
     private static async Task<IResult> SetSkillEnabledAsync(
         string name, string? chatId, McpServerEnabledRequest request,
-        HttpContext http, AppDbContext db, WorkspaceRepoService repos,
-        SkillDiscoveryService skills, UserConfigOverlayService overlay, CancellationToken ct)
+        HttpContext http, [AsParameters] RepoSkillDeps deps,
+        CancellationToken ct)
     {
-        var (userId, workdir, reject) = await BoundWorkdirAsync(http, db, repos, chatId, ct);
+        var (userId, workdir, reject) = await BoundWorkdirAsync(http, deps.Db, deps.Repos, chatId, ct);
         if (reject is not null)
         {
             return reject;
         }
 
-        var entry = skills.Scan(workdir!).Skills
+        var entry = deps.Skills.Scan(workdir!).Skills
             .FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         if (entry is null)
         {
             return Results.NotFound(new { detail = $"Skill '{name}' não encontrada no repositório." });
         }
-        var adminOff = await overlay.AdminDisabledSkillNamesAsync(ct);
+        var adminOff = await deps.Overlay.AdminDisabledSkillNamesAsync(ct);
         if (request.Enabled && adminOff.Contains(entry.Name))
         {
             return Results.BadRequest(new
@@ -84,7 +84,7 @@ public static class RepoSkillEndpoints
             });
         }
 
-        await overlay.SetSkillDisabledAsync(userId!, entry.Name, disabled: !request.Enabled, ct);
+        await deps.Overlay.SetSkillDisabledAsync(userId!, entry.Name, disabled: !request.Enabled, ct);
         return Results.Ok(new { status = true });
     }
 
@@ -211,3 +211,8 @@ public static class RepoSkillEndpoints
         WorkspaceRepoService Repos,
         RepoCommandService Commands);
 }
+
+/// <summary>Bundle DI dos endpoints de repo-skills (S107).</summary>
+internal sealed record RepoSkillDeps(
+    AppDbContext Db, WorkspaceRepoService Repos,
+    SkillDiscoveryService Skills, UserConfigOverlayService Overlay);

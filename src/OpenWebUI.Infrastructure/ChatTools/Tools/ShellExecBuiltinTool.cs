@@ -79,8 +79,10 @@ public sealed class ShellExecBuiltinTool(
             ? AgentEnv.Empty
             : await agentEnv.BuildAsync(context.UserId, ct);
         var outcome = await ChatProcessRunner.RunAsync(
-            prepared, context.WorkspacePath, timeout, stdin: stdin,
-            env: env.Vars, secretsToScrub: env.SecretsToScrub, ct: ct);
+            prepared, context.WorkspacePath, timeout,
+            new ChatProcessRunner.RunOptions(
+                Stdin: stdin, Env: env.Vars,
+                SecretsToScrub: env.SecretsToScrub), ct);
 
         return BuildResult(outcome, timeout, assessment);
     }

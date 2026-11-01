@@ -79,15 +79,15 @@ public static class ChatEndpoints
     private static async Task<IResult> ListChatsAsync(
         string? folderId,
         HttpContext http,
-        AppDbContext db,
-        ChatRunApprovals approvals,
-        CancellationToken ct,
-        string? query = null,
-        bool includeFolders = false,
-        int skip = 0,
-        int limit = 0,
-        string? attention = null)
+        [AsParameters] ChatListDeps deps,
+        [AsParameters] ChatListQuery q,
+        CancellationToken ct)
     {
+        var (query, includeFolders, skip, limit, attention) =
+            (q.Query, q.IncludeFolders ?? false, q.Skip ?? 0,
+             q.Limit ?? 0, q.Attention);
+        var db = deps.Db;
+        var approvals = deps.Approvals;
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
         {
@@ -837,12 +837,10 @@ public static class ChatEndpoints
     }
 
     private static async Task<IResult> DeleteChatAsync(
-        string id, HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, WorktreeService worktrees,
-        CheckpointService checkpoints,
-        OpenWebUI.Infrastructure.Terminal.TerminalSessionManager terminals,
-        CancellationToken ct)
+        string id, HttpContext http,
+        [AsParameters] DeleteChatDeps deps, CancellationToken ct)
     {
+        var db = deps.Db;
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         var chat = await LoadChatAsync(id, user?.Id, db, ct, tracking: true);
         if (chat is null)
@@ -853,8 +851,7 @@ public static class ChatEndpoints
         // Libera TODOS os artefatos do chat (sessões PTY bindadas, worktree
         // do binding, worktrees isolados por run e snapshots de checkpoint)
         // — liberação de espaço imediata, sem esperar sweeper de retenção.
-        await ReleaseChatDiskAsync(
-            db, repos, worktrees, checkpoints, terminals, user!.Id, id, ct);
+        await ReleaseChatDiskAsync(deps, user!.Id, id, ct);
         await AttentionService.RemoveForChatAsync(db, id, ct);
 
         db.Chats.Remove(chat);
@@ -863,12 +860,10 @@ public static class ChatEndpoints
     }
 
     private static async Task<IResult> DeleteAllChatsAsync(
-        HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, WorktreeService worktrees,
-        CheckpointService checkpoints,
-        OpenWebUI.Infrastructure.Terminal.TerminalSessionManager terminals,
-        CancellationToken ct)
+        HttpContext http,
+        [AsParameters] DeleteChatDeps deps, CancellationToken ct)
     {
+        var db = deps.Db;
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
         {
@@ -881,9 +876,7 @@ public static class ChatEndpoints
             .ToListAsync(ct);
         foreach (var chatId in chatIds)
         {
-            await ReleaseChatDiskAsync(
-                db, repos, worktrees, checkpoints, terminals,
-                user.Id, chatId, ct);
+            await ReleaseChatDiskAsync(deps, user.Id, chatId, ct);
             await AttentionService.RemoveForChatAsync(db, chatId, ct);
         }
 
@@ -901,11 +894,13 @@ public static class ChatEndpoints
     /// <c>git worktree remove</c> precisa do repo base ainda vivo.
     /// </summary>
     private static async Task ReleaseChatDiskAsync(
-        AppDbContext db, WorkspaceRepoService repos,
-        WorktreeService worktrees, CheckpointService checkpoints,
-        OpenWebUI.Infrastructure.Terminal.TerminalSessionManager terminals,
-        string userId, string chatId, CancellationToken ct)
+        DeleteChatDeps deps, string userId, string chatId, CancellationToken ct)
     {
+        var db = deps.Db;
+        var repos = deps.Repos;
+        var worktrees = deps.Worktrees;
+        var checkpoints = deps.Checkpoints;
+        var terminals = deps.Terminals;
         // PTYs bindadas primeiro — shell órfão em cwd deletado ficaria
         // preso a inode morto (SPEC-20261022).
         await terminals.KillForChatAsync(userId, chatId);
@@ -1585,4 +1580,25 @@ public static class ChatEndpoints
 
     /// <summary>Atualização das tags de um chat.</summary>
     public sealed record TagUpdateRequest(IReadOnlyList<string>? Tags);
+
+    /// <summary>Bundle DI da listagem de chats (S107).</summary>
+    internal sealed record ChatListDeps(
+        AppDbContext Db, ChatRunApprovals Approvals);
+
+    /// <summary>Query params da listagem — mesmos nomes do contrato HTTP
+    /// (S107).</summary>
+    internal sealed record ChatListQuery
+    {
+        public string? Query { get; init; }
+        public bool? IncludeFolders { get; init; }
+        public int? Skip { get; init; }
+        public int? Limit { get; init; }
+        public string? Attention { get; init; }
+    }
+
+    /// <summary>Bundle DI do delete + limpeza de disco do chat (S107).</summary>
+    internal sealed record DeleteChatDeps(
+        AppDbContext Db, WorkspaceRepoService Repos,
+        WorktreeService Worktrees, CheckpointService Checkpoints,
+        Infrastructure.Terminal.TerminalSessionManager Terminals);
 }

@@ -144,14 +144,18 @@ public sealed class InstinctService(
     /// mescladas até 10) em vez de duplicar. Devolve o instinct gravado
     /// ou null quando inválido/poda.
     /// </summary>
+    public sealed record InstinctCandidate(
+        string UserId, string Scope, string? WorkspaceId, string Domain,
+        string Trigger, string Body, string SourceRef);
+
     public async Task<Instinct?> UpsertCandidateAsync(
-        string userId, string scope, string? workspaceId,
-        string domain, string trigger, string body,
-        string sourceRef, CancellationToken ct)
+        InstinctCandidate c, CancellationToken ct)
     {
-        domain = (domain ?? string.Empty).Trim().ToLowerInvariant();
-        trigger = (trigger ?? string.Empty).Trim();
-        body = (body ?? string.Empty).Trim();
+        var userId = c.UserId; var scope = c.Scope; var workspaceId = c.WorkspaceId;
+        var sourceRef = c.SourceRef;
+        var domain = (c.Domain ?? string.Empty).Trim().ToLowerInvariant();
+        var trigger = (c.Trigger ?? string.Empty).Trim();
+        var body = (c.Body ?? string.Empty).Trim();
         if (domain.Length == 0 || trigger.Length == 0 || body.Length == 0)
         {
             return null;

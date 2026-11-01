@@ -144,10 +144,7 @@ public class EvalRunnerService(IServiceScopeFactory scopeFactory,
                     logger.LogWarning(ex,
                         "evals: caso {CaseId} rep {Rep} falhou",
                         unit.c.Id, unit.rep);
-                    await StoreResultAsync(db, evalRun, unit.c, unit.rep,
-                        null, null, null,
-                        new EvalGrade(false, null,
-                            new { error = ex.Message }), ct);
+                    await StoreResultAsync(db, new ResultInfo(evalRun, unit.c, unit.rep,                         null, null, null,                         new EvalGrade(false, null,                             new { error = ex.Message })), ct);
                 }
                 finally
                 {
@@ -221,8 +218,7 @@ public class EvalRunnerService(IServiceScopeFactory scopeFactory,
                     .CreateAsync(evalRun.ModelId, ct))
                 .GradeAsync(evalCase, finished, finished.PartialContent,
                     evalRun.UserId, ct);
-        await StoreResultAsync(db, evalRun, evalCase, rep,
-            run.Id, chat.Id, finished?.PartialContent, grade, ct);
+        await StoreResultAsync(db, new ResultInfo(evalRun, evalCase, rep,             run.Id, chat.Id, finished?.PartialContent, grade), ct);
     }
 
     private static async Task<ChatRun?> WaitForRunAsync(
@@ -243,15 +239,20 @@ public class EvalRunnerService(IServiceScopeFactory scopeFactory,
         return null;
     }
 
+    private sealed record ResultInfo(
+        EvalRun EvalRun, EvalCase EvalCase, int Rep, string? ChatRunId,
+        string? ChatId, string? FinalAnswer, EvalGrade Grade);
+
     private static async Task StoreResultAsync(
-        AppDbContext db, EvalRun evalRun, EvalCase evalCase, int rep,
-        string? chatRunId, string? chatId, string? finalAnswer,
-        EvalGrade grade, CancellationToken ct)
+        AppDbContext db, ResultInfo r, CancellationToken ct)
     {
+        var evalRun = r.EvalRun; var evalCase = r.EvalCase; var rep = r.Rep;
+        var chatRunId = r.ChatRunId; var chatId = r.ChatId;
+        var finalAnswer = r.FinalAnswer; var grade = r.Grade;
         // Idempotente: reexecução pós-restart substitui o resultado.
         var existing = await db.EvalResults
-            .Where(r => r.EvalRunId == evalRun.Id
-                && r.CaseId == evalCase.Id && r.Rep == rep)
+            .Where(x => x.EvalRunId == evalRun.Id
+                && x.CaseId == evalCase.Id && x.Rep == rep)
             .ToListAsync(ct);
         db.EvalResults.RemoveRange(existing);
         db.EvalResults.Add(new EvalResult

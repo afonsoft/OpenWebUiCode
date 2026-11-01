@@ -192,7 +192,7 @@ public class BuiltinToolsTests
         Assert.That(lento.TimedOut, Is.True);
 
         var grande = await ChatProcessRunner.RunAsync(
-            "seq 1 100000", _workspace, TimeSpan.FromSeconds(15), maxOutputChars: 1000);
+            "seq 1 100000", _workspace, TimeSpan.FromSeconds(15), new ChatProcessRunner.RunOptions(MaxOutputChars: 1000));
         Assert.Multiple(() =>
         {
             Assert.That(grande.Truncated, Is.True);
@@ -864,6 +864,52 @@ public class BuiltinToolsTests
         var r = await tool.ExecuteAsync(
             Args("{\"query\":\"devin\",\"count\":3}"), Ctx(), default);
         Assert.That(r.Text, Does.Contain("Resultado um").Or.Contain("ex.com"));
+    }
+
+    [Test]
+    public async Task WebSearch_Jina_ContentFallback_QuandoSemDescription()
+    {
+        await using var db = NewDb();
+        db.ConfigEntries.Add(new ConfigEntry
+        {
+            Key = "retrieval.config",
+            ValueJson = JsonSerializer.Serialize(
+                new { engine = "jina", jinaApiKey = "k" }),
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        await db.SaveChangesAsync();
+
+        var jinaJson = "{\"data\":[{\"title\":\"T-jina\",\"url\":\"https://j.ex\",\"content\":\"via content\"}]}";
+        var tool = new WebSearchBuiltinTool(new WebSearchService(
+            new StubHttpClientFactory(new FakeHandler(HttpStatusCode.OK, jinaJson, "application/json")),
+            new ConfigService(db, TestCache.Create())));
+
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"devin\",\"count\":3}"), Ctx(), default);
+        Assert.That(r.Text, Does.Contain("T-jina").And.Contain("via content"));
+    }
+
+    [Test]
+    public async Task WebSearch_Exa_SummaryFallback_QuandoSemText()
+    {
+        await using var db = NewDb();
+        db.ConfigEntries.Add(new ConfigEntry
+        {
+            Key = "retrieval.config",
+            ValueJson = JsonSerializer.Serialize(
+                new { engine = "exa", exaApiKey = "k" }),
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        await db.SaveChangesAsync();
+
+        var exaJson = "{\"results\":[{\"title\":\"T-exa\",\"url\":\"https://e.ex\",\"summary\":\"via summary\"}]}";
+        var tool = new WebSearchBuiltinTool(new WebSearchService(
+            new StubHttpClientFactory(new FakeHandler(HttpStatusCode.OK, exaJson, "application/json")),
+            new ConfigService(db, TestCache.Create())));
+
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"devin\",\"count\":3}"), Ctx(), default);
+        Assert.That(r.Text, Does.Contain("T-exa").And.Contain("via summary"));
     }
 
     // ---------------- File tools (P11) ----------------

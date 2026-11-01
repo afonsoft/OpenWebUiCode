@@ -48,10 +48,8 @@ public class RunUsageLedgerTests
         await using var db = CreateContext();
         var ledger = Ledger(db);
 
-        await ledger.RecordAsync("run-1", "chat-1", "user-1", null,
-            "model-a", 3, 100, 50, 10, 0.01, CancellationToken.None);
-        await ledger.RecordAsync("run-1", "chat-1", "user-1", null,
-            "model-a", 3, 100, 50, 10, 0.01, CancellationToken.None);
+        await ledger.RecordAsync(new RunUsageLedgerService.UsageEntry("run-1", "chat-1", "user-1", null, "model-a", 3, 100, 50, 10, 0.01), CancellationToken.None);
+        await ledger.RecordAsync(new RunUsageLedgerService.UsageEntry("run-1", "chat-1", "user-1", null, "model-a", 3, 100, 50, 10, 0.01), CancellationToken.None);
 
         Assert.That(await db.RunUsageRecords.CountAsync(
             r => r.RunId == "run-1"), Is.EqualTo(1));
@@ -63,8 +61,7 @@ public class RunUsageLedgerTests
     public async Task RecordAsync_NoUsage_StoresNullCost()
     {
         await using var db = CreateContext();
-        await Ledger(db).RecordAsync("run-2", "chat-1", "user-1", null,
-            "local-model", 0, 0, 0, 0, null, CancellationToken.None);
+        await Ledger(db).RecordAsync(new RunUsageLedgerService.UsageEntry("run-2", "chat-1", "user-1", null, "local-model", 0, 0, 0, 0, null), CancellationToken.None);
 
         var row = await db.RunUsageRecords.SingleAsync(
             r => r.RunId == "run-2");
@@ -144,5 +141,75 @@ public class RunUsageLedgerTests
             "root", CancellationToken.None);
 
         Assert.That(chain, Is.EqualTo(1.5).Within(1e-9));
+    }
+
+    // Covers superfície admin: query por janela com filtro de usuário e
+    // ordenação por criação descendente.
+    [Test]
+    public async Task QueryAsync_Filtra_Janela_E_Usuario()
+    {
+        await using var db = CreateContext();
+        db.RunUsageRecords.AddRange(
+            new RunUsageRecord
+            {
+                RunId = "a", ChatId = "c", UserId = "u1", CreatedAt = 100,
+                CostUsd = 1,
+            },
+            new RunUsageRecord
+            {
+                RunId = "b", ChatId = "c", UserId = "u2", CreatedAt = 200,
+                CostUsd = 2,
+            },
+            new RunUsageRecord
+            {
+                RunId = "c", ChatId = "c", UserId = "u1", CreatedAt = 300,
+                CostUsd = 3,
+            });
+        await db.SaveChangesAsync();
+
+        var all = await Ledger(db).QueryAsync(
+            null, 0, 250, CancellationToken.None);
+        Assert.That(all.Select(r => r.RunId),
+            Is.EqualTo(new[] { "b", "a" }));
+        var u1 = await Ledger(db).QueryAsync(
+            "u1", 0, 400, CancellationToken.None);
+        Assert.That(u1.Select(r => r.RunId),
+            Is.EqualTo(new[] { "c", "a" }));
+    }
+
+    // Covers superfície admin: top chats agrega custo por (chat, user) na
+    // janela e ordena pelo total.
+    [Test]
+    public async Task TopChatsAsync_Agrega_E_Ordena_Por_Custo()
+    {
+        await using var db = CreateContext();
+        db.RunUsageRecords.AddRange(
+            new RunUsageRecord
+            {
+                RunId = "a", ChatId = "cheap", UserId = "u", CreatedAt = 10,
+                CostUsd = 0.1,
+            },
+            new RunUsageRecord
+            {
+                RunId = "b", ChatId = "cheap", UserId = "u", CreatedAt = 20,
+                CostUsd = 0.2,
+            },
+            new RunUsageRecord
+            {
+                RunId = "c", ChatId = "dear", UserId = "u", CreatedAt = 30,
+                CostUsd = 5,
+            });
+        await db.SaveChangesAsync();
+
+        var top = await Ledger(db).TopChatsAsync(
+            0, 100, 10, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(top[0].ChatId, Is.EqualTo("dear"));
+            Assert.That(top[0].CostUsd, Is.EqualTo(5).Within(1e-9));
+            Assert.That(top[1].ChatId, Is.EqualTo("cheap"));
+            Assert.That(top[1].CostUsd, Is.EqualTo(0.3).Within(1e-9));
+        });
     }
 }

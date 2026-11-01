@@ -166,7 +166,8 @@ public sealed class RepoCommandService(
         var outcome = await ChatProcessRunner.RunAsync(
             cmd, workdir ?? Directory.GetCurrentDirectory(),
             CommandExpansion.ShellTimeout,
-            CommandExpansion.ShellOutputMaxBytes, ct: ct);
+            new ChatProcessRunner.RunOptions(
+                MaxOutputChars: CommandExpansion.ShellOutputMaxBytes), ct);
         var text = outcome.TimedOut
             ? outcome.Output + "\n[timed out]"
             : outcome.Output;

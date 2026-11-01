@@ -279,9 +279,7 @@ public class ContextSnapshotServiceTests : SnapshotTestBase
         };
         var originalContent = items[1].Content;
 
-        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-            items, "elision", 512, summarizer: null, model: null,
-            userId: null, "c1", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(new ContextSnapshotCompactor.BudgetRequest(items, "elision", 512, Summarizer: null, Model: null, UserId: null, "c1", TimeSpan.FromSeconds(5)), CancellationToken.None);
 
         Assert.Multiple(() =>
         {
@@ -305,9 +303,7 @@ public class ContextSnapshotServiceTests : SnapshotTestBase
             Item("tool_output", new string('o', 9_000)),
         };
 
-        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-            items, "elision+summary", 512, new ThrowingSummarizer(), "m",
-            "u1", "c1", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(new ContextSnapshotCompactor.BudgetRequest(items, "elision+summary", 512, new ThrowingSummarizer(), "m", "u1", "c1", TimeSpan.FromSeconds(5)), CancellationToken.None);
 
         Assert.Multiple(() =>
         {
@@ -327,9 +323,7 @@ public class ContextSnapshotServiceTests : SnapshotTestBase
             Item("tool_output", new string('o', 9_000)),
         };
 
-        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-            items, "elision+summary", 512, new FakeSummarizer("RESUMO X"), "m",
-            "u1", "c1", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(new ContextSnapshotCompactor.BudgetRequest(items, "elision+summary", 512, new FakeSummarizer("RESUMO X"), "m", "u1", "c1", TimeSpan.FromSeconds(5)), CancellationToken.None);
 
         Assert.Multiple(() =>
         {
@@ -359,9 +353,7 @@ public class ContextSnapshotServiceTests : SnapshotTestBase
             Item("tool_output", "recente" + new string('r', 193)),
         };
 
-        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-            items, "none", 120, summarizer: null, model: null,
-            userId: null, "c1", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var (result, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(new ContextSnapshotCompactor.BudgetRequest(items, "none", 120, Summarizer: null, Model: null, UserId: null, "c1", TimeSpan.FromSeconds(5)), CancellationToken.None);
 
         Assert.Multiple(() =>
         {
@@ -389,9 +381,7 @@ public class ContextSnapshotServiceTests : SnapshotTestBase
             Item("note", new string('n', 2_000)),
         };
 
-        var (_, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(
-            items, "none", 256, summarizer: null, model: null,
-            userId: null, "c1", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var (_, stats) = await ContextSnapshotCompactor.ApplyBudgetAsync(new ContextSnapshotCompactor.BudgetRequest(items, "none", 256, Summarizer: null, Model: null, UserId: null, "c1", TimeSpan.FromSeconds(5)), CancellationToken.None);
 
         Assert.That(stats.WithinBudget, Is.False);
     }

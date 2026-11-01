@@ -157,8 +157,9 @@ public class CoverageRound2Tests
         // env + stdin cobrem os ramos pendentes do RunAsync.
         var ok = await ChatProcessRunner.RunAsync(
             "cat && echo $R2_VAR", _tmp, TimeSpan.FromSeconds(10),
-            stdin: "stdin-line\n",
-            env: new Dictionary<string, string> { ["R2_VAR"] = "env-val" });
+            new ChatProcessRunner.RunOptions(
+                Stdin: "stdin-line\n",
+                Env: new Dictionary<string, string> { ["R2_VAR"] = "env-val" }));
         Assert.That(ok.Output, Does.Contain("stdin-line"));
         Assert.That(ok.Output, Does.Contain("env-val"));
 

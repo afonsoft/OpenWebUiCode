@@ -118,19 +118,29 @@ public class ChatStreamService(HttpClient http, AuthService auth)
     /// sobrevive a reload/fechamento da aba. <paramref name="content"/> null
     /// regenera sobre o histórico existente.
     /// </summary>
+    public sealed record EnqueueOptions(
+        IReadOnlyList<string>? FileIds = null,
+        IReadOnlyList<string>? ToolIds = null,
+        bool? WebSearch = null,
+        IReadOnlyList<string>? MentionPaths = null,
+        string? ForkFromMessageId = null,
+        string? Command = null,
+        string? CommandArgs = null);
+
     public async Task<ChatRunResponse> EnqueueRunAsync(
         string chatId,
         string? content,
         string model,
-        IReadOnlyList<string>? fileIds = null,
-        IReadOnlyList<string>? toolIds = null,
-        bool? webSearch = null,
-        IReadOnlyList<string>? mentionPaths = null,
-        string? forkFromMessageId = null,
-        string? command = null,
-        string? commandArgs = null,
+        EnqueueOptions? options = null,
         CancellationToken ct = default)
     {
+        var fileIds = options?.FileIds;
+        var toolIds = options?.ToolIds;
+        var webSearch = options?.WebSearch;
+        var mentionPaths = options?.MentionPaths;
+        var forkFromMessageId = options?.ForkFromMessageId;
+        var command = options?.Command;
+        var commandArgs = options?.CommandArgs;
         using var httpRequest = auth.CreateRequest(
             HttpMethod.Post, $"/api/v1/chats/{chatId}/messages");
         httpRequest.Content = JsonContent.Create(new EnqueueChatRunRequest(

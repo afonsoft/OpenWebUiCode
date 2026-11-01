@@ -542,9 +542,8 @@ public class AgentPolishTests
                     ["ollama:m-warm"] = ["compaction"],
                 });
         }
-        return new ContextCompactionService(db, config, summarizer, roles,
-            NullLogger<ContextCompactionService>.Instance,
-            native, providers, caps);
+        return new ContextCompactionService(db, config, summarizer, roles, NullLogger<ContextCompactionService>.Instance,
+            new CompactionDeps(native, providers, caps));
     }
 
     private static List<ChatCompletionMessage> History(int n) =>
@@ -627,9 +626,8 @@ public class AgentPolishTests
             TestCache.Create(), new ConfigurationBuilder().Build());
         await config.SetAsync("connections",
             new ConnectionsConfig(["http://ollama.test"], [], []));
-        var svc = new ContextCompactionService(db, config, summarizer, roles,
-            NullLogger<ContextCompactionService>.Instance,
-            native, providers, caps);
+        var svc = new ContextCompactionService(db, config, summarizer, roles, NullLogger<ContextCompactionService>.Instance,
+            new CompactionDeps(native, providers, caps));
         await SeedChatAsync("chat-n", 4);
 
         var result = await svc.CompactNowAsync(
@@ -666,9 +664,8 @@ public class AgentPolishTests
             new StubFactory(new ProviderHandler()), config,
             NullLogger<ProviderService>.Instance,
             TestCache.Create(), new ConfigurationBuilder().Build());
-        var svc = new ContextCompactionService(db, config, summarizer, roles,
-            NullLogger<ContextCompactionService>.Instance,
-            native, providers, caps);
+        var svc = new ContextCompactionService(db, config, summarizer, roles, NullLogger<ContextCompactionService>.Instance,
+            new CompactionDeps(native, providers, caps));
         await SeedChatAsync("chat-nc", 4);
 
         var result = await svc.CompactNowAsync(
@@ -705,9 +702,8 @@ public class AgentPolishTests
             new StubFactory(new ProviderHandler()), config,
             NullLogger<ProviderService>.Instance,
             TestCache.Create(), new ConfigurationBuilder().Build());
-        var svc = new ContextCompactionService(db, config, summarizer, roles,
-            NullLogger<ContextCompactionService>.Instance,
-            native, providers, caps);
+        var svc = new ContextCompactionService(db, config, summarizer, roles, NullLogger<ContextCompactionService>.Instance,
+            new CompactionDeps(native, providers, caps));
         await SeedChatAsync("chat-nf", 4);
 
         var result = await svc.CompactNowAsync(
@@ -1154,9 +1150,8 @@ public class AgentPolishTests
             TestCache.Create(), new ConfigurationBuilder().Build());
         await config.SetAsync("connections",
             new ConnectionsConfig(["http://ollama.test"], [], []));
-        var svc = new ContextCompactionService(db, config, summarizer, roles,
-            NullLogger<ContextCompactionService>.Instance,
-            native, providers, caps);
+        var svc = new ContextCompactionService(db, config, summarizer, roles, NullLogger<ContextCompactionService>.Instance,
+            new CompactionDeps(native, providers, caps));
         await SeedChatAsync("chat-out", 4);
 
         // Modelo fora do catálogo → capacidade não resolve → sem native.
@@ -1206,7 +1201,7 @@ public class AgentPolishTests
         var svc = new ContextCompactionService(db, config,
             new StubSummarizer(null), roles,
             NullLogger<ContextCompactionService>.Instance,
-            new ThrowingNative(), providers, caps);
+            new CompactionDeps(new ThrowingNative(), providers, caps));
         await SeedChatAsync("chat-throw", 4);
 
         var result = await svc.CompactNowAsync(
