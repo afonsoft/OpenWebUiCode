@@ -27,62 +27,22 @@ public class EmbeddingService(IHttpClientFactory httpClientFactory, ConfigServic
 
         foreach (var baseUrl in connections.OllamaBaseUrls)
         {
-            try
+            if (await PostOllamaEmbedAsync(http, baseUrl, text, ct)
+                    is { } payload && payload.Embeddings?.FirstOrDefault()
+                        is { Length: > 0 } vector)
             {
-                var model = Environment.GetEnvironmentVariable(OllamaModelEnv)
-                    ?? "nomic-embed-text";
-                var response = await http.PostAsJsonAsync(
-                    $"{baseUrl.TrimEnd('/')}/api/embed",
-                    new { model, input = text }, ct);
-                if (!response.IsSuccessStatusCode)
-                {
-                    continue;
-                }
-                var payload = await response.Content.ReadFromJsonAsync<OllamaEmbedResponse>(ct);
-                var vector = payload?.Embeddings?.FirstOrDefault();
-                if (vector is { Length: > 0 })
-                {
-                    return vector;
-                }
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            {
-                // Connection falhou — tenta a próxima base URL.
+                return vector;
             }
         }
 
         var openAiModel = await ResolveOpenAiModelAsync(ct);
         for (var i = 0; i < connections.OpenAiBaseUrls.Count; i++)
         {
-            try
+            if (await PostOpenAiEmbedAsync(http, connections, i, openAiModel, text, ct)
+                    is { } payload && payload.Data?.FirstOrDefault()?.Embedding
+                        is { Length: > 0 } vector)
             {
-                var baseUrl = connections.OpenAiBaseUrls[i].TrimEnd('/');
-                var model = openAiModel;
-                using var request = new HttpRequestMessage(
-                    HttpMethod.Post, $"{baseUrl}/embeddings");
-                if (i < connections.OpenAiApiKeys.Count &&
-                    !string.IsNullOrEmpty(connections.OpenAiApiKeys[i]))
-                {
-                    request.Headers.Authorization =
-                        new System.Net.Http.Headers.AuthenticationHeaderValue(
-                            "Bearer", connections.OpenAiApiKeys[i]);
-                }
-                request.Content = JsonContent.Create(new { model, input = text });
-                var response = await http.SendAsync(request, ct);
-                if (!response.IsSuccessStatusCode)
-                {
-                    continue;
-                }
-                var payload = await response.Content.ReadFromJsonAsync<OpenAiEmbedResponse>(ct);
-                var vector = payload?.Data?.FirstOrDefault()?.Embedding;
-                if (vector is { Length: > 0 })
-                {
-                    return vector;
-                }
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            {
-                // Connection falhou — tenta a próxima base URL.
+                return vector;
             }
         }
 
@@ -120,69 +80,86 @@ public class EmbeddingService(IHttpClientFactory httpClientFactory, ConfigServic
 
         foreach (var baseUrl in connections.OllamaBaseUrls)
         {
-            try
+            if (await PostOllamaEmbedAsync(http, baseUrl, texts, ct)
+                    is { } payload && payload.Embeddings is { Length: > 0 } vectors)
             {
-                var model = Environment.GetEnvironmentVariable(OllamaModelEnv)
-                    ?? "nomic-embed-text";
-                var response = await http.PostAsJsonAsync(
-                    $"{baseUrl.TrimEnd('/')}/api/embed",
-                    new { model, input = texts }, ct);
-                if (!response.IsSuccessStatusCode)
-                {
-                    continue;
-                }
-                var payload = await response.Content.ReadFromJsonAsync<OllamaEmbedResponse>(ct);
-                var vectors = payload?.Embeddings;
-                if (vectors is { Length: > 0 })
-                {
-                    return vectors;
-                }
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-            {
-                // Connection falhou — tenta a próxima base URL.
+                return vectors;
             }
         }
 
         var openAiModel = await ResolveOpenAiModelAsync(ct);
         for (var i = 0; i < connections.OpenAiBaseUrls.Count; i++)
         {
-            try
+            if (await PostOpenAiEmbedAsync(http, connections, i, openAiModel, texts, ct)
+                    is not { } payload)
             {
-                var baseUrl = connections.OpenAiBaseUrls[i].TrimEnd('/');
-                var model = openAiModel;
-                using var request = new HttpRequestMessage(
-                    HttpMethod.Post, $"{baseUrl}/embeddings");
-                if (i < connections.OpenAiApiKeys.Count &&
-                    !string.IsNullOrEmpty(connections.OpenAiApiKeys[i]))
-                {
-                    request.Headers.Authorization =
-                        new System.Net.Http.Headers.AuthenticationHeaderValue(
-                            "Bearer", connections.OpenAiApiKeys[i]);
-                }
-                request.Content = JsonContent.Create(new { model, input = texts });
-                var response = await http.SendAsync(request, ct);
-                if (!response.IsSuccessStatusCode)
-                {
-                    continue;
-                }
-                var payload = await response.Content.ReadFromJsonAsync<OpenAiEmbedResponse>(ct);
-                var vectors = payload?.Data?.Select(d => d.Embedding)
-                    .Where(e => e is { Length: > 0 })
-                    .Select(e => e!)
-                    .ToArray();
-                if (vectors is { Length: > 0 } && vectors.Length == texts.Count)
-                {
-                    return vectors;
-                }
+                continue;
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            var vectors = payload.Data?.Select(d => d.Embedding)
+                .Where(e => e is { Length: > 0 })
+                .Select(e => e!)
+                .ToArray();
+            if (vectors is { Length: > 0 } && vectors.Length == texts.Count)
             {
-                // Connection falhou — tenta a próxima base URL.
+                return vectors;
             }
         }
 
         return null;
+    }
+
+    /// <summary>POST <c>/api/embed</c> numa base Ollama — null em falha
+    /// de conexão/status (o chamador tenta a próxima).</summary>
+    private static async Task<OllamaEmbedResponse?> PostOllamaEmbedAsync(
+        HttpClient http, string baseUrl, object input, CancellationToken ct)
+    {
+        try
+        {
+            var model = Environment.GetEnvironmentVariable(OllamaModelEnv)
+                ?? "nomic-embed-text";
+            var response = await http.PostAsJsonAsync(
+                $"{baseUrl.TrimEnd('/')}/api/embed",
+                new { model, input }, ct);
+            return response.IsSuccessStatusCode
+                ? await response.Content.ReadFromJsonAsync<OllamaEmbedResponse>(ct)
+                : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // Connection falhou — tenta a próxima base URL.
+            return null;
+        }
+    }
+
+    /// <summary>POST <c>/embeddings</c> numa base OpenAI-compatible (auth
+    /// pela apiKey do índice) — null em falha (tenta a próxima).</summary>
+    private static async Task<OpenAiEmbedResponse?> PostOpenAiEmbedAsync(
+        HttpClient http, ConnectionsConfig connections, int i,
+        string model, object input, CancellationToken ct)
+    {
+        try
+        {
+            var baseUrl = connections.OpenAiBaseUrls[i].TrimEnd('/');
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post, $"{baseUrl}/embeddings");
+            if (i < connections.OpenAiApiKeys.Count &&
+                !string.IsNullOrEmpty(connections.OpenAiApiKeys[i]))
+            {
+                request.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue(
+                        "Bearer", connections.OpenAiApiKeys[i]);
+            }
+            request.Content = JsonContent.Create(new { model, input });
+            var response = await http.SendAsync(request, ct);
+            return response.IsSuccessStatusCode
+                ? await response.Content.ReadFromJsonAsync<OpenAiEmbedResponse>(ct)
+                : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // Connection falhou — tenta a próxima base URL.
+            return null;
+        }
     }
 
     /// <summary>
