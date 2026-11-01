@@ -282,29 +282,7 @@ public class AutomationService(
 
         var method = doc.RootElement.TryGetProperty("method", out var me) && me.ValueKind == JsonValueKind.String
             ? me.GetString()!.ToUpperInvariant() : "POST";
-        using var req = new HttpRequestMessage(new HttpMethod(method), uri);
-        if (method is "POST" or "PUT" or "PATCH")
-        {
-            req.Content = new StringContent(
-                JsonSerializer.Serialize(new
-                {
-                    automationId = automation.Id,
-                    automation.Name,
-                    at = DateTimeOffset.UtcNow,
-                }), System.Text.Encoding.UTF8, "application/json");
-        }
-
-        if (doc.RootElement.TryGetProperty("headers", out var hs) && hs.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var h in hs.EnumerateObject())
-            {
-                if (h.Value.ValueKind == JsonValueKind.String
-                    && !h.Name.Equals("Host", StringComparison.OrdinalIgnoreCase))
-                {
-                    req.Headers.TryAddWithoutValidation(h.Name, h.Value.GetString());
-                }
-            }
-        }
+        using var req = BuildWebhookRequest(doc, automation, uri, method);
 
         using var http = httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(15);
@@ -320,6 +298,38 @@ public class AutomationService(
         {
             return new(Error: "Webhook timeout (15s).");
         }
+    }
+
+    /// <summary>Monta o request do webhook — body JSON nas verbs com
+    /// payload e headers customizados (Host ignorado, é reservado).</summary>
+    private static HttpRequestMessage BuildWebhookRequest(
+        JsonDocument doc, Automation automation, Uri uri, string method)
+    {
+        var req = new HttpRequestMessage(new HttpMethod(method), uri);
+        if (method is "POST" or "PUT" or "PATCH")
+        {
+            req.Content = new StringContent(
+                JsonSerializer.Serialize(new
+                {
+                    automationId = automation.Id,
+                    automation.Name,
+                    at = DateTimeOffset.UtcNow,
+                }), System.Text.Encoding.UTF8, "application/json");
+        }
+
+        if (doc.RootElement.TryGetProperty("headers", out var hs)
+            && hs.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var h in hs.EnumerateObject())
+            {
+                if (h.Value.ValueKind == JsonValueKind.String
+                    && !h.Name.Equals("Host", StringComparison.OrdinalIgnoreCase))
+                {
+                    req.Headers.TryAddWithoutValidation(h.Name, h.Value.GetString());
+                }
+            }
+        }
+        return req;
     }
 
     /// <summary>Host permitido para webhook: http(s) público; bloqueia loopback/privados/metadata.</summary>
@@ -342,20 +352,23 @@ public class AutomationService(
         var bytes = ip.GetAddressBytes();
         return ip.AddressFamily switch
         {
-            System.Net.Sockets.AddressFamily.InterNetwork => bytes[0] switch
-            {
-                0 or 10 or 127 => false,
-                169 => bytes[1] != 254,
-                172 => bytes[1] < 16 || bytes[1] > 31,
-                192 => bytes[1] != 168,
-                _ => true,
-            },
+            System.Net.Sockets.AddressFamily.InterNetwork => IsPublicIPv4(bytes),
             System.Net.Sockets.AddressFamily.InterNetworkV6 =>
                 !ip.Equals(IPAddress.IPv6Loopback) && !ip.IsIPv6LinkLocal
                 && !ip.IsIPv6SiteLocal && !(bytes[0] is 0xfc or 0xfd),
             _ => false,
         };
     }
+
+    /// <summary>IPv4 público — bloqueia 0/8, 10/8, 127/8, link-local e privados.</summary>
+    private static bool IsPublicIPv4(byte[] bytes) => bytes[0] switch
+    {
+        0 or 10 or 127 => false,
+        169 => bytes[1] != 254,
+        172 => bytes[1] < 16 || bytes[1] > 31,
+        192 => bytes[1] != 168,
+        _ => true,
+    };
 
     /// <summary>Completa um prompt e grava user+assistant no chat (novo ou reusado).</summary>
     private async Task<ActionOutcome> CompleteIntoChatAsync(

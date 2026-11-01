@@ -172,38 +172,14 @@ public sealed class ExternalAgentService(ConfigService config)
 
             // Template override "cmd: args…" (ex.: "codex exec") ou default
             // "{bin} -p {prompt}" estilo claude/gemini.
-            if (!string.IsNullOrWhiteSpace(cmdTemplate))
-            {
-                foreach (var arg in cmdTemplate.Split(' ',
-                    StringSplitOptions.RemoveEmptyEntries))
-                {
-                    psi.ArgumentList.Add(arg == "{prompt}" ? prompt : arg);
-                }
-                if (!cmdTemplate.Contains("{prompt}", StringComparison.Ordinal))
-                {
-                    psi.ArgumentList.Add(prompt);
-                }
-            }
-            else
-            {
-                psi.ArgumentList.Add("-p");
-                psi.ArgumentList.Add(prompt);
-            }
+            ApplyArguments(psi, cmdTemplate, prompt);
 
             process.Start();
             var readOut = DrainAsync(process.StandardOutput, stdout, MaxStdoutChars);
             var readErr = DrainAsync(process.StandardError, stderr, 8192);
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(ExecTimeout);
-            try
+            if (await AwaitExitAsync(process, def, ct) is { } timeoutResult)
             {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* processo já encerrado */ }
-                return new ExternalRunResult(
-                    false, $"Agente '{def.Id}' excedeu o timeout de 5min.");
+                return timeoutResult;
             }
             await Task.WhenAll(readOut, readErr);
 
@@ -221,6 +197,47 @@ public sealed class ExternalAgentService(ConfigService config)
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return new ExternalRunResult(false, $"Agente '{def.Id}' falhou: {ex.Message}");
+        }
+    }
+
+    /// <summary>Argumentos do processo — template custom ou "-p prompt".</summary>
+    private static void ApplyArguments(
+        ProcessStartInfo psi, string? cmdTemplate, string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(cmdTemplate))
+        {
+            psi.ArgumentList.Add("-p");
+            psi.ArgumentList.Add(prompt);
+            return;
+        }
+        foreach (var arg in cmdTemplate.Split(' ',
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            psi.ArgumentList.Add(arg == "{prompt}" ? prompt : arg);
+        }
+        if (!cmdTemplate.Contains("{prompt}", StringComparison.Ordinal))
+        {
+            psi.ArgumentList.Add(prompt);
+        }
+    }
+
+    /// <summary>Espera a saída com timeout — kill da árvore e resultado
+    /// de timeout quando estoura; null quando sai a tempo.</summary>
+    private static async Task<ExternalRunResult?> AwaitExitAsync(
+        Process process, ExternalAgentDef def, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(ExecTimeout);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+            return null;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* processo já encerrado */ }
+            return new ExternalRunResult(
+                false, $"Agente '{def.Id}' excedeu o timeout de 5min.");
         }
     }
 
@@ -274,47 +291,49 @@ public sealed class ExternalAgentService(ConfigService config)
 
         var deadline = DateTime.UtcNow + DetectBudget;
         var pathEnv = PathResolver();
-        string? found = null;
-        if (!string.IsNullOrEmpty(pathEnv))
-        {
-            var names = OperatingSystem.IsWindows()
-                ? new[] { bin, $"{bin}.exe", $"{bin}.cmd", $"{bin}.bat" }
-                : new[] { bin };
-            foreach (var dir in pathEnv.Split(Path.PathSeparator,
-                StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (DateTime.UtcNow > deadline)
-                {
-                    break; // budget total de 2s (RF-002)
-                }
-                try
-                {
-                    foreach (var name in names)
-                    {
-                        var candidate = Path.Join(dir.Trim(), name);
-                        if (File.Exists(candidate))
-                        {
-                            found = candidate;
-                            break;
-                        }
-                    }
-                }
-                catch (Exception)
-                {
-                    // Dir ilegível — segue para o próximo.
-                }
-                if (found is not null)
-                {
-                    break;
-                }
-            }
-        }
+        var found = string.IsNullOrEmpty(pathEnv)
+            ? null
+            : SearchOnPath(pathEnv, bin, deadline);
 
         lock (DetectLock)
         {
             DetectCache[bin] = (DateTimeOffset.UtcNow, found is not null, found);
         }
         return found;
+    }
+
+    /// <summary>Varre o PATH procurando o binário — budget de
+    /// <see cref="DetectBudget"/> e dirs ilegíveis são tolerados.</summary>
+    private static string? SearchOnPath(
+        string pathEnv, string bin, DateTime deadline)
+    {
+        var names = OperatingSystem.IsWindows()
+            ? new[] { bin, $"{bin}.exe", $"{bin}.cmd", $"{bin}.bat" }
+            : new[] { bin };
+        foreach (var dir in pathEnv.Split(Path.PathSeparator,
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                break; // budget total de 2s (RF-002)
+            }
+            try
+            {
+                foreach (var name in names)
+                {
+                    var candidate = Path.Join(dir.Trim(), name);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Dir ilegível — segue para o próximo.
+            }
+        }
+        return null;
     }
 
     private static async Task DrainAsync(
