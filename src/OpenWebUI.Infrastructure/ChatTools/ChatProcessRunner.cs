@@ -47,6 +47,26 @@ public static class ChatProcessRunner
         var stdin = options?.Stdin;
         var secretsToScrub = options?.SecretsToScrub;
         var psi = CreateStartInfo(command, workingDirectory, stdin, options?.Env);
+        return await RunAsync(psi, timeout, options, ct);
+    }
+
+    /// <summary>
+    /// Executa um <see cref="ProcessStartInfo"/> já montado (ex.: bwrap do
+    /// <c>SandboxedProcessRunner</c>) com o mesmo coletor/timeout/scrub.
+    /// </summary>
+    public static async Task<ProcessOutcome> RunAsync(
+        ProcessStartInfo psi,
+        TimeSpan timeout,
+        RunOptions? options = null,
+        CancellationToken ct = default)
+    {
+        var maxOutputChars = options?.MaxOutputChars ?? DefaultMaxOutputChars;
+        var stdin = options?.Stdin;
+        var secretsToScrub = options?.SecretsToScrub;
+        if (stdin is not null)
+        {
+            psi.RedirectStandardInput = true;
+        }
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stdout = new StringBuilder();

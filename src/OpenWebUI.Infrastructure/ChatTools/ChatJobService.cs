@@ -1,3 +1,4 @@
+using OpenWebUI.Infrastructure.Sandbox;
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
@@ -65,7 +66,22 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
         };
         job.OutputPath = Path.Join(jobsDir, $"{job.Id}.log");
 
-        var psi = new ProcessStartInfo
+        // Sandbox (SPEC-20261031-sandboxed-exec): jobs em background
+        // também rodam confinados quando habilitado e não excluídos.
+        ProcessStartInfo psi;
+        var boxed = await BuildSandboxedPsiAsync(
+            command, context, agentEnv, ct);
+        if (boxed is not null)
+        {
+            (psi, var proxy) = boxed.Value;
+            if (proxy is not null)
+            {
+                JobProxies[job.Id] = proxy;
+            }
+        }
+        else
+        {
+        psi = new ProcessStartInfo
         {
             FileName = "/bin/sh",
             RedirectStandardOutput = true,
@@ -78,6 +94,7 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
         foreach (var (key, value) in agentEnv.Vars)
         {
             psi.Environment[key] = value;
+        }
         }
 
         Process? process = null;
@@ -260,10 +277,63 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
     /// Vigia o processo: copia stdout+stderr para o arquivo de log (linhas
     /// mascaradas), mata após <see cref="MaxRuntime"/> e grava o status final.
     /// </summary>
+    /// <summary>Proxies de rede vivos por job sandboxed — descartados no fim.</summary>
+    private static readonly System.Collections.Concurrent
+        .ConcurrentDictionary<string, SandboxProxyServer> JobProxies = new();
+
+    /// <summary>Monta o psi do bwrap quando o sandbox está habilitado.</summary>
+    private async Task<(ProcessStartInfo Psi, SandboxProxyServer? Proxy)?>
+        BuildSandboxedPsiAsync(
+            string command, BuiltinToolContext context, AgentEnv env,
+            CancellationToken ct)
+    {
+        ConfigService? config;
+        await using (var cfgScope = scopeFactory.CreateAsyncScope())
+        {
+            config = cfgScope.ServiceProvider.GetService<ConfigService>();
+        }
+        if (config is null
+            || !await SandboxExec.EnabledAsync(config, ct))
+        {
+            return null;
+        }
+
+        var sessionKey = context.RunId ?? context.ChatId ?? context.UserId;
+        var scope = await SandboxScope.LoadAsync(config, sessionKey, ct);
+        if (scope.IsExcluded("shell_exec"))
+        {
+            return null;
+        }
+        var bwrap = BwrapBuilder.FindBwrap();
+        if (bwrap is null)
+        {
+            return null;
+        }
+        SandboxProxyServer? proxy = null;
+        int? port = null;
+        if (scope.NetworkEnabled)
+        {
+            proxy = SandboxProxyServer.Start(scope.AllowedDomains);
+            port = proxy.Port;
+        }
+        var psi = BwrapBuilder.Build(
+            bwrap, command, context.WorkspacePath, scope, port, env.Vars);
+        psi.RedirectStandardInput = false;
+        return (psi, proxy);
+    }
+
     private async Task WatchAsync(
         string jobId, Process process, IReadOnlyList<string> secretsToScrub)
     {
         var outputPath = string.Empty;
+        try
+        {
+            if (JobProxies.TryRemove(jobId, out var jobProxy))
+            {
+                await jobProxy.DisposeAsync();
+            }
+        }
+        catch (ObjectDisposedException) { /* já encerrado */ }
         try
         {
             await using (var scope = scopeFactory.CreateAsyncScope())

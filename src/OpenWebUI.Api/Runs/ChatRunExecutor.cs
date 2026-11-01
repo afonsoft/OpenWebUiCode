@@ -285,6 +285,7 @@ public sealed class ChatRunExecutor(
                 // RF-004: estado por-run do deferral não vaza entre runs.
                 deferred.Clear(run.Id, run.ChatId);
             SmartPermissionClassifier.Clear(run.Id);
+            OpenWebUI.Infrastructure.Sandbox.SandboxScope.ClearSession(run.Id);
             }
 
             return;
@@ -2087,7 +2088,7 @@ public sealed class ChatRunExecutor(
 
         var preset = gateInfo?.ApprovalPreset ?? "approve-mutations";
         if (!forcePrompt
-            && AutoPresetDecision(run, tool, call, preset) is { } autoDecision)
+            && await AutoPresetDecisionAsync(run, tool, call, preset, builtinContext, ct) is { } autoDecision)
         {
             return autoDecision;
         }
@@ -2381,9 +2382,38 @@ public sealed class ChatRunExecutor(
     /// segue os mesmos tiers, mas mutações de arquivo caem na pergunta —
     /// "executa sem aprovação, com restrição em alterações". Null → segue pro ask.
     /// </summary>
-    private ToolGateDecision? AutoPresetDecision(
-        ChatRun run, Tool tool, ProviderToolCall call, string preset)
+    private async Task<ToolGateDecision?> AutoPresetDecisionAsync(
+        ChatRun run, Tool tool, ProviderToolCall call, string preset,
+        BuiltinToolContext builtinContext, CancellationToken ct)
     {
+        // Preset autonomous (SPEC-20261031-sandboxed-exec RF-004): tudo
+        // permitido dentro do sandbox; fora dele (tool excluída ou sandbox
+        // indisponível) cai no gate do dono / nega com erro claro.
+        if (preset == "autonomous")
+        {
+            var sandboxOn = await OpenWebUI.Infrastructure.Sandbox.SandboxExec
+                .EnabledAsync(config, ct);
+            if (!sandboxOn
+                || !OpenWebUI.Infrastructure.Sandbox.SandboxedProcessRunner
+                    .Capabilities.Bwrap)
+            {
+                return new ToolGateDecision(true, Output:
+                    "preset 'autonomous' exige sandbox ativo "
+                    + "(Sandbox:Enabled + bwrap) — indisponível");
+            }
+            var sessionKey = run.Id;
+            var scope = await OpenWebUI.Infrastructure.Sandbox.SandboxScope
+                .LoadAsync(config, sessionKey, ct);
+            if (scope.IsExcluded(call.Name))
+            {
+                return null; // capability fora do sandbox → prompt do dono
+            }
+            await runEvents.AppendAsync(run.Id,
+                "permission.autonomous.allow",
+                new { tool = call.Name }, ct);
+            return ToolGateDecision.Allow;
+        }
+
         switch (preset)
         {
             case "always-allow":

@@ -162,8 +162,10 @@ public class Chat
     /// (SPEC-20261007-chat-tool-streaming RF-004): <c>allow-readonly</c>
     /// (mutáveis negadas), <c>approve-mutations</c> (mutáveis pedem aprovação
     /// — default), <c>smart</c> (executa sem perguntar; mutações de arquivo
-    /// pedem aprovação), <c>always-allow</c> (tudo executa sem perguntar)
-    /// ou <c>auto</c> (tiers de risco — legacy).
+    /// pedem aprovação), <c>always-allow</c> (tudo executa sem perguntar),
+    /// <c>autonomous</c> (SPEC-20261031-sandboxed-exec: tudo permitido
+    /// dentro do sandbox bwrap — capabilities fora dele pedem aprovação;
+    /// indisponível sem sandbox) ou <c>auto</c> (tiers de risco — legacy).
     /// </summary>
     public string ApprovalPreset { get; set; } = "approve-mutations";
 

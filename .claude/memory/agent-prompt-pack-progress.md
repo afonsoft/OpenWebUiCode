@@ -51,3 +51,11 @@ Order 84. Testes ToolSearchTests 8/8.
 - Merge com `main` após lifecycle-hooks: `ChatRunLifecycleDeps` terminou
   `(Budgets, Hooks, SmartJudge)`; DI no Program.cs adicionado ao lado do
   PromptHookEvaluator. 5 testes novos verdes.
+
+## sandboxed-exec (#578) — 2026-11-01
+- `Sandbox/`: scope+deny defaults, BwrapBuilder, proxy CONNECT com
+  allowlist+DeniedHosts, runner com fallback degradado, `SandboxExec`
+  ponto de entrada; shell_exec/code_interpreter/jobs confinados.
+- Preset `autonomous` (allow dentro do sandbox, excluídas → prompt do
+  dono); `GET /api/v1/system/sandbox` (admin); grants de domínio por
+  sessão (`GrantDomain`, limpo no fim da run). 6 testes verdes.
