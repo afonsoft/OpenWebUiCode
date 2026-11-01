@@ -170,60 +170,18 @@ public sealed class DelegateTaskBuiltinTool(
             return new BuiltinToolResult(extResult.Result);
         }
 
-        var allowedCsv = await config.GetAsync<string?>(
-            $"r:{context.RunId}:agent.spawns", null, ct);
-        var callerDepth = await config.GetAsync<int?>(
-            $"r:{context.RunId}:agent.depth", null, ct);
-        if (callerDepth == 0)
+        var (gateError, allowedCsv) = await CheckSpawnGateAsync(
+            config, context, agentName, ct);
+        if (gateError is not null)
         {
-            // Run nascida de agente sem profundidade residual — a tool só
-            // existe se vazou por toolIds explícitos; bloqueia sempre.
-            return new BuiltinToolResult(
-                "Este sub-agente não pode delegar (maxDepth esgotado).");
-        }
-        if (agentName is null && allowedCsv is not null)
-        {
-            // Run nascida de agente com spawns: delegação livre bypassaria a
-            // allowlist — o filho tem que referenciar um nome permitido.
-            return new BuiltinToolResult(
-                "Este sub-agente só pode delegar via parâmetro 'agent' "
-                    + $"para: {allowedCsv}.");
+            return gateError;
         }
 
-        AgentDefinition? agent = null;
-        if (agentName is not null)
+        var (agent, agentError) = await ResolveAgentAsync(
+            scope, context, agentName, allowedCsv, personaSkill, ct);
+        if (agentError is not null)
         {
-            var agents = scope.ServiceProvider
-                .GetRequiredService<AgentDefinitionService>();
-            agent = await agents.FindAsync(
-                context.UserId, context.WorkspacePath, agentName, ct);
-            if (agent is null)
-            {
-                var catalog = await agents.ListAsync(
-                    context.UserId, context.WorkspacePath, ct);
-                return new BuiltinToolResult(
-                    $"Agente '{agentName}' não encontrado. Disponíveis: "
-                    + (catalog.Count == 0
-                        ? "(nenhum)"
-                        : string.Join(", ", catalog.Keys.Order())));
-            }
-
-            if (allowedCsv is not null
-                && !allowedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries
-                    | StringSplitOptions.TrimEntries)
-                    .Contains(agent.Name, StringComparer.OrdinalIgnoreCase))
-            {
-                return new BuiltinToolResult(
-                    $"Este sub-agente só pode delegar para: {allowedCsv}. "
-                        + $"'{agent.Name}' não está na allowlist spawns.");
-            }
-
-            if (personaSkill is not null)
-            {
-                return new BuiltinToolResult(
-                    "Use 'agent' OU 'persona' — os dois definem o system "
-                        + "prompt do filho e não se combinam.");
-            }
+            return agentError;
         }
 
         var parentRun = context.RunId is { } parentId
@@ -255,9 +213,206 @@ public sealed class DelegateTaskBuiltinTool(
         // ≥ MaxDepth perdem a tool delegate_task — o filho não pode delegar
         // além do limite (SPEC-20261010-async-delegate).
         var childDepth = await DepthOfAsync(db, parentRun, ct) + 1;
+        var plan = PlanChildTools(scope, parentRun, agent, childDepth);
 
-        // Herda modelo + tools do pai; exclui o próprio delegate apenas
-        // quando o filho atingiria o teto de profundidade.
+        // RF-003: modelo do filho — `model:` explícito > `role:` (cadeia do
+        // papel) > modelo do pai. Com teto de tier herdado (SPEC-20261023
+        // run-cost-budgets RF-004) a resolução de `role:` escolhe o melhor
+        // candidato ≤ teto; nenhum elegível → erro no_model_in_tier, nunca
+        // upgrade silencioso.
+        var parentMaxTier = await config.GetAsync<int?>(
+            $"r:{parentRun.Id}:agent.maxtier", null, ct);
+        var (childModel, modelError) = await ResolveChildModelAsync(
+            scope, agent, parentRun, context, parentMaxTier, ct);
+        if (modelError is not null)
+        {
+            return modelError;
+        }
+
+        // `blocking` do agente é o default de wait (o arg explícito vence).
+        var wait = waitExplicit ?? agent?.Blocking ?? true;
+
+        // RF-001 `skills`: slugs de skills pessoais ativas autoload —
+        // conteúdo concatenado ao system prompt do agente.
+        var systemPrompt = agent is null ? personaSkill?.Content
+            : await ComposeSystemPromptAsync(db, context, agent, ct);
+
+        var preset = context.ChatId is { } chatId
+            ? await db.Chats.AsNoTracking()
+                .Where(c => c.Id == chatId)
+                .Select(c => c.ApprovalPreset)
+                .FirstOrDefaultAsync(ct) ?? "approve-mutations"
+            : "approve-mutations";
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var childChat = await CreateChildChatAsync(
+            db, context, agent, childModel!, plan.ToolIds, systemPrompt,
+            preset, prompt, fullPrompt, joinTeam, now, ct);
+
+        var childRequest = new ChatCompletionRequest(
+            childModel!,
+            [
+                .. systemPrompt is null
+                    ? Array.Empty<ChatCompletionMessage>()
+                    : new[] { new ChatCompletionMessage("system", systemPrompt) },
+                new ChatCompletionMessage("user", fullPrompt),
+            ],
+            Stream: true,
+            ToolIds: plan.ToolIds);
+        var childRun = new ChatRun
+        {
+            ChatId = childChat.Id,
+            UserId = context.UserId,
+            Model = childModel!,
+            RequestJson = JsonSerializer.Serialize(childRequest, JsonOptions),
+            ParentRunId = parentRun.Id,
+            CreatedAt = now,
+        };
+        db.ChatRuns.Add(childRun);
+        await db.SaveChangesAsync(ct);
+
+        // RF-003: constraints de delegação do filho — allowlist spawns +
+        // profundidade residual ficam em kv para enforcement no delegate
+        // dele (spawns ∪ maxDepth; enforcement por-hop, não transitivo).
+        await PersistChildConstraintsAsync(
+            config, agent, childRun, plan, parentMaxTier, ct);
+
+        // SPEC-20261010-chat-repo-binding: o filho herda o binding POR CHAT
+        // do pai (não o global). SPEC-15: herda repo/branch mas com
+        // worktree próprio — subtarefa não escreve no worktree do pai.
+        var repos = scope.ServiceProvider.GetRequiredService<WorkspaceRepoService>();
+        await InheritWorkspaceAsync(repos, context, childChat, ct);
+
+        var repoError = await BindTargetRepoAsync(scope, context, args, childChat, ct);
+        if (repoError is not null)
+        {
+            childRun.Status = ChatRunStatus.Failed;
+            childRun.Error = repoError;
+            await db.SaveChangesAsync(ct);
+            return new BuiltinToolResult(repoError);
+        }
+
+        dispatcher.Enqueue(childRun.Id);
+
+        var link = $"/c/{childChat.Id}";
+        if (!wait)
+        {
+            // wait=false: devolve já — o pai segue o turno e colhe o
+            // resultado depois via builtin:run_result (paralelismo real).
+            return new BuiltinToolResult(
+                $"Subtarefa delegada em background — run filha {childRun.Id} "
+                    + $"(chat filho: {link}). Chame builtin_run_result com "
+                    + $"run_id={childRun.Id} para colher o resultado.",
+                new
+                {
+                    childChatId = childChat.Id,
+                    childRunId = childRun.Id,
+                    status = "queued",
+                });
+        }
+
+        return await WaitForChildAsync(
+            new ChildWait(db, scope, context, childChat, childRun,
+                autoMerge, link), ct);
+    }
+
+    /// <summary>
+    /// Gate de delegação: depth residual esgotado bloqueia sempre; run de
+    /// agente com allowlist <c>spawns</c> exige <c>agent</c> explícito.
+    /// Devolve o csv da allowlist para a validação seguinte.
+    /// </summary>
+    private static async Task<(BuiltinToolResult? Error, string? AllowedCsv)>
+        CheckSpawnGateAsync(
+            ConfigService config, BuiltinToolContext context,
+            string? agentName, CancellationToken ct)
+    {
+        var allowedCsv = await config.GetAsync<string?>(
+            $"r:{context.RunId}:agent.spawns", null, ct);
+        var callerDepth = await config.GetAsync<int?>(
+            $"r:{context.RunId}:agent.depth", null, ct);
+        if (callerDepth == 0)
+        {
+            // Run nascida de agente sem profundidade residual — a tool só
+            // existe se vazou por toolIds explícitos; bloqueia sempre.
+            return (new BuiltinToolResult(
+                "Este sub-agente não pode delegar (maxDepth esgotado)."), allowedCsv);
+        }
+        if (agentName is null && allowedCsv is not null)
+        {
+            // Run nascida de agente com spawns: delegação livre bypassaria a
+            // allowlist — o filho tem que referenciar um nome permitido.
+            return (new BuiltinToolResult(
+                "Este sub-agente só pode delegar via parâmetro 'agent' "
+                    + $"para: {allowedCsv}."), allowedCsv);
+        }
+        return (null, allowedCsv);
+    }
+
+    /// <summary>
+    /// Resolve a definição do agente pedido — existência no catálogo,
+    /// presença na allowlist <c>spawns</c> e exclusividade com persona.
+    /// </summary>
+    private static async Task<(AgentDefinition? Agent, BuiltinToolResult? Error)>
+        ResolveAgentAsync(
+            IServiceScope scope, BuiltinToolContext context,
+            string? agentName, string? allowedCsv, Skill? personaSkill,
+            CancellationToken ct)
+    {
+        if (agentName is null)
+        {
+            return (null, null);
+        }
+        var agents = scope.ServiceProvider
+            .GetRequiredService<AgentDefinitionService>();
+        var agent = await agents.FindAsync(
+            context.UserId, context.WorkspacePath, agentName, ct);
+        if (agent is null)
+        {
+            var catalog = await agents.ListAsync(
+                context.UserId, context.WorkspacePath, ct);
+            return (null, new BuiltinToolResult(
+                $"Agente '{agentName}' não encontrado. Disponíveis: "
+                + (catalog.Count == 0
+                    ? "(nenhum)"
+                    : string.Join(", ", catalog.Keys.Order()))));
+        }
+
+        if (allowedCsv is not null
+            && !allowedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries
+                | StringSplitOptions.TrimEntries)
+                .Contains(agent.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            return (null, new BuiltinToolResult(
+                $"Este sub-agente só pode delegar para: {allowedCsv}. "
+                    + $"'{agent.Name}' não está na allowlist spawns."));
+        }
+
+        if (personaSkill is not null)
+        {
+            return (null, new BuiltinToolResult(
+                "Use 'agent' OU 'persona' — os dois definem o system "
+                    + "prompt do filho e não se combinam."));
+        }
+        return (agent, null);
+    }
+
+    /// <summary>Plano de tools/profundidade do filho calculado por
+    /// <see cref="PlanChildTools"/>.</summary>
+    private sealed record ChildToolPlan(
+        IReadOnlyList<string>? ToolIds, int SpawnDepth, bool CanSpawn);
+
+    /// <summary>
+    /// Herança de tools do pai ∩ allowlist do agente, com
+    /// <c>delegate_task</c> removida ao atingir <see cref="MaxDepth"/> ou
+    /// sem capacidade de spawn — e readicionada quando <c>spawns</c>
+    /// declarado a implica (mas a explicita a excluía intencionalmente).
+    /// </summary>
+    private ChildToolPlan PlanChildTools(
+        IServiceScope scope, ChatRun parentRun, AgentDefinition? agent,
+        int childDepth)
+    {
+        // Herda tools do pai; exclui o próprio delegate apenas quando o
+        // filho atingiria o teto de profundidade.
         IReadOnlyList<string>? childToolIds = null;
         var parentHadDelegate = false;
         try
@@ -293,23 +448,20 @@ public sealed class DelegateTaskBuiltinTool(
                         registry.TierOfName(StripPrefix(id)) == ApprovalTier.Read)
                     .ToList();
             }
-            else if (agent.Tools.Contains("*"))
-            {
-                // sem restrição — childToolIds passa integral
-            }
-            else
+            else if (!agent.Tools.Contains("*"))
             {
                 childToolIds = childToolIds?.Where(id => agent.Tools.Contains(
                         StripPrefix(id), StringComparer.OrdinalIgnoreCase))
                     .ToList();
             }
+            // ["*"]: sem restrição — childToolIds passa integral.
         }
         // Depth residual do filho: min(maxDepth do agente, teto global) —
         // gravado como kv para enforcement quando ele próprio delegar.
-        var childSpawnDepth = agent is null ? 0
+        var spawnDepth = agent is null ? 0
             : Math.Min(agent.MaxDepth, MaxDepth - childDepth);
-        var childCanSpawn = agent?.Spawns.Count > 0 && childSpawnDepth > 0;
-        if (childCanSpawn && parentHadDelegate && childToolIds is List<string> mutable
+        var canSpawn = agent?.Spawns.Count > 0 && spawnDepth > 0;
+        if (canSpawn && parentHadDelegate && childToolIds is List<string> mutable
             && (agent!.Tools is null || agent.Tools.Contains("*"))
             && !mutable.Contains($"{BuiltinToolRegistry.IdPrefix}{Name}",
                 StringComparer.OrdinalIgnoreCase))
@@ -319,62 +471,57 @@ public sealed class DelegateTaskBuiltinTool(
             // Tools explícita sem delegate_task é exclusão intencional: honra.
             mutable.Add($"{BuiltinToolRegistry.IdPrefix}{Name}");
         }
-        if (!childCanSpawn)
+        if (!canSpawn)
         {
             childToolIds = childToolIds?.Where(id =>
                     !id.Equals($"{BuiltinToolRegistry.IdPrefix}{Name}",
                         StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
+        return new ChildToolPlan(childToolIds, spawnDepth, canSpawn);
+    }
 
-        // RF-003: modelo do filho — `model:` explícito > `role:` (cadeia do
-        // papel) > modelo do pai. Com teto de tier herdado (SPEC-20261023
-        // run-cost-budgets RF-004) a resolução de `role:` escolhe o melhor
-        // candidato ≤ teto; nenhum elegível → erro no_model_in_tier, nunca
-        // upgrade silencioso.
-        var parentMaxTier = await config.GetAsync<int?>(
-            $"r:{parentRun.Id}:agent.maxtier", null, ct);
-        var childModel = parentRun.Model;
-        if (agent?.Model is { Length: > 0 } agentModel)
+    /// <summary>
+    /// Modelo do filho — <c>model:</c> explícito &gt; <c>role:</c> (resolvido
+    /// dentro do teto de tier herdado) &gt; modelo do pai.
+    /// </summary>
+    private static async Task<(string? Model, BuiltinToolResult? Error)>
+        ResolveChildModelAsync(
+            IServiceScope scope, AgentDefinition? agent, ChatRun parentRun,
+            BuiltinToolContext context, int? parentMaxTier,
+            CancellationToken ct)
+    {
+        if (agent?.Model is not { Length: > 0 } agentModel)
         {
-            if (agentModel.StartsWith("role:", StringComparison.OrdinalIgnoreCase))
-            {
-                var resolved = await scope.ServiceProvider
-                    .GetRequiredService<ModelRoleResolver>()
-                    .ResolveForTierAsync(
-                        agentModel["role:".Length..], context.UserId,
-                        parentRun.Model, parentMaxTier, ct);
-                if (resolved is null)
-                {
-                    return new BuiltinToolResult(
-                        $"no_model_in_tier: nenhum modelo do papel "
-                        + $"'{agentModel["role:".Length..]}' cabe no tier "
-                        + $"máximo {parentMaxTier} herdado da run pai.");
-                }
-                childModel = resolved;
-            }
-            else
-            {
-                childModel = agentModel;
-            }
+            return (parentRun.Model, null);
         }
+        if (!agentModel.StartsWith("role:", StringComparison.OrdinalIgnoreCase))
+        {
+            return (agentModel, null);
+        }
+        var resolved = await scope.ServiceProvider
+            .GetRequiredService<ModelRoleResolver>()
+            .ResolveForTierAsync(
+                agentModel["role:".Length..], context.UserId,
+                parentRun.Model, parentMaxTier, ct);
+        return resolved is null
+            ? (null, new BuiltinToolResult(
+                $"no_model_in_tier: nenhum modelo do papel "
+                + $"'{agentModel["role:".Length..]}' cabe no tier "
+                + $"máximo {parentMaxTier} herdado da run pai."))
+            : (resolved, null);
+    }
 
-        // `blocking` do agente é o default de wait (o arg explícito vence).
-        var wait = waitExplicit ?? agent?.Blocking ?? true;
-
-        // RF-001 `skills`: slugs de skills pessoais ativas autoload —
-        // conteúdo concatenado ao system prompt do agente.
-        var systemPrompt = agent is null ? personaSkill?.Content
-            : await ComposeSystemPromptAsync(db, context, agent, ct);
-
-        var preset = context.ChatId is { } chatId
-            ? await db.Chats.AsNoTracking()
-                .Where(c => c.Id == chatId)
-                .Select(c => c.ApprovalPreset)
-                .FirstOrDefaultAsync(ct) ?? "approve-mutations"
-            : "approve-mutations";
-
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    /// <summary>
+    /// Cria o chat filho com system/user iniciais — e o junta ao team da
+    /// raiz quando <c>team:true</c> (leader na primeira delegação).
+    /// </summary>
+    private static async Task<Chat> CreateChildChatAsync(
+        AppDbContext db, BuiltinToolContext context, AgentDefinition? agent,
+        string childModel, IReadOnlyList<string>? childToolIds,
+        string? systemPrompt, string preset, string prompt,
+        string fullPrompt, bool joinTeam, long now, CancellationToken ct)
+    {
         var title = prompt.Length > MaxTitleChars
             ? prompt[..MaxTitleChars] + "…"
             : prompt;
@@ -426,38 +573,24 @@ public sealed class DelegateTaskBuiltinTool(
                 childChat.TeamRole = "member";
             }
         }
+        return childChat;
+    }
 
-        var childRequest = new ChatCompletionRequest(
-            childModel,
-            [
-                .. systemPrompt is null
-                    ? Array.Empty<ChatCompletionMessage>()
-                    : new[] { new ChatCompletionMessage("system", systemPrompt) },
-                new ChatCompletionMessage("user", fullPrompt),
-            ],
-            Stream: true,
-            ToolIds: childToolIds);
-        var childRun = new ChatRun
-        {
-            ChatId = childChat.Id,
-            UserId = context.UserId,
-            Model = childModel,
-            RequestJson = JsonSerializer.Serialize(childRequest, JsonOptions),
-            ParentRunId = parentRun.Id,
-            CreatedAt = now,
-        };
-        db.ChatRuns.Add(childRun);
-        await db.SaveChangesAsync(ct);
-
-        // RF-003: constraints de delegação do filho — allowlist spawns +
-        // profundidade residual ficam em kv para enforcement no delegate
-        // dele (spawns ∪ maxDepth; enforcement por-hop, não transitivo).
-        if (agent is not null && childCanSpawn)
+    /// <summary>
+    /// Persiste os constraints kv da run filha — allowlist spawns, depth
+    /// residual (0 quando não pode delegar), teto de steps e tier de custo
+    /// herdado (a cadeia só afunila, nunca alarga).
+    /// </summary>
+    private static async Task PersistChildConstraintsAsync(
+        ConfigService config, AgentDefinition? agent, ChatRun childRun,
+        ChildToolPlan plan, int? parentMaxTier, CancellationToken ct)
+    {
+        if (agent is not null && plan.CanSpawn)
         {
             await config.SetAsync(
                 $"r:{childRun.Id}:agent.spawns", string.Join(",", agent.Spawns), ct);
             await config.SetAsync(
-                $"r:{childRun.Id}:agent.depth", childSpawnDepth, ct);
+                $"r:{childRun.Id}:agent.depth", plan.SpawnDepth, ct);
         }
         else if (agent is not null)
         {
@@ -482,11 +615,17 @@ public sealed class DelegateTaskBuiltinTool(
             await config.SetAsync(
                 $"r:{childRun.Id}:agent.maxtier", inheritedTier, ct);
         }
+    }
 
-        // SPEC-20261010-chat-repo-binding: o filho herda o binding POR CHAT
-        // do pai (não o global). SPEC-15: herda repo/branch mas com
-        // worktree próprio — subtarefa não escreve no worktree do pai.
-        var repos = scope.ServiceProvider.GetRequiredService<WorkspaceRepoService>();
+    /// <summary>
+    /// Herança de workspace: binding por chat do pai vira worktree próprio
+    /// do filho; pai sem repo faz o filho trabalhar em
+    /// <c>scratch/{pai}/agents/{filho}</c> (SPEC-20261027).
+    /// </summary>
+    private static async Task InheritWorkspaceAsync(
+        WorkspaceRepoService repos, BuiltinToolContext context,
+        Chat childChat, CancellationToken ct)
+    {
         if (context.ChatId is { } boundParent
             && await repos.GetChatBindingAsync(boundParent, ct) is { } parentBinding)
         {
@@ -500,38 +639,6 @@ public sealed class DelegateTaskBuiltinTool(
             // trabalho dos subagentes.
             await repos.SetScratchParentAsync(childChat.Id, scratchParent, ct);
         }
-
-        var repoError = await BindTargetRepoAsync(scope, context, args, childChat, ct);
-        if (repoError is not null)
-        {
-            childRun.Status = ChatRunStatus.Failed;
-            childRun.Error = repoError;
-            await db.SaveChangesAsync(ct);
-            return new BuiltinToolResult(repoError);
-        }
-
-        dispatcher.Enqueue(childRun.Id);
-
-        var link = $"/c/{childChat.Id}";
-        if (!wait)
-        {
-            // wait=false: devolve já — o pai segue o turno e colhe o
-            // resultado depois via builtin:run_result (paralelismo real).
-            return new BuiltinToolResult(
-                $"Subtarefa delegada em background — run filha {childRun.Id} "
-                    + $"(chat filho: {link}). Chame builtin_run_result com "
-                    + $"run_id={childRun.Id} para colher o resultado.",
-                new
-                {
-                    childChatId = childChat.Id,
-                    childRunId = childRun.Id,
-                    status = "queued",
-                });
-        }
-
-        return await WaitForChildAsync(
-            new ChildWait(db, scope, context, childChat, childRun,
-                autoMerge, link), ct);
     }
 
     /// <summary>
@@ -647,41 +754,9 @@ public sealed class DelegateTaskBuiltinTool(
                     + "mensagem via builtin_team_message em vez de resumir.");
         }
 
-        if (joinTeam || target.TeamId is not null)
-        {
-            var teamId = target.TeamId;
-            if (joinTeam && teamId is null && context.ChatId is { } pcid)
-            {
-                var parentChat = await db.Chats
-                    .FirstOrDefaultAsync(c => c.Id == pcid, ct);
-                if (parentChat is not null)
-                {
-                    teamId = await TeamService.EnsureRootTeamAsync(
-                        db, parentChat, ct);
-                }
-            }
-            if (teamId is not null && target.TeamId is null)
-            {
-                target.TeamId = teamId;
-                target.TeamRole = "member";
-            }
-        }
-
+        await JoinResumeTeamAsync(db, context, target, joinTeam, ct);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var position = target.Messages.Count == 0
-            ? 0 : target.Messages.Max(m => m.Position) + 1;
-        var userMsg = new ChatMessage
-        {
-            ChatId = target.Id,
-            Role = "user",
-            Content = fullPrompt,
-            Position = position,
-            Timestamp = now,
-            ParentId = BranchService.ResolveLeaf(target)?.Id,
-        };
-        target.Messages.Add(userMsg);
-        target.LeafMessageId = userMsg.Id;
-        target.UpdatedAt = now;
+        AppendResumeMessage(target, fullPrompt, now);
 
         var model = parentRun.Model;
         var toolIds = JsonSerializer.Deserialize<List<string>>(
@@ -721,6 +796,55 @@ public sealed class DelegateTaskBuiltinTool(
         return await WaitForChildAsync(
             new ChildWait(db, scope, context, target, childRun,
                 AutoMerge: false, link), ct);
+    }
+
+    /// <summary>
+    /// Team do resume: junta ao team da raiz do chamador quando pedido ou
+    /// mantém o TeamId existente — o alvo entra como member.
+    /// </summary>
+    private static async Task JoinResumeTeamAsync(
+        AppDbContext db, BuiltinToolContext context, Chat target,
+        bool joinTeam, CancellationToken ct)
+    {
+        if (!joinTeam && target.TeamId is null)
+        {
+            return;
+        }
+        var teamId = target.TeamId;
+        if (joinTeam && teamId is null && context.ChatId is { } pcid)
+        {
+            var parentChat = await db.Chats
+                .FirstOrDefaultAsync(c => c.Id == pcid, ct);
+            if (parentChat is not null)
+            {
+                teamId = await TeamService.EnsureRootTeamAsync(
+                    db, parentChat, ct);
+            }
+        }
+        if (teamId is not null && target.TeamId is null)
+        {
+            target.TeamId = teamId;
+            target.TeamRole = "member";
+        }
+    }
+
+    /// <summary>Append da mensagem de resume no topo da árvore do alvo.</summary>
+    private static void AppendResumeMessage(
+        Chat target, string fullPrompt, long now)
+    {
+        var userMsg = new ChatMessage
+        {
+            ChatId = target.Id,
+            Role = "user",
+            Content = fullPrompt,
+            Position = target.Messages.Count == 0
+                ? 0 : target.Messages.Max(m => m.Position) + 1,
+            Timestamp = now,
+            ParentId = BranchService.ResolveLeaf(target)?.Id,
+        };
+        target.Messages.Add(userMsg);
+        target.LeafMessageId = userMsg.Id;
+        target.UpdatedAt = now;
     }
 
     private sealed record ChildWait(
