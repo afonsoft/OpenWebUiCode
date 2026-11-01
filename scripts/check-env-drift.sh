@@ -19,6 +19,7 @@ for v in $used; do
             echo "  SKIP $v (framework/sistema)"
             continue
             ;;
+        *) ;;
     esac
     if grep -q "$v" .env.exemplo; then
         echo "  OK   $v"

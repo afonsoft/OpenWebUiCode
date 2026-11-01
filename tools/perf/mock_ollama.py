@@ -78,7 +78,7 @@ def _plan(messages: list):
             break
     # tool result just came back -> finish with text
     if messages and messages[-1].get("role") == "tool":
-        return ("text", "Tool result processed. Done.")
+        return ("text", "Tool result processed. Done.", 0)
     if messages and messages[-1].get("role") == "user" and not last_user:
         last_user = messages[-1].get("content") or ""
     sleep = SLEEP_RE.search(last_user)
@@ -140,14 +140,12 @@ async def chat(request: web.Request) -> web.Response:
     body = await request.json()
     messages = body.get("messages", [])
     stream = body.get("stream", True)
-    plan = _plan(messages)
-    kind = plan[0]
-    delay_ms = plan[-1] if plan[-1] != plan[1] else 0
+    kind, payload, delay_ms = _plan(messages)
     if delay_ms:
         await asyncio.sleep(delay_ms / 1000.0)
 
     if kind == "tool_calls":
-        calls = plan[1]
+        calls = payload
         if not stream:
             return web.json_response(
                 {
@@ -173,7 +171,7 @@ async def chat(request: web.Request) -> web.Response:
         await resp.write_eof()
         return resp
 
-    text = plan[1]
+    text = payload
     pieces = text.split(" ")
     if not stream:
         return web.json_response(
