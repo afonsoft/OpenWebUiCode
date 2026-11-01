@@ -1926,48 +1926,16 @@ public sealed class ChatRunExecutor(
     private async Task<ToolGateDecision> AskUserAsync(
         ChatRun run, ProviderToolCall call, string? preset, CancellationToken ct)
     {
-        List<RunQuestionItem> items;
-        try
+        // NormalizeArgs desembrulha args double-encoded (string com o
+        // objeto dentro — Gemini/OmniRoute). Sem isso o TryGetProperty
+        // em root String lançava InvalidOperationException e a run
+        // inteira ia para failed.
+        var args = BuiltinToolRegistry.NormalizeArgs(call.ArgumentsJson);
+        var (items, parseError) = ParseAskUserItems(args);
+        if (parseError is not null || items is null)
         {
-            // NormalizeArgs desembrulha args double-encoded (string com o
-            // objeto dentro — Gemini/OmniRoute). Sem isso o TryGetProperty
-            // em root String lançava InvalidOperationException e a run
-            // inteira ia para failed.
-            var args = BuiltinToolRegistry.NormalizeArgs(call.ArgumentsJson);
-            if (args.ValueKind != JsonValueKind.Object)
-            {
-                return new ToolGateDecision(true, Output: "Pergunta malformada (args inválidos).");
-            }
-
-            // SPEC-20261016-question-forms RF-001: questions[] é o form
-            // multi-pergunta (cap 5); a forma singular vira açúcar de 1 item.
-            if (args.TryGetProperty("questions", out var qs)
-                && qs.ValueKind == JsonValueKind.Array)
-            {
-                if (qs.GetArrayLength() > 5)
-                {
-                    return new ToolGateDecision(
-                        true, Output: "Erro: max 5 questions por chamada.");
-                }
-                items = [.. qs.EnumerateArray().Select(ParseQuestionItem)];
-            }
-            else
-            {
-                var question = args.TryGetProperty("question", out var q)
-                    && q.GetString() is { Length: > 0 } qt ? qt : "?";
-                var options = ParseOptions(args);
-                var multiple = args.TryGetProperty("multiple", out var m)
-                    && m.ValueKind == JsonValueKind.True;
-                items = [new RunQuestionItem(question, null, options, multiple, true)];
-            }
-            if (items.Count == 0)
-            {
-                return new ToolGateDecision(true, Output: "Pergunta malformada (questions vazio).");
-            }
-        }
-        catch (JsonException)
-        {
-            return new ToolGateDecision(true, Output: "Pergunta malformada (args inválidos).");
+            return parseError ?? new ToolGateDecision(
+                true, Output: "Pergunta malformada (args inválidos).");
         }
 
         var first = items[0];
@@ -1982,19 +1950,7 @@ public sealed class ChatRunExecutor(
         // continua no fluxo de aprovação abaixo e alcança o usuário.
         if (IsAutoPickPreset(preset) && !items.Any(RequiresOwnerInput))
         {
-            static string Auto(RunQuestionItem i) => i.Options.Length > 0
-                ? PickRecommended(i.Options)
-                : AutonomousAnswer;
-            if (single)
-            {
-                var pick = Auto(first);
-                PublishDecisionAuto(run, call.Id, "ask_user", pick);
-                return new ToolGateDecision(true, Output: pick);
-            }
-            var picks = items.Select(Auto).ToList();
-            PublishDecisionAuto(run, call.Id, "ask_user", picks[0]);
-            return new ToolGateDecision(
-                true, Output: JsonSerializer.Serialize(new { answers = picks }, JsonOptions));
+            return AutoPickAnswer(run, call.Id, items, single);
         }
 
         broadcaster.Publish(run.Id,
@@ -2030,6 +1986,75 @@ public sealed class ChatRunExecutor(
         }
         return new ToolGateDecision(true,
             Output: Scrub(Truncate(result.Message, PreviewChars)));
+    }
+
+    /// <summary>
+    /// Parse dos args do ask_user: questions[] (form multi, cap 5 —
+    /// SPEC-20261016-question-forms RF-001) ou a forma singular como
+    /// açúcar de 1 item. Devolve os itens ou o erro a responder.
+    /// </summary>
+    private static (List<RunQuestionItem>? Items, ToolGateDecision? Error) ParseAskUserItems(
+        JsonElement args)
+    {
+        try
+        {
+            if (args.ValueKind != JsonValueKind.Object)
+            {
+                return (null, new ToolGateDecision(
+                    true, Output: "Pergunta malformada (args inválidos)."));
+            }
+            List<RunQuestionItem> items;
+            if (args.TryGetProperty("questions", out var qs)
+                && qs.ValueKind == JsonValueKind.Array)
+            {
+                if (qs.GetArrayLength() > 5)
+                {
+                    return (null, new ToolGateDecision(
+                        true, Output: "Erro: max 5 questions por chamada."));
+                }
+                items = [.. qs.EnumerateArray().Select(ParseQuestionItem)];
+            }
+            else
+            {
+                var question = args.TryGetProperty("question", out var q)
+                    && q.GetString() is { Length: > 0 } qt ? qt : "?";
+                var options = ParseOptions(args);
+                var multiple = args.TryGetProperty("multiple", out var m)
+                    && m.ValueKind == JsonValueKind.True;
+                items = [new RunQuestionItem(question, null, options, multiple, true)];
+            }
+            return items.Count == 0
+                ? (null, new ToolGateDecision(
+                    true, Output: "Pergunta malformada (questions vazio)."))
+                : (items, null);
+        }
+        catch (JsonException)
+        {
+            return (null, new ToolGateDecision(
+                true, Output: "Pergunta malformada (args inválidos)."));
+        }
+    }
+
+    /// <summary>
+    /// Resposta autônoma do ask_user (SPEC-15 RF-003): opções → a
+    /// recomendada ou a primeira; resposta livre → diretriz padrão.
+    /// </summary>
+    private ToolGateDecision AutoPickAnswer(
+        ChatRun run, string callId, List<RunQuestionItem> items, bool single)
+    {
+        static string Auto(RunQuestionItem i) => i.Options.Length > 0
+            ? PickRecommended(i.Options)
+            : AutonomousAnswer;
+        if (single)
+        {
+            var pick = Auto(items[0]);
+            PublishDecisionAuto(run, callId, "ask_user", pick);
+            return new ToolGateDecision(true, Output: pick);
+        }
+        var picks = items.Select(Auto).ToList();
+        PublishDecisionAuto(run, callId, "ask_user", picks[0]);
+        return new ToolGateDecision(
+            true, Output: JsonSerializer.Serialize(new { answers = picks }, JsonOptions));
     }
 
     /// <summary>Item do form multi-pergunta (options aceitam string ou {label,description}).</summary>
@@ -2369,23 +2394,32 @@ public sealed class ChatRunExecutor(
             return $"budget_exceeded: tokens do mês ({monthTokens}) "
                 + $"atingiram o teto tokensPerMonth ({tm}).";
         }
-        if (!_budgetWarned && limits.UsdPerMonth is { } umw)
-        {
-            var warnPct = await budgets.WarnAtPercentAsync(ct);
-            if (monthUsd >= umw * warnPct / 100d)
-            {
-                _budgetWarned = true;
-                await runEvents.AppendAsync(run.Id,
-                    RunEventWriter.Types.BudgetWarning,
-                    new
-                    {
-                        usedUsd = Math.Round(monthUsd, 6),
-                        usdPerMonth = umw,
-                        pct = warnPct,
-                    }, ct);
-            }
-        }
+        await WarnIfNearBudgetAsync(run, limits, monthUsd, ct);
         return null;
+    }
+
+    /// <summary>Aviso de orçamento 1× por run ao cruzar warnPct do teto mensal.</summary>
+    private async Task WarnIfNearBudgetAsync(
+        ChatRun run, BudgetLimits limits, double monthUsd, CancellationToken ct)
+    {
+        if (_budgetWarned || limits.UsdPerMonth is not { } umw)
+        {
+            return;
+        }
+        var warnPct = await budgets.WarnAtPercentAsync(ct);
+        if (monthUsd < umw * warnPct / 100d)
+        {
+            return;
+        }
+        _budgetWarned = true;
+        await runEvents.AppendAsync(run.Id,
+            RunEventWriter.Types.BudgetWarning,
+            new
+            {
+                usedUsd = Math.Round(monthUsd, 6),
+                usdPerMonth = umw,
+                pct = warnPct,
+            }, ct);
     }
 
     /// <summary>
@@ -2495,52 +2529,7 @@ public sealed class ChatRunExecutor(
                 .FirstOrDefaultAsync(c => c.Id == run.ChatId, CancellationToken.None);
             if (chat is not null)
             {
-                // As mensagens da run penduram em cadeia no leaf ativo:
-                // cada nova é filha da anterior, e a última vira o leaf
-                // (RF-001 — o caminho ativo avança com a resposta).
-                var nextPosition = chat.Messages.Count == 0
-                    ? 0
-                    : chat.Messages.Max(m => m.Position) + 1;
-                var parentId = BranchService.ResolveLeaf(chat)?.Id;
-                ChatMessage? lastAdded = null;
-                foreach (var m in toolMessages ?? [])
-                {
-                    var message = new ChatMessage
-                    {
-                        ChatId = chat.Id,
-                        Role = m.Role,
-                        Content = m.Content,
-                        Model = m.Role == "assistant" ? run.Model : null,
-                        ToolCallsJson = m.ToolCallsJson,
-                        ToolCallId = m.ToolCallId,
-                        Position = nextPosition++,
-                        Timestamp = now,
-                        ParentId = parentId,
-                    };
-                    chat.Messages.Add(message);
-                    lastAdded = message;
-                    parentId = lastAdded.Id;
-                }
-                if (content.Length > 0)
-                {
-                    var message = new ChatMessage
-                    {
-                        ChatId = chat.Id,
-                        Role = "assistant",
-                        Content = content,
-                        Model = run.Model,
-                        Position = nextPosition,
-                        Timestamp = now,
-                        ParentId = parentId,
-                    };
-                    chat.Messages.Add(message);
-                    lastAdded = message;
-                }
-                if (lastAdded is not null)
-                {
-                    chat.LeafMessageId = lastAdded.Id;
-                }
-                chat.UpdatedAt = now;
+                AppendRunMessages(run, chat, content, toolMessages, now);
             }
         }
 
@@ -2549,6 +2538,60 @@ public sealed class ChatRunExecutor(
             run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new { status = run.Status })}");
         await PublishRunFinishedAsync(run);
+    }
+
+    /// <summary>
+    /// As mensagens da run penduram em cadeia no leaf ativo: cada nova é
+    /// filha da anterior, e a última vira o leaf (RF-001 — o caminho ativo
+    /// avança com a resposta).
+    /// </summary>
+    private static void AppendRunMessages(
+        ChatRun run, Chat chat, string content,
+        IReadOnlyList<ChatCompletionMessage>? toolMessages, long now)
+    {
+        var nextPosition = chat.Messages.Count == 0
+            ? 0
+            : chat.Messages.Max(m => m.Position) + 1;
+        var parentId = BranchService.ResolveLeaf(chat)?.Id;
+        ChatMessage? lastAdded = null;
+        foreach (var m in toolMessages ?? [])
+        {
+            var message = new ChatMessage
+            {
+                ChatId = chat.Id,
+                Role = m.Role,
+                Content = m.Content,
+                Model = m.Role == "assistant" ? run.Model : null,
+                ToolCallsJson = m.ToolCallsJson,
+                ToolCallId = m.ToolCallId,
+                Position = nextPosition++,
+                Timestamp = now,
+                ParentId = parentId,
+            };
+            chat.Messages.Add(message);
+            lastAdded = message;
+            parentId = lastAdded.Id;
+        }
+        if (content.Length > 0)
+        {
+            var message = new ChatMessage
+            {
+                ChatId = chat.Id,
+                Role = "assistant",
+                Content = content,
+                Model = run.Model,
+                Position = nextPosition,
+                Timestamp = now,
+                ParentId = parentId,
+            };
+            chat.Messages.Add(message);
+            lastAdded = message;
+        }
+        if (lastAdded is not null)
+        {
+            chat.LeafMessageId = lastAdded.Id;
+        }
+        chat.UpdatedAt = now;
     }
 
     /// <summary>Marca a run como failed antes de iniciar.</summary>
