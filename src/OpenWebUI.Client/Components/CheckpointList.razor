@@ -62,57 +62,16 @@
         try
         {
             var detail = await Api.GetCheckpointAsync(hash, ChatId);
-            var files = detail?.Files ?? [];
-            var shortHash = hash[..Math.Min(10, hash.Length)];
-            var message = L.T("chat.revert_confirm",
-                ("count", files.Count.ToString()), ("hash", shortHash));
-            if (files.Count > 0)
-            {
-                message += "\n\n" + string.Join("\n", files.Take(20))
-                    + (files.Count > 20 ? $"\n… +{files.Count - 20}" : string.Empty);
-            }
-            if (detail?.Diff is { Length: > 0 } diff)
-            {
-                message += "\n\n" + (diff.Length > ConfirmDiffChars
-                    ? diff[..ConfirmDiffChars] + "\n…" : diff);
-            }
-            if (!await Dialogs.ConfirmAsync(message, danger: true))
+            if (!await Dialogs.ConfirmAsync(
+                BuildConfirmMessage(detail, hash), danger: true))
             {
                 return;
             }
 
-            var (result, status) = await Api.RevertCheckpointAsync(hash, chatId: ChatId);
-            if (status == 409)
-            {
-                Toast.Show(L["chat.revert_blocked"], ToastType.Warning);
-                return;
-            }
+            var result = await ExecuteRevertAsync(hash);
             if (result is null)
             {
-                Toast.Show(L["chat.revert_failed"], ToastType.Error);
                 return;
-            }
-            if (result.Conflicts.Count > 0)
-            {
-                var force = await Dialogs.ConfirmAsync(
-                    L.T("chat.revert_force_confirm", ("count", result.Conflicts.Count.ToString()))
-                        + "\n\n" + string.Join("\n", result.Conflicts.Take(20)),
-                    danger: true);
-                if (!force)
-                {
-                    return;
-                }
-                (result, status) = await Api.RevertCheckpointAsync(hash, force: true, chatId: ChatId);
-                if (status == 409)
-                {
-                    Toast.Show(L["chat.revert_blocked"], ToastType.Warning);
-                    return;
-                }
-                if (result is null)
-                {
-                    Toast.Show(L["chat.revert_failed"], ToastType.Error);
-                    return;
-                }
             }
 
             Toast.Show(
@@ -127,5 +86,64 @@
         {
             _busy = false;
         }
+    }
+
+    /// <summary>Mensagem do confirm — arquivos + diff truncado a 2 KB.</summary>
+    private string BuildConfirmMessage(
+        WorkspaceCheckpointDetailResponse? detail, string hash)
+    {
+        var files = detail?.Files ?? [];
+        var shortHash = hash[..Math.Min(10, hash.Length)];
+        var message = L.T("chat.revert_confirm",
+            ("count", files.Count.ToString()), ("hash", shortHash));
+        if (files.Count > 0)
+        {
+            message += "\n\n" + string.Join("\n", files.Take(20))
+                + (files.Count > 20 ? $"\n… +{files.Count - 20}" : string.Empty);
+        }
+        if (detail?.Diff is { Length: > 0 } diff)
+        {
+            message += "\n\n" + (diff.Length > ConfirmDiffChars
+                ? diff[..ConfirmDiffChars] + "\n…" : diff);
+        }
+        return message;
+    }
+
+    /// <summary>
+    /// Executa o revert; em conflito de drift pede o force explícito e
+    /// retenta. Null = abortado (409/erro/falta de confirmação — já tostado).
+    /// </summary>
+    private async Task<WorkspaceCheckpointRevertResponse?> ExecuteRevertAsync(string hash)
+    {
+        var (result, status) = await Api.RevertCheckpointAsync(hash, chatId: ChatId);
+        if (result is null || status == 409)
+        {
+            Toast.Show(status == 409
+                ? L["chat.revert_blocked"] : L["chat.revert_failed"],
+                status == 409 ? ToastType.Warning : ToastType.Error);
+            return null;
+        }
+        if (result.Conflicts.Count == 0)
+        {
+            return result;
+        }
+
+        var force = await Dialogs.ConfirmAsync(
+            L.T("chat.revert_force_confirm", ("count", result.Conflicts.Count.ToString()))
+                + "\n\n" + string.Join("\n", result.Conflicts.Take(20)),
+            danger: true);
+        if (!force)
+        {
+            return null;
+        }
+        (result, status) = await Api.RevertCheckpointAsync(hash, force: true, chatId: ChatId);
+        if (result is null || status == 409)
+        {
+            Toast.Show(status == 409
+                ? L["chat.revert_blocked"] : L["chat.revert_failed"],
+                status == 409 ? ToastType.Warning : ToastType.Error);
+            return null;
+        }
+        return result;
     }
 }

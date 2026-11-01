@@ -361,39 +361,7 @@
     private async Task SaveAsync()
     {
         _error = null;
-        var ok = Kind switch
-        {
-            "prompts" => IsCreate
-                ? await Api.CreatePromptAsync(new PromptUpsertRequest(
-                    _pCommand.Trim().TrimStart('/'), _pTitle.Trim(), _pContent)) is not null
-                : await Api.UpdatePromptAsync(Id!, new PromptUpsertRequest(
-                    _pCommand.Trim().TrimStart('/'), _pTitle.Trim(), _pContent)) is not null,
-            "models" => IsCreate
-                ? await Api.CreateCustomModelAsync(new ModelEntryUpsertRequest(
-                    _mName.Trim(), _mBase, _mSystem,
-                    NullIfWhiteSpace(_mParams), null,
-                    NullIfWhiteSpace(_mMeta),
-                    NullIfWhiteSpace(_mGrants))) is not null
-                : await Api.UpdateCustomModelAsync(Id!, new ModelEntryUpsertRequest(
-                    _mName.Trim(), _mBase, _mSystem,
-                    NullIfWhiteSpace(_mParams), _model?.ProfileImageUrl,
-                    NullIfWhiteSpace(_mMeta),
-                    NullIfWhiteSpace(_mGrants))) is not null,
-            "tools" => IsCreate
-                ? await Api.CreateToolAsync(new ToolUpsertRequest(
-                    _tName.Trim(), _tDesc, _tSpec,
-                    NullIfWhiteSpace(_tUrl?.Trim()),
-                    NullIfWhiteSpace(_tCode), _tEnabled)) is not null
-                : await Api.UpdateToolAsync(Id!, new ToolUpsertRequest(
-                    _tName.Trim(), _tDesc, _tSpec, null,
-                    NullIfWhiteSpace(_tCode) ?? "", _tEnabled)) is not null,
-            _ => IsCreate
-                ? await Api.CreateKnowledgeAsync(_kName.Trim(),
-                    NullIfWhiteSpace(_kDesc)) is not null
-                : await Api.UpdateKnowledgeAsync(Id!, _kName.Trim(),
-                    NullIfWhiteSpace(_kDesc)) is not null,
-        };
-
+        var ok = await SaveKindAsync();
         if (ok)
         {
             Nav.NavigateTo($"/workspace/{Kind}");
@@ -403,6 +371,55 @@
             _error = L["common.save_failed"];
         }
     }
+
+    /// <summary>Upsert do item em edição — dispatch por <see cref="Kind"/>.</summary>
+    private Task<bool> SaveKindAsync() => Kind switch
+    {
+        "prompts" => SavePromptAsync(),
+        "models" => SaveModelAsync(),
+        "tools" => SaveToolAsync(),
+        _ => SaveKnowledgeAsync(),
+    };
+
+    private async Task<bool> SavePromptAsync()
+    {
+        var request = new PromptUpsertRequest(
+            _pCommand.Trim().TrimStart('/'), _pTitle.Trim(), _pContent);
+        return IsCreate
+            ? await Api.CreatePromptAsync(request) is not null
+            : await Api.UpdatePromptAsync(Id!, request) is not null;
+    }
+
+    private async Task<bool> SaveModelAsync()
+    {
+        var request = new ModelEntryUpsertRequest(
+            _mName.Trim(), _mBase, _mSystem,
+            NullIfWhiteSpace(_mParams),
+            IsCreate ? null : _model?.ProfileImageUrl,
+            NullIfWhiteSpace(_mMeta),
+            NullIfWhiteSpace(_mGrants));
+        return IsCreate
+            ? await Api.CreateCustomModelAsync(request) is not null
+            : await Api.UpdateCustomModelAsync(Id!, request) is not null;
+    }
+
+    private async Task<bool> SaveToolAsync()
+    {
+        var request = new ToolUpsertRequest(
+            _tName.Trim(), _tDesc, _tSpec,
+            IsCreate ? NullIfWhiteSpace(_tUrl?.Trim()) : null,
+            IsCreate ? NullIfWhiteSpace(_tCode) : NullIfWhiteSpace(_tCode) ?? "",
+            _tEnabled);
+        return IsCreate
+            ? await Api.CreateToolAsync(request) is not null
+            : await Api.UpdateToolAsync(Id!, request) is not null;
+    }
+
+    private async Task<bool> SaveKnowledgeAsync() => IsCreate
+        ? await Api.CreateKnowledgeAsync(_kName.Trim(),
+            NullIfWhiteSpace(_kDesc)) is not null
+        : await Api.UpdateKnowledgeAsync(Id!, _kName.Trim(),
+            NullIfWhiteSpace(_kDesc)) is not null;
 
     private async Task AddFileAsync()
     {

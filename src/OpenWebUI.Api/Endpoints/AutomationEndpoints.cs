@@ -48,6 +48,12 @@ public static class AutomationEndpoints
         if (r.PermissionMode is not null &&
             r.PermissionMode is not "default" and not "auto" and not "bypass")
             return "PermissionMode deve ser default, auto ou bypass.";
+        return ValidateSchedule(r);
+    }
+
+    /// <summary>Checks do agendamento por kind (interval/once/daily/weekly).</summary>
+    private static string? ValidateSchedule(AutomationUpsertRequest r)
+    {
         if (!Kinds.Contains(r.ScheduleKind)) return "ScheduleKind deve ser interval, daily, weekly ou once.";
         if (r.ScheduleKind == "interval" && (r.IntervalMinutes ?? 0) < 1)
             return "Intervalo mínimo é 1 minuto.";

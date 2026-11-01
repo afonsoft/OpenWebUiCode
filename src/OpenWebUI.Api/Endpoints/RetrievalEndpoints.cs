@@ -277,7 +277,20 @@ public static class RetrievalEndpoints
             return Results.Forbid();
         }
 
-        var valid = request.Engine is "none" or "auto" or "searxng" or "duckduckgo" or "tavily"
+        if (!IsValid(request))
+        {
+            return Results.BadRequest(new { detail = "Configuração de retrieval inválida." });
+        }
+
+        // Chave mascarada (MaskedSecret) ou nula mantém o valor já persistido.
+        var current = await config.GetAsync("retrieval.config", RetrievalConfig.Default, ct);
+        var merged = MergeSecrets(request, current);
+        await config.SetAsync("retrieval.config", merged, ct);
+        return Results.Ok(merged.Masked());
+    }
+
+    private static bool IsValid(RetrievalConfig request) =>
+        request.Engine is "none" or "auto" or "searxng" or "duckduckgo" or "tavily"
             or "brave" or "google_pse" or "jina" or "exa" or "kagi" or "perplexity"
             && request.TopK is > 0 and <= 100
             && request.ChunkSize is >= 100 and <= 10000
@@ -285,14 +298,11 @@ public static class RetrievalEndpoints
             && request.ChunkOverlap < request.ChunkSize
             && request.HybridWeight is >= 0 and <= 1
             && request.RerankEngine is "local" or "external";
-        if (!valid)
-        {
-            return Results.BadRequest(new { detail = "Configuração de retrieval inválida." });
-        }
 
-        // Chave mascarada (MaskedSecret) ou nula mantém o valor já persistido.
-        var current = await config.GetAsync("retrieval.config", RetrievalConfig.Default, ct);
-        var merged = request with
+    /// <summary>Chave mascarada (MaskedSecret) ou nula mantém o valor persistido.</summary>
+    private static RetrievalConfig MergeSecrets(
+        RetrievalConfig request, RetrievalConfig current) =>
+        request with
         {
             BraveApiKey = request.BraveApiKey is null or MaskedSecret ? current.BraveApiKey : request.BraveApiKey,
             TavilyApiKey = request.TavilyApiKey is null or MaskedSecret ? current.TavilyApiKey : request.TavilyApiKey,
@@ -303,9 +313,6 @@ public static class RetrievalEndpoints
             PerplexityApiKey = request.PerplexityApiKey is null or MaskedSecret ? current.PerplexityApiKey : request.PerplexityApiKey,
             RerankExternalApiKey = request.RerankExternalApiKey is null or MaskedSecret ? current.RerankExternalApiKey : request.RerankExternalApiKey,
         };
-        await config.SetAsync("retrieval.config", merged, ct);
-        return Results.Ok(merged.Masked());
-    }
 
     private static async Task<IResult> ResetAsync(
         string target, HttpContext http, AppDbContext db, CancellationToken ct)
