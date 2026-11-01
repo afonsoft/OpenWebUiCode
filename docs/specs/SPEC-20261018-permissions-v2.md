@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261018-permissions-v2` |
-| Status | `In Progress` |
+| Status | `Completed` |
 | Parent | `docs/analise-opencode-v2.md` (P1.2); depends on SPEC-20261018-policies-admin |
 
 ## 1. User Story
@@ -74,6 +74,12 @@ tests/OpenWebUI.Api.Tests/ExternalDirectoryTests.cs            # NOVO
 - `file_read /etc/passwd` fora do workdir dispara ask; `allow external_directory` libera.
 - Rules order testado: `allow shell:*` seguido de `deny shell:rm *` → `rm` bloqueado, resto livre.
 - UI lista/revoga approvals; testes NUnit cobrem ordem, glob, persistência.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/592
+- Branch: `feature/permissions-v2-20261101`
+- Data: 2026-11-01
 
 ## Implementation notes (2026-11-01)
 
