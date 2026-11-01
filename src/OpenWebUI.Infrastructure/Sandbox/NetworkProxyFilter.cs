@@ -61,9 +61,12 @@ public sealed class SandboxProxyServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _stop = new();
 
-    /// <summary>Hosts negados nesta instância (ordem de chegada).</summary>
-    public readonly System.Collections.Concurrent
-        .ConcurrentDictionary<string, byte> DeniedHosts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent
+        .ConcurrentDictionary<string, byte> _deniedHosts = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Hosts negados nesta instância (sandbox.network.denied).</summary>
+    public IReadOnlyCollection<string> DeniedHosts =>
+        _deniedHosts.Keys.ToArray();
 
     public int Port { get; }
 
@@ -95,7 +98,7 @@ public sealed class SandboxProxyServer : IAsyncDisposable
             catch (OperationCanceledException) { return; }
             catch (SocketException) { return; }
             catch (ObjectDisposedException) { return; }
-            _ = Task.Run(() => HandleAsync(client), CancellationToken.None);
+            _ = Task.Run(() => HandleAsync(client), _stop.Token);
         }
     }
 
@@ -141,7 +144,7 @@ public sealed class SandboxProxyServer : IAsyncDisposable
             {
                 if (host is not null)
                 {
-                    DeniedHosts.TryAdd(host, 1);
+                    _deniedHosts.TryAdd(host, 1);
                 }
                 await WriteAsync(stream,
                     "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
@@ -150,7 +153,7 @@ public sealed class SandboxProxyServer : IAsyncDisposable
 
             if (parts[0].Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
             {
-                await TunnelConnectAsync(stream, host!, request);
+                await TunnelConnectAsync(stream, host, request);
             }
             else
             {
@@ -173,14 +176,10 @@ public sealed class SandboxProxyServer : IAsyncDisposable
         {
             return uri.Host;
         }
-        foreach (var line in request.Split("\r\n"))
-        {
-            if (line.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
-            {
-                return line[5..].Trim().Split(':')[0];
-            }
-        }
-        return null;
+        return request.Split("\r\n")
+            .Where(l => l.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))
+            .Select(l => l[5..].Trim().Split(':')[0])
+            .FirstOrDefault();
     }
 
     private static async Task TunnelConnectAsync(

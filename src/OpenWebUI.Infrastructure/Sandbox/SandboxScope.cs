@@ -31,7 +31,7 @@ public sealed record SandboxScope(
     /// Concessões de domínio aprovadas na sessão (request_scope) —
     /// chave = <c>runId|workspace</c>, valor = conjunto de domínios.
     /// </summary>
-    public static readonly System.Collections.Concurrent.ConcurrentDictionary<
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
         string, System.Collections.Concurrent.ConcurrentDictionary<string, byte>>
         SessionDomainGrants = new(StringComparer.Ordinal);
 

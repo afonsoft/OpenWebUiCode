@@ -133,7 +133,7 @@ public class SandboxedExecTests
         Assert.Multiple(() =>
         {
             Assert.That(resp, Does.StartWith("HTTP/1.1 403"));
-            Assert.That(proxy.DeniedHosts.Keys, Does.Contain("evil.com"));
+            Assert.That(proxy.DeniedHosts, Does.Contain("evil.com"));
         });
     }
 

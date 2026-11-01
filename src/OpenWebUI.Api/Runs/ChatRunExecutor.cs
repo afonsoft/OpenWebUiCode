@@ -2088,7 +2088,7 @@ public sealed class ChatRunExecutor(
 
         var preset = gateInfo?.ApprovalPreset ?? "approve-mutations";
         if (!forcePrompt
-            && await AutoPresetDecisionAsync(run, tool, call, preset, builtinContext, ct) is { } autoDecision)
+            && await AutoPresetDecisionAsync(run, tool, call, preset, ct) is { } autoDecision)
         {
             return autoDecision;
         }
@@ -2384,7 +2384,7 @@ public sealed class ChatRunExecutor(
     /// </summary>
     private async Task<ToolGateDecision?> AutoPresetDecisionAsync(
         ChatRun run, Tool tool, ProviderToolCall call, string preset,
-        BuiltinToolContext builtinContext, CancellationToken ct)
+        CancellationToken ct)
     {
         // Preset autonomous (SPEC-20261031-sandboxed-exec RF-004): tudo
         // permitido dentro do sandbox; fora dele (tool excluída ou sandbox

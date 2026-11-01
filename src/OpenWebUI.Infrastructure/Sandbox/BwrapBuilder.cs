@@ -11,6 +11,9 @@ namespace OpenWebUI.Infrastructure.Sandbox;
 /// </summary>
 public static class BwrapBuilder
 {
+    private const string Setenv = "--setenv";
+    private const string Robind = "--ro-bind";
+
     private static readonly string[] RoSystemPaths =
         ["/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc/resolv.conf",
          "/etc/ssl", "/etc/ca-certificates", "/etc/hosts", "/etc/nsswitch.conf"];
@@ -22,24 +25,16 @@ public static class BwrapBuilder
     /// <summary>Path do binário bwrap, ou <c>null</c> se ausente.</summary>
     public static string? FindBwrap()
     {
-        foreach (var c in BwrapCandidates)
+        var hit = BwrapCandidates.FirstOrDefault(File.Exists);
+        if (hit is not null)
         {
-            if (File.Exists(c))
-            {
-                return c;
-            }
+            return hit;
         }
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in path.Split(Path.PathSeparator,
-            StringSplitOptions.RemoveEmptyEntries))
-        {
-            var p = Path.Join(dir, "bwrap");
-            if (File.Exists(p))
-            {
-                return p;
-            }
-        }
-        return null;
+        return path
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(dir => Path.Join(dir, "bwrap"))
+            .FirstOrDefault(File.Exists);
     }
 
     /// <summary>bwrap presente + Linux = sandbox disponível.</summary>
@@ -72,26 +67,35 @@ public static class BwrapBuilder
         args.Add("--die-with-parent");
         args.Add("--new-session");
 
-        // Sistema essencial read-only.
-        foreach (var p in RoSystemPaths)
+        AddFilesystemBinds(args, workspacePath, scope);
+        AddFakeHome(args);
+        AddNetwork(args, scope, proxyPort);
+        AddEnv(args, env);
+
+        args.Add("--");
+        args.Add("/bin/sh");
+        args.Add("-c");
+        args.Add(command);
+        return psi;
+    }
+
+    /// <summary>Binds de filesystem: sistema ro, workspace+escopos rw,
+    /// deny-reads ocultos (deny sempre vence).</summary>
+    private static void AddFilesystemBinds(
+        IList<string> args, string workspacePath, SandboxScope scope)
+    {
+        foreach (var p in RoSystemPaths.Where(p =>
+            File.Exists(p) || Directory.Exists(p)))
         {
-            if (File.Exists(p) || Directory.Exists(p))
-            {
-                args.Add("--ro-bind"); args.Add(p); args.Add(p);
-            }
+            args.Add(Robind); args.Add(p); args.Add(p);
         }
 
-        // Workspace rw + escopos Write extras.
         args.Add("--bind"); args.Add(workspacePath); args.Add(workspacePath);
-        foreach (var w in scope.WriteScopes)
+        foreach (var w in scope.WriteScopes.Where(Directory.Exists))
         {
-            if (Directory.Exists(w))
-            {
-                args.Add("--bind"); args.Add(w); args.Add(w);
-            }
+            args.Add("--bind"); args.Add(w); args.Add(w);
         }
 
-        // Deny wins: arquivos → /dev/null por cima; diretórios → tmpfs.
         foreach (var deny in scope.DenyReads)
         {
             var full = Path.IsPathRooted(deny)
@@ -103,51 +107,55 @@ public static class BwrapBuilder
             }
             else
             {
-                args.Add("--ro-bind"); args.Add("/dev/null"); args.Add(full);
+                args.Add(Robind); args.Add("/dev/null"); args.Add(full);
             }
         }
+    }
 
-        // HOME falso mínimo.
+    /// <summary>HOME falso: tmpfs privada sobre o HOME real (não pública,
+    /// diferente de <c>/tmp</c>).</summary>
+    private static void AddFakeHome(IList<string> args)
+    {
         var home = Environment.GetFolderPath(
             Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrEmpty(home))
         {
             args.Add("--tmpfs"); args.Add(home);
+            args.Add(Setenv); args.Add("HOME"); args.Add(home);
         }
-        args.Add("--setenv"); args.Add("HOME"); args.Add("/tmp");
+    }
 
-        // Rede.
-        var netAllowed = scope.NetworkEnabled && proxyPort is not null;
-        if (netAllowed)
-        {
-            var proxy = $"http://127.0.0.1:{proxyPort}";
-            args.Add("--setenv"); args.Add("HTTP_PROXY"); args.Add(proxy);
-            args.Add("--setenv"); args.Add("HTTPS_PROXY"); args.Add(proxy);
-            args.Add("--setenv"); args.Add("ALL_PROXY"); args.Add(proxy);
-            args.Add("--setenv"); args.Add("http_proxy"); args.Add(proxy);
-            args.Add("--setenv"); args.Add("https_proxy"); args.Add(proxy);
-            args.Add("--setenv"); args.Add("all_proxy"); args.Add(proxy);
-            args.Add("--setenv"); args.Add("NO_PROXY");
-            args.Add("localhost,127.0.0.1,::1");
-        }
-        else
+    /// <summary>Rede: proxy allowlisted via envs ou <c>--unshare-net</c>.</summary>
+    private static void AddNetwork(
+        IList<string> args, SandboxScope scope, int? proxyPort)
+    {
+        if (!scope.NetworkEnabled || proxyPort is null)
         {
             args.Add("--unshare-net");
+            return;
         }
-
-        // Env resolvida (secrets mascarados na saída pelo runner).
-        if (env is not null)
+        var proxy = $"http://127.0.0.1:{proxyPort}";
+        foreach (var key in
+            new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                    "http_proxy", "https_proxy", "all_proxy" })
         {
-            foreach (var (k, v) in env)
-            {
-                args.Add("--setenv"); args.Add(k); args.Add(v);
-            }
+            args.Add(Setenv); args.Add(key); args.Add(proxy);
         }
+        args.Add(Setenv); args.Add("NO_PROXY");
+        args.Add("localhost,127.0.0.1,::1");
+    }
 
-        args.Add("--");
-        args.Add("/bin/sh");
-        args.Add("-c");
-        args.Add(command);
-        return psi;
+    /// <summary>Env resolvida (secrets mascarados na saída pelo runner).</summary>
+    private static void AddEnv(
+        IList<string> args, IReadOnlyDictionary<string, string>? env)
+    {
+        if (env is null)
+        {
+            return;
+        }
+        foreach (var (k, v) in env)
+        {
+            args.Add(Setenv); args.Add(k); args.Add(v);
+        }
     }
 }
