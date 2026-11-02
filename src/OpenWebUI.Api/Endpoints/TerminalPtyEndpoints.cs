@@ -311,78 +311,11 @@ public static class TerminalPtyEndpoints
         Task Send(object payload) =>
             SendJsonAsync(socket, sendLock, payload, ct);
 
-        async Task AttachAsync(string sid)
-        {
-            if (handles.ContainsKey(sid))
-            {
-                return;
-            }
+        Task AttachAsync(string sid) =>
+            AttachMuxAsync(uid, sid, deps, handles, Send);
 
-            var h = deps.Terminals.Attach(
-                uid, sid,
-                chunk => Send(new { type = "output", sid, data = chunk }),
-                code => Send(new { type = "exit", sid, code }));
-            if (h is null)
-            {
-                await Send(new { type = "error", sid, detail = "Sessão não encontrada." });
-                return;
-            }
-
-            handles[sid] = h;
-            if (h.Scrollback.Length > 0)
-            {
-                await Send(new { type = "output", sid, data = h.Scrollback });
-            }
-            if (h.ExitCode is { } code)
-            {
-                await Send(new { type = "exit", sid, code });
-            }
-        }
-
-        async Task CreateAsync(JsonElement root)
-        {
-            var chatId = root.TryGetProperty("chatId", out var ci)
-                && ci.ValueKind is JsonValueKind.String
-                    ? ci.GetString() : null;
-            var runId = root.TryGetProperty("runId", out var ri)
-                && ri.ValueKind is JsonValueKind.String
-                    ? ri.GetString() : null;
-            var wdir = root.TryGetProperty("workdir", out var wd)
-                && wd.ValueKind is JsonValueKind.String
-                    ? wd.GetString() : null;
-            var cols = root.TryGetProperty("cols", out var cc)
-                && cc.ValueKind is JsonValueKind.Number
-                && cc.TryGetInt32(out var ccv) ? ccv : 120;
-            var rows = root.TryGetProperty("rows", out var rr)
-                && rr.ValueKind is JsonValueKind.Number
-                && rr.TryGetInt32(out var rrv) ? rrv : 30;
-
-            var (resolved, resolveError) =
-                await ResolveBoundWorkdirAsync(
-                    uid, wdir, runId, chatId, deps, ct);
-            if (resolveError is not null)
-            {
-                await Send(new { type = "error", detail = "workdir fora de data/." });
-                return;
-            }
-
-            var secrets = await deps.AgentEnv.BuildAsync(uid, ct);
-            try
-            {
-                var newSid = deps.Terminals.Create(
-                    uid, cols, rows, secrets.Vars,
-                    resolved, chatId, runId);
-                await Send(new
-                {
-                    type = "created", sid = newSid, chatId, runId,
-                });
-                await AttachAsync(newSid);
-            }
-            catch (InvalidOperationException ex)
-            {
-                await Send(new { type = "error", detail = ex.Message });
-            }
-        }
+        Task CreateAsync(JsonElement root) =>
+            CreateMuxAsync(uid, root, deps, handles, Send, ct);
 
         // Lista inicial — o cliente abre abas para sessões já vivas.
         await Send(new
@@ -419,46 +352,8 @@ public static class TerminalPtyEndpoints
                     && s.ValueKind is JsonValueKind.String
                         ? s.GetString() : null;
 
-                switch (type)
-                {
-                    case "attach" when sid is not null:
-                        await AttachAsync(sid);
-                        break;
-                    case "detach" when sid is not null:
-                        if (handles.Remove(sid, out var det))
-                        {
-                            det.Dispose();
-                        }
-                        break;
-                    case "input" when sid is not null
-                        && handles.TryGetValue(sid, out var inp)
-                        && root.TryGetProperty("data", out var data):
-                        await inp.WriteAsync(
-                            data.ValueKind is JsonValueKind.String
-                                ? data.GetString() ?? string.Empty
-                                : string.Empty);
-                        break;
-                    case "resize" when sid is not null
-                        && handles.TryGetValue(sid, out var rsz):
-                        await rsz.ResizeAsync(
-                            root.TryGetProperty("cols", out var c)
-                                && c.ValueKind is JsonValueKind.Number
-                                && c.TryGetInt32(out var cv) ? cv : 120,
-                            root.TryGetProperty("rows", out var r)
-                                && r.ValueKind is JsonValueKind.Number
-                                && r.TryGetInt32(out var rv) ? rv : 30);
-                        break;
-                    case "kill" when sid is not null:
-                        if (handles.Remove(sid, out var kh))
-                        {
-                            kh.Dispose();
-                        }
-                        await deps.Terminals.KillAsync(uid, sid);
-                        break;
-                    case "create":
-                        await CreateAsync(root);
-                        break;
-                }
+                await DispatchMuxMessageAsync(
+                    type, sid, root, handles, deps, uid, AttachAsync, CreateAsync);
             }
         }
         catch (OperationCanceledException)
@@ -482,6 +377,132 @@ public static class TerminalPtyEndpoints
         }
 
         return Results.Empty;
+    }
+
+    /// <summary>Attach de uma sessão viva do usuário no mux: replays
+    /// scrollback e exit-code quando já encerrou.</summary>
+    private static async Task AttachMuxAsync(
+        string uid, string sid, TerminalDeps deps,
+        Dictionary<string, TerminalSessionManager.SessionHandle> handles,
+        Func<object, Task> send)
+    {
+        if (handles.ContainsKey(sid))
+        {
+            return;
+        }
+        var h = deps.Terminals.Attach(
+            uid, sid,
+            chunk => send(new { type = "output", sid, data = chunk }),
+            code => send(new { type = "exit", sid, code }));
+        if (h is null)
+        {
+            await send(new { type = "error", sid, detail = "Sessão não encontrada." });
+            return;
+        }
+        handles[sid] = h;
+        if (h.Scrollback.Length > 0)
+        {
+            await send(new { type = "output", sid, data = h.Scrollback });
+        }
+        if (h.ExitCode is { } code)
+        {
+            await send(new { type = "exit", sid, code });
+        }
+    }
+
+    /// <summary>Frame <c>create</c>: resolve o workdir, cria a sessão PTY e
+    /// já anexa no mux.</summary>
+    private static async Task CreateMuxAsync(
+        string uid, JsonElement root, TerminalDeps deps,
+        Dictionary<string, TerminalSessionManager.SessionHandle> handles,
+        Func<object, Task> send, CancellationToken ct)
+    {
+        var chatId = root.TryGetProperty("chatId", out var ci)
+            && ci.ValueKind is JsonValueKind.String
+                ? ci.GetString() : null;
+        var runId = root.TryGetProperty("runId", out var ri)
+            && ri.ValueKind is JsonValueKind.String
+                ? ri.GetString() : null;
+        var wdir = root.TryGetProperty("workdir", out var wd)
+            && wd.ValueKind is JsonValueKind.String
+                ? wd.GetString() : null;
+        var cols = root.TryGetProperty("cols", out var cc)
+            && cc.ValueKind is JsonValueKind.Number
+            && cc.TryGetInt32(out var ccv) ? ccv : 120;
+        var rows = root.TryGetProperty("rows", out var rr)
+            && rr.ValueKind is JsonValueKind.Number
+            && rr.TryGetInt32(out var rrv) ? rrv : 30;
+
+        var (resolved, resolveError) =
+            await ResolveBoundWorkdirAsync(uid, wdir, runId, chatId, deps, ct);
+        if (resolveError is not null)
+        {
+            await send(new { type = "error", detail = "workdir fora de data/." });
+            return;
+        }
+
+        var secrets = await deps.AgentEnv.BuildAsync(uid, ct);
+        try
+        {
+            var newSid = deps.Terminals.Create(
+                uid, cols, rows, secrets.Vars, resolved, chatId, runId);
+            await send(new { type = "created", sid = newSid, chatId, runId });
+            await AttachMuxAsync(uid, newSid, deps, handles, send);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await send(new { type = "error", detail = ex.Message });
+        }
+    }
+
+    /// <summary>Dispatch de um frame do mux: attach/detach/input/resize/
+    /// kill/create.</summary>
+    private static async Task DispatchMuxMessageAsync(
+        string? type, string? sid, JsonElement root,
+        Dictionary<string, TerminalSessionManager.SessionHandle> handles,
+        TerminalDeps deps, string uid,
+        Func<string, Task> attachAsync, Func<JsonElement, Task> createAsync)
+    {
+        switch (type)
+        {
+            case "attach" when sid is not null:
+                await attachAsync(sid);
+                break;
+            case "detach" when sid is not null:
+                if (handles.Remove(sid, out var det))
+                {
+                    det.Dispose();
+                }
+                break;
+            case "input" when sid is not null
+                && handles.TryGetValue(sid, out var inp)
+                && root.TryGetProperty("data", out var data):
+                await inp.WriteAsync(
+                    data.ValueKind is JsonValueKind.String
+                        ? data.GetString() ?? string.Empty
+                        : string.Empty);
+                break;
+            case "resize" when sid is not null
+                && handles.TryGetValue(sid, out var rsz):
+                await rsz.ResizeAsync(
+                    root.TryGetProperty("cols", out var c)
+                        && c.ValueKind is JsonValueKind.Number
+                        && c.TryGetInt32(out var cv) ? cv : 120,
+                    root.TryGetProperty("rows", out var r)
+                        && r.ValueKind is JsonValueKind.Number
+                        && r.TryGetInt32(out var rv) ? rv : 30);
+                break;
+            case "kill" when sid is not null:
+                if (handles.Remove(sid, out var kh))
+                {
+                    kh.Dispose();
+                }
+                await deps.Terminals.KillAsync(uid, sid);
+                break;
+            case "create":
+                await createAsync(root);
+                break;
+        }
     }
 
     /// <summary>Interpreta um frame de controle; devolve o texto cru quando não é JSON.</summary>
