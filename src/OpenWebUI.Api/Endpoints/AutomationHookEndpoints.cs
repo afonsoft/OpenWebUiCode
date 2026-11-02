@@ -309,6 +309,18 @@ public static class AutomationHookEndpoints
         {
             return bindError;
         }
+        return await EnqueueHookRunAsync(
+            deps, db, hook, content, model, deliveryKey, eventType,
+            securityWarning, ct);
+    }
+
+    /// <summary>Monta a mensagem + a run do hook (persona vira system),
+    /// persiste tudo, grava a delivery "accepted" e enfileira.</summary>
+    private static async Task<IResult> EnqueueHookRunAsync(
+        HookFireDeps deps, AppDbContext db, AutomationHook hook,
+        string content, string model, string? deliveryKey, string? eventType,
+        string? securityWarning, CancellationToken ct)
+    {
         if (hook.AgentMode is { Length: > 0 } mode)
         {
             hook.Chat.Mode = mode;

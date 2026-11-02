@@ -258,24 +258,30 @@ public sealed class AgentDefinitionService(
             {
                 return;
             }
-            string raw;
-            try
-            {
-                var info = new FileInfo(file);
-                if (!info.Exists || info.Length == 0 || info.Length > MaxFileBytes)
-                {
-                    continue;
-                }
-                raw = File.ReadAllText(file);
-            }
-            catch (IOException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
-
-            if (TryParse(raw, file, source) is { } def)
+            if (ReadDefinition(file, source) is { } def)
             {
                 map[def.Name] = def;
             }
         }
+    }
+
+    /// <summary>Lê e faz o parse de um arquivo de definição — <c>null</c>
+    /// em arquivo ilegível, vazio/grande demais ou frontmatter inválido.</summary>
+    private AgentDefinition? ReadDefinition(string file, string source)
+    {
+        string raw;
+        try
+        {
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length == 0 || info.Length > MaxFileBytes)
+            {
+                return null;
+            }
+            raw = File.ReadAllText(file);
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+        return TryParse(raw, file, source);
     }
 
     /// <summary>

@@ -111,28 +111,32 @@ public class AutomationService(
         try
         {
             using var doc = JsonDocument.Parse(actionJson);
-            var e = doc.RootElement;
-            return actionKind switch
-            {
-                SkillKey => e.TryGetProperty(SkillKey, out var s) && s.ValueKind == JsonValueKind.String
-                    ? null : "ActionJson.skill (string) obrigatório.",
-                "mcp" => e.TryGetProperty("server", out var sv) && sv.ValueKind == JsonValueKind.String
-                    && e.TryGetProperty("tool", out var t) && t.ValueKind == JsonValueKind.String
-                    ? null : "ActionJson.server e ActionJson.tool (strings) obrigatórios.",
-                "reminder" => e.TryGetProperty("title", out var ti) && ti.ValueKind == JsonValueKind.String
-                    ? null : "ActionJson.title (string) obrigatório.",
-                "webhook" => e.TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String
-                    && Uri.TryCreate(u.GetString(), UriKind.Absolute, out var uri)
-                    && (uri.Scheme is "http" or "https")
-                    ? null : "ActionJson.url (http/https absoluta) obrigatório.",
-                _ => null,
-            };
+            return ValidateActionPayload(actionKind, doc.RootElement);
         }
         catch (JsonException)
         {
             return "ActionJson não é JSON válido.";
         }
     }
+
+    /// <summary>Shape exigido do payload por kind (RF-008) —
+    /// <c>null</c> quando válido.</summary>
+    private static string? ValidateActionPayload(string actionKind, JsonElement e) =>
+        actionKind switch
+        {
+            SkillKey => e.TryGetProperty(SkillKey, out var s) && s.ValueKind == JsonValueKind.String
+                ? null : "ActionJson.skill (string) obrigatório.",
+            "mcp" => e.TryGetProperty("server", out var sv) && sv.ValueKind == JsonValueKind.String
+                && e.TryGetProperty("tool", out var t) && t.ValueKind == JsonValueKind.String
+                ? null : "ActionJson.server e ActionJson.tool (strings) obrigatórios.",
+            "reminder" => e.TryGetProperty("title", out var ti) && ti.ValueKind == JsonValueKind.String
+                ? null : "ActionJson.title (string) obrigatório.",
+            "webhook" => e.TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String
+                && Uri.TryCreate(u.GetString(), UriKind.Absolute, out var uri)
+                && (uri.Scheme is "http" or "https")
+                ? null : "ActionJson.url (http/https absoluta) obrigatório.",
+            _ => null,
+        };
 
     /// <summary>Executa a automação agora e registra o run; erros viram run failed.</summary>
     public async Task<AutomationRun> RunNowAsync(
