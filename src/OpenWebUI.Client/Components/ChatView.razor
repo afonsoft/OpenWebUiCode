@@ -2421,6 +2421,29 @@
         }
     }
 
+    /// <summary>Prefixo <c>/plan</c>: liga o modo plan e devolve o texto
+    /// restante; <c>Handled</c> quando era só a troca de modo (composer
+    /// esvaziado, nada enviado).</summary>
+    private async Task<(bool Handled, string Text)> TryHandlePlanPrefixAsync(
+        string text, List<string> fileIds, List<string>? mentionPaths)
+    {
+        if (!text.StartsWith("/plan", StringComparison.OrdinalIgnoreCase)
+            || (text.Length != "/plan".Length && !char.IsWhiteSpace(text["/plan".Length])))
+        {
+            return (false, text);
+        }
+        await SetAgentModeAsync("plan");
+        var rest = RepoSlashCommands.ArgsAfter(text);
+        if (rest.Length == 0 && fileIds.Count == 0 && mentionPaths is null)
+        {
+            // Só troca de modo — esvazia o composer e encerra sem enviar.
+            _input = string.Empty;
+            _promptSuggestions = [];
+            return (true, rest);
+        }
+        return (false, rest);
+    }
+
     private async Task SendAsync()
     {
         var text = _input.Trim();
@@ -2433,19 +2456,13 @@
         var mentionPaths = _mentionPaths.Count > 0 ? _mentionPaths.ToList() : null;
         // SPEC-20261015-plan-spec-sdd RF-003: "/plan <requisito>" enviado sem
         // passar pela sugestão também liga o modo plan — o restante vira a msg.
-        if (text.StartsWith("/plan", StringComparison.OrdinalIgnoreCase)
-            && (text.Length == "/plan".Length || char.IsWhiteSpace(text["/plan".Length])))
+        var (planHandled, planText) = await TryHandlePlanPrefixAsync(
+            text, fileIds, mentionPaths);
+        if (planHandled)
         {
-            await SetAgentModeAsync("plan");
-            text = RepoSlashCommands.ArgsAfter(text);
-            if (text.Length == 0 && fileIds.Count == 0 && mentionPaths is null)
-            {
-                // Só troca de modo — esvazia o composer e encerra sem enviar.
-                _input = string.Empty;
-                _promptSuggestions = [];
-                return;
-            }
+            return;
         }
+        text = planText;
         if ((text.Length == 0 && fileIds.Count == 0 && mentionPaths is null) || string.IsNullOrEmpty(_model))
         {
             return;
