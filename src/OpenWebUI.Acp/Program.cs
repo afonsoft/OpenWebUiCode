@@ -86,7 +86,7 @@ async Task PromptAsync(JsonElement? id, JsonElement? parms)
     var sessionId = parms is { } p1
         && p1.TryGetProperty("sessionId", out var s)
         ? s.GetString() : null;
-    var prompt = ExtractPrompt(parms);
+    var prompt = AcpDispatch.ExtractPrompt(parms);
     if (sessionId is null || prompt is null)
     {
         ReplyError(id, -32602,
@@ -113,8 +113,8 @@ async Task PromptAsync(JsonElement? id, JsonElement? parms)
             $"run não iniciada{Detail(started)}");
         return;
     }
-    var stop = await RelayRunAsync(
-        sessionId, runId, CancellationToken.None);
+    var stop = await AcpDispatch.RelayRunAsync(
+        http, Send, RpcAsync, sessionId, runId, CancellationToken.None);
     Reply(id, new { stopReason = stop });
 }
 
@@ -143,124 +143,5 @@ while ((line = await Console.In.ReadLineAsync()) is not null)
         await AcpDispatch.HandleAsync(
             req.RootElement, token, Reply, ReplyError,
             NewSessionAsync, PromptAsync);
-    }
-}
-
-static string? ExtractPrompt(JsonElement? parms)
-{
-    if (parms is not { } p
-        || !p.TryGetProperty("prompt", out var arr)
-        || arr.ValueKind != JsonValueKind.Array)
-    {
-        return null;
-    }
-    var parts = new List<string>();
-    foreach (var block in arr.EnumerateArray())
-    {
-        if (block.TryGetProperty("type", out var t)
-            && t.GetString() == "text"
-            && block.TryGetProperty("text", out var txt))
-        {
-            parts.Add(txt.GetString() ?? "");
-        }
-    }
-    return parts.Count == 0 ? null : string.Join("\n", parts);
-}
-
-// Relê o stream SSE da run e reemite deltas como session/update.
-async Task<string> RelayRunAsync(
-    string sessionId, string runId, CancellationToken ct)
-{
-    try
-    {
-        using var resp = await http.SendAsync(
-            new HttpRequestMessage(HttpMethod.Get,
-                $"/api/v1/chats/{sessionId}/runs/{runId}/stream"),
-            HttpCompletionOption.ResponseHeadersRead, ct);
-        resp.EnsureSuccessStatusCode();
-        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(stream);
-        string? sline;
-        while ((sline = await reader.ReadLineAsync(ct)) is not null)
-        {
-            if (!sline.StartsWith("data:", StringComparison.Ordinal))
-            {
-                continue;
-            }
-            var data = sline[5..].Trim();
-            if (data.Length == 0 || data == "[DONE]")
-            {
-                continue;
-            }
-            try
-            {
-                var evt = JsonDocument.Parse(data);
-                var type = evt.RootElement.TryGetProperty("type", out var t)
-                    ? t.GetString() : null;
-                if (type is "content.delta" or "content_delta"
-                    && evt.RootElement.TryGetProperty("delta", out var d))
-                {
-                    Send(new
-                    {
-                        jsonrpc = "2.0",
-                        method = "session/update",
-                        @params = new
-                        {
-                            sessionId,
-                            update = new
-                            {
-                                sessionUpdate = "agent_message_chunk",
-                                content = new
-                                {
-                                    type = "text",
-                                    text = d.GetString() ?? "",
-                                },
-                            },
-                        },
-                    });
-                }
-                else if (type is "run.completed" or "completed")
-                {
-                    return EndTurnReason;
-                }
-                else if (type is "run.failed" or "failed")
-                {
-                    return "error";
-                }
-                else if (type is "run.stopped" or "stopped")
-                {
-                    return "cancelled";
-                }
-            }
-            catch (JsonException)
-            {
-                // linha não-JSON — ignora
-            }
-        }
-        return EndTurnReason;
-    }
-    catch (Exception)
-    {
-        // Fallback: polling do status até terminal.
-        for (var i = 0; i < 720; i++)
-        {
-            await Task.Delay(500, ct);
-            try
-            {
-                var r = await RpcAsync("runs.get",
-                    new { runId }, ct);
-                var status = r is { } el
-                    && el.TryGetProperty("status", out var s)
-                    ? s.GetString() : null;
-                if (status is "completed") return EndTurnReason;
-                if (status is "failed") return "error";
-                if (status is "stopped" or "interrupted") return "cancelled";
-            }
-            catch (Exception)
-            {
-                // tenta de novo no próximo tick
-            }
-        }
-        return EndTurnReason;
     }
 }

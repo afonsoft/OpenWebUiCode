@@ -214,39 +214,10 @@ public sealed class DelegateTaskBuiltinTool(
             && persEl.ValueKind == JsonValueKind.True;
         if (persistent)
         {
-            var sidekickId = ReadString(args, "sidekick_id", 100)?.Trim();
-            if (string.IsNullOrEmpty(sidekickId))
-            {
-                sidekickId = $"sk-{Guid.NewGuid():N}"[..20];
-            }
-            var gate2 = SidekickGate.For(context.RunId!, sidekickId);
-            await gate2.WaitAsync(ct);
-            try
-            {
-                var kvKey = $"r:{context.RunId}:sidekick:{sidekickId}";
-                var existingChat = await config.GetAsync<string?>(kvKey, null, ct);
-                if (existingChat is not null)
-                {
-                    return await ResumeInExistingChatAsync(
-                        new ResumeRequest(scope, db, context, parentRun,
-                            existingChat, fullPrompt, waitExplicit ?? true,
-                            joinTeam), ct);
-                }
-                var created = await CreateDispatchAsync(
-                    new DispatchRequest(args, config, agent, fullPrompt,
-                        waitExplicit, autoMerge, joinTeam,
-                        personaSkill?.Content, prompt),
-                    scope, db, context, parentRun, ct);
-                if (created.ChatId is { } createdChatId)
-                {
-                    await config.SetAsync(kvKey, createdChatId, ct);
-                }
-                return created.Result;
-            }
-            finally
-            {
-                gate2.Release();
-            }
+            return await PersistentSidekickDispatchAsync(
+                args, config, agent, personaSkill, prompt, fullPrompt,
+                waitExplicit, autoMerge, joinTeam,
+                scope, db, context, parentRun, ct);
         }
         if (resumeChatId is not null)
         {
@@ -261,6 +232,53 @@ public sealed class DelegateTaskBuiltinTool(
                 personaSkill?.Content, prompt),
             scope, db, context, parentRun, ct);
         return dispatch.Result;
+    }
+
+    /// <summary>
+    /// Caminho do sidekick persistente (SPEC-20261031-sidekick-orchestration
+    /// RF-002): kv do pai resolve o chat filho entre dispatches e o
+    /// semáforo serializa dispatches concorrentes do mesmo sidekick.
+    /// </summary>
+    private async Task<BuiltinToolResult> PersistentSidekickDispatchAsync(
+        JsonElement args, ConfigService config, AgentDefinition? agent,
+        Skill? personaSkill, string prompt, string fullPrompt,
+        bool? waitExplicit, bool autoMerge, bool joinTeam,
+        IServiceScope scope, AppDbContext db, BuiltinToolContext context,
+        ChatRun parentRun, CancellationToken ct)
+    {
+        var sidekickId = ReadString(args, "sidekick_id", 100)?.Trim();
+        if (string.IsNullOrEmpty(sidekickId))
+        {
+            sidekickId = $"sk-{Guid.NewGuid():N}"[..20];
+        }
+        var gate2 = SidekickGate.For(context.RunId!, sidekickId);
+        await gate2.WaitAsync(ct);
+        try
+        {
+            var kvKey = $"r:{context.RunId}:sidekick:{sidekickId}";
+            var existingChat = await config.GetAsync<string?>(kvKey, null, ct);
+            if (existingChat is not null)
+            {
+                return await ResumeInExistingChatAsync(
+                    new ResumeRequest(scope, db, context, parentRun,
+                        existingChat, fullPrompt, waitExplicit ?? true,
+                        joinTeam), ct);
+            }
+            var created = await CreateDispatchAsync(
+                new DispatchRequest(args, config, agent, fullPrompt,
+                    waitExplicit, autoMerge, joinTeam,
+                    personaSkill?.Content, prompt),
+                scope, db, context, parentRun, ct);
+            if (created.ChatId is { } createdChatId)
+            {
+                await config.SetAsync(kvKey, createdChatId, ct);
+            }
+            return created.Result;
+        }
+        finally
+        {
+            gate2.Release();
+        }
     }
 
     /// <summary>

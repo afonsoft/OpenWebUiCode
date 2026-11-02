@@ -1503,36 +1503,11 @@ public class ProviderService(
             throw MidStreamProviderError(errorNode);
         }
         var message = Prop(node, MessageKey);
-        var piece = CoerceText(Prop(message, ContentKey));
-        if (!string.IsNullOrEmpty(piece))
-        {
-            var visible = markupContent.Feed(piece);
-            if (visible.Length > 0)
-            {
-                content.Append(visible);
-                if (onDelta is not null)
-                {
-                    await onDelta(visible, ct);
-                }
-            }
-            if (onReasoning is not null
-                && markupContent.TakeReasoning() is { Length: > 0 } lifted)
-            {
-                await onReasoning(lifted, ct);
-            }
-        }
-
-        // Modelos "think" do Ollama emitem message.thinking separado
-        // de message.content na mesma linha NDJSON.
-        if (onReasoning is not null
-            && Str(Prop(message, ThinkingKey)) is { Length: > 0 } thought)
-        {
-            var clean = markupReasoning.Feed(thought);
-            if (clean.Length > 0)
-            {
-                await onReasoning(clean, ct);
-            }
-        }
+        await EmitOllamaContentAsync(
+            Prop(message, ContentKey), content, markupContent,
+            onDelta, onReasoning, ct);
+        await EmitOllamaThoughtAsync(
+            message, markupReasoning, onReasoning, ct);
 
         // Linha final done:true carrega prompt_eval_count/eval_count
         // (SPEC-20261016-agent-steps-usage RF-004).
@@ -1551,6 +1526,55 @@ public class ProviderService(
             doneReason = dr;
         }
         return (usage, doneReason);
+    }
+
+    /// <summary>Content de uma linha NDJSON: filtra markup, acumula e
+    /// emite onDelta + raciocínio içado pelo filtro.</summary>
+    private static async Task EmitOllamaContentAsync(
+        JsonNode? contentNode, StringBuilder content,
+        ReasoningMarkupFilter markupContent,
+        Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        var piece = CoerceText(contentNode);
+        if (string.IsNullOrEmpty(piece))
+        {
+            return;
+        }
+        var visible = markupContent.Feed(piece);
+        if (visible.Length > 0)
+        {
+            content.Append(visible);
+            if (onDelta is not null)
+            {
+                await onDelta(visible, ct);
+            }
+        }
+        if (onReasoning is not null
+            && markupContent.TakeReasoning() is { Length: > 0 } lifted)
+        {
+            await onReasoning(lifted, ct);
+        }
+    }
+
+    /// <summary><c>message.thinking</c> dos modelos "think" do Ollama —
+    /// canal separado do content na mesma linha NDJSON.</summary>
+    private static async Task EmitOllamaThoughtAsync(
+        JsonNode? message, ReasoningMarkupFilter markupReasoning,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        if (onReasoning is null
+            || Str(Prop(message, ThinkingKey)) is not { Length: > 0 } thought)
+        {
+            return;
+        }
+        var clean = markupReasoning.Feed(thought);
+        if (clean.Length > 0)
+        {
+            await onReasoning(clean, ct);
+        }
     }
 
     /// <summary>Monta os <see cref="ProviderToolCall"/> das linhas NDJSON do Ollama.</summary>

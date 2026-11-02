@@ -117,7 +117,15 @@ public class LspFakeServerTests
                 edit = {'range': {'start': {'line': 0, 'character': 0},
                                   'end': {'line': 0, 'character': 5}},
                         'newText': 'beta'}
-                if msg['params'].get('newName') == 'docchanges':
+                if msg['params'].get('newName') == 'docchanges+ops':
+                    send({'jsonrpc': '2.0', 'id': mid, 'result': {'documentChanges': [
+                        {'kind': 'create', 'uri': root + '/created.py'},
+                        {'kind': 'bogus'},
+                        {'textDocument': {'uri': td, 'version': None},
+                         'edits': [edit]},
+                        {'textDocument': {'uri': root + '/other.py', 'version': None},
+                         'edits': [edit]}]}})
+                elif msg['params'].get('newName') == 'docchanges':
                     send({'jsonrpc': '2.0', 'id': mid, 'result': {'documentChanges': [
                         {'textDocument': {'uri': td, 'version': None},
                          'edits': [edit]},
@@ -678,6 +686,24 @@ public class LspFakeServerTests
         });
         var disk = await File.ReadAllTextAsync(Path.Join(WorkdirOf(uid), "other.py"));
         Assert.That(disk, Is.EqualTo("beta\n"));
+    }
+
+    [Test]
+    public async Task Rename_DocumentChangesComOpsDeRecurso_IgnoraOps()
+    {
+        var uid = await BoundUserWithFilesAsync();
+        await OpenDocAsync();
+        var response = await _client.PostAsJsonAsync("/api/v1/workspace/lsp/rename",
+            new LspRenameRequest("app.py", 0, 1, "docchanges+ops", "app.py"));
+        var json = await ReadJsonAsync(response);
+        Assert.Multiple(() =>
+        {
+            Assert.That(json.GetProperty("available").GetBoolean(), Is.True);
+            Assert.That(json.GetProperty("filesUpdated").GetArrayLength(), Is.EqualTo(1));
+        });
+        var disk = await File.ReadAllTextAsync(Path.Join(WorkdirOf(uid), "other.py"));
+        Assert.That(disk, Is.EqualTo("beta\n"));
+        Assert.That(File.Exists(Path.Join(WorkdirOf(uid), "created.py")), Is.False);
     }
 
     [Test]
