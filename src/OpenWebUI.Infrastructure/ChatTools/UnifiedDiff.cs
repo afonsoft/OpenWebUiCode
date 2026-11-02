@@ -132,8 +132,11 @@ public static class UnifiedDiff
         foreach (var (hs, he) in hunks)
         {
             AdvanceTo(ops, hs, ref pos, ref ai, ref bi);
-            EmitHunk(new HunkCtx(sb, body, ops, a, b, hs, he, pos, ai, bi),
-                c => { pos = c.Pos; ai = c.Ai; bi = c.Bi; });
+            EmitHunk(new HunkCtx
+            {
+                Sb = sb, Body = body, Ops = ops, A = a, B = b,
+                Hs = hs, He = he, Pos = pos, Ai = ai, Bi = bi,
+            }, c => { pos = c.Pos; ai = c.Ai; bi = c.Bi; });
         }
 
         return sb.ToString().TrimEnd('\n');
@@ -193,20 +196,18 @@ public static class UnifiedDiff
     /// consumindo as ops da janela e avançando os cursores.</summary>
     /// <summary>Estado mutável do hunk em emissão (cursores pos/ai/bi
     /// viajam por referência dentro do objeto — S107).</summary>
-    private sealed class HunkCtx(
-        StringBuilder sb, StringBuilder body, List<Op> ops,
-        string[] a, string[] b, int hs, int he, int pos, int ai, int bi)
+    private sealed record HunkCtx
     {
-        public StringBuilder Sb { get; } = sb;
-        public StringBuilder Body { get; } = body;
-        public List<Op> Ops { get; } = ops;
-        public string[] A { get; } = a;
-        public string[] B { get; } = b;
-        public int Hs { get; } = hs;
-        public int He { get; } = he;
-        public int Pos { get; set; } = pos;
-        public int Ai { get; set; } = ai;
-        public int Bi { get; set; } = bi;
+        public required StringBuilder Sb { get; init; }
+        public required StringBuilder Body { get; init; }
+        public required List<Op> Ops { get; init; }
+        public required string[] A { get; init; }
+        public required string[] B { get; init; }
+        public required int Hs { get; init; }
+        public required int He { get; init; }
+        public int Pos { get; set; }
+        public int Ai { get; set; }
+        public int Bi { get; set; }
     }
 
     private static void EmitHunk(HunkCtx c, Action<HunkCtx> flush)
