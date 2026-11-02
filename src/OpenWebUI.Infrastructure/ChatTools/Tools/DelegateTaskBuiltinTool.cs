@@ -170,12 +170,8 @@ public sealed class DelegateTaskBuiltinTool(
         // coberto pelo gate da tool) — sem run filha.
         if (agentName?.StartsWith("ext:", StringComparison.OrdinalIgnoreCase) == true)
         {
-            var external = scope.ServiceProvider
-                .GetRequiredService<ExternalAgentService>();
-            var extResult = await external.RunDelegateAsync(
-                agentName["ext:".Length..], fullPrompt,
-                context.WorkspacePath, context.UserId, ct);
-            return new BuiltinToolResult(extResult.Result);
+            return await RunExternalAgentAsync(
+                scope, agentName["ext:".Length..], fullPrompt, context, ct);
         }
 
         var (gateError, allowedCsv) = await CheckSpawnGateAsync(
@@ -1099,6 +1095,19 @@ public sealed class DelegateTaskBuiltinTool(
             return null;
         }
         return s.Length > max ? s[..max] : s;
+    }
+
+    /// <summary>agent:"ext:{id}" — executa o CLI externo headless
+    /// confinado ao workdir (RF-005 external-agent-registry).</summary>
+    private async Task<BuiltinToolResult> RunExternalAgentAsync(
+        IServiceScope scope, string extId, string fullPrompt,
+        BuiltinToolContext context, CancellationToken ct)
+    {
+        var external = scope.ServiceProvider
+            .GetRequiredService<ExternalAgentService>();
+        var extResult = await external.RunDelegateAsync(
+            extId, fullPrompt, context.WorkspacePath, context.UserId, ct);
+        return new BuiltinToolResult(extResult.Result);
     }
 
     private static string Truncate(string value, int max) =>
