@@ -289,9 +289,16 @@ public sealed class ChatRunExecutor(
                 run, effective, outletRules, state, ct);
         }
 
-        await CompleteRunAsync(
-            new RunCompletion(run, request, user, state.Content,
-                state.LoopOutcome, state.ToolMessages, comboRef, sw), ct);
+        // Run já finalizada pelo veto de budget (FailAsync dentro do
+        // tool loop): CompleteRunAsync não pode reescrever o status
+        // para completed.
+        if (run.Status != ChatRunStatus.Failed)
+        {
+            await CompleteRunAsync(
+                new RunCompletion(run, request, user, state.Content,
+                    state.LoopOutcome, state.ToolMessages, comboRef, sw),
+                ct);
+        }
     }
 
     /// <summary>Tool loop com Stop hooks (SPEC-20261031-lifecycle-hooks
@@ -335,6 +342,9 @@ public sealed class ChatRunExecutor(
                         + (stopHook.Reason
                             ?? "continue trabalhando."))]
             };
+            // A mutação do effective precisa voltar ao record — a
+            // próxima iteração re-desestrutura de l.
+            l = l with { Effective = effective };
         }
     }
 
