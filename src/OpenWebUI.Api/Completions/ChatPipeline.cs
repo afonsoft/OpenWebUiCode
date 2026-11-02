@@ -836,26 +836,7 @@ public static class ChatPipeline
             {
                 if (ProviderRetryPolicy.IsContextOverflow(ex))
                 {
-                    var compacted = state.OverflowRetries < OverflowTargets.Length
-                        && callbacks?.OnOverflowCompactAsync is { } compact
-                        ? await compact(state.Messages,
-                            OverflowTargets[state.OverflowRetries], ct)
-                        : null;
-                    if (compacted is not { Count: > 0 })
-                    {
-                        throw new InvalidOperationException(
-                            "context-overflow: o provedor rejeitou o contexto "
-                            + "e a janela não pôde ser reduzida o suficiente.", ex);
-                    }
-                    state.OverflowRetries++;
-                    state.Messages.Clear();
-                    state.Messages.AddRange(compacted);
-                    log?.LogWarning(
-                        ex,
-                        "Context-overflow do provider: janela compactada para "
-                        + "~{Tail}% do tail ({Attempt}/3) e retentando.",
-                        (int)(OverflowTargets[state.OverflowRetries - 1] * 100),
-                        state.OverflowRetries);
+                    await CompactOverflowAsync(state, callbacks, log, ex, ct);
                     attempt++;
                     continue;
                 }
@@ -897,6 +878,36 @@ public static class ChatPipeline
                 attempt++;
             }
         }
+    }
+
+    /// <summary>RF-004 overflow → compact → retry: aplica o callback de
+    /// compactação com tail progressivo 70%/50%/35% (até 3x por run) e troca
+    /// a janela de mensagens. Lança quando não reduz o suficiente.</summary>
+    private static async Task CompactOverflowAsync(
+        ToolLoopMutable state, ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, Exception ex,
+        CancellationToken ct)
+    {
+        var compacted = state.OverflowRetries < OverflowTargets.Length
+            && callbacks?.OnOverflowCompactAsync is { } compact
+            ? await compact(state.Messages,
+                OverflowTargets[state.OverflowRetries], ct)
+            : null;
+        if (compacted is not { Count: > 0 })
+        {
+            throw new InvalidOperationException(
+                "context-overflow: o provedor rejeitou o contexto "
+                + "e a janela não pôde ser reduzida o suficiente.", ex);
+        }
+        state.OverflowRetries++;
+        state.Messages.Clear();
+        state.Messages.AddRange(compacted);
+        log?.LogWarning(
+            ex,
+            "Context-overflow do provider: janela compactada para "
+            + "~{Tail}% do tail ({Attempt}/3) e retentando.",
+            (int)(OverflowTargets[state.OverflowRetries - 1] * 100),
+            state.OverflowRetries);
     }
 
     /// <summary>Registra usage do step (RF-004) — só steps com usage
