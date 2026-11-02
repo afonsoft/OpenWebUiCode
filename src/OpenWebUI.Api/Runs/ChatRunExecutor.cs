@@ -328,6 +328,8 @@ public sealed class ChatRunExecutor(
         public ChatPipeline.ToolLoopOutcome? LoopOutcome;
         public IReadOnlyList<ChatCompletionMessage>? ToolMessages;
         public int CheckpointTurn;
+        public int CurrentStep;
+        public int CurrentMaxSteps;
     }
 
     /// <summary>Resolve o prelúdio da run — request, usuário, gate de
@@ -792,9 +794,41 @@ public sealed class ChatRunExecutor(
             await config.GetAsync<int?>(
                 $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
             ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
-        var currentStep = 0;
-        var currentMaxSteps = 0;
-        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+        var callbacks = BuildToolLoopCallbacks(
+            run, user, commandMode, chatMode, effective, tools, budgetLimits,
+            outletRules, builtinContext, state);
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            effective, tools, toolExecutor, providers, ct,
+            new ChatPipeline.ToolLoopOptions(
+                callbacks, builtinContext, run.UserId, logger, maxSteps,
+                toolExecutor.MaxParallel, resumeSeed));
+        if (outcome is not null)
+        {
+            await ApplyUsageMetaAsync(run, outcome, ct);
+        }
+        // Veto de budget (SPEC-20261023-run-cost-budgets RF-003):
+        // o uso já foi persistido acima — a run termina falha
+        // com a razão explicável, não silencia.
+        if (outcome?.BudgetExceededReason is { } budgetReason)
+        {
+            await FailAsync(run, budgetReason);
+            return (outcome, true);
+        }
+        return (outcome, false);
+    }
+
+    /// <summary>Callbacks do tool loop — fases/pause, steps, retry, overflow
+    /// compaction, tool events, budget veto, steer, advisor notes e deltas de
+    /// content/reasoning. Estado mutável vive em <paramref name="state"/>.</summary>
+    private ChatPipeline.ToolLoopCallbacks BuildToolLoopCallbacks(
+        ChatRun run, User user, string? commandMode, string chatMode,
+        ChatCompletionRequest effective, List<Tool> tools,
+        BudgetLimits budgetLimits,
+        List<(Regex Regex, string Replacement)> outletRules,
+        BuiltinToolContext builtinContext, RunStreamState state)
+    {
+        return new ChatPipeline.ToolLoopCallbacks(
+
             // Checkpoint de pausa em cada iteração do loop (RF-013):
             // fase nova só começa depois do resume.
             OnPhaseAsync: async (phase, label, t) =>
@@ -802,13 +836,13 @@ public sealed class ChatRunExecutor(
                 await pauses.WaitIfPausedAsync(run.Id, t);
                 // generating carrega {step,maxSteps} (RF-006).
                 await PublishPhaseAsync(run, phase, label,
-                    phase == "generating" ? currentStep : null,
-                    phase == "generating" ? currentMaxSteps : null);
+                    phase == "generating" ? state.CurrentStep : null,
+                    phase == "generating" ? state.CurrentMaxSteps : null);
             },
             OnStepAsync: async (step, max, t) =>
             {
-                currentStep = step;
-                currentMaxSteps = max;
+                state.CurrentStep = step;
+                state.CurrentMaxSteps = max;
                 await runEvents.AppendAsync(run.Id,
                     RunEventWriter.Types.StepStarted,
                     new { round = step, maxSteps = max }, t);
@@ -923,7 +957,7 @@ public sealed class ChatRunExecutor(
                 var outcome = await interceptors.RunPreStepAsync(
                     new OpenWebUI.Application.Interfaces.PreStepContext(
                         run.Id, run.ChatId, run.UserId,
-                        currentStep, claimed), t);
+                        state.CurrentStep, claimed), t);
                 if (!outcome.Rejected)
                 {
                     return outcome.Messages;
@@ -1005,24 +1039,6 @@ public sealed class ChatRunExecutor(
                 });
                 broadcaster.Publish(run.Id, $"data: {chunk}");
             });
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            effective, tools, toolExecutor, providers, ct,
-            new ChatPipeline.ToolLoopOptions(
-                callbacks, builtinContext, run.UserId, logger, maxSteps,
-                toolExecutor.MaxParallel, resumeSeed));
-        if (outcome is not null)
-        {
-            await ApplyUsageMetaAsync(run, outcome, ct);
-        }
-        // Veto de budget (SPEC-20261023-run-cost-budgets RF-003):
-        // o uso já foi persistido acima — a run termina falha
-        // com a razão explicável, não silencia.
-        if (outcome?.BudgetExceededReason is { } budgetReason)
-        {
-            await FailAsync(run, budgetReason);
-            return (outcome, true);
-        }
-        return (outcome, false);
     }
 
     /// <summary>Stream sem tool loop — deltas diretos com retentativa
