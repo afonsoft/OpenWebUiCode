@@ -398,22 +398,32 @@ public class ChatStreamService(HttpClient http, AuthService auth)
 
             var evt = eventName;
             eventName = null;
-            var (produced, error, parsed) = ParseDataPayload(payload, evt);
-            if (!parsed)
+            foreach (var item in ProduceEvents(payload, evt, lastSeq))
             {
-                continue;
+                yield return item;
             }
+        }
+    }
 
-            if (error is not null)
+    /// <summary>Eventos produzidos por uma linha `data:` (erro lança,
+    /// linha malformada não produz nada).</summary>
+    private IEnumerable<ChatStreamEvent> ProduceEvents(
+        string payload, string? evt, int lastSeq)
+    {
+        var (produced, error, parsed) = ParseDataPayload(payload, evt);
+        if (!parsed)
+        {
+            yield break;
+        }
+        if (error is not null)
+        {
+            throw new InvalidOperationException(error);
+        }
+        if (produced is not null)
+        {
+            foreach (var item in produced)
             {
-                throw new InvalidOperationException(error);
-            }
-            if (produced is not null)
-            {
-                foreach (var item in produced)
-                {
-                    yield return item with { Seq = lastSeq };
-                }
+                yield return item with { Seq = lastSeq };
             }
         }
     }

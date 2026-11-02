@@ -327,6 +327,20 @@ public static class TerminalPtyEndpoints
             }),
         });
 
+        await RunMuxLoopAsync(
+            socket, handles, deps, uid, AttachAsync, CreateAsync, ct);
+        return Results.Empty;
+    }
+
+    /// <summary>Loop de leitura do mux: recebe frames até close/idle-timeout/
+    /// queda do socket; desanexa (sem matar) todas as sessões no finally.</summary>
+    private static async Task RunMuxLoopAsync(
+        WebSocket socket,
+        Dictionary<string, TerminalSessionManager.SessionHandle> handles,
+        TerminalDeps deps, string uid,
+        Func<string, Task> attachAsync, Func<JsonElement, Task> createAsync,
+        CancellationToken ct)
+    {
         var buffer = new byte[16 * 1024];
         using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         idleCts.CancelAfter(WsIdleTimeout);
@@ -354,7 +368,7 @@ public static class TerminalPtyEndpoints
 
                 await DispatchMuxMessageAsync(
                     new MuxDispatch(type, sid, root, handles, deps, uid),
-                    AttachAsync, CreateAsync);
+                    attachAsync, createAsync);
             }
         }
         catch (OperationCanceledException)
@@ -376,8 +390,6 @@ public static class TerminalPtyEndpoints
                 h.Dispose();
             }
         }
-
-        return Results.Empty;
     }
 
     /// <summary>Attach de uma sessão viva do usuário no mux: replays

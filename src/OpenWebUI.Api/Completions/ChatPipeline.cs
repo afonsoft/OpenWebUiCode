@@ -567,15 +567,7 @@ public static class ChatPipeline
             // de bater no teto sem aviso. A mensagem sintética não vira
             // ChatMessage persistida (só vive no request desta rodada).
             var lastStep = state.Round == maxRounds - 1;
-            Func<List<ChatCompletionMessage>, ChatCompletionRequest> makeRoundRequest =
-                lastStep
-                    ? msgs => state.Request with
-                    {
-                        Messages = [..msgs, new ChatCompletionMessage(
-                            "user", MaxStepsPrompt)],
-                        Tools = null,
-                    }
-                    : msgs => state.Request with { Messages = msgs };
+            var makeRoundRequest = MakeRoundRequest(state, lastStep);
             var step = await CompleteResilientAsync(
                 state, makeRoundRequest, userId ?? builtinContext?.UserId,
                 providers, callbacks, log, ct);
@@ -631,6 +623,21 @@ public static class ChatPipeline
         return await CompleteToollessFinalAsync(
             state, userId ?? builtinContext?.UserId, providers,
             callbacks, log, maxRounds, ct);
+    }
+
+    /// <summary>Request factory do round: no último step permitido (RF-002)
+    /// injeta o prompt de wrap-up sem tools — encerramento gracioso.</summary>
+    private static Func<List<ChatCompletionMessage>, ChatCompletionRequest>
+        MakeRoundRequest(ToolLoopMutable state, bool lastStep)
+    {
+        return lastStep
+            ? msgs => state.Request with
+            {
+                Messages = [..msgs, new ChatCompletionMessage(
+                    "user", MaxStepsPrompt)],
+                Tools = null,
+            }
+            : msgs => state.Request with { Messages = msgs };
     }
 
     /// <summary>Estado mutável do loop reconstruído do plano de retomada
@@ -847,14 +854,7 @@ public static class ChatPipeline
                     ex, attempt, timeouts, options: providers.RetryOptions);
                 if (!decision.Retry)
                 {
-                    var code = decision.Reason switch
-                    {
-                        ProviderRetryReason.RateLimit => "rate-limit",
-                        ProviderRetryReason.Timeout => "provider-timeout",
-                        ProviderRetryReason.ServerError => "server-error",
-                        _ => null,
-                    };
-                    if (code is not null)
+                    if (RetryFailCode(decision) is { } code)
                     {
                         throw new InvalidOperationException(
                             $"{code}: a chamada ao provedor falhou após "
@@ -862,21 +862,45 @@ public static class ChatPipeline
                     }
                     throw;
                 }
-                log?.LogWarning(ex,
-                    "Completion falhou ({Reason}, tentativa {Attempt}/{Max}) — retry em {Delay}ms.",
-                    decision.Reason, attempt + 1, providers.RetryOptions.MaxAttempts,
-                    (int)decision.Delay.TotalMilliseconds);
-                if (callbacks?.OnRetryingAsync is { } onRetry)
-                {
-                    await onRetry(attempt + 1, decision.Delay,
-                        decision.Reason.ToString(), ct);
-                }
-                else
-                {
-                    await Task.Delay(decision.Delay, ct);
-                }
+                await NotifyRetryAsync(
+                    log, callbacks, providers, ex, attempt, decision, ct);
                 attempt++;
             }
+        }
+    }
+
+    /// <summary>Código tipado da falha definitiva do retry loop —
+    /// <c>null</c> relança a exceção original com stack preservado.</summary>
+    private static string? RetryFailCode(RetryDecision decision)
+    {
+        return decision.Reason switch
+        {
+            ProviderRetryReason.RateLimit => "rate-limit",
+            ProviderRetryReason.Timeout => "provider-timeout",
+            ProviderRetryReason.ServerError => "server-error",
+            _ => null,
+        };
+    }
+
+    /// <summary>Log + callback/fase do retry, ou delay direto quando a run
+    /// não declara OnRetryingAsync.</summary>
+    private static async Task NotifyRetryAsync(
+        Microsoft.Extensions.Logging.ILogger? log,
+        ToolLoopCallbacks? callbacks, ProviderService providers,
+        Exception ex, int attempt, RetryDecision decision, CancellationToken ct)
+    {
+        log?.LogWarning(ex,
+            "Completion falhou ({Reason}, tentativa {Attempt}/{Max}) — retry em {Delay}ms.",
+            decision.Reason, attempt + 1, providers.RetryOptions.MaxAttempts,
+            (int)decision.Delay.TotalMilliseconds);
+        if (callbacks?.OnRetryingAsync is { } onRetry)
+        {
+            await onRetry(attempt + 1, decision.Delay,
+                decision.Reason.ToString(), ct);
+        }
+        else
+        {
+            await Task.Delay(decision.Delay, ct);
         }
     }
 

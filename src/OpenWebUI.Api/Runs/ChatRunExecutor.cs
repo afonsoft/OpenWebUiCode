@@ -2079,21 +2079,12 @@ public sealed class ChatRunExecutor(
             .FirstOrDefaultAsync(ct);
         var mode = await ResolveEffectiveModeAsync(run, gateInfo?.Mode, ct);
 
-        // ask_user (RF-005): a pergunta é o próprio gate; a resposta volta
-        // como ToolGateDecision.Output e vira o resultado da tool. SPEC-15
-        // RF-003: presets autônomos respondem sozinhos quando há opções.
-        if (string.Equals(call.Name, "builtin:ask_user", StringComparison.OrdinalIgnoreCase))
+        // ask_user/plan_exit têm gates próprios (RF-005/RF-003).
+        if (await ChatToolGateAsync(
+                run, tools, call, builtinContext, mode,
+                gateInfo?.ApprovalPreset, ct) is { } chatTool)
         {
-            return await AskUserAsync(run, call, gateInfo?.ApprovalPreset, ct);
-        }
-
-        // plan_exit (RF-003): gate próprio — grava o plano, pergunta o
-        // dono e aprovado promove o chat a build. SPEC-15 RF-003: presets
-        // autônomos promovem sem perguntar.
-        if (string.Equals(call.Name, "builtin:plan_exit", StringComparison.OrdinalIgnoreCase))
-        {
-            return await PlanExitAsync(
-                run, tools, call, builtinContext, mode, gateInfo?.ApprovalPreset, ct);
+            return chatTool;
         }
 
         var tool = ToolExecutor.FindTool(tools, call.Name);
@@ -2157,21 +2148,52 @@ public sealed class ChatRunExecutor(
         }
 
         var preset = gateInfo?.ApprovalPreset ?? "approve-mutations";
+        if (await PresetGateDecisionAsync(
+                run, tool, call, preset, forcePrompt, ct) is { } presetDecision)
+        {
+            return presetDecision;
+        }
+
+        return await AskToolApprovalAsync(run, call, tool!, builtinContext, ct);
+    }
+
+    /// <summary>Gates das chat-tools com decisão própria: ask_user (RF-005)
+    /// e plan_exit (RF-003, aprovado promove o chat a build).</summary>
+    private async Task<ToolGateDecision?> ChatToolGateAsync(
+        ChatRun run, IReadOnlyList<Tool> tools, ProviderToolCall call,
+        BuiltinToolContext builtinContext, string mode,
+        string? approvalPreset, CancellationToken ct)
+    {
+        if (string.Equals(call.Name, "builtin:ask_user", StringComparison.OrdinalIgnoreCase))
+        {
+            return await AskUserAsync(run, call, approvalPreset, ct);
+        }
+        if (string.Equals(call.Name, "builtin:plan_exit", StringComparison.OrdinalIgnoreCase))
+        {
+            return await PlanExitAsync(
+                run, tools, call, builtinContext, mode, approvalPreset, ct);
+        }
+        return null;
+    }
+
+    /// <summary>Decisões do preset: regras determinísticas do preset e o
+    /// juiz LLM do smart (SPEC-20261031-smart-permission-llm) — fail-safe
+    /// devolve <c>null</c> e a call segue para a fila do dono.</summary>
+    private async Task<ToolGateDecision?> PresetGateDecisionAsync(
+        ChatRun run, Tool tool, ProviderToolCall call, string preset,
+        bool forcePrompt, CancellationToken ct)
+    {
         if (!forcePrompt
             && await AutoPresetDecisionAsync(run, tool, call, preset, ct) is { } autoDecision)
         {
             return autoDecision;
         }
-
-        // Juiz LLM do preset smart (SPEC-20261031-smart-permission-llm):
-        // só decide o que a regra determinística não cobriu — fail-safe ask.
-        if (preset == SmartPreset && tool is not null
+        if (preset == SmartPreset
             && await SmartJudgeDecisionAsync(run, call, ct) is { } smartDecision)
         {
             return smartDecision;
         }
-
-        return await AskToolApprovalAsync(run, call, tool!, builtinContext, ct);
+        return null;
     }
 
     /// <summary>Juiz LLM do preset smart — <c>allow</c>/<c>deny</c> resolvem,
@@ -2352,44 +2374,61 @@ public sealed class ChatRunExecutor(
         var name = PermissionRuleset.BuiltinName(call.Name);
         if (name is "apply_patch")
         {
-            var patch = JsonField(call.ArgumentsJson, "patch");
-            if (string.IsNullOrWhiteSpace(patch))
+            foreach (var p in PatchCandidatePaths(call))
             {
-                yield break;
-            }
-            var ops = ApplyPatch.Parse(patch, out _);
-            if (ops is null)
-            {
-                yield break;
-            }
-            foreach (var op in ops)
-            {
-                yield return op.Path;
-                if (op.MoveTo is { } moveTo)
-                {
-                    yield return moveTo;
-                }
+                yield return p;
             }
             yield break;
         }
         if (name.StartsWith("file_", StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var field in new[] { "path", "dir", "directory" })
+            foreach (var p in FileCandidatePaths(name, call))
             {
-                if (JsonField(call.ArgumentsJson, field) is { } p
-                    && !string.IsNullOrWhiteSpace(p))
-                {
-                    yield return p;
-                }
+                yield return p;
             }
-            if (name is "file_write" or "file_edit")
+        }
+    }
+
+    /// <summary>Paths dos ops de um apply_patch (path + move_to).</summary>
+    private static IEnumerable<string> PatchCandidatePaths(ProviderToolCall call)
+    {
+        var patch = JsonField(call.ArgumentsJson, "patch");
+        if (string.IsNullOrWhiteSpace(patch))
+        {
+            yield break;
+        }
+        var ops = ApplyPatch.Parse(patch, out _);
+        if (ops is null)
+        {
+            yield break;
+        }
+        foreach (var op in ops)
+        {
+            yield return op.Path;
+            if (op.MoveTo is { } moveTo)
             {
-                if (JsonField(call.ArgumentsJson, "move_to") is { } m
-                    && !string.IsNullOrWhiteSpace(m))
-                {
-                    yield return m;
-                }
+                yield return moveTo;
             }
+        }
+    }
+
+    /// <summary>Paths dos args de uma file_* (path/dir/directory/move_to).</summary>
+    private static IEnumerable<string> FileCandidatePaths(
+        string name, ProviderToolCall call)
+    {
+        foreach (var field in new[] { "path", "dir", "directory" })
+        {
+            if (JsonField(call.ArgumentsJson, field) is { } p
+                && !string.IsNullOrWhiteSpace(p))
+            {
+                yield return p;
+            }
+        }
+        if (name is "file_write" or "file_edit"
+            && JsonField(call.ArgumentsJson, "move_to") is { } m
+            && !string.IsNullOrWhiteSpace(m))
+        {
+            yield return m;
         }
     }
 

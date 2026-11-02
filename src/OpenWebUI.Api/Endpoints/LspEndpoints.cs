@@ -788,32 +788,53 @@ public static class LspEndpoints
         if (res.TryGetProperty("changes", out var changes)
             && changes.ValueKind == JsonValueKind.Object)
         {
-            foreach (var prop in changes.EnumerateObject())
+            foreach (var e in ChangesEdits(changes))
             {
-                var edits = ParseEdits(prop.Value);
-                if (edits.Count > 0)
-                {
-                    yield return (prop.Name, edits);
-                }
+                yield return e;
             }
         }
         if (res.TryGetProperty("documentChanges", out var docs)
             && docs.ValueKind == JsonValueKind.Array)
         {
-            foreach (var dc in docs.EnumerateArray())
+            foreach (var e in DocumentChangeEdits(docs))
             {
-                if (!dc.TryGetProperty("textDocument", out var td)
-                    || !td.TryGetProperty("uri", out var u)
-                    || !dc.TryGetProperty("edits", out var es))
-                {
-                    continue;
-                }
-                var edits = ParseEdits(es);
-                var uri = u.GetString();
-                if (uri is not null && edits.Count > 0)
-                {
-                    yield return (uri, edits);
-                }
+                yield return e;
+            }
+        }
+    }
+
+    /// <summary>Edits da forma <c>{changes:{uri:[edit]}}</c>.</summary>
+    private static IEnumerable<(string Uri, List<LspRenameEdit> Edits)>
+        ChangesEdits(JsonElement changes)
+    {
+        foreach (var prop in changes.EnumerateObject())
+        {
+            var edits = ParseEdits(prop.Value);
+            if (edits.Count > 0)
+            {
+                yield return (prop.Name, edits);
+            }
+        }
+    }
+
+    /// <summary>Edits da forma <c>{documentChanges:[{textDocument,
+    /// edits}]}</c> — ops de recurso ignoradas.</summary>
+    private static IEnumerable<(string Uri, List<LspRenameEdit> Edits)>
+        DocumentChangeEdits(JsonElement docs)
+    {
+        foreach (var dc in docs.EnumerateArray())
+        {
+            if (!dc.TryGetProperty("textDocument", out var td)
+                || !td.TryGetProperty("uri", out var u)
+                || !dc.TryGetProperty("edits", out var es))
+            {
+                continue;
+            }
+            var edits = ParseEdits(es);
+            var uri = u.GetString();
+            if (uri is not null && edits.Count > 0)
+            {
+                yield return (uri, edits);
             }
         }
     }
