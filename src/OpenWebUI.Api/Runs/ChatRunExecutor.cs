@@ -96,6 +96,9 @@ public sealed class ChatRunExecutor(
     /// <summary>Bytes de delta acumulados antes de gravar um checkpoint.</summary>
     private const int CheckpointBytes = 2048;
 
+    /// <summary>Preset de aprovação com juiz LLM (SPEC smart-permission).</summary>
+    private const string SmartPreset = "smart";
+
     /// <summary>Role das notas de sistema injetadas no histórico do loop.</summary>
     private const string RoleSystem = "system";
     private const string SseDoneLine = "data: [DONE]";
@@ -184,12 +187,7 @@ public sealed class ChatRunExecutor(
             }
             catch (OperationCanceledException ex)
             {
-                approvals.Cancel(run.Id);
-                await FinishAsync(run, state.Content.ToString(), ChatRunStatus.Stopped, state.ToolMessages);
-                broadcaster.Publish(run.Id, SseDoneLine);
-                logger.LogWarning(ex,
-                    "Run {RunId} cancelada após {Elapsed}ms com {Chars} chars parciais.",
-                    run.Id, sw.ElapsedMilliseconds, state.Content.Length);
+                await FinishCancelledAsync(run, ex, state, sw);
             }
             catch (Exception ex)
             {
@@ -212,6 +210,20 @@ public sealed class ChatRunExecutor(
 
             return;
         }
+    }
+
+    /// <summary>Run cancelada: aprovações pendentes resolvem, a run fecha
+    /// como Stopped com o conteúdo parcial, [DONE] e log.</summary>
+    private async Task FinishCancelledAsync(
+        ChatRun run, OperationCanceledException ex,
+        RunStreamState state, Stopwatch sw)
+    {
+        approvals.Cancel(run.Id);
+        await FinishAsync(run, state.Content.ToString(), ChatRunStatus.Stopped, state.ToolMessages);
+        broadcaster.Publish(run.Id, SseDoneLine);
+        logger.LogWarning(ex,
+            "Run {RunId} cancelada após {Elapsed}ms com {Chars} chars parciais.",
+            run.Id, sw.ElapsedMilliseconds, state.Content.Length);
     }
 
     /// <summary>Uma tentativa da run: modelos especiais, preparação,
@@ -328,6 +340,9 @@ public sealed class ChatRunExecutor(
         public ChatPipeline.ToolLoopOutcome? LoopOutcome;
         public IReadOnlyList<ChatCompletionMessage>? ToolMessages;
         public int CheckpointTurn;
+        public int CurrentStep;
+        public int CurrentMaxSteps;
+        public bool Answered;
     }
 
     /// <summary>Resolve o prelúdio da run — request, usuário, gate de
@@ -364,52 +379,17 @@ public sealed class ChatRunExecutor(
         // headless, delegate_task, persona, automação) — inclusive
         // retomadas.
         var budgetLimits = await budgets.EffectiveAsync(run.UserId, ct);
-        var inheritedTier = await config.GetAsync<int?>(
-            $"r:{run.Id}:agent.maxtier", null, ct);
-        var gate = await budgets.CheckStartAsync(
-            run.UserId, run.Model, ct, inheritedTier);
-        if (!gate.Allowed)
+        if (!await EnforceBudgetGateAsync(run, budgetLimits, ct))
         {
-            await FailAsync(run, $"{gate.Code}: {gate.Detail}");
             return null;
-        }
-        // Normaliza o tier efetivo no kv da run — delegate_task copia
-        // para os filhos e a cadeia só afunila (min(inherited, policy)).
-        if (await budgets.EnabledAsync(ct))
-        {
-            var effectiveTier = budgetLimits.MaxModelTier is { } pt
-                && inheritedTier is { } it ? Math.Min(pt, it)
-                : budgetLimits.MaxModelTier ?? inheritedTier;
-            if (effectiveTier != inheritedTier)
-            {
-                await config.SetAsync(
-                    $"r:{run.Id}:agent.maxtier", effectiveTier, ct);
-            }
         }
 
         // SPEC-20261016-run-recovery RF-003/004: run reivindicada pelo sweep
         // com eventos duráveis → replay do último snapshot + delta. Sem
         // snapshot válido o plano é null e a execução segue como nova.
-        var storedEvents = await db.ChatRunEvents.AsNoTracking()
-            .Where(e => e.RunId == run.Id)
-            .OrderBy(e => e.Seq)
-            .ToListAsync(ct);
-        var resumePlan = storedEvents.Count > 0
-            ? RunRecoveryPlanner.Replay(storedEvents)
-            : null;
-        if (resumePlan is null
-            && storedEvents.Any(e => e.Type == RunEventWriter.Types.Snapshot))
+        var (resumePlan, corrupted) = await LoadResumePlanAsync(run, ct);
+        if (corrupted)
         {
-            // RF-003 fallback: snapshot durável existe mas não desserializa
-            // — estado corrompido; interrompe em vez de re-executar sobre
-            // um histórico que não dá para reconstruir.
-            run.Status = ChatRunStatus.Interrupted;
-            run.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            run.Error ??= "Estado de retomada corrompido (snapshot ilegível).";
-            await db.SaveChangesAsync(CancellationToken.None);
-            broadcaster.Publish(run.Id,
-                $"data: {JsonSerializer.Serialize(new { error = run.Error })}");
-            broadcaster.Publish(run.Id, SseDoneLine);
             return null;
         }
 
@@ -436,6 +416,63 @@ public sealed class ChatRunExecutor(
         request = overridden;
 
         return new RunPrelude(request, user, budgetLimits, resumePlan, commandMode);
+    }
+
+    /// <summary>Gate de budget pré-run (RF-002/004) + normalização do tier
+    /// efetivo no kv da run — delegate_task copia aos filhos e a cadeia só
+    /// afunila (min(inherited, policy)).</summary>
+    private async Task<bool> EnforceBudgetGateAsync(
+        ChatRun run, BudgetLimits budgetLimits, CancellationToken ct)
+    {
+        var inheritedTier = await config.GetAsync<int?>(
+            $"r:{run.Id}:agent.maxtier", null, ct);
+        var gate = await budgets.CheckStartAsync(
+            run.UserId, run.Model, ct, inheritedTier);
+        if (!gate.Allowed)
+        {
+            await FailAsync(run, $"{gate.Code}: {gate.Detail}");
+            return false;
+        }
+        if (await budgets.EnabledAsync(ct))
+        {
+            var effectiveTier = budgetLimits.MaxModelTier is { } pt
+                && inheritedTier is { } it ? Math.Min(pt, it)
+                : budgetLimits.MaxModelTier ?? inheritedTier;
+            if (effectiveTier != inheritedTier)
+            {
+                await config.SetAsync(
+                    $"r:{run.Id}:agent.maxtier", effectiveTier, ct);
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Replay do último snapshot + delta para retomada (RF-003/004).
+    /// <c>Corrupted</c>: snapshot durável existe mas não desserializa — a run
+    /// é interrompida em vez de re-executar sobre histórico irreconstruível.</summary>
+    private async Task<(RunResumePlan? Plan, bool Corrupted)> LoadResumePlanAsync(
+        ChatRun run, CancellationToken ct)
+    {
+        var storedEvents = await db.ChatRunEvents.AsNoTracking()
+            .Where(e => e.RunId == run.Id)
+            .OrderBy(e => e.Seq)
+            .ToListAsync(ct);
+        var resumePlan = storedEvents.Count > 0
+            ? RunRecoveryPlanner.Replay(storedEvents)
+            : null;
+        if (resumePlan is not null
+            || !storedEvents.Any(e => e.Type == RunEventWriter.Types.Snapshot))
+        {
+            return (resumePlan, false);
+        }
+        run.Status = ChatRunStatus.Interrupted;
+        run.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        run.Error ??= "Estado de retomada corrompido (snapshot ilegível).";
+        await db.SaveChangesAsync(CancellationToken.None);
+        broadcaster.Publish(run.Id,
+            $"data: {JsonSerializer.Serialize(new { error = run.Error })}");
+        broadcaster.Publish(run.Id, SseDoneLine);
+        return (null, true);
     }
 
     /// <summary>Aplica overrides de command ao request: <c>subagent</c>
@@ -792,9 +829,41 @@ public sealed class ChatRunExecutor(
             await config.GetAsync<int?>(
                 $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
             ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
-        var currentStep = 0;
-        var currentMaxSteps = 0;
-        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+        var callbacks = BuildToolLoopCallbacks(
+            run, commandMode, effective, tools, budgetLimits,
+            outletRules, builtinContext, state);
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            effective, tools, toolExecutor, providers, ct,
+            new ChatPipeline.ToolLoopOptions(
+                callbacks, builtinContext, run.UserId, logger, maxSteps,
+                toolExecutor.MaxParallel, resumeSeed));
+        if (outcome is not null)
+        {
+            await ApplyUsageMetaAsync(run, outcome, ct);
+        }
+        // Veto de budget (SPEC-20261023-run-cost-budgets RF-003):
+        // o uso já foi persistido acima — a run termina falha
+        // com a razão explicável, não silencia.
+        if (outcome?.BudgetExceededReason is { } budgetReason)
+        {
+            await FailAsync(run, budgetReason);
+            return (outcome, true);
+        }
+        return (outcome, false);
+    }
+
+    /// <summary>Callbacks do tool loop — fases/pause, steps, retry, overflow
+    /// compaction, tool events, budget veto, steer, advisor notes e deltas de
+    /// content/reasoning. Estado mutável vive em <paramref name="state"/>.</summary>
+    private ChatPipeline.ToolLoopCallbacks BuildToolLoopCallbacks(
+        ChatRun run, string? commandMode,
+        ChatCompletionRequest effective, List<Tool> tools,
+        BudgetLimits budgetLimits,
+        List<(Regex Regex, string Replacement)> outletRules,
+        BuiltinToolContext builtinContext, RunStreamState state)
+    {
+        return new ChatPipeline.ToolLoopCallbacks(
+
             // Checkpoint de pausa em cada iteração do loop (RF-013):
             // fase nova só começa depois do resume.
             OnPhaseAsync: async (phase, label, t) =>
@@ -802,13 +871,13 @@ public sealed class ChatRunExecutor(
                 await pauses.WaitIfPausedAsync(run.Id, t);
                 // generating carrega {step,maxSteps} (RF-006).
                 await PublishPhaseAsync(run, phase, label,
-                    phase == "generating" ? currentStep : null,
-                    phase == "generating" ? currentMaxSteps : null);
+                    phase == "generating" ? state.CurrentStep : null,
+                    phase == "generating" ? state.CurrentMaxSteps : null);
             },
             OnStepAsync: async (step, max, t) =>
             {
-                currentStep = step;
-                currentMaxSteps = max;
+                state.CurrentStep = step;
+                state.CurrentMaxSteps = max;
                 await runEvents.AppendAsync(run.Id,
                     RunEventWriter.Types.StepStarted,
                     new { round = step, maxSteps = max }, t);
@@ -827,27 +896,8 @@ public sealed class ChatRunExecutor(
             // RF-004 provider-resilience: rejeição de janela cheia
             // → compacta o histórico do loop com tail progressivo e
             // devolve a janela reduzida; null = sem como reduzir.
-            OnOverflowCompactAsync: async (history, tailScale, t) =>
-            {
-                // RF-004 agent-prompt-pack: o modelo pediu extend_context
-                // explicitamente → pular esta compactação de emergência.
-                if (extendContext.TryConsume(run.Id))
-                {
-                    await runEvents.AppendAsync(run.Id,
-                        RunEventWriter.Types.Note,
-                        new { status = "context_extended" }, t);
-                    return history;
-                }
-                var didCompact = await compaction.MaybeCompactAsync(
-                    run.ChatId, history, effective.Model, t, run.UserId,
-                    force: true, tailScale: tailScale);
-                if (!didCompact)
-                {
-                    return null;
-                }
-                await PublishPhaseAsync(run, "compacting", null);
-                return await compaction.ApplyAsync(run.ChatId, history, t);
-            },
+            OnOverflowCompactAsync: (history, tailScale, t) =>
+                CompactOverflowAttemptAsync(run, effective, history, tailScale, t),
             OnCallAsync: async (call, t) =>
             {
                 await PublishToolCallAsync(run, call);
@@ -913,31 +963,8 @@ public sealed class ChatRunExecutor(
             // RF-A2 harness-seams: interceptors pre-step decidem
             // sobre as mensagens claimed antes de entrarem no
             // histórico enviado ao provider.
-            OnRoundBoundaryAsync: async (queuedOnly, t) =>
-            {
-                var claimed = await PollSteerAsync(run, queuedOnly, t);
-                if (claimed.Count == 0 || !interceptors.HasInterceptors)
-                {
-                    return claimed;
-                }
-                var outcome = await interceptors.RunPreStepAsync(
-                    new OpenWebUI.Application.Interfaces.PreStepContext(
-                        run.Id, run.ChatId, run.UserId,
-                        currentStep, claimed), t);
-                if (!outcome.Rejected)
-                {
-                    return outcome.Messages;
-                }
-                await runEvents.AppendAsync(run.Id,
-                    RunEventWriter.Types.InterceptorVeto,
-                    new
-                    {
-                        hook = "pre-step",
-                        interceptor = outcome.VetoedBy,
-                        reason = outcome.Reason,
-                    }, t);
-                return outcome.Messages;
-            },
+            OnRoundBoundaryAsync: (queuedOnly, t) =>
+                RoundBoundaryAsync(run, state, queuedOnly, t),
             // Conselhos do advisor viram notas system no round
             // seguinte — sem zerar o teto de iterações.
             OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
@@ -952,77 +979,134 @@ public sealed class ChatRunExecutor(
                     call, output, result, denied, t),
             // Texto do modelo sai delta a delta — sem isso a resposta
             // inteira só aparecia num blob no fim da run.
-            OnDeltaAsync: async (piece, t) =>
-            {
-                await pauses.WaitIfPausedAsync(run.Id, t);
-                var processed = piece;
-                foreach (var (regex, replacement) in outletRules)
-                {
-                    processed = regex.Replace(processed, replacement);
-                }
-                if (processed.Length == 0)
-                {
-                    return;
-                }
-                var chunk = JsonSerializer.Serialize(new
-                {
-                    choices = new[] { new { index = 0, delta = new { content = processed } } },
-                });
-                broadcaster.Publish(run.Id, $"data: {chunk}");
-                state.Content.Append(processed);
-                state.SinceCheckpoint += processed.Length;
-                if (state.SinceCheckpoint >= CheckpointBytes)
-                {
-                    run.PartialContent = state.Content.ToString();
-                    await db.SaveChangesAsync(CancellationToken.None);
-                    await runEvents.AppendAsync(run.Id,
-                        RunEventWriter.Types.ContentDelta,
-                        new { content = state.Content.ToString() },
-                        CancellationToken.None);
-                    state.SinceCheckpoint = 0;
-                }
-            },
+            OnDeltaAsync: (piece, t) =>
+                PublishContentDeltaAsync(run, piece, outletRules, state, t),
             // SPEC-20261015 RF-002: raciocínio/thinking sai como
             // delta.reasoning — canal separado do content (a UI
             // renderiza colapsado; nunca entra em PartialContent).
             // Outlet rules aplicam igual — segredos no pensamento
             // são scrubados do mesmo jeito.
-            OnReasoningAsync: async (piece, t) =>
+            OnReasoningAsync: (piece, t) =>
+                PublishReasoningDeltaAsync(run, piece, outletRules, t));
+    }
+
+    /// <summary>Compactação de emergência por overflow — extend_context
+    /// explícito do modelo pula uma compactação (RF-004 prompt-pack).</summary>
+    private async Task<IReadOnlyList<ChatCompletionMessage>?> CompactOverflowAttemptAsync(
+        ChatRun run, ChatCompletionRequest effective,
+        IReadOnlyList<ChatCompletionMessage> history, double tailScale,
+        CancellationToken t)
+    {
+        if (extendContext.TryConsume(run.Id))
+        {
+            await runEvents.AppendAsync(run.Id,
+                RunEventWriter.Types.Note,
+                new { status = "context_extended" }, t);
+            return history;
+        }
+        var didCompact = await compaction.MaybeCompactAsync(
+            run.ChatId, history, effective.Model, t, run.UserId,
+            force: true, tailScale: tailScale);
+        if (!didCompact)
+        {
+            return null;
+        }
+        await PublishPhaseAsync(run, "compacting", null);
+        return await compaction.ApplyAsync(run.ChatId, history, t);
+    }
+
+    /// <summary>Fronteira de rodada: claimed do steer/queue passa pelos
+    /// interceptors pre-step antes de entrar no histórico (RF-A2).</summary>
+    private async Task<IReadOnlyList<ChatCompletionMessage>> RoundBoundaryAsync(
+        ChatRun run, RunStreamState state, bool queuedOnly,
+        CancellationToken t)
+    {
+        var claimed = await PollSteerAsync(run, queuedOnly, t);
+        if (claimed.Count == 0 || !interceptors.HasInterceptors)
+        {
+            return claimed;
+        }
+        var outcome = await interceptors.RunPreStepAsync(
+            new OpenWebUI.Application.Interfaces.PreStepContext(
+                run.Id, run.ChatId, run.UserId,
+                state.CurrentStep, claimed), t);
+        if (!outcome.Rejected)
+        {
+            return outcome.Messages;
+        }
+        await runEvents.AppendAsync(run.Id,
+            RunEventWriter.Types.InterceptorVeto,
+            new
             {
-                await pauses.WaitIfPausedAsync(run.Id, t);
-                var processed = piece;
-                foreach (var (regex, replacement) in outletRules)
-                {
-                    processed = regex.Replace(processed, replacement);
-                }
-                if (processed.Length == 0)
-                {
-                    return;
-                }
-                var chunk = JsonSerializer.Serialize(new
-                {
-                    choices = new[] { new { index = 0, delta = new { reasoning = processed } } },
-                });
-                broadcaster.Publish(run.Id, $"data: {chunk}");
-            });
-        var outcome = await ChatPipeline.RunToolLoopAsync(
-            effective, tools, toolExecutor, providers, ct,
-            new ChatPipeline.ToolLoopOptions(
-                callbacks, builtinContext, run.UserId, logger, maxSteps,
-                toolExecutor.MaxParallel, resumeSeed));
-        if (outcome is not null)
+                hook = "pre-step",
+                interceptor = outcome.VetoedBy,
+                reason = outcome.Reason,
+            }, t);
+        return outcome.Messages;
+    }
+
+    /// <summary>Delta de content: pausa, filtros outlet, publica e
+    /// acumula — checkpoint de PartialContent a cada CheckpointBytes.</summary>
+    private async Task PublishContentDeltaAsync(
+        ChatRun run, string piece,
+        List<(Regex Regex, string Replacement)> outletRules,
+        RunStreamState state, CancellationToken t)
+    {
+        await pauses.WaitIfPausedAsync(run.Id, t);
+        var processed = ApplyOutletRules(piece, outletRules);
+        if (processed.Length == 0)
         {
-            await ApplyUsageMetaAsync(run, outcome, ct);
+            return;
         }
-        // Veto de budget (SPEC-20261023-run-cost-budgets RF-003):
-        // o uso já foi persistido acima — a run termina falha
-        // com a razão explicável, não silencia.
-        if (outcome?.BudgetExceededReason is { } budgetReason)
+        var chunk = JsonSerializer.Serialize(new
         {
-            await FailAsync(run, budgetReason);
-            return (outcome, true);
+            choices = new[] { new { index = 0, delta = new { content = processed } } },
+        });
+        broadcaster.Publish(run.Id, $"data: {chunk}");
+        state.Content.Append(processed);
+        state.SinceCheckpoint += processed.Length;
+        if (state.SinceCheckpoint >= CheckpointBytes)
+        {
+            run.PartialContent = state.Content.ToString();
+            await db.SaveChangesAsync(CancellationToken.None);
+            await runEvents.AppendAsync(run.Id,
+                RunEventWriter.Types.ContentDelta,
+                new { content = state.Content.ToString() },
+                CancellationToken.None);
+            state.SinceCheckpoint = 0;
         }
-        return (outcome, false);
+    }
+
+    /// <summary>Delta de reasoning: canal separado (nunca entra em
+    /// PartialContent) com os mesmos filtros outlet.</summary>
+    private async Task PublishReasoningDeltaAsync(
+        ChatRun run, string piece,
+        List<(Regex Regex, string Replacement)> outletRules,
+        CancellationToken t)
+    {
+        await pauses.WaitIfPausedAsync(run.Id, t);
+        var processed = ApplyOutletRules(piece, outletRules);
+        if (processed.Length == 0)
+        {
+            return;
+        }
+        var chunk = JsonSerializer.Serialize(new
+        {
+            choices = new[] { new { index = 0, delta = new { reasoning = processed } } },
+        });
+        broadcaster.Publish(run.Id, $"data: {chunk}");
+    }
+
+    /// <summary>Filtros outlet do modelo sobre um delta.</summary>
+    private static string ApplyOutletRules(
+        string piece, List<(Regex Regex, string Replacement)> outletRules)
+    {
+        var processed = piece;
+        foreach (var (regex, replacement) in outletRules)
+        {
+            processed = regex.Replace(processed, replacement);
+        }
+        return processed;
     }
 
     /// <summary>Stream sem tool loop — deltas diretos com retentativa
@@ -1038,7 +1122,7 @@ public sealed class ChatRunExecutor(
         // RF-005: a run sem tools não emitia nenhuma fase — a UI
         // ficava no "Pensando…" estático até o primeiro token.
         await PublishPhaseAsync(run, "generating", null);
-        var answered = false;
+        state.Answered = false;
         // RF-001 provider-resilience: o stream do chat sem tools
         // também retenta falhas transitórias — enquanto nenhum delta
         // de conteúdo saiu (content vazio garante idempotência do
@@ -1049,32 +1133,8 @@ public sealed class ChatRunExecutor(
         {
             try
             {
-                await foreach (var line in providers.StreamCompletionAsync(
-                    effective, run.UserId, ct))
-                {
-                    await pauses.WaitIfPausedAsync(run.Id, ct);
-                    var processed = ModelFilterService.ProcessSseLine(line, outletRules);
-                    broadcaster.Publish(run.Id, processed);
-                    AccumulateDelta(processed, state.Content);
-                    // "answering" no 1º delta de conteúdo real — reasoning
-                    // não conta (AccumulateDelta só anexa delta.content).
-                    if (!answered && state.Content.Length > 0)
-                    {
-                        answered = true;
-                        await PublishPhaseAsync(run, "answering", null);
-                    }
-                    state.SinceCheckpoint += processed.Length;
-                    if (state.SinceCheckpoint >= CheckpointBytes)
-                    {
-                        run.PartialContent = state.Content.ToString();
-                        await db.SaveChangesAsync(CancellationToken.None);
-                        await runEvents.AppendAsync(run.Id,
-                            RunEventWriter.Types.ContentDelta,
-                            new { content = state.Content.ToString() },
-                            CancellationToken.None);
-                        state.SinceCheckpoint = 0;
-                    }
-                }
+                await ReadPlainStreamAsync(
+                    run, effective, outletRules, state, ct);
                 break;
             }
             catch (Exception ex)
@@ -1097,6 +1157,42 @@ public sealed class ChatRunExecutor(
                     + $"{Math.Max(1, (int)decision.Delay.TotalMilliseconds)}ms)");
                 await Task.Delay(decision.Delay, ct);
                 await pauses.WaitIfPausedAsync(run.Id, ct);
+            }
+        }
+    }
+
+    /// <summary>Lê um attempt do stream plain: publica cada linha, acumula
+    /// content, promove "answering" no 1º delta real e checkpointa
+    /// <c>PartialContent</c> a cada <see cref="CheckpointBytes"/>.</summary>
+    private async Task ReadPlainStreamAsync(
+        ChatRun run, ChatCompletionRequest effective,
+        List<(Regex Regex, string Replacement)> outletRules,
+        RunStreamState state, CancellationToken ct)
+    {
+        await foreach (var line in providers.StreamCompletionAsync(
+            effective, run.UserId, ct))
+        {
+            await pauses.WaitIfPausedAsync(run.Id, ct);
+            var processed = ModelFilterService.ProcessSseLine(line, outletRules);
+            broadcaster.Publish(run.Id, processed);
+            AccumulateDelta(processed, state.Content);
+            // "answering" no 1º delta de conteúdo real — reasoning
+            // não conta (AccumulateDelta só anexa delta.content).
+            if (!state.Answered && state.Content.Length > 0)
+            {
+                state.Answered = true;
+                await PublishPhaseAsync(run, "answering", null);
+            }
+            state.SinceCheckpoint += processed.Length;
+            if (state.SinceCheckpoint >= CheckpointBytes)
+            {
+                run.PartialContent = state.Content.ToString();
+                await db.SaveChangesAsync(CancellationToken.None);
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.ContentDelta,
+                    new { content = state.Content.ToString() },
+                    CancellationToken.None);
+                state.SinceCheckpoint = 0;
             }
         }
     }
@@ -2069,36 +2165,43 @@ public sealed class ChatRunExecutor(
 
         // Juiz LLM do preset smart (SPEC-20261031-smart-permission-llm):
         // só decide o que a regra determinística não cobriu — fail-safe ask.
-        if (preset == "smart" && tool is not null)
+        if (preset == SmartPreset && tool is not null
+            && await SmartJudgeDecisionAsync(run, call, ct) is { } smartDecision)
         {
-            var verdict = await smartJudge.ClassifyAsync(
-                run.Id, run, call.Name, call.ArgumentsJson,
-                projectRules: null,
-                conversationContext: string.Join("\n",
-                    _recentTools.ToArray()), ct);
-            await runEvents.AppendAsync(run.Id,
-                $"permission.smart.{verdict.Decision}", new
-                {
-                    actionHash = verdict.Fingerprint,
-                    tool = call.Name,
-                    decision = verdict.Decision,
-                    reason = verdict.Reason,
-                    model = verdict.Model,
-                    latencyMs = verdict.LatencyMs,
-                    fromCache = verdict.FromCache,
-                }, ct);
-            switch (verdict.Decision)
-            {
-                case "allow":
-                    return ToolGateDecision.Allow;
-                case "deny":
-                    return new ToolGateDecision(true, Output:
-                        $"Negado pelo juiz smart: {verdict.Reason}");
-            }
-            // "ask" → segue para a fila de aprovação do dono.
+            return smartDecision;
         }
 
         return await AskToolApprovalAsync(run, call, tool!, builtinContext, ct);
+    }
+
+    /// <summary>Juiz LLM do preset smart — <c>allow</c>/<c>deny</c> resolvem,
+    /// <c>ask</c> devolve <c>null</c> e segue para a fila do dono.</summary>
+    private async Task<ToolGateDecision?> SmartJudgeDecisionAsync(
+        ChatRun run, ProviderToolCall call, CancellationToken ct)
+    {
+        var verdict = await smartJudge.ClassifyAsync(
+            run.Id, run, call.Name, call.ArgumentsJson,
+            projectRules: null,
+            conversationContext: string.Join("\n",
+                _recentTools.ToArray()), ct);
+        await runEvents.AppendAsync(run.Id,
+            $"permission.smart.{verdict.Decision}", new
+            {
+                actionHash = verdict.Fingerprint,
+                tool = call.Name,
+                decision = verdict.Decision,
+                reason = verdict.Reason,
+                model = verdict.Model,
+                latencyMs = verdict.LatencyMs,
+                fromCache = verdict.FromCache,
+            }, ct);
+        return verdict.Decision switch
+        {
+            "allow" => ToolGateDecision.Allow,
+            "deny" => new ToolGateDecision(true, Output:
+                $"Negado pelo juiz smart: {verdict.Reason}"),
+            _ => null,
+        };
     }
 
     /// <summary>SPEC-15: build sem repo vinculado não executa tools de workspace.</summary>
@@ -2149,31 +2252,12 @@ public sealed class ChatRunExecutor(
 
         // RF-003: path fora do workdir → regra external_directory (default ask).
         var external = ExternalPathOf(call, builtinContext.WorkspacePath);
-        if (external is not null)
+        if (external is not null
+            && await GateExternalPathAsync(
+                run, tool, call, external, builtinContext, ct)
+                is { } extDecision)
         {
-            var extEffect = await rules.EvaluateAsync(
-                run.UserId, "external_directory", external, ct);
-            if (string.Equals(extEffect, "deny", StringComparison.OrdinalIgnoreCase))
-            {
-                return (new ToolGateDecision(true, Output:
-                    $"Erro: '{external}' está fora do workspace e a regra "
-                    + "external_directory do usuário é deny."), false);
-            }
-            if (string.Equals(extEffect, "allow", StringComparison.OrdinalIgnoreCase))
-            {
-                externalAccess.Allow(run.Id, external);
-            }
-            else if (tool is not null)
-            {
-                // default ask — prompt com o path; aprovado, libera para a run.
-                var gate = await AskToolApprovalAsync(
-                    run, call, tool, builtinContext, ct);
-                if (gate.Approved)
-                {
-                    externalAccess.Allow(run.Id, external);
-                }
-                return (gate, false);
-            }
+            return (extDecision, false);
         }
 
         // RF-001: regras ordenadas — a última que casa decide.
@@ -2207,6 +2291,40 @@ public sealed class ChatRunExecutor(
                 + "Revogue em Settings → Permissions."), false),
             _ => (null, false),
         };
+    }
+
+    /// <summary>Gate da regra <c>external_directory</c> (RF-003): deny resolve,
+    /// allow libera para a run e segue; default ask prompta e aprovado libera.
+    /// <c>null</c> quando o fluxo continua para as regras ordenadas.</summary>
+    private async Task<ToolGateDecision?> GateExternalPathAsync(
+        ChatRun run, Tool? tool, ProviderToolCall call, string external,
+        BuiltinToolContext builtinContext, CancellationToken ct)
+    {
+        var extEffect = await rules.EvaluateAsync(
+            run.UserId, "external_directory", external, ct);
+        if (string.Equals(extEffect, "deny", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ToolGateDecision(true, Output:
+                $"Erro: '{external}' está fora do workspace e a regra "
+                + "external_directory do usuário é deny.");
+        }
+        if (string.Equals(extEffect, "allow", StringComparison.OrdinalIgnoreCase))
+        {
+            externalAccess.Allow(run.Id, external);
+            return null;
+        }
+        if (tool is null)
+        {
+            return null;
+        }
+        // default ask — prompt com o path; aprovado, libera para a run.
+        var gate = await AskToolApprovalAsync(
+            run, call, tool, builtinContext, ct);
+        if (gate.Approved)
+        {
+            externalAccess.Allow(run.Id, external);
+        }
+        return gate;
     }
 
     /// <summary>
@@ -2395,13 +2513,13 @@ public sealed class ChatRunExecutor(
             case "allow-readonly":
                 return ToolGateDecision.Deny;
             case "auto":
-            case "smart":
+            case SmartPreset:
                 var workspace = Path.Join(
                     DataPaths.Root(env.ContentRootPath), "workspaces", run.UserId);
                 var risk = ToolCallRiskClassifier.Classify(
                     tool, call.ArgumentsJson, workspace);
                 var fileMutation = risk == ToolCallRisk.Medium
-                    && preset == "smart"
+                    && preset == SmartPreset
                     && ToolCallRiskClassifier.IsFileMutation(
                         tool, call.ArgumentsJson, workspace);
                 if (risk == ToolCallRisk.Low)
@@ -2862,7 +2980,7 @@ public sealed class ChatRunExecutor(
     /// <c>approve-mutations</c>/<c>allow-readonly</c> seguem perguntando.
     /// </summary>
     private static bool IsAutoPickPreset(string? preset) =>
-        preset is "smart" or "always-allow" or "auto";
+        preset is SmartPreset or "always-allow" or "auto";
 
     /// <summary>
     /// Resposta autônoma padrão para pergunta de texto livre em preset

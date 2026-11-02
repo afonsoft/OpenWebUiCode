@@ -334,7 +334,35 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         }
     }
 
-    /// <summary>
+    /// <summary>Consome linhas de prefixo (`:` keepalive, `event:`, `id:`)
+    /// e qualquer linha que não comece com `data:` — devolve se consumiu.</summary>
+    private static bool ConsumePrefixLine(
+        string line, ref string? eventName, ref int lastSeq,
+        out bool heartbeat)
+    {
+        heartbeat = false;
+        // Keepalive do servidor (`: hb`) — não é `data:` mas prova que
+        // o stream segue vivo (proxies derrubam/fecham SSE ocioso).
+        if (line.StartsWith(':'))
+        {
+            heartbeat = true;
+            return true;
+        }
+        if (line.StartsWith("event:", StringComparison.Ordinal))
+        {
+            eventName = line["event:".Length..].Trim();
+            return true;
+        }
+        if (line.StartsWith("id:", StringComparison.Ordinal))
+        {
+            // Last-Event-ID do bloco — o consumidor usa como checkpoint
+            // de resume (`lastSeq` no próximo attach).
+            _ = int.TryParse(line["id:".Length..].Trim(), out lastSeq);
+            return true;
+        }
+        return !line.StartsWith("data:", StringComparison.Ordinal);
+    }
+
     /// Parser SSE: lê pares `event:`/`data:` e produz
     /// <see cref="ChatStreamEvent"/>s — `data:` sem `event:` segue o
     /// formato OpenAI (deltas, erro, arena); `data: [DONE]` encerra.
@@ -353,27 +381,12 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             {
                 continue;
             }
-            // Keepalive do servidor (`: hb`) — não é `data:` mas prova que
-            // o stream segue vivo (proxies derrubam/fecham SSE ocioso).
-            if (line.StartsWith(':'))
+            if (ConsumePrefixLine(line, ref eventName, ref lastSeq, out var heartbeat))
             {
-                yield return new ChatStreamEvent.Heartbeat();
-                continue;
-            }
-            if (line.StartsWith("event:", StringComparison.Ordinal))
-            {
-                eventName = line["event:".Length..].Trim();
-                continue;
-            }
-            if (line.StartsWith("id:", StringComparison.Ordinal))
-            {
-                // Last-Event-ID do bloco — o consumidor usa como checkpoint
-                // de resume (`lastSeq` no próximo attach).
-                _ = int.TryParse(line["id:".Length..].Trim(), out lastSeq);
-                continue;
-            }
-            if (!line.StartsWith("data:", StringComparison.Ordinal))
-            {
+                if (heartbeat)
+                {
+                    yield return new ChatStreamEvent.Heartbeat();
+                }
                 continue;
             }
 

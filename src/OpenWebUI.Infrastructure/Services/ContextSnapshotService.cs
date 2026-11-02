@@ -170,12 +170,29 @@ public sealed class ContextSnapshotService(
                 $"item {idx}: 'content' é obrigatório."));
         }
 
+        var (title, score, fieldError) = ParseOptionalFields(e, idx);
+        if (fieldError is not null)
+        {
+            return (null, fieldError);
+        }
+
+        var elided = e.TryGetProperty("elided", out var g)
+            && g.ValueKind == JsonValueKind.True;
+
+        return (new SnapshotItem(kind, title, c.GetString() ?? string.Empty, score, elided), null);
+    }
+
+    /// <summary>Campos opcionais <c>title</c>/<c>score</c> — tipos errados
+    /// viram erro; <c>null</c> JSON vale como ausente.</summary>
+    private static (string? Title, double? Score, SnapshotError? Error)
+        ParseOptionalFields(JsonElement e, int idx)
+    {
         string? title = null;
         if (e.TryGetProperty("title", out var t))
         {
             if (t.ValueKind != JsonValueKind.String && t.ValueKind != JsonValueKind.Null)
             {
-                return (null, new SnapshotError(InvalidPayloadCode,
+                return (null, null, new SnapshotError(InvalidPayloadCode,
                     $"item {idx}: 'title' deve ser string."));
             }
             title = t.ValueKind == JsonValueKind.String ? t.GetString() : null;
@@ -186,16 +203,12 @@ public sealed class ContextSnapshotService(
         {
             if (s.ValueKind != JsonValueKind.Number || !s.TryGetDouble(out var d))
             {
-                return (null, new SnapshotError(InvalidPayloadCode,
+                return (null, null, new SnapshotError(InvalidPayloadCode,
                     $"item {idx}: 'score' deve ser número."));
             }
             score = d;
         }
-
-        var elided = e.TryGetProperty("elided", out var g)
-            && g.ValueKind == JsonValueKind.True;
-
-        return (new SnapshotItem(kind, title, c.GetString() ?? string.Empty, score, elided), null);
+        return (title, score, null);
     }
 
     /// <summary>

@@ -103,27 +103,16 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
                 break;
             }
 
-            if (el.ValueKind != JsonValueKind.Object)
+            var (norm, error) = ParseTodoItem(el, ref i);
+            if (error is not null)
+            {
+                return new ParsedTodos(null, 0, 0, null, error);
+            }
+            if (norm is null)
             {
                 continue;
             }
-
-            var content = el.TryGetProperty("content", out var c) ? c.GetString() : null;
-            var status = el.TryGetProperty("status", out var s) ? s.GetString() : null;
-            if (string.IsNullOrWhiteSpace(content)
-                || status is not ("pending" or "in_progress" or "completed"))
-            {
-                return new ParsedTodos(null, 0, 0, null,
-                    "Todo item exige 'content' e 'status' ∈ pending|in_progress|completed.");
-            }
-
-            var id = el.TryGetProperty("id", out var idEl) && !string.IsNullOrWhiteSpace(idEl.GetString())
-                ? idEl.GetString()!
-                : $"t{++i}";
-            if (content.Length > MaxContentChars)
-            {
-                content = content[..MaxContentChars] + "…";
-            }
+            var (id, content, status) = norm.Value;
 
             if (status == "completed")
             {
@@ -142,6 +131,34 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
             items.Add(new { id, content, status });
         }
         return new ParsedTodos(items, done, doing, nextPendingContent, null);
+    }
+
+    /// <summary>Normaliza um item: valida content/status, id sintético
+    /// <c>t{n}</c> quando ausente, truncamento de content. <c>null</c> em
+    /// não-objeto (skip); <c>Error</c> em item inválido.</summary>
+    private static ((string Id, string Content, string Status)? Norm, string? Error)
+        ParseTodoItem(JsonElement el, ref int seq)
+    {
+        if (el.ValueKind != JsonValueKind.Object)
+        {
+            return (null, null);
+        }
+        var content = el.TryGetProperty("content", out var c) ? c.GetString() : null;
+        var status = el.TryGetProperty("status", out var s) ? s.GetString() : null;
+        if (string.IsNullOrWhiteSpace(content)
+            || status is not ("pending" or "in_progress" or "completed"))
+        {
+            return (null,
+                "Todo item exige 'content' e 'status' ∈ pending|in_progress|completed.");
+        }
+        var id = el.TryGetProperty("id", out var idEl) && !string.IsNullOrWhiteSpace(idEl.GetString())
+            ? idEl.GetString()!
+            : $"t{++seq}";
+        if (content.Length > MaxContentChars)
+        {
+            content = content[..MaxContentChars] + "…";
+        }
+        return ((id, content, status), null);
     }
 
     private sealed record ParsedTodos(

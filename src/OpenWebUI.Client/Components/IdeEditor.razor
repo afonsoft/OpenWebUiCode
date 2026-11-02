@@ -539,24 +539,32 @@
                     e.NewText);
             }
         }
-        foreach (var path in r.FilesUpdated)
+        await ReloadUpdatedTabsAsync(r.FilesUpdated);
+        await OnSaved.InvokeAsync();
+    }
+
+    /// <summary>Tabs limpas de arquivos escritos no disco pelo rename →
+    /// reload do conteúdo (a aba ativa também repinta o editor).</summary>
+    private async Task ReloadUpdatedTabsAsync(IReadOnlyList<string> paths)
+    {
+        foreach (var path in paths)
         {
             var t = _tabs.FirstOrDefault(x => x.Path == path);
-            if (t is { Dirty: false })
+            if (t is not { Dirty: false })
             {
-                var f = await Api.GetWorkspaceFileAsync(path, null, null, ChatId);
-                if (f is { } body)
+                continue;
+            }
+            var f = await Api.GetWorkspaceFileAsync(path, null, null, ChatId);
+            if (f is { } body)
+            {
+                t.Doc = body.Content;
+                if (t == _active)
                 {
-                    t.Doc = body.Content;
-                    if (t == _active)
-                    {
-                        await JS.InvokeVoidAsync(
-                            "owuiIde.setDoc", "ide-cm-host", body.Content, path);
-                    }
+                    await JS.InvokeVoidAsync(
+                        "owuiIde.setDoc", "ide-cm-host", body.Content, path);
                 }
             }
         }
-        await OnSaved.InvokeAsync();
     }
 
     /// <summary>Ctrl+\ — split do editor na mesma doc (panes sync).</summary>

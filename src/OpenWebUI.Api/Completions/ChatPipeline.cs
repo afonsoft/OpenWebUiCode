@@ -250,6 +250,21 @@ public static class ChatPipeline
         }
 
         var byId = entries.ToDictionary(f => f.Id);
+        await AttachImagesAsync(messages, request, byId, log, ct);
+
+        return await AttachmentContentService.InjectTextFilesAsync(
+            messages, byId, request.FileIds,
+            (f, c) => AttachmentContentService.TryReadTextAsync(f, c), ct);
+    }
+
+    /// <summary>Resolve imagens por mensagem (lazy, FileIds do histórico +
+    /// FileIds top-level na última msg do usuário) e reescreve as mensagens
+    /// com <c>Images</c> populado.</summary>
+    private static async Task AttachImagesAsync(
+        List<ChatCompletionMessage> messages, ChatCompletionRequest request,
+        Dictionary<string, FileEntry> byId,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
         var lastUserIdx = messages.FindLastIndex(m => m.Role == "user");
         for (var i = 0; i < messages.Count; i++)
         {
@@ -276,10 +291,6 @@ public static class ChatPipeline
                 messages[i] = messages[i] with { Images = images };
             }
         }
-
-        return await AttachmentContentService.InjectTextFilesAsync(
-            messages, byId, request.FileIds,
-            (f, c) => AttachmentContentService.TryReadTextAsync(f, c), ct);
     }
 
     /// <summary>Imagem de um anexo — null quando não é imagem, não existe
@@ -532,29 +543,7 @@ public static class ChatPipeline
         // SPEC-20261016-run-recovery RF-003: com <paramref name="resume"/> a
         // janela, o tail de tools e os contadores vêm do estado reconstruído
         // — o turno entra direto no round indicado pelo planner.
-        var state = new ToolLoopMutable
-        {
-            Request = effective,
-            Messages = (resume?.Messages ?? effective.Messages).ToList(),
-            ToolMessages = resume?.ToolMessages.ToList()
-                ?? new List<ChatCompletionMessage>(),
-            StepUsages = resume?.StepUsages
-                .Select(u => new RoundUsage(
-                    u.Step, u.PromptTokens, u.CompletionTokens,
-                    u.ReasoningTokens))
-                .ToList() ?? new List<RoundUsage>(),
-            ContinuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? ""),
-            StepCount = resume?.StepCount ?? 0,
-            EmptyRounds = resume?.EmptyRounds ?? 0,
-            LengthContinuations = resume?.LengthContinuations ?? 0,
-            // -1 = lista nunca escrita: a chain do executor usa como fallback
-            // ("sem lista populada em modo build, continua mesmo assim").
-            // A retomada restaura a contagem do snapshot — sem isso a run
-            // reiniciada voltaria ao fallback mesmo com trabalho pendente
-            // (Devin #458).
-            PendingTodos = resume?.PendingTodos ?? -1,
-            Round = resume?.Round ?? 0,
-        };
+        var state = BuildLoopState(effective, resume);
 
         // SPEC-20261016-provider-resilience: retry com backoff nas chamadas
         // de completion (RF-001/005), continuação em finish=length (RF-003,
@@ -639,20 +628,60 @@ public static class ChatPipeline
         // com wrap-up — chegar aqui significa que o modelo insistiu em
         // tool_calls mesmo anunciadas nenhuma (ex.: markup DSML sintetizado).
         // Uma rodada final toolless garante encerramento com texto.
+        return await CompleteToollessFinalAsync(
+            state, userId ?? builtinContext?.UserId, providers,
+            callbacks, log, maxRounds, ct);
+    }
+
+    /// <summary>Estado mutável do loop reconstruído do plano de retomada
+    /// (RF-003 run-recovery) ou zerado para uma run nova.</summary>
+    private static ToolLoopMutable BuildLoopState(
+        ChatCompletionRequest effective, RunLoopCheckpoint? resume)
+    {
+        return new ToolLoopMutable
+        {
+            Request = effective,
+            Messages = (resume?.Messages ?? effective.Messages).ToList(),
+            ToolMessages = resume?.ToolMessages.ToList()
+                ?? new List<ChatCompletionMessage>(),
+            StepUsages = resume?.StepUsages
+                .Select(u => new RoundUsage(
+                    u.Step, u.PromptTokens, u.CompletionTokens,
+                    u.ReasoningTokens))
+                .ToList() ?? new List<RoundUsage>(),
+            ContinuedAnswer = new StringBuilder(resume?.ContinuedAnswer ?? ""),
+            StepCount = resume?.StepCount ?? 0,
+            EmptyRounds = resume?.EmptyRounds ?? 0,
+            LengthContinuations = resume?.LengthContinuations ?? 0,
+            // -1 = lista nunca escrita: a chain do executor usa como fallback
+            // ("sem lista populada em modo build, continua mesmo assim").
+            // A retomada restaura a contagem do snapshot — sem isso a run
+            // reiniciada voltaria ao fallback mesmo com trabalho pendente
+            // (Devin #458).
+            PendingTodos = resume?.PendingTodos ?? -1,
+            Round = resume?.Round ?? 0,
+        };
+    }
+
+    /// <summary>Rodada final toolless após o teto de iterações — encerra a
+    /// run com texto em vez de falhar (HitStepCap=true).</summary>
+    private static async Task<ToolLoopOutcome> CompleteToollessFinalAsync(
+        ToolLoopMutable state, string? userId, ProviderService providers,
+        ToolLoopCallbacks? callbacks, ILogger? log, int maxRounds,
+        CancellationToken ct)
+    {
         log?.LogWarning(
             "Tool loop atingiu o teto de {Max} rounds — resposta final sem tools.",
             maxRounds);
         var final = await CompleteResilientAsync(
             state,
             msgs => state.Request with { Messages = msgs, Tools = null },
-            userId ?? builtinContext?.UserId,
-            providers, callbacks, log, ct);
+            userId, providers, callbacks, log, ct);
         RecordStepUsage(state, final);
         return new ToolLoopOutcome(
             state.ContinuedAnswer + final.Content, state.ToolMessages,
             state.StepUsages, state.StepCount,
             HitStepCap: true, PendingTodos: state.PendingTodos);
-
     }
 
     // Rodadas vazias (só reasoning, sem content nem tool_calls) não
@@ -807,26 +836,7 @@ public static class ChatPipeline
             {
                 if (ProviderRetryPolicy.IsContextOverflow(ex))
                 {
-                    var compacted = state.OverflowRetries < OverflowTargets.Length
-                        && callbacks?.OnOverflowCompactAsync is { } compact
-                        ? await compact(state.Messages,
-                            OverflowTargets[state.OverflowRetries], ct)
-                        : null;
-                    if (compacted is not { Count: > 0 })
-                    {
-                        throw new InvalidOperationException(
-                            "context-overflow: o provedor rejeitou o contexto "
-                            + "e a janela não pôde ser reduzida o suficiente.", ex);
-                    }
-                    state.OverflowRetries++;
-                    state.Messages.Clear();
-                    state.Messages.AddRange(compacted);
-                    log?.LogWarning(
-                        ex,
-                        "Context-overflow do provider: janela compactada para "
-                        + "~{Tail}% do tail ({Attempt}/3) e retentando.",
-                        (int)(OverflowTargets[state.OverflowRetries - 1] * 100),
-                        state.OverflowRetries);
+                    await CompactOverflowAsync(state, callbacks, log, ex, ct);
                     attempt++;
                     continue;
                 }
@@ -868,6 +878,36 @@ public static class ChatPipeline
                 attempt++;
             }
         }
+    }
+
+    /// <summary>RF-004 overflow → compact → retry: aplica o callback de
+    /// compactação com tail progressivo 70%/50%/35% (até 3x por run) e troca
+    /// a janela de mensagens. Lança quando não reduz o suficiente.</summary>
+    private static async Task CompactOverflowAsync(
+        ToolLoopMutable state, ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, Exception ex,
+        CancellationToken ct)
+    {
+        var compacted = state.OverflowRetries < OverflowTargets.Length
+            && callbacks?.OnOverflowCompactAsync is { } compact
+            ? await compact(state.Messages,
+                OverflowTargets[state.OverflowRetries], ct)
+            : null;
+        if (compacted is not { Count: > 0 })
+        {
+            throw new InvalidOperationException(
+                "context-overflow: o provedor rejeitou o contexto "
+                + "e a janela não pôde ser reduzida o suficiente.", ex);
+        }
+        state.OverflowRetries++;
+        state.Messages.Clear();
+        state.Messages.AddRange(compacted);
+        log?.LogWarning(
+            ex,
+            "Context-overflow do provider: janela compactada para "
+            + "~{Tail}% do tail ({Attempt}/3) e retentando.",
+            (int)(OverflowTargets[state.OverflowRetries - 1] * 100),
+            state.OverflowRetries);
     }
 
     /// <summary>Registra usage do step (RF-004) — só steps com usage

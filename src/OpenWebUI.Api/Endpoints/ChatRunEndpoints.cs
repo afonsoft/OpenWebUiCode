@@ -80,29 +80,13 @@ public static class ChatRunEndpoints
         // UserPromptSubmit (SPEC-20261031-lifecycle-hooks RF-005): hooks
         // do repo vinculado rodam antes da mensagem entrar na fila —
         // block rejeita com a reason; additionalContext injeta nota.
-        var promptWorkdir = await deps.Repos.ResolveWorkdirAsync(
-            user.Id, chat.Id, ct);
-        var promptRun = new ChatRun { Id = chat.Id, ChatId = chat.Id,
-            UserId = user.Id, Model = request.Model };
-        var promptHook = await deps.Hooks.RunAsync("UserPromptSubmit",
-            promptWorkdir, promptRun, null,
-            new { prompt = request.Content }, ct);
-        if (promptHook.Decision is HookDecision.Block)
+        var (hookedRequest, hookFail) = await ApplyPromptSubmitHooksAsync(
+            deps, user, chat, request, ct);
+        if (hookFail is not null)
         {
-            return Results.BadRequest(new
-            {
-                detail = promptHook.Reason ?? "Mensagem bloqueada por hook.",
-            });
+            return hookFail;
         }
-        if (promptHook.AdditionalContexts.Count > 0
-            && !string.IsNullOrWhiteSpace(request.Content))
-        {
-            request = request with
-            {
-                Content = request.Content + "\n\n"
-                    + string.Join("\n", promptHook.AdditionalContexts),
-            };
-        }
+        request = hookedRequest;
 
         // SPEC-20261016-commands-v2 RF-003/RF-004: submit via command — o
         // servidor expande o template (a mensagem persistida mostra o texto
@@ -136,32 +120,9 @@ public static class ChatRunEndpoints
         // do envio (somente arquivos do dono) viram FilesJson da mensagem.
         var attached = await ResolveAttachmentsAsync(deps, user, request, ct);
 
-        if (!string.IsNullOrWhiteSpace(request.Content))
+        if (PersistUserMessage(chat, request, attached, now) is { } msgFail)
         {
-            // Persiste a mensagem do usuário já no servidor (o cliente não precisa reenviar o chat inteiro).
-            var nextPosition = chat.Messages.Count == 0
-                ? 0
-                : chat.Messages.Max(m => m.Position) + 1;
-            var message = new ChatMessage
-            {
-                ChatId = chat.Id,
-                Role = "user",
-                Content = request.Content,
-                Position = nextPosition,
-                Timestamp = now,
-                FilesJson = attached is null
-                    ? null
-                    : JsonSerializer.Serialize(attached, JsonOptions),
-                ParentId = BranchService.ResolveLeaf(chat)?.Id,
-            };
-            chat.Messages.Add(message);
-            chat.LeafMessageId = message.Id;
-            chat.UpdatedAt = now;
-        }
-        else if (BranchService.WalkPath(chat).LastOrDefault()?.Role != "user")
-        {
-            // Sem conteúdo novo, a run regenera sobre o histórico — que precisa terminar em msg do usuário.
-            return Results.BadRequest(new { detail = "Histórico não termina em mensagem do usuário." });
+            return msgFail;
         }
 
         // Histórico reconstruído no servidor — a fonte da verdade é o banco.
@@ -229,6 +190,75 @@ public static class ChatRunEndpoints
 
         deps.Dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: ToResponse(run));
+    }
+
+    /// <summary>Hooks <c>UserPromptSubmit</c> do repo vinculado (RF-005):
+    /// block → 400 com a reason; additionalContext anexa nota ao content.</summary>
+    private static async Task<(EnqueueChatRunRequest Request, IResult? Failure)>
+        ApplyPromptSubmitHooksAsync(EnqueueRunDeps deps, User user, Chat chat,
+            EnqueueChatRunRequest request, CancellationToken ct)
+    {
+        var promptWorkdir = await deps.Repos.ResolveWorkdirAsync(
+            user.Id, chat.Id, ct);
+        var promptRun = new ChatRun { Id = chat.Id, ChatId = chat.Id,
+            UserId = user.Id, Model = request.Model };
+        var promptHook = await deps.Hooks.RunAsync("UserPromptSubmit",
+            promptWorkdir, promptRun, null,
+            new { prompt = request.Content }, ct);
+        if (promptHook.Decision is HookDecision.Block)
+        {
+            return (request, Results.BadRequest(new
+            {
+                detail = promptHook.Reason ?? "Mensagem bloqueada por hook.",
+            }));
+        }
+        if (promptHook.AdditionalContexts.Count > 0
+            && !string.IsNullOrWhiteSpace(request.Content))
+        {
+            request = request with
+            {
+                Content = request.Content + "\n\n"
+                    + string.Join("\n", promptHook.AdditionalContexts),
+            };
+        }
+        return (request, null);
+    }
+
+    /// <summary>Persiste a mensagem do usuário como nova leaf do ramo ativo
+    /// (o cliente não reenvia o chat inteiro). Sem conteúdo novo, a run
+    /// regenera sobre o histórico — que precisa terminar em msg do usuário.</summary>
+    private static IResult? PersistUserMessage(
+        Chat chat, EnqueueChatRunRequest request,
+        List<ChatMessageFileModel>? attached, long now)
+    {
+        if (!string.IsNullOrWhiteSpace(request.Content))
+        {
+            var nextPosition = chat.Messages.Count == 0
+                ? 0
+                : chat.Messages.Max(m => m.Position) + 1;
+            var message = new ChatMessage
+            {
+                ChatId = chat.Id,
+                Role = "user",
+                Content = request.Content,
+                Position = nextPosition,
+                Timestamp = now,
+                FilesJson = attached is null
+                    ? null
+                    : JsonSerializer.Serialize(attached, JsonOptions),
+                ParentId = BranchService.ResolveLeaf(chat)?.Id,
+            };
+            chat.Messages.Add(message);
+            chat.LeafMessageId = message.Id;
+            chat.UpdatedAt = now;
+            return null;
+        }
+        if (BranchService.WalkPath(chat).LastOrDefault()?.Role != "user")
+        {
+            return Results.BadRequest(
+                new { detail = "Histórico não termina em mensagem do usuário." });
+        }
+        return null;
     }
 
     /// <summary>Command expandido + overrides resolvidos (RF-003/RF-004).</summary>
@@ -488,54 +518,7 @@ public static class ChatRunEndpoints
             await using var enumerator = broadcaster
                 .SubscribeAsync(runId, since, ct)
                 .GetAsyncEnumerator(ct);
-            // ValueTask é consumo único — materializa em Task antes do WhenAny.
-            // PeriodicTimer aceita um único wait pendente: o tick é criado
-            // uma vez e só re-armado depois de completar.
-            var moveNext = enumerator.MoveNextAsync().AsTask();
-            try
-            {
-                using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(10));
-                var tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
-                while (true)
-                {
-                    var winner = await Task.WhenAny(moveNext, tick);
-                    if (winner == tick)
-                    {
-                        await tick; // relança OperationCanceledException no disconnect
-                        await writer.WriteLineAsync(": hb");
-                        await writer.WriteLineAsync();
-                        await writer.FlushAsync(ct);
-                        tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
-                        continue;
-                    }
-
-                    if (!await moveNext)
-                    {
-                        break;
-                    }
-                    var evt = enumerator.Current;
-                    await writer.WriteLineAsync($"id: {evt.Seq}");
-                    await writer.WriteLineAsync(evt.Payload);
-                    await writer.WriteLineAsync();
-                    await writer.FlushAsync(ct);
-                    moveNext = enumerator.MoveNextAsync().AsTask();
-                }
-            }
-            finally
-            {
-                // Drena o MoveNext pendente antes do DisposeAsync do
-                // enumerador: dispose com chamada em voo lançava
-                // NotSupportedException — um unhandled exception no Kestrel
-                // a cada disconnect/stall do cliente.
-                try
-                {
-                    await moveNext;
-                }
-                catch
-                {
-                    // O wait já completou (cancelado/erro) — só o dreno importa.
-                }
-            }
+            await PumpRunEventsAsync(writer, enumerator, ct);
         }
         catch (OperationCanceledException)
         {
@@ -545,6 +528,64 @@ public static class ChatRunEndpoints
         {
             // Disconnect no meio de um write (cliente matou o socket) —
             // idem: a run segue no dispatcher, só o attach morreu.
+        }
+    }
+
+    /// <summary>Merge do replay/live do broadcaster com o heartbeat
+    /// <c>: hb</c> (10s) num único loop <c>WhenAny</c> — escreve cada
+    /// evento com <c>id: seq</c> para replay via Last-Event-ID.</summary>
+    private static async Task PumpRunEventsAsync(
+        StreamWriter writer,
+        IAsyncEnumerator<ChatRunBroadcaster.RunEvent> enumerator,
+        CancellationToken ct)
+    {
+        // ValueTask é consumo único — materializa em Task antes do WhenAny.
+        // PeriodicTimer aceita um único wait pendente: o tick é criado
+        // uma vez e só re-armado depois de completar.
+        var moveNext = enumerator.MoveNextAsync().AsTask();
+        try
+        {
+            using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(10));
+            var tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
+            while (true)
+            {
+                var winner = await Task.WhenAny(moveNext, tick);
+                if (winner == tick)
+                {
+                    await tick; // relança OperationCanceledException no disconnect
+                    await writer.WriteLineAsync(": hb");
+                    await writer.WriteLineAsync();
+                    await writer.FlushAsync(ct);
+                    tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
+                    continue;
+                }
+
+                if (!await moveNext)
+                {
+                    break;
+                }
+                var evt = enumerator.Current;
+                await writer.WriteLineAsync($"id: {evt.Seq}");
+                await writer.WriteLineAsync(evt.Payload);
+                await writer.WriteLineAsync();
+                await writer.FlushAsync(ct);
+                moveNext = enumerator.MoveNextAsync().AsTask();
+            }
+        }
+        finally
+        {
+            // Drena o MoveNext pendente antes do DisposeAsync do
+            // enumerador: dispose com chamada em voo lançava
+            // NotSupportedException — um unhandled exception no Kestrel
+            // a cada disconnect/stall do cliente.
+            try
+            {
+                await moveNext;
+            }
+            catch
+            {
+                // O wait já completou (cancelado/erro) — só o dreno importa.
+            }
         }
     }
 
@@ -886,33 +927,7 @@ public static class ChatRunEndpoints
         // approve → allow, deny → deny (rejeição durável revogável).
         if (request.Remember)
         {
-            var pending = await deps.Approvals.PendingInfoAsync(run.Id, callId);
-            if (pending is { } info)
-            {
-                var workdir = await deps.Repos.ResolveWorkdirAsync(
-                    user.Id, run.ChatId, ct);
-                var existing = await deps.Db.SavedApprovals
-                    .FirstOrDefaultAsync(s => s.UserId == user.Id
-                        && s.Workdir == workdir && s.Tool == info.ToolName
-                        && s.ArgPattern == info.ArgPattern, ct);
-                if (existing is null)
-                {
-                    deps.Db.SavedApprovals.Add(new SavedApproval
-                    {
-                        UserId = user.Id,
-                        Workdir = workdir,
-                        Tool = info.ToolName,
-                        ArgPattern = info.ArgPattern,
-                        Decision = approved ? "allow" : "deny",
-                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    });
-                }
-                else
-                {
-                    existing.Decision = approved ? "allow" : "deny";
-                }
-                await deps.Db.SaveChangesAsync(ct);
-            }
+            await PersistSavedApprovalAsync(deps, user, run, callId, approved, ct);
         }
         // A mensagem vai mesmo em approve: no ask_user a resposta do dono
         // é justamente decision=approve + message (RF-005); numa aprovação
@@ -922,6 +937,42 @@ public static class ChatRunEndpoints
             request.Message)
             ? Results.Ok(new StatusResponse(true))
             : Results.NotFound(new { detail = "Aprovação não está pendente." });
+    }
+
+    /// <summary>RF-002 "Sempre": upsert da SavedApproval durável por
+    /// (userId, workdir, tool, argPattern) — approve → allow, deny → deny.</summary>
+    private static async Task PersistSavedApprovalAsync(
+        ApprovalDeps deps, User user, ChatRun run, string callId,
+        bool approved, CancellationToken ct)
+    {
+        var pending = await deps.Approvals.PendingInfoAsync(run.Id, callId);
+        if (pending is not { } info)
+        {
+            return;
+        }
+        var workdir = await deps.Repos.ResolveWorkdirAsync(
+            user.Id, run.ChatId, ct);
+        var existing = await deps.Db.SavedApprovals
+            .FirstOrDefaultAsync(s => s.UserId == user.Id
+                && s.Workdir == workdir && s.Tool == info.ToolName
+                && s.ArgPattern == info.ArgPattern, ct);
+        if (existing is null)
+        {
+            deps.Db.SavedApprovals.Add(new SavedApproval
+            {
+                UserId = user.Id,
+                Workdir = workdir,
+                Tool = info.ToolName,
+                ArgPattern = info.ArgPattern,
+                Decision = approved ? "allow" : "deny",
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            });
+        }
+        else
+        {
+            existing.Decision = approved ? "allow" : "deny";
+        }
+        await deps.Db.SaveChangesAsync(ct);
     }
 
     /// <summary>

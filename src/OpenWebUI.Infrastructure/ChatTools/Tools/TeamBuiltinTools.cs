@@ -179,35 +179,9 @@ public sealed class TeamTaskBuiltinTool(IServiceScopeFactory scopeFactory)
                 $"Tarefa '{taskId}' não existe neste team.");
         }
 
-        if (op == "claim")
+        if (ApplyTaskOp(task, op, args, context) is { } opError)
         {
-            if (task.AssigneeChatId is not null && task.Status != "pending")
-            {
-                return new BuiltinToolResult(
-                    $"Tarefa já claimada por {task.AssigneeChatId}.");
-            }
-            task.AssigneeChatId = context.ChatId;
-            task.Status = "in_progress";
-        }
-        else if (op == "complete")
-        {
-            task.Status = "done";
-            task.AssigneeChatId ??= context.ChatId;
-            task.Result = args.TryGetProperty("result", out var rEl)
-                && rEl.GetString() is { } r
-                    ? r.Length > 500 ? r[..500] : r
-                    : null;
-        }
-        else // update
-        {
-            var status = args.TryGetProperty("status", out var sEl)
-                ? sEl.GetString() : null;
-            if (status is not ("pending" or "in_progress" or "done"))
-            {
-                return new BuiltinToolResult(
-                    "'status' deve ser pending|in_progress|done.");
-            }
-            task.Status = status;
+            return new BuiltinToolResult(opError);
         }
 
         task.UpdatedAt = now;
@@ -215,6 +189,42 @@ public sealed class TeamTaskBuiltinTool(IServiceScopeFactory scopeFactory)
         return new BuiltinToolResult(
             $"Tarefa {task.Id}: {task.Status}.",
             new { taskId = task.Id, status = task.Status });
+    }
+
+    /// <summary>Aplica a mutação claim/complete/update na tarefa —
+    /// retorna a mensagem de erro ou <c>null</c> no sucesso.</summary>
+    private static string? ApplyTaskOp(
+        TeamTask task, string op, JsonElement args, BuiltinToolContext context)
+    {
+        if (op == "claim")
+        {
+            if (task.AssigneeChatId is not null && task.Status != "pending")
+            {
+                return $"Tarefa já claimada por {task.AssigneeChatId}.";
+            }
+            task.AssigneeChatId = context.ChatId;
+            task.Status = "in_progress";
+            return null;
+        }
+        if (op == "complete")
+        {
+            task.Status = "done";
+            task.AssigneeChatId ??= context.ChatId;
+            task.Result = args.TryGetProperty("result", out var rEl)
+                && rEl.GetString() is { } r
+                    ? r.Length > 500 ? r[..500] : r
+                    : null;
+            return null;
+        }
+        // update
+        var status = args.TryGetProperty("status", out var sEl)
+            ? sEl.GetString() : null;
+        if (status is not ("pending" or "in_progress" or "done"))
+        {
+            return "'status' deve ser pending|in_progress|done.";
+        }
+        task.Status = status;
+        return null;
     }
 }
 

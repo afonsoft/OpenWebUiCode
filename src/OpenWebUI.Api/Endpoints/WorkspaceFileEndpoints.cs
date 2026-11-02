@@ -635,23 +635,26 @@ public static class WorkspaceFileEndpoints
             }
         }
 
-        foreach (var f in files)
+        foreach (var f in files.Where(IsSearchableFile))
         {
-            var ext = Path.GetExtension(f);
-            if (SearchSkipExt.Contains(ext)
-                || f.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-            long size;
-            try { size = new FileInfo(f).Length; }
-            catch (IOException) { continue; }
-            if (size > SearchMaxFileBytes)
-            {
-                continue;
-            }
             yield return f;
         }
+    }
+
+    /// <summary>Filtro por arquivo: extensão binária/minificada e cap de
+    /// tamanho (arquivo ilegível é pulado, não derruba a busca).</summary>
+    private static bool IsSearchableFile(string f)
+    {
+        var ext = Path.GetExtension(f);
+        if (SearchSkipExt.Contains(ext)
+            || f.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        long size;
+        try { size = new FileInfo(f).Length; }
+        catch (IOException) { return false; }
+        return size <= SearchMaxFileBytes;
     }
 
     // ---------- POST /commit (SPEC-20261011-ide-search-scm) ----------

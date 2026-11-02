@@ -124,20 +124,29 @@ public static class HookConfigLoader
             }
             foreach (var group in ev.Value.EnumerateArray())
             {
-                var matcher = Str(group, "matcher");
-                if (group.TryGetProperty("hooks", out var inner)
-                    && inner.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var h in inner.EnumerateArray())
-                    {
-                        AddHook(hooks, ev.Name, matcher, h, source, log);
-                    }
-                }
-                else
-                {
-                    AddHook(hooks, ev.Name, matcher, group, source, log);
-                }
+                AddGroupHooks(hooks, ev.Name, group, source, log);
             }
+        }
+    }
+
+    /// <summary>Um grupo do array: objeto <c>{matcher?, hooks:[]}</c> ou
+    /// hook direto — ambos viram AddHook com o matcher do grupo.</summary>
+    private static void AddGroupHooks(
+        List<HookDefinition> hooks, string evName, JsonElement group,
+        string source, ILogger? log)
+    {
+        var matcher = Str(group, "matcher");
+        if (group.TryGetProperty("hooks", out var inner)
+            && inner.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var h in inner.EnumerateArray())
+            {
+                AddHook(hooks, evName, matcher, h, source, log);
+            }
+        }
+        else
+        {
+            AddHook(hooks, evName, matcher, group, source, log);
         }
     }
 

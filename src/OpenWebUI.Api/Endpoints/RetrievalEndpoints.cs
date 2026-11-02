@@ -304,15 +304,19 @@ public static class RetrievalEndpoints
         RetrievalConfig request, RetrievalConfig current) =>
         request with
         {
-            BraveApiKey = request.BraveApiKey is null or MaskedSecret ? current.BraveApiKey : request.BraveApiKey,
-            TavilyApiKey = request.TavilyApiKey is null or MaskedSecret ? current.TavilyApiKey : request.TavilyApiKey,
-            GooglePseApiKey = request.GooglePseApiKey is null or MaskedSecret ? current.GooglePseApiKey : request.GooglePseApiKey,
-            JinaApiKey = request.JinaApiKey is null or MaskedSecret ? current.JinaApiKey : request.JinaApiKey,
-            ExaApiKey = request.ExaApiKey is null or MaskedSecret ? current.ExaApiKey : request.ExaApiKey,
-            KagiApiKey = request.KagiApiKey is null or MaskedSecret ? current.KagiApiKey : request.KagiApiKey,
-            PerplexityApiKey = request.PerplexityApiKey is null or MaskedSecret ? current.PerplexityApiKey : request.PerplexityApiKey,
-            RerankExternalApiKey = request.RerankExternalApiKey is null or MaskedSecret ? current.RerankExternalApiKey : request.RerankExternalApiKey,
+            BraveApiKey = KeepOrTake(request.BraveApiKey, current.BraveApiKey),
+            TavilyApiKey = KeepOrTake(request.TavilyApiKey, current.TavilyApiKey),
+            GooglePseApiKey = KeepOrTake(request.GooglePseApiKey, current.GooglePseApiKey),
+            JinaApiKey = KeepOrTake(request.JinaApiKey, current.JinaApiKey),
+            ExaApiKey = KeepOrTake(request.ExaApiKey, current.ExaApiKey),
+            KagiApiKey = KeepOrTake(request.KagiApiKey, current.KagiApiKey),
+            PerplexityApiKey = KeepOrTake(request.PerplexityApiKey, current.PerplexityApiKey),
+            RerankExternalApiKey = KeepOrTake(request.RerankExternalApiKey, current.RerankExternalApiKey),
         };
+
+    /// <summary>null ou máscara mantém o valor persistido; senão usa o do request.</summary>
+    private static string? KeepOrTake(string? fromRequest, string? persisted) =>
+        fromRequest is null or MaskedSecret ? persisted : fromRequest;
 
     private static async Task<IResult> ResetAsync(
         string target, HttpContext http, AppDbContext db, CancellationToken ct)

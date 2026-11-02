@@ -392,10 +392,9 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
         {
             foreach (var t in el.EnumerateArray())
             {
-                if (t.ValueKind == JsonValueKind.String
-                    && t.GetString() is { Length: > 0 } s)
+                if (NormTag(t) is { } tag)
                 {
-                    tags.Add(s.Length > MaxTagChars ? s[..MaxTagChars] : s);
+                    tags.Add(tag);
                     if (tags.Count == MaxTags)
                     {
                         break;
@@ -404,6 +403,16 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
             }
         }
         return tags;
+    }
+
+    /// <summary>Tag string não-vazia truncada no cap — <c>null</c> ignora o item.</summary>
+    private static string? NormTag(JsonElement t)
+    {
+        if (t.ValueKind != JsonValueKind.String || t.GetString() is not { Length: > 0 } s)
+        {
+            return null;
+        }
+        return s.Length > MaxTagChars ? s[..MaxTagChars] : s;
     }
 
     private static string Slug(string value)
