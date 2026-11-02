@@ -5,14 +5,14 @@ using OpenWebUI.Application.Contracts;
 namespace OpenWebUI.Client.Services;
 
 /// <summary>
-/// Estado e chamadas do wizard de geração
+/// Estado do wizard de geração
 /// (SPEC-20261027-context-gen-wizard RF-002): carrega o catálogo de
 /// presets (<c>wwwroot/gen-context/presets.json</c>), persiste rascunho
-/// em localStorage e chama <c>/api/v1/gen-context</c> via
-/// <see cref="ApiService"/>.
+/// em localStorage e monta o payload salvo/gerado pelo
+/// <see cref="ApiService"/> na página Generate.
 /// </summary>
 public class GenContextClientService(
-    ApiService api, HttpClient http, BrowserStorage storage)
+    HttpClient http, BrowserStorage storage)
 {
     private const string DraftKey = "gen-context-draft";
 

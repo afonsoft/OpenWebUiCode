@@ -251,7 +251,7 @@ else
             _auxW = await SashAsync("aux", _auxW);
             _bottomH = await SashAsync("bottom", _bottomH);
             await RefreshSideAsync();
-            _poll = new Timer(_ => RefreshSideAsync(), null,
+            _poll = new Timer(_ => _ = RefreshSideAsync(), null,
                 TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
         }
     }
