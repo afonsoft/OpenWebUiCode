@@ -916,33 +916,7 @@ public static class ChatRunEndpoints
         // approve → allow, deny → deny (rejeição durável revogável).
         if (request.Remember)
         {
-            var pending = await deps.Approvals.PendingInfoAsync(run.Id, callId);
-            if (pending is { } info)
-            {
-                var workdir = await deps.Repos.ResolveWorkdirAsync(
-                    user.Id, run.ChatId, ct);
-                var existing = await deps.Db.SavedApprovals
-                    .FirstOrDefaultAsync(s => s.UserId == user.Id
-                        && s.Workdir == workdir && s.Tool == info.ToolName
-                        && s.ArgPattern == info.ArgPattern, ct);
-                if (existing is null)
-                {
-                    deps.Db.SavedApprovals.Add(new SavedApproval
-                    {
-                        UserId = user.Id,
-                        Workdir = workdir,
-                        Tool = info.ToolName,
-                        ArgPattern = info.ArgPattern,
-                        Decision = approved ? "allow" : "deny",
-                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    });
-                }
-                else
-                {
-                    existing.Decision = approved ? "allow" : "deny";
-                }
-                await deps.Db.SaveChangesAsync(ct);
-            }
+            await PersistSavedApprovalAsync(deps, user, run, callId, approved, ct);
         }
         // A mensagem vai mesmo em approve: no ask_user a resposta do dono
         // é justamente decision=approve + message (RF-005); numa aprovação
@@ -952,6 +926,42 @@ public static class ChatRunEndpoints
             request.Message)
             ? Results.Ok(new StatusResponse(true))
             : Results.NotFound(new { detail = "Aprovação não está pendente." });
+    }
+
+    /// <summary>RF-002 "Sempre": upsert da SavedApproval durável por
+    /// (userId, workdir, tool, argPattern) — approve → allow, deny → deny.</summary>
+    private static async Task PersistSavedApprovalAsync(
+        ApprovalDeps deps, User user, ChatRun run, string callId,
+        bool approved, CancellationToken ct)
+    {
+        var pending = await deps.Approvals.PendingInfoAsync(run.Id, callId);
+        if (pending is not { } info)
+        {
+            return;
+        }
+        var workdir = await deps.Repos.ResolveWorkdirAsync(
+            user.Id, run.ChatId, ct);
+        var existing = await deps.Db.SavedApprovals
+            .FirstOrDefaultAsync(s => s.UserId == user.Id
+                && s.Workdir == workdir && s.Tool == info.ToolName
+                && s.ArgPattern == info.ArgPattern, ct);
+        if (existing is null)
+        {
+            deps.Db.SavedApprovals.Add(new SavedApproval
+            {
+                UserId = user.Id,
+                Workdir = workdir,
+                Tool = info.ToolName,
+                ArgPattern = info.ArgPattern,
+                Decision = approved ? "allow" : "deny",
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            });
+        }
+        else
+        {
+            existing.Decision = approved ? "allow" : "deny";
+        }
+        await deps.Db.SaveChangesAsync(ct);
     }
 
     /// <summary>
