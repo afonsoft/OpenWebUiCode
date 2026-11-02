@@ -5,7 +5,7 @@ using System.Net.Http.Json;
 
 namespace OpenWebUI.Acp;
 
-internal static class AcpDispatch
+public static class AcpDispatch
 {
     /// <summary>Despacha um request já parseado: initialize /
     /// session/new / session/prompt / cancel; desconhecido → -32601
@@ -79,7 +79,7 @@ internal static class AcpDispatch
     }
     /// <summary>Params do session/prompt: sessionId, prompt (blocos
     /// text) e model (default "default" quando ausente).</summary>
-    internal static (string? SessionId, string? Prompt, string Model)
+    public static (string? SessionId, string? Prompt, string Model)
         ExtractPromptParams(JsonElement? parms)
     {
         var sessionId = parms is { } p1
