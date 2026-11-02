@@ -132,8 +132,8 @@ public static class UnifiedDiff
         foreach (var (hs, he) in hunks)
         {
             AdvanceTo(ops, hs, ref pos, ref ai, ref bi);
-            EmitHunk(sb, body, ops, a, b, hs, he,
-                ref pos, ref ai, ref bi);
+            EmitHunk(new HunkCtx(sb, body, ops, a, b, hs, he, pos, ai, bi),
+                c => { pos = c.Pos; ai = c.Ai; bi = c.Bi; });
         }
 
         return sb.ToString().TrimEnd('\n');
@@ -191,42 +191,58 @@ public static class UnifiedDiff
 
     /// <summary>Emite um hunk <c>@@ -oldStart,oldCount +newStart,newCount @@</c>
     /// consumindo as ops da janela e avançando os cursores.</summary>
-    private static void EmitHunk(
+    /// <summary>Estado mutável do hunk em emissão (cursores pos/ai/bi
+    /// viajam por referência dentro do objeto — S107).</summary>
+    private sealed class HunkCtx(
         StringBuilder sb, StringBuilder body, List<Op> ops,
-        string[] a, string[] b, int hs, int he,
-        ref int pos, ref int ai, ref int bi)
+        string[] a, string[] b, int hs, int he, int pos, int ai, int bi)
     {
-        var oldStart = ai + 1;
-        var newStart = bi + 1;
+        public StringBuilder Sb { get; } = sb;
+        public StringBuilder Body { get; } = body;
+        public List<Op> Ops { get; } = ops;
+        public string[] A { get; } = a;
+        public string[] B { get; } = b;
+        public int Hs { get; } = hs;
+        public int He { get; } = he;
+        public int Pos { get; set; } = pos;
+        public int Ai { get; set; } = ai;
+        public int Bi { get; set; } = bi;
+    }
+
+    private static void EmitHunk(HunkCtx c, Action<HunkCtx> flush)
+    {
+        var oldStart = c.Ai + 1;
+        var newStart = c.Bi + 1;
         var oldCount = 0;
         var newCount = 0;
-        body.Clear();
-        for (var i = hs; i <= he && pos <= he; i++, pos++)
+        c.Body.Clear();
+        for (var i = c.Hs; i <= c.He && c.Pos <= c.He; i++, c.Pos++)
         {
-            switch (ops[i])
+            switch (c.Ops[i])
             {
                 case Op.Keep:
-                    body.Append(' ').Append(a[ai++]).Append('\n');
-                    bi++;
+                    c.Body.Append(' ').Append(c.A[c.Ai++]).Append('\n');
+                    c.Bi++;
                     oldCount++;
                     newCount++;
                     break;
                 case Op.Del:
-                    body.Append('-').Append(a[ai++]).Append('\n');
+                    c.Body.Append('-').Append(c.A[c.Ai++]).Append('\n');
                     oldCount++;
                     break;
                 case Op.Add:
-                    body.Append('+').Append(b[bi++]).Append('\n');
+                    c.Body.Append('+').Append(c.B[c.Bi++]).Append('\n');
                     newCount++;
                     break;
             }
         }
 
-        sb.Append("@@ -").Append(oldCount == 0 ? oldStart - 1 : oldStart)
+        c.Sb.Append("@@ -").Append(oldCount == 0 ? oldStart - 1 : oldStart)
             .Append(',').Append(oldCount)
             .Append(" +").Append(newCount == 0 ? newStart - 1 : newStart)
             .Append(',').Append(newCount)
-            .Append(" @@\n").Append(body);
+            .Append(" @@\n").Append(c.Body);
+        flush(c);
     }
 
     /// <summary>Fallback para arquivos grandes: tudo removido/adicionado.</summary>
