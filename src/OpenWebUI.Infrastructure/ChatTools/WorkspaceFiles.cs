@@ -5,7 +5,7 @@ namespace OpenWebUI.Infrastructure.ChatTools;
 
 /// <summary>
 /// Resolução de caminhos confinados ao workspace do usuário
-/// (SPEC-20261007-chat-agent-parity RF-011): todo caminho pedido pelo
+/// (SPEC-20261007-chat-agent-parity RF-011): cada caminho pedido pelo
 /// modelo é normalizado contra <c>data/workspaces/{userId}</c> — fuga via
 /// <c>..</c>, absolutos ou <c>~</c>/<c>$VAR</c> é negada fail-closed.
 /// Reusa <see cref="CommandRiskClassifier.PathInside"/> para o jail.

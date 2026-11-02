@@ -484,7 +484,7 @@ public class ChatEndpointsTests
             "/api/v1/chats/pinned");
         Assert.That(pinned, Has.Count.EqualTo(1));
 
-        // DeleteAll remove todos os chats do usuário.
+        // DeleteAll remove os chats todos do usuário.
         var deleted = await _client.DeleteAsync("/api/v1/chats/");
         Assert.That(deleted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         var list = await _client.GetFromJsonAsync<List<ChatSummaryResponse>>("/api/v1/chats/");

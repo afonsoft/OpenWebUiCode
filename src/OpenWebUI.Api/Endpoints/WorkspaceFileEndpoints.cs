@@ -10,7 +10,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>
 /// Workspace File API (SPEC-20261009-workspace-file-api, E16 S1): REST sobre
 /// o workdir do repositório vinculado — tree paginada, leitura fatiada com
-/// ETag, escrita com If-Match e operações de estrutura. Todo caminho passa
+/// ETag, escrita com If-Match e operações de estrutura. Cada caminho passa
 /// por <see cref="WorkspaceFiles.ResolveInsideFinal"/> (jail + symlink).
 /// Sem repo vinculado: 404 <c>{detail, bound:false}</c> em todas as rotas.
 /// </summary>

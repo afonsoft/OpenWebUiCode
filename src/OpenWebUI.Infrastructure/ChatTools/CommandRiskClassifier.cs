@@ -268,7 +268,7 @@ public static class CommandRiskClassifier
     }
 
     /// <summary>
-    /// Aplica o check de confinamento a todo argumento que parece caminho; o
+    /// Aplica o check de confinamento a cada argumento que parece caminho; o
     /// piso é <paramref name="baseLevel"/> e qualquer alvo fora escala para
     /// Dangerous. Globs amplos e <c>$VAR</c> são irresolúveis → Dangerous.
     /// </summary>

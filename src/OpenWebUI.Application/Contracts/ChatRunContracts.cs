@@ -166,7 +166,7 @@ public sealed record RunDecisionAutoEvent(
 
 /// <summary>
 /// Item da lista de tarefas da run (SPEC-20261007-chat-agent-parity
-/// RF-010): snapshot emitido pela builtin <c>todo_write</c>.
+/// RF-010): snapshot emitido pela builtin de tasks.
 /// </summary>
 /// <param name="Id">Id estável (t1, t2, ...).</param>
 /// <param name="Content">Descrição da tarefa.</param>
@@ -176,7 +176,7 @@ public sealed record RunTaskItem(string Id, string Content, string Status);
 /// <summary>
 /// Evento SSE <c>tasks</c> (RF-010): snapshot da lista de tarefas da run
 /// — o executor republica o array <c>tasks</c> do resultado estruturado
-/// de <c>todo_write</c> para o painel/checklist do cliente.
+/// da tool de tasks para o painel/checklist do cliente.
 /// </summary>
 public sealed record RunTasksEvent(IReadOnlyList<RunTaskItem> Tasks);
 

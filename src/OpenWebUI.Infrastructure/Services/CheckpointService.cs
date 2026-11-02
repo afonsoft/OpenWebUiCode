@@ -329,7 +329,7 @@ public sealed class CheckpointService(
         Path.Join(DataRoot, "repo", HashPath(workdir));
 
     /// <summary>
-    /// Remove todo o estado de checkpoint do workdir — gitdir de snapshots
+    /// Remove o estado inteiro de checkpoint do workdir — gitdir de snapshots
     /// em <c>checkpoints/repo/{hash}</c> e manifests em
     /// <c>checkpoints/files/{hash}</c>. Chamado quando o workspace dono
     /// some (delete de chat / release de worktree) — libera o disco que

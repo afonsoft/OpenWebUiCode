@@ -6,7 +6,7 @@ namespace OpenWebUI.Infrastructure.ChatTools;
 /// Diff unificado por linhas (SPEC-20261007-chat-agent-parity RF-011):
 /// LCS simples com hunks de 3 linhas de contexto, formato
 /// <c>--- a/path +++ b/path @@ -s,c +s,c @@</c>. Teto de 4M de pares de
-/// linhas na matriz — acima disso emite diff ingênuo (todo -/+ truncado).
+/// linhas na matriz — acima disso emite diff ingênuo (-/+ inteiro truncado).
 /// </summary>
 public static class UnifiedDiff
 {
