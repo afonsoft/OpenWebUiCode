@@ -1719,6 +1719,36 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("GatewaySessions");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.GenerationContextEntry", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastChatId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("GenerationContexts");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.Group", b =>
                 {
                     b.Property<string>("Id")

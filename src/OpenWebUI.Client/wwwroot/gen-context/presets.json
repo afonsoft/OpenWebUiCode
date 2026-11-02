@@ -1,0 +1,34 @@
+{
+  "personas": [
+    {
+      "id": "developer",
+      "label": "Developer",
+      "description": "Terminal-style developer portfolio — dark, monospaced, keyboard-first.",
+      "style": { "preset": "terminal", "mode": "dark", "density": "compact" }
+    },
+    {
+      "id": "designer",
+      "label": "Designer",
+      "description": "Minimal grid portfolio — whitespace, precise typography, case studies.",
+      "style": { "preset": "minimal", "mode": "light", "density": "comfortable" }
+    },
+    {
+      "id": "photographer",
+      "label": "Photographer",
+      "description": "Full-bleed imagery, lightbox galleries, minimal chrome.",
+      "style": { "preset": "bold", "mode": "dark", "density": "spacious" }
+    },
+    {
+      "id": "writer",
+      "label": "Writer",
+      "description": "Editorial long-form reading — serif headlines, calm palette.",
+      "style": { "preset": "editorial", "mode": "light", "density": "comfortable" }
+    },
+    {
+      "id": "custom",
+      "label": "Custom",
+      "description": "Describe your own persona and style.",
+      "style": { "preset": "custom", "mode": "system", "density": "comfortable" }
+    }
+  ]
+}

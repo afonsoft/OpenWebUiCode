@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261027-context-gen-wizard` |
-| Status | `Draft` |
+| Status | `Delivered` |
 | Parent | Análise Lovable `build/portfolio-website-builder` (2026-10-27) |
 
 ## 1. User Story
@@ -156,10 +156,10 @@ src/OpenWebUI.Infrastructure/Data/AppDbContext.cs   # DbSet + config
 
 ## 9. Definition of Done
 
-- [ ] Migration aplicada e `AppDbContext` consistente
-- [ ] `POST /gen-context` + `/generate` com testes verdes (auth, schema, erro)
-- [ ] Wizard acessível (labels, teclado) e i18n paridade nos 8 locales
-- [ ] System prompt contém persona/style/projects e `prompt_version`
-- [ ] Iteração via chat preserva contexto da sessão
-- [ ] Coverage ratchet não regride; `check-spec-status.py` OK
+- [x] Migration aplicada e `AppDbContext` consistente
+- [x] `POST /gen-context` + `/generate` com testes verdes (auth, schema, erro)
+- [x] Wizard acessível (labels, teclado) e i18n paridade nos 8 locales
+- [x] System prompt contém persona/style/projects e `prompt_version`
+- [x] Iteração via chat preserva contexto da sessão
+- [x] Coverage ratchet não regride; `check-spec-status.py` OK
 - [ ] SPEC arquivada em `docs/specs/` com Status `Completed` + issue/épico atualizados

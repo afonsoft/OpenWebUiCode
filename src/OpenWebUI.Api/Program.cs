@@ -147,6 +147,8 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
     OpenWebUI.Api.Completions.Contributors.AgentModeContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.DeferredToolIndexContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.GenContextContributor>();
 // Gerenciamento de contexto dirigido pelo agente (SPEC-20261013-agent-
 // context-management): boundaries + notebook + flag new_context via kv.
 builder.Services.AddScoped<ContextBoundaryService>();
@@ -703,6 +705,7 @@ static void MapFeatureEndpoints(WebApplication app)
     app.MapAudioEndpoints();
     app.MapRetrievalEndpoints();
     app.MapCalendarEndpoints();
+    app.MapGenContextEndpoints();
 }
 
 /// <summary>
@@ -722,6 +725,10 @@ static string BootstrapDatabase(string connectionString)
     }
 
     DatabaseMigrator.MigrateAsync(bootstrap).GetAwaiter().GetResult();
+    // Data fix retroativo: markup de raciocínio/special tokens
+    // persistidos antes do ReasoningMarkupFilter (idempotente, uma vez).
+    OpenWebUI.Infrastructure.Services.CorruptMarkupDataFix
+        .RunAsync(bootstrap).GetAwaiter().GetResult();
     SeedConnectionsFromEnv(bootstrap);
     SeedWhisperUrlFromEnv(bootstrap);
     SeedAdminUserFromEnv(bootstrap);
