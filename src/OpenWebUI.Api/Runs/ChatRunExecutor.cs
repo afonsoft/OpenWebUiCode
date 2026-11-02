@@ -426,31 +426,50 @@ public sealed class ChatRunExecutor(
         // Params["mode"|"agent"|"subagent"] no RequestJson aplicam overrides
         // por run sem tocar o chat.
         var commandMode = ParamStr(request.Params, "mode");
-        var commandAgent = ParamStr(request.Params, "agent");
+        var (overridden, done) = await ApplyCommandOverridesAsync(
+            run, request, user, ct);
+        if (done)
+        {
+            return null;
+        }
+        request = overridden;
+
+        return new RunPrelude(request, user, budgetLimits, resumePlan, commandMode);
+    }
+
+    /// <summary>Aplica overrides de command ao request: <c>subagent</c>
+    /// delega a run a uma sub-run (<c>Done</c>) e <c>agent</c> injeta o
+    /// system prompt da definição no topo das mensagens.</summary>
+    private async Task<(ChatCompletionRequest Request, bool Done)>
+        ApplyCommandOverridesAsync(
+            ChatRun run, ChatCompletionRequest request, User user,
+            CancellationToken ct)
+    {
         if (ParamBool(request.Params, "subagent"))
         {
             await SpawnCommandSubagentAsync(run, request, ct);
-            return null;
+            return (request, true);
         }
-        if (commandAgent is not null)
+        var commandAgent = ParamStr(request.Params, "agent");
+        if (commandAgent is null)
         {
-            using var agentScope = scopes.CreateScope();
-            var agentSvc = agentScope.ServiceProvider
-                .GetRequiredService<AgentDefinitionService>();
-            var agentWorkdir = await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct);
-            if (await agentSvc.FindAsync(user.Id, agentWorkdir, commandAgent, ct)
-                    is { } def
-                && !string.IsNullOrWhiteSpace(def.SystemPrompt))
-            {
-                request = request with
-                {
-                    Messages = [new ChatCompletionMessage(RoleSystem, def.SystemPrompt),
-                        .. request.Messages],
-                };
-            }
+            return (request, false);
         }
-
-        return new RunPrelude(request, user, budgetLimits, resumePlan, commandMode);
+        using var agentScope = scopes.CreateScope();
+        var agentSvc = agentScope.ServiceProvider
+            .GetRequiredService<AgentDefinitionService>();
+        var agentWorkdir = await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct);
+        if (await agentSvc.FindAsync(user.Id, agentWorkdir, commandAgent, ct)
+                is { } def
+            && !string.IsNullOrWhiteSpace(def.SystemPrompt))
+        {
+            request = request with
+            {
+                Messages = [new ChatCompletionMessage(RoleSystem, def.SystemPrompt),
+                    .. request.Messages],
+            };
+        }
+        return (request, false);
     }
 
     /// <summary>Resolve o próximo candidato do combo para a tentativa.
