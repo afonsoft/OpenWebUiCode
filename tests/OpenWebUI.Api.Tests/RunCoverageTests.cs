@@ -328,6 +328,23 @@ public class RunCoverageTests
     }
 
     [Test]
+    public async Task Executor_ParamsModePlan_RunFalhaNoProvider()
+    {
+        // Regressão do refactor S3776 (ResolveRunPreludeAsync +
+        // ApplyCommandOverridesAsync): params.mode=plan é aceito no
+        // prelúdio e a run segue até falhar no provider inexistente.
+        var auth = await SignUpAsync("ModePlan", $"modeplan-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+        var run = await ExecutarDiretoAsync(chat.Id, auth.User.Id,
+            "{\"model\":\"llama3\",\"connection\":\"bogus\","
+            + "\"params\":{\"mode\":\"plan\"},"
+            + "\"messages\":[{\"role\":\"user\",\"content\":\"oi\"}]}");
+        Assert.That(run.Status, Is.EqualTo(ChatRunStatus.Failed));
+        Assert.That(run.Error, Is.Not.Null.And.Not.Empty);
+    }
+
+    [Test]
     public async Task Stop_RunFinalizada_RetornaConflito()
     {
         var auth = await SignUpAsync("Stop", "stop@cov.local");
