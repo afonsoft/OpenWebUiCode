@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261102-admin-analytics-v2` |
 | Ticket | `#628` — https://github.com/afonsoft/OpenWebUiCode/issues/628 |
-| Status | `In implementation` |
+| Status | `Completed` |
 
 ## 1. User Story
 
@@ -187,3 +187,10 @@ tests/OpenWebUI.Api.Tests/AdminUsageTests.cs                   (novo)
 ## Open Questions / Pending Ambiguity
 
 - Nenhuma — escopo fechado em entrevista (blocos: todos; período: presets 7/30/90d; sub-runs somadas ao usuário; barra cap-vs-uso: sim).
+
+## Delivered
+
+- PR #630 — implementação e testes mergeados em `main` (2026-11-02, `e6fa58c`); Issue #628 fechada.
+- `GET /api/v1/admin/usage`: totals, série tokens/dia, agregados por modelo e usuário (split prompt/completion/reasoning + caps efetivos), top chats com título/email; `?days=` (1..365), `?userId=`, `from`/`to`.
+- `Admin.razor`: seletor 7/30/90d, KPIs, `LineChart` multi-série, ranking usuário com barra cap-vs-uso, tabela por modelo, top chats linkados `/c/{id}`; 19 chaves i18n × 8 locales.
+- CI: baseline de cobertura recalibrado para a medida real da main (`90.10`/`77.78`); E2E provider-real flaky confirmado (passou no retry).
