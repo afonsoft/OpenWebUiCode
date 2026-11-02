@@ -113,7 +113,8 @@ public sealed class GatewayInboundService(
             return GatewayInboundResult.Ok;
         }
 
-        await EnqueueRunAsync(channel, peer, chat, model, content, inbound, now, ct);
+        await EnqueueRunAsync(new InboundRun(channel, peer, chat, model,
+            content, inbound, now), ct);
         return GatewayInboundResult.Ok;
     }
 
@@ -261,11 +262,14 @@ public sealed class GatewayInboundService(
     }
 
     /// <summary>Persona do canal + persistência do run + enqueue no dispatcher.</summary>
-    private async Task EnqueueRunAsync(
-        GatewayChannel channel, GatewayPeer peer, Chat chat, string model,
-        string content, GatewayInboundMessage inbound,
-        long now, CancellationToken ct)
+    /// <summary>Parâmetros do enqueue da run (S107).</summary>
+    private sealed record InboundRun(
+        GatewayChannel Channel, GatewayPeer Peer, Chat Chat, string Model,
+        string Content, GatewayInboundMessage Inbound, long Now);
+
+    private async Task EnqueueRunAsync(InboundRun r, CancellationToken ct)
     {
+        var (channel, peer, chat, model, content, inbound, now) = r;
         string? personaPrompt = null;
         if (channel.PersonaId is { Length: > 0 } personaSlug)
         {
