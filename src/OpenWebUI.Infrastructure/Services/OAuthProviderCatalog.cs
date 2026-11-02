@@ -28,14 +28,17 @@ public sealed record OAuthProviderConfig(
 /// </summary>
 public static class OAuthProviderCatalog
 {
-    private const string GoogleAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth";
-    private const string GoogleTokenUrl = "https://oauth2.googleapis.com/token";
-    private const string GoogleUserInfoUrl = "https://openidconnect.googleapis.com/v1/userinfo";
-    private const string GithubAuthUrl = "https://github.com/login/oauth/authorize";
-    private const string GithubTokenUrl = "https://github.com/login/oauth/access_token";
-    private const string GithubUserUrl = "https://api.github.com/user";
-    private const string MicrosoftUserInfoUrl = "https://graph.microsoft.com/oidc/userinfo";
-    private const string MicrosoftLoginBaseUrl = "https://login.microsoftonline.com";
+    // S1075 won't-fix: endpoints OAuth canônicos (paridade upstream); IdPs
+    // self-hosted já são atendidos pelo provider OIDC genérico
+    // (OPENID_PROVIDER_URL).
+    private const string GoogleAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth"; // NOSONAR
+    private const string GoogleTokenUrl = "https://oauth2.googleapis.com/token"; // NOSONAR
+    private const string GoogleUserInfoUrl = "https://openidconnect.googleapis.com/v1/userinfo"; // NOSONAR
+    private const string GithubAuthUrl = "https://github.com/login/oauth/authorize"; // NOSONAR
+    private const string GithubTokenUrl = "https://github.com/login/oauth/access_token"; // NOSONAR
+    private const string GithubUserUrl = "https://api.github.com/user"; // NOSONAR
+    private const string MicrosoftUserInfoUrl = "https://graph.microsoft.com/oidc/userinfo"; // NOSONAR
+    private const string MicrosoftLoginBaseUrl = "https://login.microsoftonline.com"; // NOSONAR
 
     private static string? Env(string name) =>
         Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : null;

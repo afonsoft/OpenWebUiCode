@@ -18,12 +18,15 @@ namespace OpenWebUI.Infrastructure.Services;
 /// </summary>
 public class WebSearchService(IHttpClientFactory httpFactory, ConfigService config)
 {
-    private const string DefaultGooglePseBaseUrl = "https://www.googleapis.com";
-    private const string DefaultJinaBaseUrl = "https://s.jina.ai";
-    private const string DefaultExaBaseUrl = "https://api.exa.ai";
-    private const string DefaultKagiBaseUrl = "https://kagi.com";
-    private const string DefaultPerplexityBaseUrl = "https://api.perplexity.ai";
-    private const string TavilySearchUrl = "https://api.tavily.com/search";
+    // S1075 won't-fix: endpoints canônicos das engines (paridade upstream) —
+    // todos com override via ConfigService (*BaseUrl), exceto Tavily que o
+    // upstream também fixa.
+    private const string DefaultGooglePseBaseUrl = "https://www.googleapis.com"; // NOSONAR
+    private const string DefaultJinaBaseUrl = "https://s.jina.ai"; // NOSONAR
+    private const string DefaultExaBaseUrl = "https://api.exa.ai"; // NOSONAR
+    private const string DefaultKagiBaseUrl = "https://kagi.com"; // NOSONAR
+    private const string DefaultPerplexityBaseUrl = "https://api.perplexity.ai"; // NOSONAR
+    private const string TavilySearchUrl = "https://api.tavily.com/search"; // NOSONAR
     private const string BraveEngine = "brave";
     private const string DuckDuckGoEngine = "duckduckgo";
     private const string GooglePseEngine = "google_pse";

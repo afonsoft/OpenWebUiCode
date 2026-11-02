@@ -11,7 +11,8 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints OAuth/OIDC, espelhando <c>/oauth/{provider}/*</c> do upstream.</summary>
 public static class OAuthEndpoints
 {
-    private const string GithubEmailsUrl = "https://api.github.com/user/emails";
+    // S1075 won't-fix: endpoint canônico da API GitHub (paridade upstream).
+    private const string GithubEmailsUrl = "https://api.github.com/user/emails"; // NOSONAR
 
     /// <summary>Mapeia as rotas de login/callback OAuth.</summary>
     public static RouteGroupBuilder MapOAuthEndpoints(this IEndpointRouteBuilder app)
