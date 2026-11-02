@@ -260,7 +260,7 @@
         _busy = true;
         _error = null;
         var payload = GenContextClientService.ToPayload(_draft);
-        var (saved, saveErr) = await Api.SaveGenContextAsync(payload);
+        var (_, saveErr) = await Api.SaveGenContextAsync(payload);
         if (saveErr is not null)
         {
             _error = saveErr;

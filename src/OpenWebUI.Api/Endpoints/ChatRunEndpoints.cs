@@ -543,6 +543,7 @@ public static class ChatRunEndpoints
         // PeriodicTimer aceita um único wait pendente: o tick é criado
         // uma vez e só re-armado depois de completar.
         var moveNext = enumerator.MoveNextAsync().AsTask();
+        var moveNextConsumed = false;
         try
         {
             using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(10));
@@ -560,6 +561,7 @@ public static class ChatRunEndpoints
                     continue;
                 }
 
+                moveNextConsumed = true;
                 if (!await moveNext)
                 {
                     break;
@@ -570,21 +572,25 @@ public static class ChatRunEndpoints
                 await writer.WriteLineAsync();
                 await writer.FlushAsync(ct);
                 moveNext = enumerator.MoveNextAsync().AsTask();
+                moveNextConsumed = false;
             }
         }
         finally
         {
-            // Drena o MoveNext pendente antes do DisposeAsync do
-            // enumerador: dispose com chamada em voo lançava
-            // NotSupportedException — um unhandled exception no Kestrel
-            // a cada disconnect/stall do cliente.
-            try
+            // Drena o MoveNext pendente (se ainda não consumido) antes do
+            // DisposeAsync do enumerador: dispose com chamada em voo
+            // lançava NotSupportedException — um unhandled exception no
+            // Kestrel a cada disconnect/stall do cliente.
+            if (!moveNextConsumed)
             {
-                await moveNext;
-            }
-            catch
-            {
-                // O wait já completou (cancelado/erro) — só o dreno importa.
+                try
+                {
+                    await moveNext;
+                }
+                catch
+                {
+                    // O wait já completou (cancelado/erro) — só o dreno importa.
+                }
             }
         }
     }

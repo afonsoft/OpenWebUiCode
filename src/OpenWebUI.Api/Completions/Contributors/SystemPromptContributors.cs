@@ -35,6 +35,7 @@ public static class SystemPromptContributors
         ContributorDeps d) =>
     [
         new BaseAgentContributor(),
+        new GenContextContributor(d.Db),
         new AlwaysAllowContributor(d.Db),
         new SddWorkflowContributor(d.Configuration),
         new CustomModelContributor(d.Db),
@@ -47,7 +48,6 @@ public static class SystemPromptContributors
         .. (IEnumerable<ISystemPromptContributor>)(d.Instincts is null
             ? []
             : [new InstinctContributor(d.Instincts, d.Config)]),
-        new GenContextContributor(d.Db),
         new DelegationPolicyContributor(d.Agents, d.Db),
         new MentionsContributor(),
         new AgentModeContributor(),
@@ -789,7 +789,7 @@ public sealed class AgentModeContributor : ISystemPromptContributor
 /// deferidas o contributor não emite nada — prompt idêntico ao atual.
 /// </summary>
 public sealed class DeferredToolIndexContributor(
-    DeferredToolState state, ToolIndexService index)
+    DeferredToolState state)
     : ISystemPromptContributor
 {
     /// <inheritdoc />
@@ -802,7 +802,7 @@ public sealed class DeferredToolIndexContributor(
         {
             return Task.FromResult<IReadOnlyList<string>>([]);
         }
-        var block = index.BuildIndex(state.Deferred(chatId));
+        var block = ToolIndexService.BuildIndex(state.Deferred(chatId));
         return Task.FromResult<IReadOnlyList<string>>(
             block is null ? [] : [block]);
     }

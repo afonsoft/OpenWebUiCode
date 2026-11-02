@@ -60,7 +60,7 @@ public class WritePlanTests
     public async Task WritePlan_CriaArquivoNaPlansDir_ERetornaPath()
     {
         var svc = new PlanFileService();
-        var tool = new WritePlanBuiltinTool(svc);
+        var tool = new WritePlanBuiltinTool();
         var result = await tool.ExecuteAsync(
             Args("""{"content":"# T\n\n## Summary\nx"}"""),
             Ctx(_dir, "r1"), default);
@@ -80,7 +80,7 @@ public class WritePlanTests
     public async Task WritePlan_SegundaChamadaNaSessao_AtualizaMesmoArquivo()
     {
         var svc = new PlanFileService();
-        var tool = new WritePlanBuiltinTool(svc);
+        var tool = new WritePlanBuiltinTool();
         var ctx = Ctx(_dir, "r2");
         await tool.ExecuteAsync(Args("""{"content":"# A\nx"}"""), ctx, default);
         var result = await tool.ExecuteAsync(
@@ -101,7 +101,7 @@ public class WritePlanTests
     public async Task WritePlan_SessoesConcorrentes_SufixoDistinto()
     {
         var svc = new PlanFileService();
-        var tool = new WritePlanBuiltinTool(svc);
+        var tool = new WritePlanBuiltinTool();
         await tool.ExecuteAsync(Args("""{"content":"# Same Title\n1"}"""),
             Ctx(_dir, "ra"), default);
         await tool.ExecuteAsync(Args("""{"content":"# Same Title\n2"}"""),
@@ -117,7 +117,7 @@ public class WritePlanTests
     public async Task WritePlan_SecoesFaltando_GravamComAviso()
     {
         var svc = new PlanFileService();
-        var tool = new WritePlanBuiltinTool(svc);
+        var tool = new WritePlanBuiltinTool();
         var result = await tool.ExecuteAsync(
             Args("""{"content":"# Partial\nsó summary"}"""),
             Ctx(_dir, "r4"), default);
@@ -138,7 +138,7 @@ public class WritePlanTests
         try
         {
             var svc = new PlanFileService();
-            var tool = new WritePlanBuiltinTool(svc);
+            var tool = new WritePlanBuiltinTool();
             var result = await tool.ExecuteAsync(
                 Args("""{"content":"# H\nx"}"""), Ctx("", "r5"), default);
             Assert.That(result.Refused, Is.False);
@@ -164,7 +164,7 @@ public class WritePlanTests
             Path.Combine(dir, "2026-01-01-old.md"),
             DateTime.UtcNow.AddDays(-1));
 
-        var list = svc.List(_dir);
+        var list = PlanFileService.List(_dir);
         Assert.Multiple(() =>
         {
             Assert.That(list, Has.Count.EqualTo(2));
@@ -179,7 +179,7 @@ public class WritePlanTests
     {
         var svc = new PlanFileService();
         var ctx = Ctx(_dir, "r6");
-        svc.Write(_dir, "chat-r6", FullPlan, null, "r6");
+        PlanFileService.Write(_dir, "chat-r6", FullPlan, null, "r6");
 
         var exit = new PlanExitBuiltinTool();
         var spec = """

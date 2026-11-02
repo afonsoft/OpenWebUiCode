@@ -208,8 +208,14 @@ public sealed class SmartPermissionClassifier(
     public static void Clear(string sessionKey) =>
         Permitted.TryRemove(sessionKey, out _);
 
-    private static string Trunc(string? s, int max) =>
-        s is null ? "(none)" : s.Length <= max ? s : s[..max] + "…";
+    private static string Trunc(string? s, int max)
+    {
+        if (s is null)
+        {
+            return "(none)";
+        }
+        return s.Length <= max ? s : s[..max] + "…";
+    }
 
     private static string LoadPrompt()
     {

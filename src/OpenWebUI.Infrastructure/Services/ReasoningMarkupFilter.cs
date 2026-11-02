@@ -177,7 +177,7 @@ public sealed class ReasoningMarkupFilter
     }
 
     /// <summary>Texto visível: sem special tokens órfãos.</summary>
-    private void EmitVisible(StringBuilder output, string text, int from, int to)
+    private static void EmitVisible(StringBuilder output, string text, int from, int to)
     {
         if (to <= from)
         {

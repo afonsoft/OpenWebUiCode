@@ -119,13 +119,13 @@ public class ToolSearchTests
         var index = IndexWith();
         var many = Enumerable.Range(0, 70)
             .Select(i => BuiltinTool($"tool_{i}", $"desc {i}")).ToList();
-        var block = index.BuildIndex(many);
+        var block = ToolIndexService.BuildIndex(many);
         Assert.Multiple(() =>
         {
             Assert.That(block, Does.Contain("## Available on demand"));
             Assert.That(block, Does.Contain("builtin_tool_0: desc 0"));
             Assert.That(block, Does.Contain("…and 10 more"));
-            Assert.That(index.BuildIndex([]), Is.Null);
+            Assert.That(ToolIndexService.BuildIndex([]), Is.Null);
         });
     }
 
@@ -137,7 +137,7 @@ public class ToolSearchTests
         var index = IndexWith();
         var events = new RunEventWriter(db,
             NullLogger<RunEventWriter>.Instance);
-        var tool = new ToolSearchBuiltinTool(state, index, events);
+        var tool = new ToolSearchBuiltinTool(state, events);
 
         state.Set("run1", "chat1",
             new[] { BuiltinTool("file_read", "read files"),
@@ -166,7 +166,7 @@ public class ToolSearchTests
         var index = IndexWith();
         var events = new RunEventWriter(db,
             NullLogger<RunEventWriter>.Instance);
-        var tool = new ToolSearchBuiltinTool(state, index, events);
+        var tool = new ToolSearchBuiltinTool(state, events);
         state.Set("run1", null, new[] { BuiltinTool("file_read") });
 
         var args = JsonDocument.Parse("""{"query":"zzz"}""").RootElement;
@@ -188,7 +188,7 @@ public class ToolSearchTests
         var state = new DeferredToolState();
         var events = new RunEventWriter(db,
             NullLogger<RunEventWriter>.Instance);
-        var tool = new ToolSearchBuiltinTool(state, IndexWith(), events);
+        var tool = new ToolSearchBuiltinTool(state, events);
         var args = JsonDocument.Parse("""{"query":"file"}""").RootElement;
         var ctx = new BuiltinToolContext("u1", null, "runX", "/tmp", "/tmp");
         var result = await tool.ExecuteAsync(args, ctx, default);

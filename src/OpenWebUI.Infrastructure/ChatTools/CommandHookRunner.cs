@@ -15,7 +15,7 @@ namespace OpenWebUI.Infrastructure.ChatTools;
 public sealed class CommandHookRunner(ILogger<CommandHookRunner>? log = null)
 {
     /// <summary>Shell usado para o comando (testável).</summary>
-    internal static Func<string, string, string, ProcessStartInfo> ShellOf =
+    private static Func<string, string, string, ProcessStartInfo> _shellOf =
         (cmd, cwd, args) =>
         {
             var psi = new ProcessStartInfo("/bin/sh")
@@ -25,10 +25,18 @@ public sealed class CommandHookRunner(ILogger<CommandHookRunner>? log = null)
                 RedirectStandardError = true,
                 WorkingDirectory = cwd,
             };
+
             psi.ArgumentList.Add("-c");
             psi.ArgumentList.Add(cmd);
             return psi;
         };
+
+    /// <summary>Seam de teste para o shell do comando.</summary>
+    internal static Func<string, string, string, ProcessStartInfo> ShellOf
+    {
+        get => _shellOf;
+        set => _shellOf = value;
+    }
 
     /// <summary>Resultado bruto de um processo de hook.</summary>
     public sealed record RawResult(
@@ -88,13 +96,16 @@ public sealed class CommandHookRunner(ILogger<CommandHookRunner>? log = null)
                 await proc.StandardInput.WriteAsync(payload.GetRawText());
                 proc.StandardInput.Close();
             }
-            catch (IOException)
+            catch (IOException ex)
             {
-                // comando que não lê stdin pode sair antes do write —
+                // Comando que não lê stdin pode sair antes do write —
                 // broken pipe não é falha do hook.
+                log?.LogDebug(ex,
+                    "Hook {Source} fechou stdin antes do write.",
+                    hook.Source);
             }
-            var stdout = proc.StandardOutput.ReadToEndAsync();
-            var stderr = proc.StandardError.ReadToEndAsync();
+            var stdout = proc.StandardOutput.ReadToEndAsync(ct);
+            var stderr = proc.StandardError.ReadToEndAsync(ct);
             using var timeout = new CancellationTokenSource(
                 TimeSpan.FromSeconds(hook.TimeoutSeconds));
             using var linked = CancellationTokenSource
@@ -160,9 +171,9 @@ public sealed class CommandHookRunner(ILogger<CommandHookRunner>? log = null)
                     reason, null, updated, contexts),
             };
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            log?.LogWarning("Hook {Source}: stdout não-JSON — não-bloqueante.",
+            log?.LogWarning(ex, "Hook {Source}: stdout não-JSON — não-bloqueante.",
                 hook.Source);
             return HookOutcome.ApproveNone;
         }

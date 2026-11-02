@@ -11,7 +11,7 @@ namespace OpenWebUI.Api.Tests;
 public class PtyIdleWatchdogTests
 {
     [Test]
-    public void Watchdog_ShouldDetectIdleAfterThreshold()
+    public async Task Watchdog_ShouldDetectIdleAfterThreshold()
     {
         var watchdog = new PtyIdleWatchdog(idleThreshold: TimeSpan.FromMilliseconds(50), maxTimeout: TimeSpan.FromSeconds(10));
         
@@ -21,7 +21,7 @@ public class PtyIdleWatchdogTests
         Assert.That(timedOut, Is.False);
 
         // Esperar passar do threshold
-        Thread.Sleep(80);
+        await Task.Delay(80);
 
         triggered = watchdog.CheckStatus(out timedOut);
         Assert.That(triggered, Is.True);
@@ -29,10 +29,10 @@ public class PtyIdleWatchdogTests
     }
 
     [Test]
-    public void Watchdog_RecordActivity_ResetsIdleState()
+    public async Task Watchdog_RecordActivity_ResetsIdleState()
     {
         var watchdog = new PtyIdleWatchdog(idleThreshold: TimeSpan.FromMilliseconds(50), maxTimeout: TimeSpan.FromSeconds(10));
-        Thread.Sleep(80);
+        await Task.Delay(80);
         
         watchdog.RecordActivity();
         var triggered = watchdog.CheckStatus(out var timedOut);

@@ -413,7 +413,7 @@ app.UseWebSockets();
 
 MapAllEndpoints(app);
 
-app.Run();
+await app.RunAsync();
 return 0;
 
 /// <summary>SignalR envia o JWT via query string no handshake do WebSocket.</summary>
@@ -873,7 +873,11 @@ static DbContextOptions<AppDbContext> CreateDbOptions(string connectionString)
 }
 
 /// <summary>Ponto de entrada para testes de integração com WebApplicationFactory.</summary>
-public partial class Program;
+public partial class Program
+{
+    /// <summary>Program só tem membros estáticos — ctor protegido (S1118).</summary>
+    protected Program() { }
+}
 
 namespace OpenWebUI.Api
 {

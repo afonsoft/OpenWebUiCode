@@ -32,14 +32,9 @@ public sealed class LifecycleHookService(
     /// <summary>Stamp = soma dos ticks dos arquivos fonte existentes.</summary>
     private static long StampOf(string? workdir, string home)
     {
-        long stamp = 0;
-        foreach (var p in SourcesOf(workdir, home))
-        {
-            if (File.Exists(p))
-            {
-                stamp += new FileInfo(p).LastWriteTimeUtc.Ticks;
-            }
-        }
+        var stamp = SourcesOf(workdir, home)
+            .Where(File.Exists)
+            .Sum(p => new FileInfo(p).LastWriteTimeUtc.Ticks);
         return stamp;
     }
 

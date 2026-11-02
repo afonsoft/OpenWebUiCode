@@ -107,11 +107,11 @@ public static class TerminalPtyEndpoints
 
         // Secrets do usuário ∪ global ∪ managed GitHub entram na env da PTY
         // (SPEC-20261017-agent-secrets-env RF-006) — sessão é por usuário.
-        var secrets = await deps.AgentEnv.BuildAsync(user!.Id, ct);
+        var secrets = await deps.AgentEnv.BuildAsync(user.Id, ct);
         try
         {
             var id = deps.Terminals.Create(
-                user!.Id, request?.Cols ?? 120, request?.Rows ?? 30,
+                user.Id, request?.Cols ?? 120, request?.Rows ?? 30,
                 secrets.Vars, workdir, request?.ChatId, request?.RunId);
             return Results.Created($"/api/v1/terminal/sessions/{id}", new { id });
         }

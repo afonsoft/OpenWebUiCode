@@ -28,6 +28,15 @@ public sealed record OAuthProviderConfig(
 /// </summary>
 public static class OAuthProviderCatalog
 {
+    private const string GoogleAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth";
+    private const string GoogleTokenUrl = "https://oauth2.googleapis.com/token";
+    private const string GoogleUserInfoUrl = "https://openidconnect.googleapis.com/v1/userinfo";
+    private const string GithubAuthUrl = "https://github.com/login/oauth/authorize";
+    private const string GithubTokenUrl = "https://github.com/login/oauth/access_token";
+    private const string GithubUserUrl = "https://api.github.com/user";
+    private const string MicrosoftUserInfoUrl = "https://graph.microsoft.com/oidc/userinfo";
+    private const string MicrosoftLoginBaseUrl = "https://login.microsoftonline.com";
+
     private static string? Env(string name) =>
         Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : null;
 
@@ -63,25 +72,25 @@ public static class OAuthProviderCatalog
             case "google":
                 return Build(new ProviderSpec(
                     "google", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-                    () => "https://accounts.google.com/o/oauth2/v2/auth",
-                    () => "https://oauth2.googleapis.com/token",
-                    () => "https://openidconnect.googleapis.com/v1/userinfo",
+                    () => GoogleAuthUrl,
+                    () => GoogleTokenUrl,
+                    () => GoogleUserInfoUrl,
                     "openid email profile"));
             case "github":
                 return Build(new ProviderSpec(
                     "github", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET",
-                    () => "https://github.com/login/oauth/authorize",
-                    () => "https://github.com/login/oauth/access_token",
-                    () => "https://api.github.com/user",
+                    () => GithubAuthUrl,
+                    () => GithubTokenUrl,
+                    () => GithubUserUrl,
                     "read:user user:email"));
             case "microsoft":
             {
                 var tenant = Env("MICROSOFT_CLIENT_TENANT_ID") ?? "common";
                 return Build(new ProviderSpec(
                     "microsoft", "MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET",
-                    () => $"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
-                    () => $"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
-                    () => "https://graph.microsoft.com/oidc/userinfo",
+                    () => $"{MicrosoftLoginBaseUrl}/{tenant}/oauth2/v2.0/authorize",
+                    () => $"{MicrosoftLoginBaseUrl}/{tenant}/oauth2/v2.0/token",
+                    () => MicrosoftUserInfoUrl,
                     "openid email profile"));
             }
             case "oidc":

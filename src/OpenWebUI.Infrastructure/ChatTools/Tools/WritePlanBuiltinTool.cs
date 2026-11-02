@@ -9,7 +9,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// escrita livre no modo plan (só toca o diretório de planos, sem
 /// aprovação); em code mode também funciona — plano como artefato.
 /// </summary>
-public sealed class WritePlanBuiltinTool(PlanFileService plans)
+public sealed class WritePlanBuiltinTool
     : IBuiltinChatTool
 {
     /// <inheritdoc />
@@ -62,7 +62,7 @@ public sealed class WritePlanBuiltinTool(PlanFileService plans)
                 ? t.GetString()
                 : null;
 
-        var written = plans.Write(
+        var written = PlanFileService.Write(
             context.WorkspacePath,
             context.ChatId ?? context.RunId ?? "session",
             content, title, context.RunId);

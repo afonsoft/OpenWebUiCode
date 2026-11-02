@@ -248,6 +248,6 @@ public sealed class BudgetPolicyService(
         {
             (null, _) => b,
             (_, null) => a,
-            _ => Math.Min(a!.Value, b!.Value),
+            _ => Math.Min(a.Value, b.Value),
         };
 }

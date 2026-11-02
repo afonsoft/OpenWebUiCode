@@ -140,12 +140,12 @@ public sealed class RemoteSkillCatalog(
         var state = _roots.GetOrAdd(root,
             _ => new RootState(DateTimeOffset.MinValue, new(StringComparer.OrdinalIgnoreCase)));
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in index.Take(MaxPerRoot))
+        foreach (var itemName in index.Take(MaxPerRoot).Select(i => i.Name))
         {
-            seen.Add(item.Name);
-            var cached = state.Skills.TryGetValue(item.Name, out var c) ? c : null;
+            seen.Add(itemName);
+            var cached = state.Skills.TryGetValue(itemName, out var c) ? c : null;
             using var request = new HttpRequestMessage(
-                HttpMethod.Get, $"{root}/{Uri.EscapeDataString(item.Name)}/SKILL.md");
+                HttpMethod.Get, $"{root}/{Uri.EscapeDataString(itemName)}/SKILL.md");
             if (cached?.ETag is { } etag)
             {
                 request.Headers.TryAddWithoutValidation("If-None-Match", etag);
@@ -167,7 +167,7 @@ public sealed class RemoteSkillCatalog(
             {
                 body = body[..MaxSkillBytes];
             }
-            state.Skills[item.Name] = new CachedSkill(
+            state.Skills[itemName] = new CachedSkill(
                 response.Headers.ETag?.Tag, body);
         }
 
@@ -230,13 +230,7 @@ public sealed class RemoteSkillCatalog(
 
     private static IndexItem? ParseItem(JsonElement item)
     {
-        var name = item.ValueKind == JsonValueKind.String
-            ? item.GetString()
-            : item.ValueKind == JsonValueKind.Object
-                && item.TryGetProperty("name", out var n)
-                && n.ValueKind == JsonValueKind.String
-                ? n.GetString()
-                : null;
+        var name = NameOf(item);
         if (string.IsNullOrWhiteSpace(name))
         {
             return null;
@@ -247,5 +241,18 @@ public sealed class RemoteSkillCatalog(
             ? d.GetString()
             : null;
         return new IndexItem(name.Trim(), description);
+    }
+
+    private static string? NameOf(JsonElement item)
+    {
+        if (item.ValueKind == JsonValueKind.String)
+        {
+            return item.GetString();
+        }
+        return item.ValueKind == JsonValueKind.Object
+            && item.TryGetProperty("name", out var n)
+            && n.ValueKind == JsonValueKind.String
+                ? n.GetString()
+                : null;
     }
 }

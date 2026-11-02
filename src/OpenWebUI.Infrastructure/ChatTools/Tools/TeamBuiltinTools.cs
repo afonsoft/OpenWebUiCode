@@ -214,10 +214,17 @@ public sealed class TeamTaskBuiltinTool(IServiceScopeFactory scopeFactory)
         {
             task.Status = "done";
             task.AssigneeChatId ??= context.ChatId;
-            task.Result = args.TryGetProperty("result", out var rEl)
-                && rEl.GetString() is { } r
-                    ? r.Length > 500 ? r[..500] : r
-                    : null;
+            task.Result = ExtractResult(args);
+            return null;
+        }
+
+        static string? ExtractResult(JsonElement args)
+        {
+            if (args.TryGetProperty("result", out var rEl)
+                && rEl.GetString() is { } r)
+            {
+                return r.Length > 500 ? r[..500] : r;
+            }
             return null;
         }
         // update

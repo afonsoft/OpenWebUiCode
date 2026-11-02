@@ -63,7 +63,7 @@ public static class HookConfigLoader
         }
         catch (JsonException ex)
         {
-            log?.LogWarning("Hooks: JSON inválido em {Path}: {Msg}", path, ex.Message);
+            log?.LogWarning(ex, "Hooks: JSON inválido em {Path}", path);
         }
     }
 
@@ -85,7 +85,7 @@ public static class HookConfigLoader
         }
         catch (JsonException ex)
         {
-            log?.LogWarning("Hooks: JSON inválido em {Path}: {Msg}", path, ex.Message);
+            log?.LogWarning(ex, "Hooks: JSON inválido em {Path}", path);
         }
     }
 

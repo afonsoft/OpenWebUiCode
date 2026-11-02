@@ -278,10 +278,6 @@ public static class WorkspaceGitService
                 ? await process.StandardOutput.ReadToEndAsync(ct)
                 : null;
         }
-        catch (OperationCanceledException)
-        {
-            throw; // cancelamento do request propaga, não vira "sem git"
-        }
         catch (Win32Exception) { return null; } // falha de spawn/exec do git → null por contrato
         catch (ObjectDisposedException) { return null; }
         catch (InvalidOperationException) { return null; }

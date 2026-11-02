@@ -62,7 +62,7 @@ public sealed class AgentRunEventBus(
             catch (Exception ex)
             {
                 logger.LogWarning(ex,
-                    "Observer {Type} falhou no evento {Event} da run {RunId} — ignorado.",
+                    "Observer {ObserverType} falhou no evento {Event} da run {RunId} — ignorado.",
                     observer.GetType().Name, e.Type, e.RunId);
             }
         }

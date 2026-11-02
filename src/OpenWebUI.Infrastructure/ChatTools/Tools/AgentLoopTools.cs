@@ -190,7 +190,7 @@ public sealed class InstantContextBuiltinTool(RestrictedExecRunner? runner = nul
                 + "\"readfile src/A.cs 1 40\", \"tree src 2\"])."));
         }
 
-        var result = _runner.Run(context.WorkspacePath, commands);
+        var result = RestrictedExecRunner.Run(context.WorkspacePath, commands);
         var xml = new StringBuilder("<ANSWER>");
         foreach (var s in result.Snippets)
         {

@@ -935,7 +935,7 @@ public class ProviderService(
     /// Processa um chunk SSE do stream OpenAI: content, reasoning e
     /// tool_calls fragmentadas por <c>index</c>.
     /// </summary>
-    private async Task ProcessOpenAiChunkAsync(
+    private static async Task ProcessOpenAiChunkAsync(
         JsonObject node, OpenAiStreamCtx ctx, CancellationToken ct)
     {
         var (diag, content, callBuffers, dsmlContent, dsmlReasoning,
@@ -1508,7 +1508,7 @@ public class ProviderService(
         Dictionary<int, (string Id, string Name, StringBuilder Args)> OpenTools,
         ProviderStreamCtx Sink);
 
-    private async Task<(ProviderUsage? Usage, string? DoneReason)> ProcessOllamaLineAsync(
+    private static async Task<(ProviderUsage? Usage, string? DoneReason)> ProcessOllamaLineAsync(
         JsonNode? node,
         ProviderUsage? usage,
         string? doneReason,
@@ -1866,7 +1866,7 @@ public class ProviderService(
             {
                 continue;
             }
-            var argsRaw = call?[FunctionKey]?[ArgumentsKey];
+            var argsRaw = call![FunctionKey]![ArgumentsKey];
             JsonNode? input;
             try
             {
@@ -1881,7 +1881,7 @@ public class ProviderService(
             blocks.Add(new JsonObject
             {
                 ["type"] = "tool_use",
-                ["id"] = call?["id"]?.GetValue<string>()
+                ["id"] = call["id"]?.GetValue<string>()
                     ?? Guid.NewGuid().ToString("N"),
                 ["name"] = name,
                 ["input"] = input ?? new JsonObject(),
@@ -1937,8 +1937,8 @@ public class ProviderService(
             tools.Add(new JsonObject
             {
                 ["name"] = name,
-                [DescriptionKey] = fn?[DescriptionKey]?.GetValue<string>(),
-                ["input_schema"] = fn?["parameters"]?.DeepClone()
+                [DescriptionKey] = fn![DescriptionKey]?.GetValue<string>(),
+                ["input_schema"] = fn["parameters"]?.DeepClone()
                     ?? new JsonObject { ["type"] = ObjectKey },
             });
         }
@@ -2294,14 +2294,9 @@ public class ProviderService(
         CancellationToken ct)
     {
         var state = actx.State;
-        var content = actx.Content;
         var calls = actx.Calls;
         var callsJson = actx.CallsJson;
         var openTools = actx.OpenTools;
-        var markupContent = actx.Sink.MarkupContent;
-        var markupReasoning = actx.Sink.MarkupReasoning;
-        var onDelta = actx.Sink.OnDelta;
-        var onReasoning = actx.Sink.OnReasoning;
         var index = IntNum(Prop(data, IndexKey)) ?? 0;
         var block = Prop(data, "content_block");
         if (eventName == "content_block_start"
@@ -2608,12 +2603,12 @@ public class ProviderService(
         {
             return null;
         }
-        var id = call?["id"]?.GetValue<string>();
+        var id = call!["id"]?.GetValue<string>();
         if (id is not null)
         {
             toolNames[id] = name;
         }
-        var argsRaw = call?[FunctionKey]?[ArgumentsKey];
+        var argsRaw = call![FunctionKey]![ArgumentsKey];
         JsonNode? args;
         try
         {
@@ -2650,8 +2645,8 @@ public class ProviderService(
             declarations.Add(new JsonObject
             {
                 ["name"] = name,
-                [DescriptionKey] = fn?[DescriptionKey]?.GetValue<string>(),
-                ["parameters"] = fn?["parameters"]?.DeepClone()
+                [DescriptionKey] = fn![DescriptionKey]?.GetValue<string>(),
+                ["parameters"] = fn["parameters"]?.DeepClone()
                     ?? new JsonObject { ["type"] = ObjectKey },
             });
         }
@@ -3131,7 +3126,7 @@ public class ProviderService(
             if (provider == ProviderTypes.Ollama)
             {
                 node["images"] = new JsonArray(images
-                    .Select(img => (JsonNode)JsonValue.Create(img.Base64Data)!)
+                    .Select(img => (JsonNode)JsonValue.Create(img.Base64Data))
                     .ToArray());
             }
             else
