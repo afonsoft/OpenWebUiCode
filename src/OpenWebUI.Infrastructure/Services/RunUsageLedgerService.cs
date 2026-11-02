@@ -153,49 +153,127 @@ public sealed class RunUsageLedgerService(
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync(ct);
 
-    /// <summary>Top chats por custo na janela (superfície admin, RF-005).</summary>
+    /// <summary>
+    /// Top chats por custo na janela (superfície admin, RF-005);
+    /// carrega tokens totais do chat para a coluna de uso.
+    /// </summary>
     public async Task<List<ChatCostRow>> TopChatsAsync(
-        long from, long to, int take, CancellationToken ct)
+        long from, long to, int take, string? userId, CancellationToken ct)
     {
         var rows = await db.RunUsageRecords.AsNoTracking()
-            .Where(r => r.CreatedAt >= from && r.CreatedAt < to)
+            .Where(r => r.CreatedAt >= from && r.CreatedAt < to
+                && (userId == null || r.UserId == userId))
             .GroupBy(r => new { r.ChatId, r.UserId })
             .Select(g => new
             {
                 g.Key.ChatId, g.Key.UserId,
+                Tokens = g.Sum(r => r.PromptTokens + r.CompletionTokens
+                    + r.ReasoningTokens),
                 Cost = g.Sum(r => r.CostUsd ?? 0),
             })
             .OrderByDescending(g => g.Cost)
             .Take(take)
             .ToListAsync(ct);
         return rows.Select(r => new ChatCostRow(
-            r.ChatId, r.UserId, r.Cost)).ToList();
+            r.ChatId, r.UserId, r.Tokens, r.Cost)).ToList();
     }
 
     /// <summary>Agregado por usuário na janela (superfície admin, RF-005).</summary>
     public async Task<List<UserCostRow>> ByUserAsync(
-        long from, long to, CancellationToken ct)
+        long from, long to, string? userId, CancellationToken ct)
     {
         var rows = await db.RunUsageRecords.AsNoTracking()
-            .Where(r => r.CreatedAt >= from && r.CreatedAt < to)
+            .Where(r => r.CreatedAt >= from && r.CreatedAt < to
+                && (userId == null || r.UserId == userId))
             .GroupBy(r => r.UserId)
             .Select(g => new
             {
                 UserId = g.Key,
-                Tokens = g.Sum(r => r.PromptTokens + r.CompletionTokens),
+                Prompt = g.Sum(r => r.PromptTokens),
+                Completion = g.Sum(r => r.CompletionTokens),
+                Reasoning = g.Sum(r => r.ReasoningTokens),
                 Cost = g.Sum(r => r.CostUsd ?? 0),
                 Runs = g.Count(),
             })
             .OrderByDescending(g => g.Cost)
             .ToListAsync(ct);
         return rows.Select(r => new UserCostRow(
-            r.UserId, r.Tokens, r.Cost, r.Runs)).ToList();
+            r.UserId, r.Prompt, r.Completion, r.Reasoning,
+            r.Prompt + r.Completion + r.Reasoning, r.Cost, r.Runs)).ToList();
+    }
+
+    /// <summary>
+    /// Série diária de tokens/custo na janela (SPEC-20261102 RF-001):
+    /// um item por dia UTC com uso, em ordem cronológica. Dias sem uso
+    /// são omitidos — o client preenche lacunas.
+    /// </summary>
+    public async Task<List<DayUsageRow>> ByDayAsync(
+        long from, long to, string? userId, CancellationToken ct)
+    {
+        var rows = await db.RunUsageRecords.AsNoTracking()
+            .Where(r => r.CreatedAt >= from && r.CreatedAt < to
+                && (userId == null || r.UserId == userId))
+            .GroupBy(r => r.CreatedAt / 86400)
+            .Select(g => new
+            {
+                DayEpoch = g.Key,
+                Prompt = g.Sum(r => r.PromptTokens),
+                Completion = g.Sum(r => r.CompletionTokens),
+                Reasoning = g.Sum(r => r.ReasoningTokens),
+                Cost = g.Sum(r => r.CostUsd ?? 0),
+            })
+            .OrderBy(g => g.DayEpoch)
+            .ToListAsync(ct);
+        return rows.Select(r => new DayUsageRow(
+            DateTimeOffset.FromUnixTimeSeconds(r.DayEpoch * 86400)
+                .ToString("yyyy-MM-dd"),
+            r.Prompt, r.Completion, r.Reasoning, r.Cost)).ToList();
+    }
+
+    /// <summary>
+    /// Agregado por modelo na janela (SPEC-20261102 RF-002): ordenado por
+    /// tokens desc; <c>ModelId</c> nulo agrupa como <c>"unknown"</c>.
+    /// </summary>
+    public async Task<List<ModelUsageRow>> ByModelAsync(
+        long from, long to, int take, string? userId, CancellationToken ct)
+    {
+        var rows = await db.RunUsageRecords.AsNoTracking()
+            .Where(r => r.CreatedAt >= from && r.CreatedAt < to
+                && (userId == null || r.UserId == userId))
+            .GroupBy(r => r.ModelId ?? "unknown")
+            .Select(g => new
+            {
+                ModelId = g.Key,
+                Prompt = g.Sum(r => r.PromptTokens),
+                Completion = g.Sum(r => r.CompletionTokens),
+                Reasoning = g.Sum(r => r.ReasoningTokens),
+                Cost = g.Sum(r => r.CostUsd ?? 0),
+                Runs = g.Count(),
+            })
+            .ToListAsync(ct);
+        return rows.Select(r => new ModelUsageRow(
+                r.ModelId, r.Runs, r.Prompt, r.Completion, r.Reasoning,
+                r.Prompt + r.Completion + r.Reasoning, r.Cost))
+            .OrderByDescending(m => m.Tokens)
+            .Take(take).ToList();
     }
 }
 
 /// <summary>Linha do agregado por chat.</summary>
-public sealed record ChatCostRow(string ChatId, string UserId, double CostUsd);
+public sealed record ChatCostRow(
+    string ChatId, string UserId, long Tokens, double CostUsd);
 
 /// <summary>Linha do agregado por usuário.</summary>
 public sealed record UserCostRow(
-    string UserId, long Tokens, double CostUsd, int Runs);
+    string UserId, long PromptTokens, long CompletionTokens,
+    long ReasoningTokens, long Tokens, double CostUsd, int Runs);
+
+/// <summary>Linha da série diária de uso (SPEC-20261102).</summary>
+public sealed record DayUsageRow(
+    string Day, long PromptTokens, long CompletionTokens,
+    long ReasoningTokens, double CostUsd);
+
+/// <summary>Linha do agregado por modelo (SPEC-20261102).</summary>
+public sealed record ModelUsageRow(
+    string ModelId, int Runs, long PromptTokens, long CompletionTokens,
+    long ReasoningTokens, long Tokens, double CostUsd);

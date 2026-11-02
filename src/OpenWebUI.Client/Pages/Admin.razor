@@ -214,7 +214,18 @@
         }
         else if (_tab == "analytics")
         {
-            if (_analytics is null)
+            <div class="flex items-center gap-2 mb-4" role="group"
+                 aria-label="@L["admin.period"]">
+                <span class="text-sm text-gray-500 dark:text-gray-400">@L["admin.period"]</span>
+                @foreach (var preset in UsagePresets)
+                {
+                    <button class="msg-action @(_usageDays == preset ? "font-semibold underline" : "")"
+                            aria-pressed="@(_usageDays == preset ? "true" : "false")"
+                            @onclick="() => ReloadUsageAsync(preset)">@(preset)d</button>
+                }
+            </div>
+
+            @if (_analytics is null)
             {
                 <div class="sidebar-empty">@L["common.loading"]</div>
             }
@@ -237,12 +248,157 @@
                         <div class="text-2xl font-medium">@_analytics.Evaluations.Positive / @_analytics.Evaluations.Negative</div>
                         <div class="text-xs text-gray-500 dark:text-gray-400">@L["admin.evaluations"]</div>
                     </div>
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                        <div class="text-2xl font-medium">@(_usage is null ? "…" : FmtTokens(_usage.Totals.PromptTokens + _usage.Totals.CompletionTokens + _usage.Totals.ReasoningTokens))</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">@L["admin.tokens"]</div>
+                    </div>
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                        <div class="text-2xl font-medium">@(_usage is null ? "…" : FmtUsd(_usage.Totals.CostUsd))</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">@L["admin.cost_usd"]</div>
+                    </div>
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                        <div class="text-2xl font-medium">@(_usage?.Totals.Runs.ToString() ?? "…")</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">@L["admin.runs"]</div>
+                    </div>
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                        <div class="text-2xl font-medium">@(_usage?.Totals.ActiveUsers.ToString() ?? "…")</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">@L["admin.active_users"]</div>
+                    </div>
                 </div>
 
-                <div class="grid md:grid-cols-2 gap-3">
+                <div class="grid md:grid-cols-2 gap-3 mb-3">
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                        <div class="text-sm font-medium mb-2">@L["admin.tokens_per_day"]</div>
+                        @if (_usage is null)
+                        {
+                            <div class="sidebar-empty">@L["common.loading"]</div>
+                        }
+                        else if (TokenSeries.Count == 0)
+                        {
+                            <div class="sidebar-empty">@L["admin.no_data"]</div>
+                        }
+                        else
+                        {
+                            <LineChart Series="TokenSeries" AriaLabel="@L["admin.chart_tokens"]" />
+                            <div class="flex gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                <span><span class="inline-block w-2 h-2 rounded-full" style="background:#3b82f6"></span> @L["admin.series_prompt"]</span>
+                                <span><span class="inline-block w-2 h-2 rounded-full" style="background:#a855f7"></span> @L["admin.series_completion"]</span>
+                                <span><span class="inline-block w-2 h-2 rounded-full" style="background:#10b981"></span> @L["admin.series_reasoning"]</span>
+                            </div>
+                        }
+                    </div>
                     <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
                         <div class="text-sm font-medium mb-2">@L["admin.messages_per_day"]</div>
                         <BarChart Points="_analytics.Series.Messages" />
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-3 mb-3">
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4 overflow-x-auto">
+                        <div class="text-sm font-medium mb-2">@L["admin.usage_by_user"]</div>
+                        @if (_usage is null)
+                        {
+                            <div class="sidebar-empty">@L["common.loading"]</div>
+                        }
+                        else if (_usage.Users.Count == 0)
+                        {
+                            <div class="sidebar-empty">@L["admin.no_data"]</div>
+                        }
+                        else
+                        {
+                            <div class="grid grid-cols-[1fr_50px_70px_70px_90px] gap-2 text-xs text-gray-500 dark:text-gray-400 min-w-[420px]">
+                                <span>@L["admin.col_user"]</span>
+                                <span>@L["admin.col_runs"]</span>
+                                <span>@L["admin.col_tokens"]</span>
+                                <span>@L["admin.col_cost"]</span>
+                                <span>@L["admin.col_cap"]</span>
+                            </div>
+                            @foreach (var u in _usage.Users)
+                            {
+                                <div class="grid grid-cols-[1fr_50px_70px_70px_90px] gap-2 text-sm py-1 border-b border-gray-100 dark:border-gray-800/50 last:border-0 min-w-[420px]">
+                                    <span class="truncate">@(u.Email ?? u.UserId)</span>
+                                    <span class="text-gray-500">@u.Runs</span>
+                                    <span class="text-gray-500">@FmtTokens(u.Tokens)</span>
+                                    <span class="text-gray-500">@FmtUsd(u.CostUsd)</span>
+                                    <span>
+                                        @if (u.UsedPct is { } pct)
+                                        {
+                                            <span class="flex items-center gap-1.5">
+                                                <span class="h-1.5 w-12 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden inline-block">
+                                                    <span class="block h-full rounded-full @CapBarClass(pct)" style="width: @Math.Min(pct, 100)%"></span>
+                                                </span>
+                                                <span class="text-xs">@((int)Math.Round(pct))%</span>
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-xs text-gray-400">—</span>
+                                        }
+                                    </span>
+                                </div>
+                            }
+                        }
+                    </div>
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4 overflow-x-auto">
+                        <div class="text-sm font-medium mb-2">@L["admin.usage_by_model"]</div>
+                        @if (_usage is null)
+                        {
+                            <div class="sidebar-empty">@L["common.loading"]</div>
+                        }
+                        else if (_usage.Models.Count == 0)
+                        {
+                            <div class="sidebar-empty">@L["admin.no_data"]</div>
+                        }
+                        else
+                        {
+                            <div class="grid grid-cols-[1fr_50px_80px_80px] gap-2 text-xs text-gray-500 dark:text-gray-400 min-w-[360px]">
+                                <span>@L["admin.col_model"]</span>
+                                <span>@L["admin.col_runs"]</span>
+                                <span>@L["admin.col_tokens"]</span>
+                                <span>@L["admin.col_cost"]</span>
+                            </div>
+                            @foreach (var m in _usage.Models)
+                            {
+                                <div class="grid grid-cols-[1fr_50px_80px_80px] gap-2 text-sm py-1 border-b border-gray-100 dark:border-gray-800/50 last:border-0 min-w-[360px]">
+                                    <span class="truncate">@m.ModelId</span>
+                                    <span class="text-gray-500">@m.Runs</span>
+                                    <span class="text-gray-500">@FmtTokens(m.Tokens)</span>
+                                    <span class="text-gray-500">@FmtUsd(m.CostUsd)</span>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-3">
+                    <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4 overflow-x-auto">
+                        <div class="text-sm font-medium mb-2">@L["admin.top_chats"]</div>
+                        @if (_usage is null)
+                        {
+                            <div class="sidebar-empty">@L["common.loading"]</div>
+                        }
+                        else if (_usage.TopChats.Count == 0)
+                        {
+                            <div class="sidebar-empty">@L["admin.no_data"]</div>
+                        }
+                        else
+                        {
+                            <div class="grid grid-cols-[1fr_1fr_80px_80px] gap-2 text-xs text-gray-500 dark:text-gray-400 min-w-[440px]">
+                                <span>@L["admin.col_title"]</span>
+                                <span>@L["admin.col_user"]</span>
+                                <span>@L["admin.col_tokens"]</span>
+                                <span>@L["admin.col_cost"]</span>
+                            </div>
+                            @foreach (var c in _usage.TopChats)
+                            {
+                                <div class="grid grid-cols-[1fr_1fr_80px_80px] gap-2 text-sm py-1 border-b border-gray-100 dark:border-gray-800/50 last:border-0 min-w-[440px]">
+                                    <a class="truncate hover:underline" href="/c/@c.ChatId" target="_blank">@(c.Title ?? L["admin.untitled"])</a>
+                                    <span class="truncate text-gray-500">@(c.Email ?? c.UserId)</span>
+                                    <span class="text-gray-500">@FmtTokens(c.Tokens)</span>
+                                    <span class="text-gray-500">@FmtUsd(c.CostUsd)</span>
+                                </div>
+                            }
+                        }
                     </div>
                     <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
                         <div class="text-sm font-medium mb-2">@L["admin.top_models"]</div>
@@ -1859,6 +2015,71 @@
     private int TotalMessages => _analytics?.Series.Messages.Sum(d => d.Count) ?? 0;
     private int TotalChats => _analytics?.Series.Chats.Sum(d => d.Count) ?? 0;
 
+    // ---------------- Analytics v2 (SPEC-20261102) ----------------
+
+    private AdminUsageResponse? _usage;
+    private int _usageDays = 30;
+    private static readonly int[] UsagePresets = [7, 30, 90];
+
+    /// <summary>Séries prompt/completion/reasoning por dia, com lacunas zeradas.</summary>
+    private IReadOnlyList<LineChart.ChartSeries> TokenSeries
+    {
+        get
+        {
+            if (_usage is null
+                || !DateOnly.TryParse(_usage.From, out var from)
+                || !DateOnly.TryParse(_usage.To, out var to))
+            {
+                return [];
+            }
+            var byDay = _usage.Series.ToDictionary(d => d.Day);
+            var prompt = new List<double>();
+            var completion = new List<double>();
+            var reasoning = new List<double>();
+            for (var d = from; d < to; d = d.AddDays(1))
+            {
+                byDay.TryGetValue(d.ToString("yyyy-MM-dd"), out var row);
+                prompt.Add(row?.PromptTokens ?? 0);
+                completion.Add(row?.CompletionTokens ?? 0);
+                reasoning.Add(row?.ReasoningTokens ?? 0);
+            }
+            return
+            [
+                new LineChart.ChartSeries(L["admin.series_prompt"], prompt),
+                new LineChart.ChartSeries(L["admin.series_completion"], completion),
+                new LineChart.ChartSeries(L["admin.series_reasoning"], reasoning),
+            ];
+        }
+    }
+
+    /// <summary>Refaz analytics + uso para o preset de dias escolhido.</summary>
+    private async Task ReloadUsageAsync(int days)
+    {
+        _usageDays = days;
+        _analytics = null;
+        _usage = null;
+        var analytics = Api.GetAnalyticsAsync(days);
+        var usage = Api.GetAdminUsageAsync(days);
+        _analytics = await analytics;
+        _usage = await usage;
+    }
+
+    /// <summary>Tokens compactos (340k, 1,2M, 2,1B).</summary>
+    private static string FmtTokens(long value) => value switch
+    {
+        >= 1_000_000_000 => $"{value / 1_000_000_000d:0.#}B",
+        >= 1_000_000 => $"{value / 1_000_000d:0.#}M",
+        >= 1_000 => $"{value / 1_000d:0.#}k",
+        _ => value.ToString(),
+    };
+
+    /// <summary>Custo em USD com 4 casas (valores pequenos importam).</summary>
+    private static string FmtUsd(double value) => $"US$ {value:0.0000}";
+
+    /// <summary>Cor da barra cap-vs-uso: azul → âmbar (≥80%) → vermelho (≥100%).</summary>
+    private static string CapBarClass(double pct) =>
+        pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-blue-500";
+
     private bool IsAdmin => Auth.CurrentUser?.Role == "admin";
     private bool _loadFailed;
 
@@ -1891,7 +2112,10 @@
     {
         await ReloadUsersAsync();
         _groups = await Api.GetGroupsAsync();
-        _analytics = await Api.GetAnalyticsAsync(30);
+        var analytics = Api.GetAnalyticsAsync(_usageDays);
+        var usage = Api.GetAdminUsageAsync(_usageDays);
+        _analytics = await analytics;
+        _usage = await usage;
         _feedbacks = await Api.GetAllFeedbacksAsync();
         _leaderboard = await Api.GetLeaderboardAsync();
         await ReloadAdminChatsAsync();
