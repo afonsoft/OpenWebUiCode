@@ -80,29 +80,13 @@ public static class ChatRunEndpoints
         // UserPromptSubmit (SPEC-20261031-lifecycle-hooks RF-005): hooks
         // do repo vinculado rodam antes da mensagem entrar na fila —
         // block rejeita com a reason; additionalContext injeta nota.
-        var promptWorkdir = await deps.Repos.ResolveWorkdirAsync(
-            user.Id, chat.Id, ct);
-        var promptRun = new ChatRun { Id = chat.Id, ChatId = chat.Id,
-            UserId = user.Id, Model = request.Model };
-        var promptHook = await deps.Hooks.RunAsync("UserPromptSubmit",
-            promptWorkdir, promptRun, null,
-            new { prompt = request.Content }, ct);
-        if (promptHook.Decision is HookDecision.Block)
+        var (hookedRequest, hookFail) = await ApplyPromptSubmitHooksAsync(
+            deps, user, chat, request, ct);
+        if (hookFail is not null)
         {
-            return Results.BadRequest(new
-            {
-                detail = promptHook.Reason ?? "Mensagem bloqueada por hook.",
-            });
+            return hookFail;
         }
-        if (promptHook.AdditionalContexts.Count > 0
-            && !string.IsNullOrWhiteSpace(request.Content))
-        {
-            request = request with
-            {
-                Content = request.Content + "\n\n"
-                    + string.Join("\n", promptHook.AdditionalContexts),
-            };
-        }
+        request = hookedRequest;
 
         // SPEC-20261016-commands-v2 RF-003/RF-004: submit via command — o
         // servidor expande o template (a mensagem persistida mostra o texto
@@ -136,32 +120,9 @@ public static class ChatRunEndpoints
         // do envio (somente arquivos do dono) viram FilesJson da mensagem.
         var attached = await ResolveAttachmentsAsync(deps, user, request, ct);
 
-        if (!string.IsNullOrWhiteSpace(request.Content))
+        if (PersistUserMessage(chat, request, attached, now) is { } msgFail)
         {
-            // Persiste a mensagem do usuário já no servidor (o cliente não precisa reenviar o chat inteiro).
-            var nextPosition = chat.Messages.Count == 0
-                ? 0
-                : chat.Messages.Max(m => m.Position) + 1;
-            var message = new ChatMessage
-            {
-                ChatId = chat.Id,
-                Role = "user",
-                Content = request.Content,
-                Position = nextPosition,
-                Timestamp = now,
-                FilesJson = attached is null
-                    ? null
-                    : JsonSerializer.Serialize(attached, JsonOptions),
-                ParentId = BranchService.ResolveLeaf(chat)?.Id,
-            };
-            chat.Messages.Add(message);
-            chat.LeafMessageId = message.Id;
-            chat.UpdatedAt = now;
-        }
-        else if (BranchService.WalkPath(chat).LastOrDefault()?.Role != "user")
-        {
-            // Sem conteúdo novo, a run regenera sobre o histórico — que precisa terminar em msg do usuário.
-            return Results.BadRequest(new { detail = "Histórico não termina em mensagem do usuário." });
+            return msgFail;
         }
 
         // Histórico reconstruído no servidor — a fonte da verdade é o banco.
@@ -229,6 +190,75 @@ public static class ChatRunEndpoints
 
         deps.Dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: ToResponse(run));
+    }
+
+    /// <summary>Hooks <c>UserPromptSubmit</c> do repo vinculado (RF-005):
+    /// block → 400 com a reason; additionalContext anexa nota ao content.</summary>
+    private static async Task<(EnqueueChatRunRequest Request, IResult? Failure)>
+        ApplyPromptSubmitHooksAsync(EnqueueRunDeps deps, User user, Chat chat,
+            EnqueueChatRunRequest request, CancellationToken ct)
+    {
+        var promptWorkdir = await deps.Repos.ResolveWorkdirAsync(
+            user.Id, chat.Id, ct);
+        var promptRun = new ChatRun { Id = chat.Id, ChatId = chat.Id,
+            UserId = user.Id, Model = request.Model };
+        var promptHook = await deps.Hooks.RunAsync("UserPromptSubmit",
+            promptWorkdir, promptRun, null,
+            new { prompt = request.Content }, ct);
+        if (promptHook.Decision is HookDecision.Block)
+        {
+            return (request, Results.BadRequest(new
+            {
+                detail = promptHook.Reason ?? "Mensagem bloqueada por hook.",
+            }));
+        }
+        if (promptHook.AdditionalContexts.Count > 0
+            && !string.IsNullOrWhiteSpace(request.Content))
+        {
+            request = request with
+            {
+                Content = request.Content + "\n\n"
+                    + string.Join("\n", promptHook.AdditionalContexts),
+            };
+        }
+        return (request, null);
+    }
+
+    /// <summary>Persiste a mensagem do usuário como nova leaf do ramo ativo
+    /// (o cliente não reenvia o chat inteiro). Sem conteúdo novo, a run
+    /// regenera sobre o histórico — que precisa terminar em msg do usuário.</summary>
+    private static IResult? PersistUserMessage(
+        Chat chat, EnqueueChatRunRequest request,
+        List<ChatMessageFileModel>? attached, long now)
+    {
+        if (!string.IsNullOrWhiteSpace(request.Content))
+        {
+            var nextPosition = chat.Messages.Count == 0
+                ? 0
+                : chat.Messages.Max(m => m.Position) + 1;
+            var message = new ChatMessage
+            {
+                ChatId = chat.Id,
+                Role = "user",
+                Content = request.Content,
+                Position = nextPosition,
+                Timestamp = now,
+                FilesJson = attached is null
+                    ? null
+                    : JsonSerializer.Serialize(attached, JsonOptions),
+                ParentId = BranchService.ResolveLeaf(chat)?.Id,
+            };
+            chat.Messages.Add(message);
+            chat.LeafMessageId = message.Id;
+            chat.UpdatedAt = now;
+            return null;
+        }
+        if (BranchService.WalkPath(chat).LastOrDefault()?.Role != "user")
+        {
+            return Results.BadRequest(
+                new { detail = "Histórico não termina em mensagem do usuário." });
+        }
+        return null;
     }
 
     /// <summary>Command expandido + overrides resolvidos (RF-003/RF-004).</summary>
