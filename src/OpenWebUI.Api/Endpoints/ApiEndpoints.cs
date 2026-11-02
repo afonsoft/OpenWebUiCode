@@ -651,51 +651,15 @@ public static class ApiEndpoints
             return Results.Forbid();
         }
 
-        // Preserva chaves existentes quando o campo vier vazio (UI não reenvia segredos).
         var current = await config.GetConnectionsAsync(ct);
-        var currentUrls = current.OpenAiBaseUrls.ToList();
-        var keys = request.OpenAiBaseUrls
-            .Select((url, i) =>
-            {
-                var incoming = request.OpenAiApiKeys.ElementAtOrDefault(i);
-                if (!string.IsNullOrEmpty(incoming))
-                {
-                    return incoming;
-                }
-
-                var previousIndex = currentUrls.IndexOf(url);
-                return previousIndex >= 0 ? current.OpenAiApiKeys.ElementAtOrDefault(previousIndex) ?? string.Empty : string.Empty;
-            })
-            .ToList();
+        var keys = MergeOpenAiKeys(request, current);
 
         // Conexões tipadas: valida tipo/chave e preserva chaves existentes
         // quando o campo vier vazio (a UI não reenvia segredos).
-        var typedProviders = new List<ProviderConnection>();
-        foreach (var p in request.ProvidersOrEmpty)
+        var (typedProviders, providerError) = ValidateTypedProviders(request, current);
+        if (providerError is not null)
         {
-            var type = p.Type?.Trim().ToLowerInvariant() ?? string.Empty;
-            if (!ProviderTypes.All.Contains(type))
-            {
-                return Results.BadRequest(new { error = $"provider type desconhecido: {p.Type}" });
-            }
-
-            var baseUrl = p.BaseUrl?.Trim() ?? string.Empty;
-            if (string.IsNullOrEmpty(baseUrl))
-            {
-                return Results.BadRequest(new { error = $"provider {type} sem baseUrl" });
-            }
-
-            var previous = current.ProvidersOrEmpty.FirstOrDefault(c =>
-                string.Equals(c.Type, type, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(c.BaseUrl?.TrimEnd('/'), baseUrl.TrimEnd('/'),
-                    StringComparison.OrdinalIgnoreCase));
-            var apiKey = !string.IsNullOrEmpty(p.ApiKey) ? p.ApiKey : previous?.ApiKey;
-            if (ProviderTypes.KeyRequired(type) && string.IsNullOrEmpty(apiKey))
-            {
-                return Results.BadRequest(new { error = $"provider {type} exige apiKey" });
-            }
-
-            typedProviders.Add(new ProviderConnection(type, baseUrl, apiKey, p.Name));
+            return providerError;
         }
 
         var updated = request with { OpenAiApiKeys = keys, Providers = typedProviders };
@@ -730,6 +694,68 @@ public static class ApiEndpoints
                 .Select(p => new ProviderConnectionResponse(
                     p.Type, p.BaseUrl, !string.IsNullOrEmpty(p.ApiKey), p.Name))
                 .ToList()));
+    }
+
+    /// <summary>Mescla apiKeys OpenAI: incoming não-vazia vence; vazia
+    /// herda a chave da mesma URL já salva (a UI não reenvia segredos).</summary>
+    private static List<string> MergeOpenAiKeys(
+        ConnectionsConfig request, ConnectionsConfig current)
+    {
+        var currentUrls = current.OpenAiBaseUrls.ToList();
+        return request.OpenAiBaseUrls
+            .Select((url, i) =>
+            {
+                var incoming = request.OpenAiApiKeys.ElementAtOrDefault(i);
+                if (!string.IsNullOrEmpty(incoming))
+                {
+                    return incoming;
+                }
+                var previousIndex = currentUrls.IndexOf(url);
+                return previousIndex >= 0
+                    ? current.OpenAiApiKeys.ElementAtOrDefault(previousIndex) ?? string.Empty
+                    : string.Empty;
+            })
+            .ToList();
+    }
+
+    /// <summary>Valida e monta as conexões tipadas: tipo conhecido, baseUrl
+    /// presente e apiKey exigida — herdada da conexão salva de mesma
+    /// type+baseUrl quando o campo vem vazio.</summary>
+    private static (List<ProviderConnection> Providers, IResult? Error)
+        ValidateTypedProviders(
+            ConnectionsConfig request, ConnectionsConfig current)
+    {
+        var typedProviders = new List<ProviderConnection>();
+        foreach (var p in request.ProvidersOrEmpty)
+        {
+            var type = p.Type?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (!ProviderTypes.All.Contains(type))
+            {
+                return (typedProviders, Results.BadRequest(
+                    new { error = $"provider type desconhecido: {p.Type}" }));
+            }
+
+            var baseUrl = p.BaseUrl?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(baseUrl))
+            {
+                return (typedProviders, Results.BadRequest(
+                    new { error = $"provider {type} sem baseUrl" }));
+            }
+
+            var previous = current.ProvidersOrEmpty.FirstOrDefault(c =>
+                string.Equals(c.Type, type, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(c.BaseUrl?.TrimEnd('/'), baseUrl.TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase));
+            var apiKey = !string.IsNullOrEmpty(p.ApiKey) ? p.ApiKey : previous?.ApiKey;
+            if (ProviderTypes.KeyRequired(type) && string.IsNullOrEmpty(apiKey))
+            {
+                return (typedProviders, Results.BadRequest(
+                    new { error = $"provider {type} exige apiKey" }));
+            }
+
+            typedProviders.Add(new ProviderConnection(type, baseUrl, apiKey, p.Name));
+        }
+        return (typedProviders, null);
     }
 
     private static async Task<IResult> ExportConfigAsync(
