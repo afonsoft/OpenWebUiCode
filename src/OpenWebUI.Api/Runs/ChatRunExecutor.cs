@@ -181,8 +181,9 @@ public sealed class ChatRunExecutor(
             try
             {
                 await ExecuteAttemptAsync(
-                    run, user, request, commandMode, resumePlan,
-                    budgetLimits, comboRef, state, sw, ct);
+                    new AttemptCtx(run, user, request, commandMode,
+                        resumePlan, budgetLimits, comboRef, state, sw),
+                    ct);
                 return;
             }
             catch (OperationCanceledException ex)
@@ -192,8 +193,9 @@ public sealed class ChatRunExecutor(
             catch (Exception ex)
             {
                 var (retry, attemptsLeft) = await HandleRunFailureAsync(
-                    run, ex, state.Content.ToString(), state.ToolMessages,
-                    comboRef, request.Model, sw, comboAttemptsLeft);
+                    new RunFailure(run, ex, state.Content.ToString(),
+                        state.ToolMessages, comboRef, request.Model, sw,
+                        comboAttemptsLeft));
                 if (retry)
                 {
                     comboAttemptsLeft = attemptsLeft;
@@ -228,12 +230,26 @@ public sealed class ChatRunExecutor(
 
     /// <summary>Uma tentativa da run: modelos especiais, preparação,
     /// tool loop (com Stop hooks) ou completion simples, e a conclusão.</summary>
+    /// <summary>Parâmetros da tentativa de execução (S107).</summary>
+    private sealed record AttemptCtx(
+        ChatRun Run, User User, ChatCompletionRequest Request,
+        string? CommandMode, RunResumePlan? ResumePlan,
+        BudgetLimits BudgetLimits, string? ComboRef,
+        RunStreamState State, Stopwatch Sw);
+
+    /// <summary>Parâmetros do tool loop com hooks (S107).</summary>
+    private sealed record ToolLoopRunCtx(
+        ChatRun Run, User User, string? CommandMode, string ChatMode,
+        ChatCompletionRequest Effective, List<Tool> Tools,
+        BudgetLimits BudgetLimits,
+        List<(Regex Regex, string Replacement)> OutletRules,
+        RunLoopCheckpoint? ResumeSeed, RunStreamState State);
+
     private async Task ExecuteAttemptAsync(
-        ChatRun run, User user, ChatCompletionRequest request,
-        string? commandMode, RunResumePlan? resumePlan,
-        BudgetLimits budgetLimits, string? comboRef,
-        RunStreamState state, Stopwatch sw, CancellationToken ct)
+        AttemptCtx a, CancellationToken ct)
     {
+        var (run, user, request, commandMode, resumePlan, budgetLimits,
+            comboRef, state, sw) = a;
         // Modelos pipeline:{id} e arena:{model} encerram a run por
         // conta própria (DONE próprio após FinishAsync).
         if (await TrySpecialModelAsync(request, run, user, ct))
@@ -263,8 +279,9 @@ public sealed class ChatRunExecutor(
         if (tools is { Count: > 0 })
         {
             await RunToolLoopWithStopHooksAsync(
-                run, user, commandMode, chatMode, effective, tools,
-                budgetLimits, outletRules, resumeSeed, state, ct);
+                new ToolLoopRunCtx(run, user, commandMode, chatMode,
+                    effective, tools, budgetLimits, outletRules, resumeSeed,
+                    state), ct);
         }
         else
         {
@@ -272,26 +289,22 @@ public sealed class ChatRunExecutor(
                 run, effective, outletRules, state, ct);
         }
 
-        await CompleteRunAsync(run, request, user, state.Content,
-            state.LoopOutcome, state.ToolMessages, comboRef, sw, ct);
+        await CompleteRunAsync(
+            new RunCompletion(run, request, user, state.Content,
+                state.LoopOutcome, state.ToolMessages, comboRef, sw), ct);
     }
 
     /// <summary>Tool loop com Stop hooks (SPEC-20261031-lifecycle-hooks
     /// RF-005): quando o agente tenta parar, hook com block injeta
     /// instrução e a run continua — teto de 3 bloqueios.</summary>
     private async Task RunToolLoopWithStopHooksAsync(
-        ChatRun run, User user, string? commandMode, string chatMode,
-        ChatCompletionRequest effective, List<Tool> tools,
-        BudgetLimits budgetLimits,
-        List<(Regex Regex, string Replacement)> outletRules,
-        RunLoopCheckpoint? resumeSeed, RunStreamState state,
-        CancellationToken ct)
+        ToolLoopRunCtx l, CancellationToken ct)
     {
+        var (run, user, commandMode, chatMode, effective, tools,
+            budgetLimits, outletRules, resumeSeed, state) = l;
         for (var stopBlocks = 0; ; stopBlocks++)
         {
-            var (outcome, done) = await RunToolLoopPathAsync(
-                run, user, commandMode, chatMode, effective, tools,
-                budgetLimits, outletRules, resumeSeed, state, ct);
+            var (outcome, done) = await RunToolLoopPathAsync(l, ct);
             state.LoopOutcome = outcome;
             state.ToolMessages = outcome?.ToolMessages;
             if (done || stopBlocks >= 3)
@@ -760,14 +773,10 @@ public sealed class ChatRunExecutor(
     /// checkpoint inicial, spec anunciado, loop com callbacks e veto de
     /// budget. <c>Done</c> = a run terminou (veto) e o chamador retorna.</summary>
     private async Task<(ChatPipeline.ToolLoopOutcome? Outcome, bool Done)>
-        RunToolLoopPathAsync(
-            ChatRun run, User user, string? commandMode, string chatMode,
-            ChatCompletionRequest effective, List<Tool> tools,
-            BudgetLimits budgetLimits,
-            List<(Regex Regex, string Replacement)> outletRules,
-            RunLoopCheckpoint? resumeSeed, RunStreamState state,
-            CancellationToken ct)
+        RunToolLoopPathAsync(ToolLoopRunCtx l, CancellationToken ct)
     {
+        var (run, user, commandMode, chatMode, effective, tools,
+            budgetLimits, outletRules, resumeSeed, state) = l;
         var builtinContext = await BuildToolContextAsync(run, user, ct);
         // SessionStart (SPEC-20261031-lifecycle-hooks RF-006): contextos
         // injetados viram notas system do primeiro round.
@@ -830,8 +839,8 @@ public sealed class ChatRunExecutor(
                 $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
             ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
         var callbacks = BuildToolLoopCallbacks(
-            run, commandMode, effective, tools, budgetLimits,
-            outletRules, builtinContext, state);
+            new CallbackDeps(run, commandMode, effective, tools,
+                budgetLimits, outletRules, builtinContext, state));
         var outcome = await ChatPipeline.RunToolLoopAsync(
             effective, tools, toolExecutor, providers, ct,
             new ChatPipeline.ToolLoopOptions(
@@ -855,13 +864,18 @@ public sealed class ChatRunExecutor(
     /// <summary>Callbacks do tool loop — fases/pause, steps, retry, overflow
     /// compaction, tool events, budget veto, steer, advisor notes e deltas de
     /// content/reasoning. Estado mutável vive em <paramref name="state"/>.</summary>
+    /// <summary>Deps da construção dos callbacks do loop (S107).</summary>
+    private sealed record CallbackDeps(
+        ChatRun Run, string? CommandMode, ChatCompletionRequest Effective,
+        List<Tool> Tools, BudgetLimits BudgetLimits,
+        List<(Regex Regex, string Replacement)> OutletRules,
+        BuiltinToolContext BuiltinContext, RunStreamState State);
+
     private ChatPipeline.ToolLoopCallbacks BuildToolLoopCallbacks(
-        ChatRun run, string? commandMode,
-        ChatCompletionRequest effective, List<Tool> tools,
-        BudgetLimits budgetLimits,
-        List<(Regex Regex, string Replacement)> outletRules,
-        BuiltinToolContext builtinContext, RunStreamState state)
+        CallbackDeps d)
     {
+        var (run, commandMode, effective, tools, budgetLimits, outletRules,
+            builtinContext, state) = d;
         return new ChatPipeline.ToolLoopCallbacks(
 
             // Checkpoint de pausa em cada iteração do loop (RF-013):
@@ -975,8 +989,8 @@ public sealed class ChatRunExecutor(
                 : "First privately list what you need next; then request every item that doesn't depend on another's result in this one response",
             OnResultAsync: (call, output, result, denied, t) =>
                 OnToolResultAsync(
-                    run, tools, builtinContext, state,
-                    call, output, result, denied, t),
+                    new ToolResultEvent(run, tools, builtinContext, state,
+                        call, output, result, denied), t),
             // Texto do modelo sai delta a delta — sem isso a resposta
             // inteira só aparecia num blob no fim da run.
             OnDeltaAsync: (piece, t) =>
@@ -1200,12 +1214,17 @@ public sealed class ChatRunExecutor(
     /// <summary>Fecha uma run bem-sucedida — ledger zerado quando não há
     /// tool loop, persistência, chain de continuação, [DONE], report de
     /// combo e log.</summary>
-    private async Task CompleteRunAsync(
-        ChatRun run, ChatCompletionRequest request, User user,
-        StringBuilder content, ChatPipeline.ToolLoopOutcome? loopOutcome,
-        IReadOnlyList<ChatCompletionMessage>? toolMessages,
-        string? comboRef, Stopwatch sw, CancellationToken ct)
+    /// <summary>Parâmetros da conclusão da run (S107).</summary>
+    private sealed record RunCompletion(
+        ChatRun Run, ChatCompletionRequest Request, User User,
+        StringBuilder Content, ChatPipeline.ToolLoopOutcome? LoopOutcome,
+        IReadOnlyList<ChatCompletionMessage>? ToolMessages,
+        string? ComboRef, Stopwatch Sw);
+
+    private async Task CompleteRunAsync(RunCompletion c, CancellationToken ct)
     {
+        var (run, request, user, content, loopOutcome, toolMessages,
+            comboRef, sw) = c;
         // Ledger (SPEC-20261023-run-cost-budgets RF-001): run sem
         // tool loop não teve record — grava com zeros (o provider não
         // reporta usage nesse caminho; CostUsd null — nunca estimado).
@@ -1240,12 +1259,18 @@ public sealed class ChatRunExecutor(
 
     /// <summary>Falha na tentativa — combo com conteúdo vazio retenta o
     /// próximo candidato (<c>Retry</c>); senão fecha a run como failed.</summary>
+    /// <summary>Parâmetros do tratamento de falha da run (S107).</summary>
+    private sealed record RunFailure(
+        ChatRun Run, Exception Ex, string Content,
+        IReadOnlyList<ChatCompletionMessage>? ToolMessages,
+        string? ComboRef, string CurrentModel,
+        Stopwatch Sw, int ComboAttemptsLeft);
+
     private async Task<(bool Retry, int AttemptsLeft)> HandleRunFailureAsync(
-        ChatRun run, Exception ex, string content,
-        IReadOnlyList<ChatCompletionMessage>? toolMessages,
-        string? comboRef, string currentModel,
-        Stopwatch sw, int comboAttemptsLeft)
+        RunFailure f)
     {
+        var (run, ex, content, toolMessages, comboRef, currentModel,
+            sw, comboAttemptsLeft) = f;
         // Combo: falha transitória sem nenhum delta emitido → report e
         // retenta com o próximo candidato (content vazio garante que o
         // cliente ainda não viu resposta parcial).
@@ -3490,11 +3515,16 @@ public sealed class ChatRunExecutor(
     /// <summary>Pós-processa cada tool result: publica, grava o evento
     /// de liquidação, alimenta hooks de ciclo de vida (PostToolUse), o
     /// stall watch, o burst do advisor e os checkpoints de mutação.</summary>
-    private async Task OnToolResultAsync(
-        ChatRun run, List<Tool> tools, BuiltinToolContext builtinContext,
-        RunStreamState state, ProviderToolCall call, string output,
-        JsonElement? result, bool denied, CancellationToken t)
+    /// <summary>Parâmetros do evento tool_result (S107).</summary>
+    private sealed record ToolResultEvent(
+        ChatRun Run, List<Tool> Tools, BuiltinToolContext BuiltinContext,
+        RunStreamState State, ProviderToolCall Call, string Output,
+        JsonElement? Result, bool Denied);
+
+    private async Task OnToolResultAsync(ToolResultEvent e, CancellationToken t)
     {
+        var (run, tools, builtinContext, state, call, output, result,
+            denied) = e;
         await PublishToolResultAsync(run, call, output, result, denied);
         // RF-001: tool_result é o fato que liquida a call na
         // retomada — gravação mandatória (SPEC run-recovery).

@@ -215,9 +215,9 @@ public sealed class DelegateTaskBuiltinTool(
         if (persistent)
         {
             return await PersistentSidekickDispatchAsync(
-                args, config, agent, personaSkill, prompt, fullPrompt,
-                waitExplicit, autoMerge, joinTeam,
-                scope, db, context, parentRun, ct);
+                new SidekickDispatch(args, config, agent, personaSkill,
+                    prompt, fullPrompt, waitExplicit, autoMerge, joinTeam,
+                    scope, db, context, parentRun), ct);
         }
         if (resumeChatId is not null)
         {
@@ -234,18 +234,25 @@ public sealed class DelegateTaskBuiltinTool(
         return dispatch.Result;
     }
 
+    /// <summary>Parâmetros do dispatch do sidekick (S107).</summary>
+    private sealed record SidekickDispatch(
+        JsonElement Args, ConfigService Config, AgentDefinition? Agent,
+        Skill? PersonaSkill, string Prompt, string FullPrompt,
+        bool? WaitExplicit, bool AutoMerge, bool JoinTeam,
+        IServiceScope Scope, AppDbContext Db, BuiltinToolContext Context,
+        ChatRun ParentRun);
+
     /// <summary>
     /// Caminho do sidekick persistente (SPEC-20261031-sidekick-orchestration
     /// RF-002): kv do pai resolve o chat filho entre dispatches e o
     /// semáforo serializa dispatches concorrentes do mesmo sidekick.
     /// </summary>
     private async Task<BuiltinToolResult> PersistentSidekickDispatchAsync(
-        JsonElement args, ConfigService config, AgentDefinition? agent,
-        Skill? personaSkill, string prompt, string fullPrompt,
-        bool? waitExplicit, bool autoMerge, bool joinTeam,
-        IServiceScope scope, AppDbContext db, BuiltinToolContext context,
-        ChatRun parentRun, CancellationToken ct)
+        SidekickDispatch d, CancellationToken ct)
     {
+        var (args, config, agent, personaSkill, prompt, fullPrompt,
+            waitExplicit, autoMerge, joinTeam, scope, db, context,
+            parentRun) = d;
         var sidekickId = ReadString(args, "sidekick_id", 100)?.Trim();
         if (string.IsNullOrEmpty(sidekickId))
         {

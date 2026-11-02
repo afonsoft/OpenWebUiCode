@@ -289,18 +289,20 @@ public static class ApiEndpoints
     private static async Task ChatCompletionsAsync(
         ChatCompletionRequest request,
         HttpContext http,
-        AppDbContext db,
-        ConfigService config,
-        ProviderService providers,
-        RagService rag,
-        ToolExecutor toolExecutor,
-        PipelineClientService pipelines,
-        WebSearchService webSearch,
-        WorkspaceRepoService repos,
-        IWebHostEnvironment env,
-        IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor> promptContributors,
+        IServiceProvider sp,
         CancellationToken ct)
     {
+        var db = sp.GetRequiredService<AppDbContext>();
+        var config = sp.GetRequiredService<ConfigService>();
+        var providers = sp.GetRequiredService<ProviderService>();
+        var rag = sp.GetRequiredService<RagService>();
+        var toolExecutor = sp.GetRequiredService<ToolExecutor>();
+        var pipelines = sp.GetRequiredService<PipelineClientService>();
+        var webSearch = sp.GetRequiredService<WebSearchService>();
+        var repos = sp.GetRequiredService<WorkspaceRepoService>();
+        var env = sp.GetRequiredService<IWebHostEnvironment>();
+        var promptContributors = sp.GetRequiredService<
+            IEnumerable<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor>>();
         http.Response.ContentType = "text/event-stream";
         http.Response.Headers.CacheControl = "no-cache";
         http.Response.Headers.Connection = "keep-alive";
@@ -393,9 +395,9 @@ public static class ApiEndpoints
                 : null;
             if (tools is { Count: > 0 }
                 && await RunOpenApiToolLoopAsync(
-                    http, writer, effective, user, tools,
-                    toolExecutor, providers, config, repos, env,
-                    outletRules, ct))
+                    new OpenApiLoopDeps(http, writer, effective, user, tools,
+                        toolExecutor, providers, config, repos, env,
+                        outletRules), ct))
             {
                 return;
             }
@@ -459,15 +461,20 @@ public static class ApiEndpoints
 
     /// <summary>Tool loop do /api/chat/completions — true quando o loop
     /// produziu conteúdo final (já emitido com outlet rules + [DONE]).</summary>
+    /// <summary>Deps do tool loop do endpoint (S107).</summary>
+    private sealed record OpenApiLoopDeps(
+        HttpContext Http, StreamWriter Writer,
+        ChatCompletionRequest Effective, User User,
+        IReadOnlyList<Tool> Tools, ToolExecutor ToolExecutor,
+        ProviderService Providers, ConfigService Config,
+        WorkspaceRepoService Repos, IWebHostEnvironment Env,
+        List<(System.Text.RegularExpressions.Regex Regex, string Replacement)> OutletRules);
+
     private static async Task<bool> RunOpenApiToolLoopAsync(
-        HttpContext http, StreamWriter writer,
-        ChatCompletionRequest effective, User user,
-        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
-        ProviderService providers, ConfigService config,
-        WorkspaceRepoService repos, IWebHostEnvironment env,
-        List<(System.Text.RegularExpressions.Regex Regex, string Replacement)> outletRules,
-        CancellationToken ct)
+        OpenApiLoopDeps d, CancellationToken ct)
     {
+        var (http, writer, effective, user, tools, toolExecutor, providers,
+            config, repos, env, outletRules) = d;
         effective = effective with
         {
             Tools = tools
