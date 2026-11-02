@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261102-admin-analytics-v2` |
 | Ticket | `#628` — https://github.com/afonsoft/OpenWebUiCode/issues/628 |
-| Status | `Approved` |
+| Status | `In implementation` |
 
 ## 1. User Story
 

@@ -1897,6 +1897,14 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<AnalyticsResponse?> GetAnalyticsAsync(int days = 30) =>
         SendAsync<AnalyticsResponse>(HttpMethod.Get, $"/api/v1/analytics?days={days}");
 
+    /// <summary>
+    /// Dashboard de uso agregado (admin, SPEC-20261102): totais, série
+    /// diária de tokens, modelos, ranking por usuário com cap e top chats.
+    /// </summary>
+    public Task<AdminUsageResponse?> GetAdminUsageAsync(int days = 30) =>
+        SendAsync<AdminUsageResponse>(HttpMethod.Get,
+            $"/api/v1/admin/usage?days={days}");
+
     // ---------------- Policies admin (SPEC-20261018-policies-admin) ----------------
 
     /// <summary>Lista statements de policy administrativa.</summary>

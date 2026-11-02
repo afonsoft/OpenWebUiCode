@@ -108,47 +108,91 @@ public static class UsageEndpoints
                 r.CreatedAt)).ToList()));
     }
 
-    /// <summary>Agregado admin por usuário e top chats por custo na janela.</summary>
+    /// <summary>
+    /// Dashboard de uso admin (SPEC-20261102): totais, série diária de
+    /// tokens, agregado por modelo, ranking por usuário com cap efetivo
+    /// e top chats por custo. <c>?days=</c> (default 30, 1..365) é
+    /// atalho de janela — <c>from</c>/<c>to</c> ISO têm precedência;
+    /// <c>?userId=</c> filtra todas as seções.
+    /// </summary>
     private static async Task<IResult> AdminUsageAsync(
         HttpContext http, [AsParameters] AdminUsageDeps deps,
-        string? userId, string? from, string? to, int? top, CancellationToken ct)
+        string? userId, string? from, string? to, int? days, int? top,
+        CancellationToken ct)
     {
         var db = deps.Db;
         var ledger = deps.Ledger;
+        var budgets = deps.Budgets;
         if (await Admin(http, db, ct) is not { })
         {
             return Forbid();
         }
-        var (fromEpoch, toEpoch) = ParseWindow(from, to);
-        var users = await ledger.ByUserAsync(fromEpoch, toEpoch, ct);
-        if (!string.IsNullOrWhiteSpace(userId))
+        if (days is < 1 or > 365)
         {
-            users = users.Where(u => u.UserId == userId).ToList();
+            return Results.BadRequest(
+                new { detail = "days deve estar entre 1 e 365." });
         }
-        var emails = await db.Users.AsNoTracking()
-            .Where(u => users.Select(x => x.UserId).Contains(u.Id))
-            .ToDictionaryAsync(u => u.Id, u => u.Email, ct);
-        var topChats = await ledger.TopChatsAsync(
-            fromEpoch, toEpoch, Math.Clamp(top ?? 10, 1, 100), ct);
-        return Results.Ok(new
+        var (fromEpoch, toEpoch) = ParseWindow(from, to, days ?? 30);
+        if (toEpoch <= fromEpoch)
         {
-            from = DateTimeOffset.FromUnixTimeSeconds(fromEpoch)
+            return Results.BadRequest(new { detail = "Janela inválida." });
+        }
+
+        var uid = string.IsNullOrWhiteSpace(userId) ? null : userId.Trim();
+        var window = db.RunUsageRecords.AsNoTracking()
+            .Where(r => r.CreatedAt >= fromEpoch && r.CreatedAt < toEpoch
+                && (uid == null || r.UserId == uid));
+        var totals = await ledger.TotalsAsync(window, ct);
+        var activeUsers = await window.Select(r => r.UserId)
+            .Distinct().CountAsync(ct);
+        var series = await ledger.ByDayAsync(fromEpoch, toEpoch, uid, ct);
+        var models = await ledger.ByModelAsync(
+            fromEpoch, toEpoch, Math.Clamp(top ?? 20, 1, 100), uid, ct);
+        var users = await ledger.ByUserAsync(fromEpoch, toEpoch, uid, ct);
+        var topChats = await ledger.TopChatsAsync(
+            fromEpoch, toEpoch, Math.Clamp(top ?? 10, 1, 100), uid, ct);
+
+        var emails = await db.Users.AsNoTracking()
+            .Where(u => users.Select(x => x.UserId).Contains(u.Id)
+                || topChats.Select(c => c.UserId).Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.Email, ct);
+        var titles = await db.Chats.AsNoTracking()
+            .Where(c => topChats.Select(x => x.ChatId).Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => (string?)c.Title, ct);
+
+        var rows = new List<AdminUsageUser>(users.Count);
+        foreach (var u in users)
+        {
+            var limits = await budgets.EffectiveAsync(u.UserId, ct);
+            rows.Add(new AdminUsageUser(
+                u.UserId, emails.GetValueOrDefault(u.UserId), u.Runs,
+                u.PromptTokens, u.CompletionTokens, u.ReasoningTokens,
+                u.Tokens, Math.Round(u.CostUsd, 6),
+                limits.TokensPerMonth, limits.UsdPerMonth,
+                UsedPct(u.Tokens, u.CostUsd, limits)));
+        }
+
+        return Results.Ok(new AdminUsageResponse(
+            DateTimeOffset.FromUnixTimeSeconds(fromEpoch)
                 .ToString("yyyy-MM-dd"),
-            to = DateTimeOffset.FromUnixTimeSeconds(toEpoch)
+            DateTimeOffset.FromUnixTimeSeconds(toEpoch)
                 .ToString("yyyy-MM-dd"),
-            users = users.Select(u => new
-            {
-                u.UserId,
-                email = emails.GetValueOrDefault(u.UserId),
-                costUsd = Math.Round(u.CostUsd, 6),
-                tokens = u.Tokens,
-                u.Runs,
-            }).ToList(),
-            topChats = topChats.Select(c => new
-            {
-                c.ChatId, c.UserId, costUsd = Math.Round(c.CostUsd, 6),
-            }).ToList(),
-        });
+            new AdminUsageTotals(
+                totals.PromptTokens, totals.CompletionTokens,
+                totals.ReasoningTokens, Math.Round(totals.CostUsd, 6),
+                totals.Runs, activeUsers),
+            series.Select(d => new AdminUsageDay(
+                d.Day, d.PromptTokens, d.CompletionTokens,
+                d.ReasoningTokens, Math.Round(d.CostUsd, 6))).ToList(),
+            models.Select(m => new AdminUsageModel(
+                m.ModelId, m.Runs, m.PromptTokens, m.CompletionTokens,
+                m.ReasoningTokens, m.Tokens,
+                Math.Round(m.CostUsd, 6))).ToList(),
+            rows,
+            topChats.Select(c => new AdminUsageTopChat(
+                c.ChatId, titles.GetValueOrDefault(c.ChatId), c.UserId,
+                emails.GetValueOrDefault(c.UserId), c.Tokens,
+                Math.Round(c.CostUsd, 6))).ToList()));
     }
 
     private static async Task<IResult> ListPoliciesAsync(
@@ -268,14 +312,56 @@ public static class UsageEndpoints
     private static double? NonNegative(double? v) =>
         v is null or < 0 ? null : v;
 
-    private static (long From, long To) ParseWindow(string? from, string? to)
+    /// <summary>
+    /// Percentual de cap usado (SPEC-20261102 RF-003): o maior entre
+    /// tokens/capTokens e cost/capUsd, 1 casa decimal; null sem cap
+    /// mensal (cap=0 é ignorado — sem teto prático naquela dimensão).
+    /// </summary>
+    private static double? UsedPct(
+        long tokens, double costUsd, BudgetLimits limits)
+    {
+        double? pct = null;
+        if (limits.TokensPerMonth is > 0)
+        {
+            pct = tokens / (double)limits.TokensPerMonth.Value * 100;
+        }
+        if (limits.UsdPerMonth is > 0)
+        {
+            var usd = costUsd / limits.UsdPerMonth.Value * 100;
+            pct = pct is null ? usd : Math.Max(pct.Value, usd);
+        }
+        return pct is null ? null : Math.Round(pct.Value, 1);
+    }
+
+    /// <summary>
+    /// Janela [from, to) em epoch seconds: <c>from</c>/<c>to</c> ISO têm
+    /// precedência; sem eles, usa <paramref name="days"/> dias UTC
+    /// terminando no fim de hoje (defaults: mês corrente, como antes).
+    /// </summary>
+    private static (long From, long To) ParseWindow(
+        string? from, string? to, int days)
     {
         var now = DateTimeOffset.UtcNow;
-        var fromDt = DateTimeOffset.TryParse(from, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var f)
-            ? f : new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-        var toDt = DateTimeOffset.TryParse(to, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t)
-            ? t : fromDt.AddMonths(1);
-        return (fromDt.ToUnixTimeSeconds(), toDt.ToUnixTimeSeconds());
+        var hasFrom = DateTimeOffset.TryParse(from,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var fromDt);
+        var hasTo = DateTimeOffset.TryParse(to,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var toDt);
+        if (!hasFrom && !hasTo)
+        {
+            var end = new DateTimeOffset(
+                now.Year, now.Month, now.Day, 0, 0, 0, TimeSpan.Zero)
+                .AddDays(1);
+            return (end.AddDays(-days).ToUnixTimeSeconds(),
+                end.ToUnixTimeSeconds());
+        }
+        var fromE = (hasFrom ? fromDt : new DateTimeOffset(
+            now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero))
+            .ToUnixTimeSeconds();
+        var toE = (hasTo ? toDt : DateTimeOffset
+            .FromUnixTimeSeconds(fromE).AddMonths(1)).ToUnixTimeSeconds();
+        return (fromE, toE);
     }
 
     private static string? Validate(BudgetPolicyRequest r)
@@ -316,4 +402,5 @@ public sealed record BudgetPolicyRequest(
 
 /// <summary>Bundle DI do uso admin (S107).</summary>
 internal sealed record AdminUsageDeps(
-    AppDbContext Db, RunUsageLedgerService Ledger);
+    AppDbContext Db, RunUsageLedgerService Ledger,
+    BudgetPolicyService Budgets);

@@ -42,3 +42,51 @@ public sealed record MyUsageCap(double UsdPerMonth, double UsedPct);
 public sealed record MyUsageResponse(
     string Month, long PromptTokens, long CompletionTokens,
     double CostUsd, int Runs, MyUsageCap? Cap);
+
+// ---------------- Uso agregado admin (SPEC-20261102) ----------------
+
+/// <summary>Totais da janela do dashboard admin.</summary>
+/// <param name="Runs">Quantidade de runs no recorte.</param>
+/// <param name="ActiveUsers">Usuários distintos com uso na janela.</param>
+public sealed record AdminUsageTotals(
+    long PromptTokens, long CompletionTokens, long ReasoningTokens,
+    double CostUsd, int Runs, int ActiveUsers);
+
+/// <summary>Ponto da série diária de tokens/custo (yyyy-MM-dd UTC).</summary>
+public sealed record AdminUsageDay(
+    string Day, long PromptTokens, long CompletionTokens,
+    long ReasoningTokens, double CostUsd);
+
+/// <summary>Uso agregado de um modelo na janela ("unknown" quando nulo).</summary>
+public sealed record AdminUsageModel(
+    string ModelId, int Runs, long PromptTokens, long CompletionTokens,
+    long ReasoningTokens, long Tokens, double CostUsd);
+
+/// <summary>
+/// Linha do ranking por usuário: split de tokens + cap efetivo quando
+/// houver policy (campos nulos = sem teto).
+/// </summary>
+/// <param name="CapTokensPerMonth">Teto de tokens/mês efetivo.</param>
+/// <param name="CapUsdPerMonth">Teto USD/mês efetivo.</param>
+/// <param name="UsedPct">max(tokens/capTokens, cost/capUsd)·100.</param>
+public sealed record AdminUsageUser(
+    string UserId, string? Email, int Runs,
+    long PromptTokens, long CompletionTokens, long ReasoningTokens,
+    long Tokens, double CostUsd,
+    long? CapTokensPerMonth, double? CapUsdPerMonth, double? UsedPct);
+
+/// <summary>Chat de destaque por custo na janela (título nulo se deletado).</summary>
+public sealed record AdminUsageTopChat(
+    string ChatId, string? Title, string UserId, string? Email,
+    long Tokens, double CostUsd);
+
+/// <summary>Resposta enriquecida de <c>GET /api/v1/admin/usage</c>.</summary>
+/// <param name="From">Início da janela (yyyy-MM-dd UTC).</param>
+/// <param name="To">Fim da janela (yyyy-MM-dd UTC, exclusivo).</param>
+public sealed record AdminUsageResponse(
+    string From, string To,
+    AdminUsageTotals Totals,
+    IReadOnlyList<AdminUsageDay> Series,
+    IReadOnlyList<AdminUsageModel> Models,
+    IReadOnlyList<AdminUsageUser> Users,
+    IReadOnlyList<AdminUsageTopChat> TopChats);
