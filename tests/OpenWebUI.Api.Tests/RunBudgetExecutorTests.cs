@@ -260,6 +260,8 @@ public class RunBudgetExecutorTests
     [Test]
     public async Task PerRunCap_VetoesSecondRound()
     {
+        // Regressão: o veto do budget não pode ser sobrescrito pelo
+        // encerramento normal (CompleteRunAsync → completed).
         await SetPolicyAsync(usdPerRun: 1e-9);
         var (run, _) = await RunChatAsync(withTool: true);
         Assert.That(run.Status, Is.EqualTo("failed"));
@@ -269,6 +271,7 @@ public class RunBudgetExecutorTests
     [Test]
     public async Task MonthTokensCap_VetoesSecondRound()
     {
+        // Regressão: idem — veto mensal mantém status failed.
         await SetPolicyAsync(tokensPerMonth: 5);
         var (run, _) = await RunChatAsync(withTool: true);
         Assert.That(run.Status, Is.EqualTo("failed"));
