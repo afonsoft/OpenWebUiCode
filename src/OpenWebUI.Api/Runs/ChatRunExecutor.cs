@@ -151,8 +151,6 @@ public sealed class ChatRunExecutor(
         var (request, user, budgetLimits, resumePlan, commandMode) = prelude;
 
         var state = new RunStreamState();
-        IReadOnlyList<ChatCompletionMessage>? toolMessages = null;
-        ChatPipeline.ToolLoopOutcome? loopOutcome = null;
         var sw = Stopwatch.StartNew();
 
         // combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada tentativa
@@ -179,91 +177,15 @@ public sealed class ChatRunExecutor(
 
             try
             {
-                // Modelos pipeline:{id} e arena:{model} encerram a run por
-                // conta própria (DONE próprio após FinishAsync).
-                if (await TrySpecialModelAsync(request, run, user, ct))
-                {
-                    return;
-                }
-
-                var prepared = await PrepareRunContextAsync(
-                    run, request, user, commandMode, resumePlan, ct);
-                request = prepared.Request;
-                var effective = prepared.Effective;
-                var chatMode = prepared.ChatMode;
-                var resumeSeed = prepared.ResumeSeed;
-
-                var outletRules = ModelFilterService.OutletRules(
-                    ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()
-                        .Where(m => m.IsActive && (m.Id == request.Model || m.Name == request.Model)
-                            && (m.UserId == user.Id || m.UserId == "public"))
-                        .Select(m => m.MetaJson).FirstOrDefaultAsync(ct)));
-
-                var tools = await LoadRunToolsAsync(run, request, user, ct);
-                await PublishPhaseAsync(run, "connecting_model", null);
-                logger.LogInformation(
-                    "Run {RunId}: model={Model}, tools={ToolCount}, mensagens={MessageCount}, chat={ChatId}.",
-                    run.Id, effective.Model, tools?.Count ?? 0,
-                    effective.Messages.Count, run.ChatId);
-                if (tools is { Count: > 0 })
-                {
-                    // Stop (SPEC-20261031-lifecycle-hooks RF-005): quando o
-                    // agente tenta parar, hook com block injeta instrução
-                    // e a run continua — teto de 3 bloqueios.
-                    for (var stopBlocks = 0; ; stopBlocks++)
-                    {
-                        var (outcome, done) = await RunToolLoopPathAsync(
-                            run, user, commandMode, chatMode, effective, tools,
-                            budgetLimits, outletRules, resumeSeed, state, ct);
-                        loopOutcome = outcome;
-                        toolMessages = outcome?.ToolMessages;
-                        if (done)
-                        {
-                            return;
-                        }
-                        if (stopBlocks >= 3)
-                        {
-                            break;
-                        }
-                        var stopHook = await hooks.RunAsync("Stop",
-                            await repos.ResolveWorkdirAsync(
-                                run.UserId, run.ChatId, ct),
-                            run, null, new { stop_reason = "end_turn" }, ct);
-                        foreach (var note in stopHook.AdditionalContexts)
-                        {
-                            lock (_contextNotes)
-                            {
-                                _contextNotes.Enqueue(
-                                    new ChatCompletionMessage(RoleSystem, note));
-                            }
-                        }
-                        if (stopHook.Decision is not HookDecision.Block)
-                        {
-                            break;
-                        }
-                        effective = effective with
-                        {
-                            Messages = [..effective.Messages,
-                                new ChatCompletionMessage("user",
-                                    "Instrução de hook de ciclo de vida: "
-                                    + (stopHook.Reason
-                                        ?? "continue trabalhando."))]
-                        };
-                    }
-                }
-                else
-                {
-                    await StreamPlainCompletionAsync(
-                        run, effective, outletRules, state, ct);
-                }
-
-                await CompleteRunAsync(run, request, user, state.Content,
-                    loopOutcome, toolMessages, comboRef, sw, ct);
+                await ExecuteAttemptAsync(
+                    run, user, request, commandMode, resumePlan,
+                    budgetLimits, comboRef, state, sw, ct);
+                return;
             }
             catch (OperationCanceledException ex)
             {
                 approvals.Cancel(run.Id);
-                await FinishAsync(run, state.Content.ToString(), ChatRunStatus.Stopped, toolMessages);
+                await FinishAsync(run, state.Content.ToString(), ChatRunStatus.Stopped, state.ToolMessages);
                 broadcaster.Publish(run.Id, SseDoneLine);
                 logger.LogWarning(ex,
                     "Run {RunId} cancelada após {Elapsed}ms com {Chars} chars parciais.",
@@ -272,7 +194,7 @@ public sealed class ChatRunExecutor(
             catch (Exception ex)
             {
                 var (retry, attemptsLeft) = await HandleRunFailureAsync(
-                    run, ex, state.Content.ToString(), toolMessages,
+                    run, ex, state.Content.ToString(), state.ToolMessages,
                     comboRef, request.Model, sw, comboAttemptsLeft);
                 if (retry)
                 {
@@ -292,6 +214,105 @@ public sealed class ChatRunExecutor(
         }
     }
 
+    /// <summary>Uma tentativa da run: modelos especiais, preparação,
+    /// tool loop (com Stop hooks) ou completion simples, e a conclusão.</summary>
+    private async Task ExecuteAttemptAsync(
+        ChatRun run, User user, ChatCompletionRequest request,
+        string? commandMode, RunResumePlan? resumePlan,
+        BudgetLimits budgetLimits, string? comboRef,
+        RunStreamState state, Stopwatch sw, CancellationToken ct)
+    {
+        // Modelos pipeline:{id} e arena:{model} encerram a run por
+        // conta própria (DONE próprio após FinishAsync).
+        if (await TrySpecialModelAsync(request, run, user, ct))
+        {
+            return;
+        }
+
+        var prepared = await PrepareRunContextAsync(
+            run, request, user, commandMode, resumePlan, ct);
+        request = prepared.Request;
+        var effective = prepared.Effective;
+        var chatMode = prepared.ChatMode;
+        var resumeSeed = prepared.ResumeSeed;
+
+        var outletRules = ModelFilterService.OutletRules(
+            ModelFilterService.Parse(await db.ModelEntries.AsNoTracking()
+                .Where(m => m.IsActive && (m.Id == request.Model || m.Name == request.Model)
+                    && (m.UserId == user.Id || m.UserId == "public"))
+                .Select(m => m.MetaJson).FirstOrDefaultAsync(ct)));
+
+        var tools = await LoadRunToolsAsync(run, request, user, ct);
+        await PublishPhaseAsync(run, "connecting_model", null);
+        logger.LogInformation(
+            "Run {RunId}: model={Model}, tools={ToolCount}, mensagens={MessageCount}, chat={ChatId}.",
+            run.Id, effective.Model, tools?.Count ?? 0,
+            effective.Messages.Count, run.ChatId);
+        if (tools is { Count: > 0 })
+        {
+            await RunToolLoopWithStopHooksAsync(
+                run, user, commandMode, chatMode, effective, tools,
+                budgetLimits, outletRules, resumeSeed, state, ct);
+        }
+        else
+        {
+            await StreamPlainCompletionAsync(
+                run, effective, outletRules, state, ct);
+        }
+
+        await CompleteRunAsync(run, request, user, state.Content,
+            state.LoopOutcome, state.ToolMessages, comboRef, sw, ct);
+    }
+
+    /// <summary>Tool loop com Stop hooks (SPEC-20261031-lifecycle-hooks
+    /// RF-005): quando o agente tenta parar, hook com block injeta
+    /// instrução e a run continua — teto de 3 bloqueios.</summary>
+    private async Task RunToolLoopWithStopHooksAsync(
+        ChatRun run, User user, string? commandMode, string chatMode,
+        ChatCompletionRequest effective, List<Tool> tools,
+        BudgetLimits budgetLimits,
+        List<(Regex Regex, string Replacement)> outletRules,
+        RunLoopCheckpoint? resumeSeed, RunStreamState state,
+        CancellationToken ct)
+    {
+        for (var stopBlocks = 0; ; stopBlocks++)
+        {
+            var (outcome, done) = await RunToolLoopPathAsync(
+                run, user, commandMode, chatMode, effective, tools,
+                budgetLimits, outletRules, resumeSeed, state, ct);
+            state.LoopOutcome = outcome;
+            state.ToolMessages = outcome?.ToolMessages;
+            if (done || stopBlocks >= 3)
+            {
+                return;
+            }
+            var stopHook = await hooks.RunAsync("Stop",
+                await repos.ResolveWorkdirAsync(
+                    run.UserId, run.ChatId, ct),
+                run, null, new { stop_reason = "end_turn" }, ct);
+            foreach (var note in stopHook.AdditionalContexts)
+            {
+                lock (_contextNotes)
+                {
+                    _contextNotes.Enqueue(
+                        new ChatCompletionMessage(RoleSystem, note));
+                }
+            }
+            if (stopHook.Decision is not HookDecision.Block)
+            {
+                return;
+            }
+            effective = effective with
+            {
+                Messages = [..effective.Messages,
+                    new ChatCompletionMessage("user",
+                        "Instrução de hook de ciclo de vida: "
+                        + (stopHook.Reason
+                            ?? "continue trabalhando."))]
+            };
+        }
+    }
+
     /// <summary>Dados resolvidos no prelúdio da run — antes do loop de
     /// tentativas de combo.</summary>
     private sealed record RunPrelude(
@@ -304,6 +325,8 @@ public sealed class ChatRunExecutor(
     {
         public StringBuilder Content { get; } = new();
         public int SinceCheckpoint;
+        public ChatPipeline.ToolLoopOutcome? LoopOutcome;
+        public IReadOnlyList<ChatCompletionMessage>? ToolMessages;
     }
 
     /// <summary>Resolve o prelúdio da run — request, usuário, gate de
