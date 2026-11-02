@@ -479,30 +479,41 @@ public static class LspEndpoints
         }
         foreach (var it in items.EnumerateArray())
         {
-            var label = it.TryGetProperty("label", out JsonElement l) ? l.GetString() : null;
-            if (label is null)
+            if (ParseCompletionItem(it, ref from) is { } parsed)
             {
-                continue;
+                list.Add(parsed);
             }
-            var kind = it.TryGetProperty("kind", out JsonElement k) && k.ValueKind == JsonValueKind.Number
-                ? k.GetInt32() : 0;
-            var detail = it.TryGetProperty("detail", out JsonElement d) ? d.GetString() : null;
-            var info = CompletionDocInfo(it);
-            var apply = it.TryGetProperty("insertText", out JsonElement ins) ? ins.GetString() : label;
-            // range explícito (textEdit) → from único; senão o client
-            // usa a palavra sob o cursor.
-            if (from is null
-                && it.TryGetProperty("textEdit", out var textEdit)
-                && textEdit.ValueKind == JsonValueKind.Object
-                && textEdit.TryGetProperty(RangeKey, out var textRange))
-            {
-                var (sl, sc) = Pos(textRange, StartKey);
-                from = new LspPosition(sl, sc);
-            }
-            list.Add(new LspCompletionItem(
-                label, KindToCmType(kind), detail, info, apply));
         }
         return list;
+    }
+
+    /// <summary>Um CompletionItem LSP → item do CM; <c>null</c> sem label.
+    /// Captura <paramref name="from"/> do primeiro textEdit explícito.</summary>
+    private static LspCompletionItem? ParseCompletionItem(
+        JsonElement it, ref LspPosition? from)
+    {
+        var label = it.TryGetProperty("label", out JsonElement l) ? l.GetString() : null;
+        if (label is null)
+        {
+            return null;
+        }
+        var kind = it.TryGetProperty("kind", out JsonElement k) && k.ValueKind == JsonValueKind.Number
+            ? k.GetInt32() : 0;
+        var detail = it.TryGetProperty("detail", out JsonElement d) ? d.GetString() : null;
+        var info = CompletionDocInfo(it);
+        var apply = it.TryGetProperty("insertText", out JsonElement ins) ? ins.GetString() : label;
+        // range explícito (textEdit) → from único; senão o client
+        // usa a palavra sob o cursor.
+        if (from is null
+            && it.TryGetProperty("textEdit", out var textEdit)
+            && textEdit.ValueKind == JsonValueKind.Object
+            && textEdit.TryGetProperty(RangeKey, out var textRange))
+        {
+            var (sl, sc) = Pos(textRange, StartKey);
+            from = new LspPosition(sl, sc);
+        }
+        return new LspCompletionItem(
+            label, KindToCmType(kind), detail, info, apply);
     }
 
     /// <summary>documentation: string ou MarkupContent {value}.</summary>
@@ -699,26 +710,8 @@ public static class LspEndpoints
                         newName = request.NewName,
                     }, ct);
 
-                var activeRel = request.ActivePath?.Replace('\\', '/');
-                var clientEdits = new List<LspRenameFileEdits>();
-                var updated = new List<string>();
-                foreach (var (uri, edits) in WorkspaceEdits(res))
-                {
-                    var rel = RelPath(workdir, uri);
-                    if (rel is null || edits.Count == 0)
-                    {
-                        continue;
-                    }
-                    if (string.Equals(rel, activeRel, StringComparison.Ordinal))
-                    {
-                        clientEdits.Add(new LspRenameFileEdits(rel, edits));
-                        continue;
-                    }
-                    if (await ApplyRenameToFileAsync(workdir, rel, edits, ct))
-                    {
-                        updated.Add(rel);
-                    }
-                }
+                var (clientEdits, updated) = await ApplyWorkspaceEditsAsync(
+                    workdir, res, request.ActivePath?.Replace('\\', '/'), ct);
                 return Results.Ok(new LspRenameResponse(true, clientEdits, updated, null));
             }
             catch (Exception ex) when (ex is LspUnavailableException or LspRequestException
@@ -727,6 +720,36 @@ public static class LspEndpoints
                 return Results.Ok(new LspRenameResponse(false, [], [], ex.Message));
             }
         });
+
+    /// <summary>Distribui os edits do WorkspaceEdit: os do arquivo ativo
+    /// voltam pro client (replaceRange, preserva dirty); os demais arquivos
+    /// são escritos direto no disco dentro do jail.</summary>
+    private static async Task<(List<LspRenameFileEdits> Client, List<string> Updated)>
+        ApplyWorkspaceEditsAsync(
+            string workdir, JsonElement res, string? activeRel,
+            CancellationToken ct)
+    {
+        var clientEdits = new List<LspRenameFileEdits>();
+        var updated = new List<string>();
+        foreach (var (uri, edits) in WorkspaceEdits(res))
+        {
+            var rel = RelPath(workdir, uri);
+            if (rel is null || edits.Count == 0)
+            {
+                continue;
+            }
+            if (string.Equals(rel, activeRel, StringComparison.Ordinal))
+            {
+                clientEdits.Add(new LspRenameFileEdits(rel, edits));
+                continue;
+            }
+            if (await ApplyRenameToFileAsync(workdir, rel, edits, ct))
+            {
+                updated.Add(rel);
+            }
+        }
+        return (clientEdits, updated);
+    }
 
     /// <summary>Aplica os edits do arquivo no disco (dentro do jail). Retorna true se mudou.</summary>
     private static async Task<bool> ApplyRenameToFileAsync(
