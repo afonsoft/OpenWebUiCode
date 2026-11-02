@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `fix/pr-review-sweep-20261019` |
-| Status | `Draft` |
+| Status | Completed |
 | Parent | auditoria dos últimos 30 PRs (#432–#466) — comentários SonarCloud, Devin Review e GitHub Advanced Security/CodeQL |
 
 ## 1. User Story
