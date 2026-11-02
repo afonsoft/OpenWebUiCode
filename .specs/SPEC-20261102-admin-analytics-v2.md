@@ -9,7 +9,7 @@
 | Stack | `.NET / Blazor` |
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261102-admin-analytics-v2` |
-| Ticket | `[a criar via create-issues]` |
+| Ticket | `#628` — https://github.com/afonsoft/OpenWebUiCode/issues/628 |
 | Status | `Approved` |
 
 ## 1. User Story
