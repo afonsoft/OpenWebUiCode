@@ -2,6 +2,8 @@
 // para reduzir a complexidade cognitiva — S3776).
 using System.Text.Json;
 
+namespace OpenWebUI.Acp;
+
 internal static class AcpDispatch
 {
     /// <summary>Despacha um request já parseado: initialize /

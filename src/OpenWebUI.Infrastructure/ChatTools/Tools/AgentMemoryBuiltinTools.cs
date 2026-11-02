@@ -406,10 +406,14 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
     }
 
     /// <summary>Tag string não-vazia truncada no cap — <c>null</c> ignora o item.</summary>
-    private static string? NormTag(JsonElement t) =>
-        t.ValueKind == JsonValueKind.String && t.GetString() is { Length: > 0 } s
-            ? s.Length > MaxTagChars ? s[..MaxTagChars] : s
-            : null;
+    private static string? NormTag(JsonElement t)
+    {
+        if (t.ValueKind != JsonValueKind.String || t.GetString() is not { Length: > 0 } s)
+        {
+            return null;
+        }
+        return s.Length > MaxTagChars ? s[..MaxTagChars] : s;
+    }
 
     private static string Slug(string value)
     {

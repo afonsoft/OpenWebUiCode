@@ -363,22 +363,29 @@ public static class ApiEndpoints
                 .Select(m => m.MetaJson).FirstOrDefaultAsync(ct)));
 
         await StreamWithToolsAsync(
-            http, writer, request, effective, user, toolExecutor,
-            providers, config, repos, env, outletRules, ct);
+            new StreamBundle(
+                http, writer, request, effective, user, toolExecutor,
+                providers, config, repos, env, outletRules),
+            ct);
     }
+
+    /// <summary>Pacote do stream do completion (S107).</summary>
+    private sealed record StreamBundle(
+        HttpContext Http, StreamWriter Writer,
+        ChatCompletionRequest Request, ChatCompletionRequest Effective,
+        User User, ToolExecutor ToolExecutor, ProviderService Providers,
+        ConfigService Config, WorkspaceRepoService Repos,
+        IWebHostEnvironment Env,
+        List<(System.Text.RegularExpressions.Regex Regex, string Replacement)> OutletRules);
 
     /// <summary>Stream do completion: com tools habilitadas tenta o caminho
     /// OpenAPI primeiro; sem ele, deltas diretos com filtros outlet.
     /// Falhas de provider viram evento SSE de erro.</summary>
     private static async Task StreamWithToolsAsync(
-        HttpContext http, StreamWriter writer,
-        ChatCompletionRequest request, ChatCompletionRequest effective,
-        User user, ToolExecutor toolExecutor, ProviderService providers,
-        ConfigService config, WorkspaceRepoService repos,
-        IWebHostEnvironment env,
-        List<(System.Text.RegularExpressions.Regex Regex, string Replacement)> outletRules,
-        CancellationToken ct)
+        StreamBundle b, CancellationToken ct)
     {
+        var (http, writer, request, effective, user, toolExecutor,
+            providers, config, repos, env, outletRules) = b;
         try
         {
             var tools = request.ToolIds is { Count: > 0 }

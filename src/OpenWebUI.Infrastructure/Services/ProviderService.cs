@@ -1729,42 +1729,49 @@ public class ProviderService(
         var messages = new List<JsonObject>();
         foreach (var m in request.Messages)
         {
-            if (m.Role == RoleSystem)
+            if (MapAnthropicMessage(m, messages) is { } systemPart)
             {
-                if (!string.IsNullOrWhiteSpace(m.Content))
-                {
-                    system.Add(m.Content);
-                }
-                continue;
+                system.Add(systemPart);
             }
-
-            if (m.ToolCallId is not null || m.Role == "tool")
-            {
-                AppendAnthropicToolResult(m, messages);
-                continue;
-            }
-
-            if (m.Role == RoleAssistant && m.ToolCallsJson is not null)
-            {
-                messages.Add(BuildAnthropicToolUseMessage(m));
-                continue;
-            }
-
-            // SPEC-20261013-chat-media-attachments RF-006: imagens do anexo
-            // viram blocos {type:"image", source:{base64}} na Messages API.
-            if (m.Images is { Count: > 0 } images && m.Role == "user")
-            {
-                messages.Add(BuildAnthropicImageMessage(m, images));
-                continue;
-            }
-
-            messages.Add(new JsonObject
-            {
-                ["role"] = m.Role == RoleAssistant ? RoleAssistant : "user",
-                [ContentKey] = m.Content,
-            });
         }
         return (system, messages);
+    }
+
+    /// <summary>
+    /// Mapeia uma mensagem do chat para o formato Anthropic: system sai
+    /// do fluxo (retorna o texto), tool_result/tool_use/imagem/texto vão
+    /// para <paramref name="messages"/> (retorna <c>null</c>).
+    /// </summary>
+    private static string? MapAnthropicMessage(
+        ChatCompletionMessage m, List<JsonObject> messages)
+    {
+        if (m.Role == RoleSystem)
+        {
+            return string.IsNullOrWhiteSpace(m.Content) ? null : m.Content;
+        }
+        if (m.ToolCallId is not null || m.Role == "tool")
+        {
+            AppendAnthropicToolResult(m, messages);
+            return null;
+        }
+        if (m.Role == RoleAssistant && m.ToolCallsJson is not null)
+        {
+            messages.Add(BuildAnthropicToolUseMessage(m));
+            return null;
+        }
+        // SPEC-20261013-chat-media-attachments RF-006: imagens do anexo
+        // viram blocos {type:"image", source:{base64}} na Messages API.
+        if (m.Images is { Count: > 0 } images && m.Role == "user")
+        {
+            messages.Add(BuildAnthropicImageMessage(m, images));
+            return null;
+        }
+        messages.Add(new JsonObject
+        {
+            ["role"] = m.Role == RoleAssistant ? RoleAssistant : "user",
+            [ContentKey] = m.Content,
+        });
+        return null;
     }
 
     /// <summary>
@@ -2935,8 +2942,11 @@ public class ProviderService(
         if (Str(Prop(part, TextKey)) is { } text)
         {
             await EmitGoogleTextPartAsync(
-                part, text, content, markupContent, markupReasoning,
-                onDelta, onReasoning, ct);
+                part, text,
+                new GoogleTextSink(
+                    content, markupContent, markupReasoning,
+                    onDelta, onReasoning),
+                ct);
             return;
         }
         if (Prop(part, "functionCall") is JsonObject call)
@@ -2961,16 +2971,21 @@ public class ProviderService(
     /// <summary><c>part.thought=true</c> é a cadeia de raciocínio do Gemini —
     /// antes vazava para o content persistido da resposta; texto comum alimenta
     /// o filtro de markup e emite <c>onDelta</c>/<c>onReasoning</c>.</summary>
+    /// <summary>Destinos do texto emitido pelo Gemini (S107).</summary>
+    private sealed record GoogleTextSink(
+        StringBuilder Content,
+        ReasoningMarkupFilter MarkupContent,
+        ReasoningMarkupFilter MarkupReasoning,
+        Func<string, CancellationToken, Task>? OnDelta,
+        Func<string, CancellationToken, Task>? OnReasoning);
+
     private static async Task EmitGoogleTextPartAsync(
         JsonNode? part,
         string text,
-        StringBuilder content,
-        ReasoningMarkupFilter markupContent,
-        ReasoningMarkupFilter markupReasoning,
-        Func<string, CancellationToken, Task>? onDelta,
-        Func<string, CancellationToken, Task>? onReasoning,
+        GoogleTextSink sink,
         CancellationToken ct)
     {
+        var (content, markupContent, markupReasoning, onDelta, onReasoning) = sink;
         if (string.IsNullOrEmpty(text))
         {
             return;

@@ -1099,7 +1099,7 @@ public sealed class DelegateTaskBuiltinTool(
 
     /// <summary>agent:"ext:{id}" — executa o CLI externo headless
     /// confinado ao workdir (RF-005 external-agent-registry).</summary>
-    private async Task<BuiltinToolResult> RunExternalAgentAsync(
+    private static async Task<BuiltinToolResult> RunExternalAgentAsync(
         IServiceScope scope, string extId, string fullPrompt,
         BuiltinToolContext context, CancellationToken ct)
     {

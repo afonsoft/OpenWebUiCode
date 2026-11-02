@@ -353,7 +353,8 @@ public static class TerminalPtyEndpoints
                         ? s.GetString() : null;
 
                 await DispatchMuxMessageAsync(
-                    type, sid, root, handles, deps, uid, AttachAsync, CreateAsync);
+                    new MuxDispatch(type, sid, root, handles, deps, uid),
+                    AttachAsync, CreateAsync);
             }
         }
         catch (OperationCanceledException)
@@ -455,14 +456,19 @@ public static class TerminalPtyEndpoints
         }
     }
 
+    /// <summary>Pacote do dispatch do mux (S107).</summary>
+    private sealed record MuxDispatch(
+        string? Type, string? Sid, JsonElement Root,
+        Dictionary<string, TerminalSessionManager.SessionHandle> Handles,
+        TerminalDeps Deps, string Uid);
+
     /// <summary>Dispatch de um frame do mux: attach/detach/input/resize/
     /// kill/create.</summary>
     private static async Task DispatchMuxMessageAsync(
-        string? type, string? sid, JsonElement root,
-        Dictionary<string, TerminalSessionManager.SessionHandle> handles,
-        TerminalDeps deps, string uid,
+        MuxDispatch m,
         Func<string, Task> attachAsync, Func<JsonElement, Task> createAsync)
     {
+        var (type, sid, root, handles, deps, uid) = m;
         switch (type)
         {
             case "attach" when sid is not null:

@@ -96,6 +96,9 @@ public sealed class ChatRunExecutor(
     /// <summary>Bytes de delta acumulados antes de gravar um checkpoint.</summary>
     private const int CheckpointBytes = 2048;
 
+    /// <summary>Preset de aprovação com juiz LLM (SPEC smart-permission).</summary>
+    private const string SmartPreset = "smart";
+
     /// <summary>Role das notas de sistema injetadas no histórico do loop.</summary>
     private const string RoleSystem = "system";
     private const string SseDoneLine = "data: [DONE]";
@@ -827,7 +830,7 @@ public sealed class ChatRunExecutor(
                 $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
             ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
         var callbacks = BuildToolLoopCallbacks(
-            run, user, commandMode, chatMode, effective, tools, budgetLimits,
+            run, commandMode, effective, tools, budgetLimits,
             outletRules, builtinContext, state);
         var outcome = await ChatPipeline.RunToolLoopAsync(
             effective, tools, toolExecutor, providers, ct,
@@ -853,7 +856,7 @@ public sealed class ChatRunExecutor(
     /// compaction, tool events, budget veto, steer, advisor notes e deltas de
     /// content/reasoning. Estado mutável vive em <paramref name="state"/>.</summary>
     private ChatPipeline.ToolLoopCallbacks BuildToolLoopCallbacks(
-        ChatRun run, User user, string? commandMode, string chatMode,
+        ChatRun run, string? commandMode,
         ChatCompletionRequest effective, List<Tool> tools,
         BudgetLimits budgetLimits,
         List<(Regex Regex, string Replacement)> outletRules,
@@ -893,27 +896,8 @@ public sealed class ChatRunExecutor(
             // RF-004 provider-resilience: rejeição de janela cheia
             // → compacta o histórico do loop com tail progressivo e
             // devolve a janela reduzida; null = sem como reduzir.
-            OnOverflowCompactAsync: async (history, tailScale, t) =>
-            {
-                // RF-004 agent-prompt-pack: o modelo pediu extend_context
-                // explicitamente → pular esta compactação de emergência.
-                if (extendContext.TryConsume(run.Id))
-                {
-                    await runEvents.AppendAsync(run.Id,
-                        RunEventWriter.Types.Note,
-                        new { status = "context_extended" }, t);
-                    return history;
-                }
-                var didCompact = await compaction.MaybeCompactAsync(
-                    run.ChatId, history, effective.Model, t, run.UserId,
-                    force: true, tailScale: tailScale);
-                if (!didCompact)
-                {
-                    return null;
-                }
-                await PublishPhaseAsync(run, "compacting", null);
-                return await compaction.ApplyAsync(run.ChatId, history, t);
-            },
+            OnOverflowCompactAsync: (history, tailScale, t) =>
+                CompactOverflowAttemptAsync(run, effective, history, tailScale, t),
             OnCallAsync: async (call, t) =>
             {
                 await PublishToolCallAsync(run, call);
@@ -979,31 +963,8 @@ public sealed class ChatRunExecutor(
             // RF-A2 harness-seams: interceptors pre-step decidem
             // sobre as mensagens claimed antes de entrarem no
             // histórico enviado ao provider.
-            OnRoundBoundaryAsync: async (queuedOnly, t) =>
-            {
-                var claimed = await PollSteerAsync(run, queuedOnly, t);
-                if (claimed.Count == 0 || !interceptors.HasInterceptors)
-                {
-                    return claimed;
-                }
-                var outcome = await interceptors.RunPreStepAsync(
-                    new OpenWebUI.Application.Interfaces.PreStepContext(
-                        run.Id, run.ChatId, run.UserId,
-                        state.CurrentStep, claimed), t);
-                if (!outcome.Rejected)
-                {
-                    return outcome.Messages;
-                }
-                await runEvents.AppendAsync(run.Id,
-                    RunEventWriter.Types.InterceptorVeto,
-                    new
-                    {
-                        hook = "pre-step",
-                        interceptor = outcome.VetoedBy,
-                        reason = outcome.Reason,
-                    }, t);
-                return outcome.Messages;
-            },
+            OnRoundBoundaryAsync: (queuedOnly, t) =>
+                RoundBoundaryAsync(run, state, queuedOnly, t),
             // Conselhos do advisor viram notas system no round
             // seguinte — sem zerar o teto de iterações.
             OnContextNotesAsync: t => DrainContextNotesAsync(run, t),
@@ -1018,59 +979,134 @@ public sealed class ChatRunExecutor(
                     call, output, result, denied, t),
             // Texto do modelo sai delta a delta — sem isso a resposta
             // inteira só aparecia num blob no fim da run.
-            OnDeltaAsync: async (piece, t) =>
-            {
-                await pauses.WaitIfPausedAsync(run.Id, t);
-                var processed = piece;
-                foreach (var (regex, replacement) in outletRules)
-                {
-                    processed = regex.Replace(processed, replacement);
-                }
-                if (processed.Length == 0)
-                {
-                    return;
-                }
-                var chunk = JsonSerializer.Serialize(new
-                {
-                    choices = new[] { new { index = 0, delta = new { content = processed } } },
-                });
-                broadcaster.Publish(run.Id, $"data: {chunk}");
-                state.Content.Append(processed);
-                state.SinceCheckpoint += processed.Length;
-                if (state.SinceCheckpoint >= CheckpointBytes)
-                {
-                    run.PartialContent = state.Content.ToString();
-                    await db.SaveChangesAsync(CancellationToken.None);
-                    await runEvents.AppendAsync(run.Id,
-                        RunEventWriter.Types.ContentDelta,
-                        new { content = state.Content.ToString() },
-                        CancellationToken.None);
-                    state.SinceCheckpoint = 0;
-                }
-            },
+            OnDeltaAsync: (piece, t) =>
+                PublishContentDeltaAsync(run, piece, outletRules, state, t),
             // SPEC-20261015 RF-002: raciocínio/thinking sai como
             // delta.reasoning — canal separado do content (a UI
             // renderiza colapsado; nunca entra em PartialContent).
             // Outlet rules aplicam igual — segredos no pensamento
             // são scrubados do mesmo jeito.
-            OnReasoningAsync: async (piece, t) =>
+            OnReasoningAsync: (piece, t) =>
+                PublishReasoningDeltaAsync(run, piece, outletRules, t));
+    }
+
+    /// <summary>Compactação de emergência por overflow — extend_context
+    /// explícito do modelo pula uma compactação (RF-004 prompt-pack).</summary>
+    private async Task<IReadOnlyList<ChatCompletionMessage>?> CompactOverflowAttemptAsync(
+        ChatRun run, ChatCompletionRequest effective,
+        IReadOnlyList<ChatCompletionMessage> history, double tailScale,
+        CancellationToken t)
+    {
+        if (extendContext.TryConsume(run.Id))
+        {
+            await runEvents.AppendAsync(run.Id,
+                RunEventWriter.Types.Note,
+                new { status = "context_extended" }, t);
+            return history;
+        }
+        var didCompact = await compaction.MaybeCompactAsync(
+            run.ChatId, history, effective.Model, t, run.UserId,
+            force: true, tailScale: tailScale);
+        if (!didCompact)
+        {
+            return null;
+        }
+        await PublishPhaseAsync(run, "compacting", null);
+        return await compaction.ApplyAsync(run.ChatId, history, t);
+    }
+
+    /// <summary>Fronteira de rodada: claimed do steer/queue passa pelos
+    /// interceptors pre-step antes de entrar no histórico (RF-A2).</summary>
+    private async Task<IReadOnlyList<ChatCompletionMessage>> RoundBoundaryAsync(
+        ChatRun run, RunStreamState state, bool queuedOnly,
+        CancellationToken t)
+    {
+        var claimed = await PollSteerAsync(run, queuedOnly, t);
+        if (claimed.Count == 0 || !interceptors.HasInterceptors)
+        {
+            return claimed;
+        }
+        var outcome = await interceptors.RunPreStepAsync(
+            new OpenWebUI.Application.Interfaces.PreStepContext(
+                run.Id, run.ChatId, run.UserId,
+                state.CurrentStep, claimed), t);
+        if (!outcome.Rejected)
+        {
+            return outcome.Messages;
+        }
+        await runEvents.AppendAsync(run.Id,
+            RunEventWriter.Types.InterceptorVeto,
+            new
             {
-                await pauses.WaitIfPausedAsync(run.Id, t);
-                var processed = piece;
-                foreach (var (regex, replacement) in outletRules)
-                {
-                    processed = regex.Replace(processed, replacement);
-                }
-                if (processed.Length == 0)
-                {
-                    return;
-                }
-                var chunk = JsonSerializer.Serialize(new
-                {
-                    choices = new[] { new { index = 0, delta = new { reasoning = processed } } },
-                });
-                broadcaster.Publish(run.Id, $"data: {chunk}");
-            });
+                hook = "pre-step",
+                interceptor = outcome.VetoedBy,
+                reason = outcome.Reason,
+            }, t);
+        return outcome.Messages;
+    }
+
+    /// <summary>Delta de content: pausa, filtros outlet, publica e
+    /// acumula — checkpoint de PartialContent a cada CheckpointBytes.</summary>
+    private async Task PublishContentDeltaAsync(
+        ChatRun run, string piece,
+        List<(Regex Regex, string Replacement)> outletRules,
+        RunStreamState state, CancellationToken t)
+    {
+        await pauses.WaitIfPausedAsync(run.Id, t);
+        var processed = ApplyOutletRules(piece, outletRules);
+        if (processed.Length == 0)
+        {
+            return;
+        }
+        var chunk = JsonSerializer.Serialize(new
+        {
+            choices = new[] { new { index = 0, delta = new { content = processed } } },
+        });
+        broadcaster.Publish(run.Id, $"data: {chunk}");
+        state.Content.Append(processed);
+        state.SinceCheckpoint += processed.Length;
+        if (state.SinceCheckpoint >= CheckpointBytes)
+        {
+            run.PartialContent = state.Content.ToString();
+            await db.SaveChangesAsync(CancellationToken.None);
+            await runEvents.AppendAsync(run.Id,
+                RunEventWriter.Types.ContentDelta,
+                new { content = state.Content.ToString() },
+                CancellationToken.None);
+            state.SinceCheckpoint = 0;
+        }
+    }
+
+    /// <summary>Delta de reasoning: canal separado (nunca entra em
+    /// PartialContent) com os mesmos filtros outlet.</summary>
+    private async Task PublishReasoningDeltaAsync(
+        ChatRun run, string piece,
+        List<(Regex Regex, string Replacement)> outletRules,
+        CancellationToken t)
+    {
+        await pauses.WaitIfPausedAsync(run.Id, t);
+        var processed = ApplyOutletRules(piece, outletRules);
+        if (processed.Length == 0)
+        {
+            return;
+        }
+        var chunk = JsonSerializer.Serialize(new
+        {
+            choices = new[] { new { index = 0, delta = new { reasoning = processed } } },
+        });
+        broadcaster.Publish(run.Id, $"data: {chunk}");
+    }
+
+    /// <summary>Filtros outlet do modelo sobre um delta.</summary>
+    private static string ApplyOutletRules(
+        string piece, List<(Regex Regex, string Replacement)> outletRules)
+    {
+        var processed = piece;
+        foreach (var (regex, replacement) in outletRules)
+        {
+            processed = regex.Replace(processed, replacement);
+        }
+        return processed;
     }
 
     /// <summary>Stream sem tool loop — deltas diretos com retentativa
@@ -2129,7 +2165,7 @@ public sealed class ChatRunExecutor(
 
         // Juiz LLM do preset smart (SPEC-20261031-smart-permission-llm):
         // só decide o que a regra determinística não cobriu — fail-safe ask.
-        if (preset == "smart" && tool is not null
+        if (preset == SmartPreset && tool is not null
             && await SmartJudgeDecisionAsync(run, call, ct) is { } smartDecision)
         {
             return smartDecision;
@@ -2477,13 +2513,13 @@ public sealed class ChatRunExecutor(
             case "allow-readonly":
                 return ToolGateDecision.Deny;
             case "auto":
-            case "smart":
+            case SmartPreset:
                 var workspace = Path.Join(
                     DataPaths.Root(env.ContentRootPath), "workspaces", run.UserId);
                 var risk = ToolCallRiskClassifier.Classify(
                     tool, call.ArgumentsJson, workspace);
                 var fileMutation = risk == ToolCallRisk.Medium
-                    && preset == "smart"
+                    && preset == SmartPreset
                     && ToolCallRiskClassifier.IsFileMutation(
                         tool, call.ArgumentsJson, workspace);
                 if (risk == ToolCallRisk.Low)
@@ -2944,7 +2980,7 @@ public sealed class ChatRunExecutor(
     /// <c>approve-mutations</c>/<c>allow-readonly</c> seguem perguntando.
     /// </summary>
     private static bool IsAutoPickPreset(string? preset) =>
-        preset is "smart" or "always-allow" or "auto";
+        preset is SmartPreset or "always-allow" or "auto";
 
     /// <summary>
     /// Resposta autônoma padrão para pergunta de texto livre em preset

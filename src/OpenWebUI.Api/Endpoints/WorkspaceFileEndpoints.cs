@@ -635,12 +635,9 @@ public static class WorkspaceFileEndpoints
             }
         }
 
-        foreach (var f in files)
+        foreach (var f in files.Where(IsSearchableFile))
         {
-            if (IsSearchableFile(f))
-            {
-                yield return f;
-            }
+            yield return f;
         }
     }
 
