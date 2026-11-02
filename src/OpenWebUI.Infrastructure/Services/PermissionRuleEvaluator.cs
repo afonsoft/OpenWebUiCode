@@ -16,12 +16,13 @@ namespace OpenWebUI.Infrastructure.Services;
 public class PermissionRuleEvaluator(AppDbContext db)
 {
     /// <summary>Efeitos válidos de uma regra.</summary>
-    public static readonly HashSet<string> ValidEffects =
-        new(StringComparer.OrdinalIgnoreCase) { "allow", "ask", "deny" };
+    public static IReadOnlySet<string> ValidEffects { get; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "allow", "ask", "deny" };
 
     /// <summary>Ações válidas de uma regra.</summary>
-    public static readonly HashSet<string> ValidActions =
-        new(StringComparer.OrdinalIgnoreCase)
+    public static IReadOnlySet<string> ValidActions { get; } =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "read", "edit", "glob", "grep", "shell", "subagent",
             "skill", "question", "webfetch", "websearch",
@@ -103,9 +104,8 @@ public class PermissionRuleEvaluator(AppDbContext db)
                 && s.Tool == toolName)
             .ToListAsync(ct);
         var match = saved
-            .Where(s => s.ArgPattern == "*"
-                || WorkspaceFiles.GlobToRegex(s.ArgPattern).IsMatch(argPattern))
-            .LastOrDefault();
+            .LastOrDefault(s => s.ArgPattern == "*"
+                || WorkspaceFiles.GlobToRegex(s.ArgPattern).IsMatch(argPattern));
         return match is null ? null : match.Decision == "allow";
     }
 

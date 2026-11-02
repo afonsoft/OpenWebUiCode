@@ -459,7 +459,7 @@ public static class LspEndpoints
                 LspPosition? from = null;
                 var list = ParseCompletionItems(items, ref from);
                 return Results.Ok(new LspCompletionResponse(
-                    true, from ?? new LspPosition(request!.Line, Math.Max(0, request.Col - 1)), list));
+                    true, from ?? new LspPosition(request.Line, Math.Max(0, request.Col - 1)), list));
             }
             catch (Exception ex) when (ex is LspUnavailableException or LspRequestException
                 or IOException or TimeoutException)

@@ -1900,9 +1900,9 @@
         _mcpServers = await Api.GetMcpServersAsync();
         _policies = await Api.GetAdminPoliciesAsync() ?? [];
         _policyDenials = await Api.GetAdminPolicyDenialsAsync() ?? [];
-        foreach (var server in _mcpServers)
+        foreach (var serverId in _mcpServers.Select(s => s.Id))
         {
-            _mcpTools[server.Id] = await Api.GetMcpToolsAsync(server.Id);
+            _mcpTools[serverId] = await Api.GetMcpToolsAsync(serverId);
         }
         if (_adminConfig is not null)
         {

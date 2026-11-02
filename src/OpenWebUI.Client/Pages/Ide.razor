@@ -35,7 +35,7 @@ else if (_repo?.Repo is null)
         <h2 class="text-base font-semibold text-gray-900 dark:text-white">@L["ide.title"]</h2>
         <p class="max-w-md text-center text-xs text-gray-500">@L["ide.bind_hint"]</p>
         <div class="w-full max-w-md rounded-lg border border-gray-200 dark:border-gray-800 p-3 text-left">
-            <RepoBindingPanel BoundChanged="OnBoundChangedAsync" />
+            <RepoBindingPanel BoundChanged="_ => ReloadAsync()" />
         </div>
     </div>
 }
@@ -251,7 +251,7 @@ else
             _auxW = await SashAsync("aux", _auxW);
             _bottomH = await SashAsync("bottom", _bottomH);
             await RefreshSideAsync();
-            _poll = new Timer(_ => _ = RefreshSideAsync(), null,
+            _poll = new Timer(_ => RefreshSideAsync(), null,
                 TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
         }
     }
@@ -510,8 +510,6 @@ else
         { Length: > 0 } ext => ext.ToUpperInvariant(),
         _ => null,
     };
-
-    private Task OnBoundChangedAsync(WorkspaceRepoResponse? bound) => ReloadAsync();
 
     private async Task ReloadAsync()
     {

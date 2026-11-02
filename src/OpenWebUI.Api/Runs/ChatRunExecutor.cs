@@ -270,17 +270,17 @@ public sealed class ChatRunExecutor(
                     && (m.UserId == user.Id || m.UserId == "public"))
                 .Select(m => m.MetaJson).FirstOrDefaultAsync(ct)));
 
-        var tools = await LoadRunToolsAsync(run, request, user, ct);
+        var runTools = await LoadRunToolsAsync(run, request, user, ct);
         await PublishPhaseAsync(run, "connecting_model", null);
         logger.LogInformation(
             "Run {RunId}: model={Model}, tools={ToolCount}, mensagens={MessageCount}, chat={ChatId}.",
-            run.Id, effective.Model, tools?.Count ?? 0,
+            run.Id, effective.Model, runTools?.Count ?? 0,
             effective.Messages.Count, run.ChatId);
-        if (tools is { Count: > 0 })
+        if (runTools is { Count: > 0 })
         {
             await RunToolLoopWithStopHooksAsync(
                 new ToolLoopRunCtx(run, user, commandMode, chatMode,
-                    effective, tools, budgetLimits, outletRules, resumeSeed,
+                    effective, runTools, budgetLimits, outletRules, resumeSeed,
                     state), ct);
         }
         else
@@ -307,9 +307,9 @@ public sealed class ChatRunExecutor(
     private async Task RunToolLoopWithStopHooksAsync(
         ToolLoopRunCtx l, CancellationToken ct)
     {
-        var (run, user, commandMode, chatMode, effective, tools,
-            budgetLimits, outletRules, resumeSeed, state) = l;
-        for (var stopBlocks = 0; ; stopBlocks++)
+        var (run, _, _, _, effective, _, _, _, _, state) = l;
+        var stopBlocks = 0;
+        while (true)
         {
             var (outcome, done) = await RunToolLoopPathAsync(l, ct);
             state.LoopOutcome = outcome;
@@ -345,6 +345,7 @@ public sealed class ChatRunExecutor(
             // A mutação do effective precisa voltar ao record — a
             // próxima iteração re-desestrutura de l.
             l = l with { Effective = effective };
+            stopBlocks++;
         }
     }
 
@@ -785,7 +786,7 @@ public sealed class ChatRunExecutor(
     private async Task<(ChatPipeline.ToolLoopOutcome? Outcome, bool Done)>
         RunToolLoopPathAsync(ToolLoopRunCtx l, CancellationToken ct)
     {
-        var (run, user, commandMode, chatMode, effective, tools,
+        var (run, user, commandMode, chatMode, effective, loopTools,
             budgetLimits, outletRules, resumeSeed, state) = l;
         var builtinContext = await BuildToolContextAsync(run, user, ct);
         // SessionStart (SPEC-20261031-lifecycle-hooks RF-006): contextos
@@ -814,34 +815,34 @@ public sealed class ChatRunExecutor(
         // plan_exit entra no catálogo sintético da run (RF-003): só
         // é anunciado em modo plan; em build fica invisível — o gate
         // o conhece para interceptar a call se ela escapar.
-        if (tools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "plan_exit")
+        if (loopTools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "plan_exit")
             && builtins.All.FirstOrDefault(t => t.Name == "plan_exit") is { } planExit)
         {
-            tools.Add(builtins.ToSyntheticTool(planExit));
+            loopTools.Add(builtins.ToSyntheticTool(planExit));
         }
         // RF-001: com deferral ativo o loader é sempre core — injeta
         // tool_search mesmo fora dos ToolIds quando há tools deferidas.
         if (deferred.IsActive(run.Id)
-            && tools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "tool_search")
+            && loopTools.All(t => t.Url != BuiltinToolRegistry.UrlPrefix + "tool_search")
             && builtins.All.FirstOrDefault(t => t.Name == "tool_search") is { } toolSearch)
         {
-            tools.Add(builtins.ToSyntheticTool(toolSearch));
+            loopTools.Add(builtins.ToSyntheticTool(toolSearch));
         }
         // Spec da primeira rodada já filtrado pelo modo (RF-002) —
         // as próximas passam pelo AnnounceToolsAsync do callback.
         effective = effective with
         {
-            Tools = tools
+            Tools = loopTools
                 .Where(t => PermissionRuleset.ShouldAnnounce(chatMode, t)
                     && !deferred.IsDeferredOnly(run.Id, t))
                 .Select(t => JsonSerializer.Deserialize<JsonElement>(t.SpecJson))
                 .ToList(),
         };
         // Teto de steps da run (SPEC-20261016-agent-steps-usage
-        // RF-001): min(agent.steps do kv da sub-run,
+        // RF-001): o mínimo entre agent.steps (kv da sub-run) e
         // agentLoop.maxRounds — override por usuário
-        // u:{id}:agentLoop.maxRounds, global default 99999;
-        // o agent.steps explícito continua vencendo).
+        // (u:{id} prefixo, global default 99999); o agent.steps
+        // explícito continua vencendo.
         var agentSteps = await config.GetAsync<int?>(
             $"r:{run.Id}:agent.steps", null, ct);
         var maxSteps = Math.Min(agentSteps ?? int.MaxValue,
@@ -849,10 +850,10 @@ public sealed class ChatRunExecutor(
                 $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
             ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
         var callbacks = BuildToolLoopCallbacks(
-            new CallbackDeps(run, commandMode, effective, tools,
+            new CallbackDeps(run, commandMode, effective, loopTools,
                 budgetLimits, outletRules, builtinContext, state));
         var outcome = await ChatPipeline.RunToolLoopAsync(
-            effective, tools, toolExecutor, providers, ct,
+            effective, loopTools, toolExecutor, providers, ct,
             new ChatPipeline.ToolLoopOptions(
                 callbacks, builtinContext, run.UserId, logger, maxSteps,
                 toolExecutor.MaxParallel, resumeSeed));
@@ -884,7 +885,7 @@ public sealed class ChatRunExecutor(
     private ChatPipeline.ToolLoopCallbacks BuildToolLoopCallbacks(
         CallbackDeps d)
     {
-        var (run, commandMode, effective, tools, budgetLimits, outletRules,
+        var (run, commandMode, effective, cbTools, budgetLimits, outletRules,
             builtinContext, state) = d;
         return new ChatPipeline.ToolLoopCallbacks(
 
@@ -969,14 +970,14 @@ public sealed class ChatRunExecutor(
             OnBudgetCheckAsync: t =>
                 RunBudgetCheckAsync(run, budgetLimits, t),
             GateAsync: (call, t) => GateWithInterceptorsAsync(
-                run, tools, call, builtinContext, t),
+                run, cbTools, call, builtinContext, t),
             // Modo relido por rodada — o plan_exit aprovado
             // promove a build já na próxima chamada do modelo.
             AnnounceToolsAsync: async t =>
             {
                 var mode = await EffectiveModeAsync(
                     run.ChatId, commandMode, t);
-                return tools
+                return cbTools
                     .Where(tool => PermissionRuleset.ShouldAnnounce(mode, tool)
                         && !deferred.IsDeferredOnly(run.Id, tool))
                     .Select(tool => JsonSerializer.Deserialize<JsonElement>(tool.SpecJson))
@@ -999,7 +1000,7 @@ public sealed class ChatRunExecutor(
                 : "First privately list what you need next; then request every item that doesn't depend on another's result in this one response",
             OnResultAsync: (call, output, result, denied, t) =>
                 OnToolResultAsync(
-                    new ToolResultEvent(run, tools, builtinContext, state,
+                    new ToolResultEvent(run, cbTools, builtinContext, state,
                         call, output, result, denied), t),
             // Texto do modelo sai delta a delta — sem isso a resposta
             // inteira só aparecia num blob no fim da run.
@@ -2189,7 +2190,7 @@ public sealed class ChatRunExecutor(
             return presetDecision;
         }
 
-        return await AskToolApprovalAsync(run, call, tool!, builtinContext, ct);
+        return await AskToolApprovalAsync(run, call, tool, builtinContext, ct);
     }
 
     /// <summary>Gates das chat-tools com decisão própria: ask_user (RF-005)
@@ -2481,9 +2482,15 @@ public sealed class ChatRunExecutor(
                 ? Path.GetFullPath(trimmed)
                 : Path.GetFullPath(Path.Join(workspace, trimmed));
             // Symlink real do nó final decide o boundary (RF-003).
-            FileSystemInfo? node = Directory.Exists(full)
-                ? new DirectoryInfo(full)
-                : File.Exists(full) ? new FileInfo(full) : null;
+            FileSystemInfo? node = null;
+            if (Directory.Exists(full))
+            {
+                node = new DirectoryInfo(full);
+            }
+            else if (File.Exists(full))
+            {
+                node = new FileInfo(full);
+            }
             return node?.LinkTarget is not null
                 ? node.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? full
                 : full;
@@ -3537,7 +3544,7 @@ public sealed class ChatRunExecutor(
 
     private async Task OnToolResultAsync(ToolResultEvent e, CancellationToken t)
     {
-        var (run, tools, builtinContext, state, call, output, result,
+        var (run, evtTools, builtinContext, state, call, output, result,
             denied) = e;
         await PublishToolResultAsync(run, call, output, result, denied);
         // RF-001: tool_result é o fato que liquida a call na
@@ -3600,7 +3607,7 @@ public sealed class ChatRunExecutor(
             _toolResultsSinceAdvise = 0;
             await KickAdvisorAsync(run, "tool_burst", builtinContext, t);
         }
-        if (!denied && ToolExecutor.FindTool(tools, call.Name) is { } tool
+        if (!denied && ToolExecutor.FindTool(evtTools, call.Name) is { } tool
             && (ToolCallRiskClassifier.IsFileMutation(
                     tool, call.ArgumentsJson, builtinContext.WorkspacePath)
                 || IsApplyPatch(call.Name)))

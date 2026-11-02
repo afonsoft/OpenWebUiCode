@@ -48,7 +48,7 @@ public static class PlanEndpoints
                 new { detail = "Nenhum repositório vinculado.", bound = false });
         }
         var workdir = await repos.ResolveWorkdirAsync(user.Id, chatId, ct);
-        var items = plans.List(workdir)
+        var items = PlanFileService.List(workdir)
             .Select(e => new PlanItemResponse(
                 e.Name, e.Path, e.Title, e.ModifiedAt))
             .ToList();

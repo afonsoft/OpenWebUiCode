@@ -39,7 +39,7 @@ public sealed class RestrictedExecRunner
     /// Executa o lote de comandos (no máx. <see cref="MaxCommands"/>) contra
     /// o workspace. Cada comando é uma linha; erros não abortam o lote.
     /// </summary>
-    public BatchResult Run(string workspace, IReadOnlyList<string> commands)
+    public static BatchResult Run(string workspace, IReadOnlyList<string> commands)
     {
         var snippets = new List<Snippet>();
         var errors = new List<CommandError>();

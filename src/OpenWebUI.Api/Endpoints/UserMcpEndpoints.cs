@@ -54,11 +54,12 @@ public static class UserMcpEndpoints
         }
         var effective = await overlay.EffectiveMcpServersAsync(user.Id, ct);
         var items = new List<McpPromptItemResponse>();
-        foreach (var entry in effective.Where(e => e.EnabledForMe))
+        foreach (var server in effective.Where(e => e.EnabledForMe)
+            .Select(e => e.Server))
         {
-            items.AddRange((await mcp.ListPromptsAsync(entry.Server, ct)).Select(prompt =>
+            items.AddRange((await mcp.ListPromptsAsync(server, ct)).Select(prompt =>
                 new McpPromptItemResponse(
-                    entry.Server.Name, prompt.Name,
+                    server.Name, prompt.Name,
                     prompt.Description, prompt.Arguments)));
         }
         return Results.Ok(items);

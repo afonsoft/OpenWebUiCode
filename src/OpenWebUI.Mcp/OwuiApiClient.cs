@@ -18,7 +18,8 @@ public sealed class OwuiApiClient
     public OwuiApiClient(HttpClient http, string baseUrl, string? apiKey)
     {
         _http = http;
-        _http.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
+        const string PathDelimiter = "/";
+        _http.BaseAddress = new Uri(baseUrl.TrimEnd('/') + PathDelimiter);
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
             _http.DefaultRequestHeaders.Authorization =

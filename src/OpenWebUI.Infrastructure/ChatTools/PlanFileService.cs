@@ -62,7 +62,7 @@ public sealed partial class PlanFileService
     /// do título explícito, do heading `# ` ou da primeira linha. Devolve
     /// path relativo ao workdir (ou absoluto no fallback) + warnings.
     /// </summary>
-    public PlanWriteResult Write(
+    public static PlanWriteResult Write(
         string? workspacePath, string sessionKey, string content,
         string? title, string? runId)
     {
@@ -79,11 +79,11 @@ public sealed partial class PlanFileService
             var slug = SlugOf(title ?? TitleOf(content));
             fileName = $"{DateTime.UtcNow:yyyy-MM-dd}-{slug}.md";
             // Sufixo para planos distintos com o mesmo slug na mesma data.
-            for (var i = 2;
-                File.Exists(Path.Combine(dir, fileName));
-                i++)
+            var i = 2;
+            while (File.Exists(Path.Combine(dir, fileName)))
             {
                 fileName = $"{DateTime.UtcNow:yyyy-MM-dd}-{slug}-{i}.md";
+                i++;
             }
             SessionFile[sessionKey] = fileName;
         }
@@ -115,7 +115,7 @@ public sealed partial class PlanFileService
     /// <summary>
     /// Lista os <c>.md</c> do diretório de planos (mais recente primeiro).
     /// </summary>
-    public IReadOnlyList<PlanEntry> List(string? workspacePath)
+    public static IReadOnlyList<PlanEntry> List(string? workspacePath)
     {
         var dir = DirFor(workspacePath);
         if (!Directory.Exists(dir))
@@ -126,7 +126,7 @@ public sealed partial class PlanFileService
         return new DirectoryInfo(dir)
             .EnumerateFiles("*.md", SearchOption.TopDirectoryOnly)
             .Select(f => new PlanEntry(
-                f.Name, RelativeOf(root, f, workspacePath),
+                f.Name, RelativeOf(f, workspacePath),
                 FirstHeading(f.FullName), f.LastWriteTimeUtc))
             .OrderByDescending(e => e.ModifiedAt)
             .ToList();
@@ -148,7 +148,8 @@ public sealed partial class PlanFileService
     /// <summary>Match de heading `## Seção` case-insensitive.</summary>
     public static Regex SectionRegex(string section) =>
         new($@"^#{1,3}\s+{Regex.Escape(section)}\s*$",
-            RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
+            RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled,
+            TimeSpan.FromMilliseconds(500));
 
     /// <summary>Primeiro heading `# ` do arquivo (ou primeira linha).</summary>
     private static string? FirstHeading(string path)
@@ -174,7 +175,7 @@ public sealed partial class PlanFileService
         return null;
     }
 
-    private static string RelativeOf(string dirFull, FileInfo f, string? ws) =>
+    private static string RelativeOf(FileInfo f, string? ws) =>
         string.IsNullOrWhiteSpace(ws)
             ? f.FullName
             : $"{DirName}/{f.Name}";

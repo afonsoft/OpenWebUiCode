@@ -230,7 +230,7 @@ else
         var result = await Api.GetGitHubBranchesAsync(parts[0], parts[1]);
         _branches = result?.Branches.ToList();
         if (result is not null && !string.IsNullOrEmpty(result.DefaultBranch)
-            && (_branches?.Contains(_branch) != true || _branch == "main"))
+            && (_branches is null || !_branches.Contains(_branch) || _branch == "main"))
         {
             _branch = result.DefaultBranch;
         }

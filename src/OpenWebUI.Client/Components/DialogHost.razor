@@ -87,7 +87,7 @@
 
     private void Cancel()
     {
-        Dialogs.Resolve(Dialogs.Current?.Kind == DialogKind.Prompt ? null : false);
+        Dialogs.Resolve(Dialogs.Current?.Kind is DialogKind.Prompt ? null : false);
     }
 
     private void Accept()

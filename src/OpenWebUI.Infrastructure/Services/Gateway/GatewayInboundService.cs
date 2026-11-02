@@ -325,7 +325,7 @@ public sealed class GatewayInboundService(
 
     /// <summary>Dados de auditoria de entrega inbound (S107).</summary>
     public sealed record AuditInfo(
-        string ChannelId, string? PeerId, string Direction, string Status,
+        string ChannelId, string? PeerId, string DeliveryDirection, string DeliveryStatus,
         string? MessageId, string? RunId, string? Excerpt, string? Error);
 
     /// <summary>Persiste auditoria de entrega inbound (excerpt truncado).</summary>
@@ -335,8 +335,8 @@ public sealed class GatewayInboundService(
         {
             ChannelId = a.ChannelId,
             PeerId = a.PeerId,
-            Direction = a.Direction,
-            Status = a.Status,
+            Direction = a.DeliveryDirection,
+            Status = a.DeliveryStatus,
             MessageId = a.MessageId,
             RunId = a.RunId,
             Excerpt = a.Excerpt,

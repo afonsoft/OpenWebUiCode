@@ -1008,9 +1008,9 @@ public static class ChatPipeline
         var continuePrompt = new ChatCompletionMessage(
             "user", LengthContinuePrompt);
         state.Messages.Add(continuePrompt);
-        if (callbacks?.OnMessagesAddedAsync is not null)
+        if (callbacks?.OnMessagesAddedAsync is { } added)
         {
-            await callbacks.OnMessagesAddedAsync(
+            await added(
                 [truncatedAssistant, continuePrompt],
                 [truncatedAssistant], ct);
         }
@@ -1079,9 +1079,9 @@ public static class ChatPipeline
             state.ToolMessages.Add(interimQueued);
         }
         state.Messages.AddRange(queued);
-        if (callbacks?.OnMessagesAddedAsync is not null)
+        if (callbacks?.OnMessagesAddedAsync is { } added)
         {
-            await callbacks.OnMessagesAddedAsync(
+            await added(
                 interimQueued is null ? queued
                     : [interimQueued, .. queued],
                 interimQueued is null ? []
@@ -1119,9 +1119,9 @@ public static class ChatPipeline
             state.ToolMessages.Add(interim);
         }
         state.Messages.Add(nudge);
-        if (callbacks?.OnMessagesAddedAsync is not null)
+        if (callbacks?.OnMessagesAddedAsync is { } added)
         {
-            await callbacks.OnMessagesAddedAsync(
+            await added(
                 interim is null ? [nudge] : [interim, nudge],
                 interim is null ? [] : [interim], ct);
         }
@@ -1157,9 +1157,9 @@ public static class ChatPipeline
             + "Responda agora de forma direta — ou chame a tool "
             + "apropriada — sem reiniciar o raciocínio.");
         state.Messages.Add(nudge);
-        if (callbacks?.OnMessagesAddedAsync is not null)
+        if (callbacks?.OnMessagesAddedAsync is { } added)
         {
-            await callbacks.OnMessagesAddedAsync([nudge], [], ct);
+            await added([nudge], [], ct);
         }
         state.Round++;
     }
@@ -1176,9 +1176,9 @@ public static class ChatPipeline
             RoleAssistant, step.Content, ToolCallsJson: step.ToolCallsJson);
         state.Messages.Add(assistantMessage);
         state.ToolMessages.Add(assistantMessage);
-        if (callbacks?.OnMessagesAddedAsync is not null)
+        if (callbacks?.OnMessagesAddedAsync is { } added)
         {
-            await callbacks.OnMessagesAddedAsync(
+            await added(
                 [assistantMessage], [assistantMessage], ct);
         }
         log?.LogInformation(
@@ -1336,8 +1336,7 @@ public static class ChatPipeline
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
         CancellationToken ct)
     {
-        var (state, tools, toolExecutor, builtinContext, maxParallelTools,
-            callbacks, log) = ctx;
+        var (_, tools, toolExecutor, _, _, callbacks, _) = ctx;
         for (var k = 0; k < calls.Count;)
         {
             // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
@@ -1374,8 +1373,7 @@ public static class ChatPipeline
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
         int start, int count, CancellationToken ct)
     {
-        var (state, tools, toolExecutor, builtinContext, maxParallelTools,
-            callbacks, log) = ctx;
+        var (_, _, _, _, maxParallelTools, callbacks, log) = ctx;
         var gates = new ToolGateDecision[count];
         for (var g = 0; g < count; g++)
         {

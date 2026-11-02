@@ -45,8 +45,7 @@ public static class AutomationEndpoints
             return "Modelo obrigatório.";
         var actionError = AutomationService.ValidateAction(kind, r.ActionJson);
         if (actionError is not null) return actionError;
-        if (r.PermissionMode is not null &&
-            r.PermissionMode is not "default" and not "auto" and not "bypass")
+        if (r.PermissionMode is not (null or "default" or "auto" or "bypass"))
             return "PermissionMode deve ser default, auto ou bypass.";
         return ValidateSchedule(r);
     }
@@ -116,7 +115,7 @@ public static class AutomationEndpoints
     private static async Task<IResult> CreateAsync(
         AutomationUpsertRequest request,
         HttpContext http, AppDbContext db,
-        AutomationService service, CancellationToken ct)
+        CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null) return Results.Unauthorized();
@@ -136,7 +135,7 @@ public static class AutomationEndpoints
     private static async Task<IResult> UpdateAsync(
         string id, AutomationUpsertRequest request,
         HttpContext http, AppDbContext db,
-        AutomationService service, CancellationToken ct)
+        CancellationToken ct)
     {
         var (user, automation) = await FindOwnedAsync(id, http, db, ct);
         if (user is null) return Results.Unauthorized();

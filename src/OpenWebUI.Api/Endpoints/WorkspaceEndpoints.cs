@@ -414,7 +414,7 @@ public static class WorkspaceEndpoints
             .OrderByDescending(n => n.UpdatedAt)
             .ToListAsync(ct);
         var groups = await access.GetGroupIdsAsync(user.Id, ct);
-        var notes = access.FilterReadable(user, all, groups, n => n.UserId, n => n.AccessGrantsJson);
+        var notes = AccessControlService.FilterReadable(user, all, groups, n => n.UserId, n => n.AccessGrantsJson);
         return Results.Ok(notes.Select(n => new NoteResponse(n.Id, n.Title, n.Content, n.CreatedAt, n.UpdatedAt)).ToList());
     }
 
@@ -499,7 +499,7 @@ public static class WorkspaceEndpoints
         {
             return Results.Unauthorized();
         }
-        var note = await db.Notes.FirstOrDefaultAsync(n => n.Id == id && n.UserId == user!.Id, ct);
+        var note = await db.Notes.FirstOrDefaultAsync(n => n.Id == id && n.UserId == user.Id, ct);
         if (note is null)
         {
             return Results.NotFound();

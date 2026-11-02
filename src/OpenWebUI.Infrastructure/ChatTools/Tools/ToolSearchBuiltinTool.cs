@@ -12,7 +12,6 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// </summary>
 public sealed class ToolSearchBuiltinTool(
     DeferredToolState state,
-    ToolIndexService index,
     RunEventWriter events) : IBuiltinChatTool
 {
     private static readonly JsonSerializerOptions JsonOptions =
@@ -57,7 +56,7 @@ public sealed class ToolSearchBuiltinTool(
                 + "already announced.");
         }
 
-        var hits = index.Search(state.Deferred(context.RunId), query, limit);
+        var hits = ToolIndexService.Search(state.Deferred(context.RunId), query, limit);
         var loaded = new List<object>();
         foreach (var tool in hits)
         {

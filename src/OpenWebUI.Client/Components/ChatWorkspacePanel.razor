@@ -400,16 +400,17 @@
                     <ul class="flex flex-col gap-1">
                         @foreach (var file in _memFiles)
                         {
-                            var selected = _memViewPath == file.Path;
+                            var memPath = file.Path;
+                            var selected = _memViewPath == memPath;
                             <li class="rounded-lg border border-gray-100 dark:border-gray-800">
                                 <button class="flex w-full items-center gap-1.5 px-2 py-1.5 text-left cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850 rounded-lg"
                                         aria-expanded="@selected"
-                                        @onclick="() => ToggleMemoryAsync(file.Path)">
+                                        @onclick="() => ToggleMemoryAsync(memPath)">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
                                          class="size-3 flex-none text-gray-400 transition @(selected ? "rotate-90" : "")">
                                         <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
                                     </svg>
-                                    <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300" title="@file.Path">@file.Path</span>
+                                    <span class="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-gray-700 dark:text-gray-300" title="@memPath">@memPath</span>
                                 </button>
                                 @if (selected && _memView is { } memView)
                                 {

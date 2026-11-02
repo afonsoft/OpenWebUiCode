@@ -153,7 +153,7 @@ public class TerminalProxyService(
             var clientToUpstream = PumpAsync(client, upstream, idleCts, idleTimeout);
             var upstreamToClient = PumpAsync(upstream, client, idleCts, idleTimeout);
             await Task.WhenAny(clientToUpstream, upstreamToClient);
-            idleCts.Cancel();
+            await idleCts.CancelAsync();
             try
             {
                 await Task.WhenAll(clientToUpstream, upstreamToClient);

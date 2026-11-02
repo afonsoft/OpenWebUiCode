@@ -18,6 +18,12 @@ namespace OpenWebUI.Infrastructure.Services;
 /// </summary>
 public class WebSearchService(IHttpClientFactory httpFactory, ConfigService config)
 {
+    private const string DefaultGooglePseBaseUrl = "https://www.googleapis.com";
+    private const string DefaultJinaBaseUrl = "https://s.jina.ai";
+    private const string DefaultExaBaseUrl = "https://api.exa.ai";
+    private const string DefaultKagiBaseUrl = "https://kagi.com";
+    private const string DefaultPerplexityBaseUrl = "https://api.perplexity.ai";
+    private const string TavilySearchUrl = "https://api.tavily.com/search";
     private const string BraveEngine = "brave";
     private const string DuckDuckGoEngine = "duckduckgo";
     private const string GooglePseEngine = "google_pse";
@@ -192,9 +198,11 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
     /// </summary>
     private static void SetCooldown(string provider, TimeSpan? retryAfter)
     {
-        var span = retryAfter is { } r
-            ? r <= TimeSpan.Zero ? RateLimitCooldown : r
-            : FailureCooldown;
+        var span = FailureCooldown;
+        if (retryAfter is { } r)
+        {
+            span = r <= TimeSpan.Zero ? RateLimitCooldown : r;
+        }
         if (span > MaxRetryAfter)
         {
             span = MaxRetryAfter;
@@ -328,7 +336,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
 
         var payload = new { api_key = cfg.TavilyApiKey, query, max_results = count };
         using var request = new HttpRequestMessage(
-            HttpMethod.Post, "https://api.tavily.com/search")
+            HttpMethod.Post, TavilySearchUrl)
         {
             Content = JsonContent.Create(payload, options: JsonOptions),
         };
@@ -379,7 +387,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             return [];
         }
 
-        var baseUrl = (cfg.GooglePseBaseUrl ?? "https://www.googleapis.com").TrimEnd('/');
+        var baseUrl = (cfg.GooglePseBaseUrl ?? DefaultGooglePseBaseUrl).TrimEnd('/');
         var url = $"{baseUrl}/customsearch/v1?key={Uri.EscapeDataString(cfg.GooglePseApiKey)}"
             + $"&cx={Uri.EscapeDataString(cfg.GooglePseEngineId)}"
             + $"&q={Uri.EscapeDataString(query)}&num={count}";
@@ -404,7 +412,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             return [];
         }
 
-        var baseUrl = (cfg.JinaBaseUrl ?? "https://s.jina.ai").TrimEnd('/');
+        var baseUrl = (cfg.JinaBaseUrl ?? DefaultJinaBaseUrl).TrimEnd('/');
         using var request = new HttpRequestMessage(
             HttpMethod.Get, $"{baseUrl}?q={Uri.EscapeDataString(query)}");
         request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {cfg.JinaApiKey}");
@@ -439,7 +447,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             return [];
         }
 
-        var baseUrl = (cfg.ExaBaseUrl ?? "https://api.exa.ai").TrimEnd('/');
+        var baseUrl = (cfg.ExaBaseUrl ?? DefaultExaBaseUrl).TrimEnd('/');
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/search");
         request.Headers.TryAddWithoutValidation("x-api-key", cfg.ExaApiKey);
         request.Content = JsonContent.Create(
@@ -476,7 +484,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             return [];
         }
 
-        var baseUrl = (cfg.KagiBaseUrl ?? "https://kagi.com").TrimEnd('/');
+        var baseUrl = (cfg.KagiBaseUrl ?? DefaultKagiBaseUrl).TrimEnd('/');
         using var request = new HttpRequestMessage(
             HttpMethod.Get, $"{baseUrl}/api/v0/search?q={Uri.EscapeDataString(query)}&limit={count}");
         request.Headers.TryAddWithoutValidation("Authorization", $"Bot {cfg.KagiApiKey}");
@@ -504,7 +512,7 @@ public class WebSearchService(IHttpClientFactory httpFactory, ConfigService conf
             return [];
         }
 
-        var baseUrl = (cfg.PerplexityBaseUrl ?? "https://api.perplexity.ai").TrimEnd('/');
+        var baseUrl = (cfg.PerplexityBaseUrl ?? DefaultPerplexityBaseUrl).TrimEnd('/');
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions");
         request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {cfg.PerplexityApiKey}");
         request.Content = JsonContent.Create(

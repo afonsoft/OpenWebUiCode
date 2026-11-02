@@ -64,7 +64,7 @@ public class WebLoaderService(IHttpClientFactory httpFactory)
             {
                 throw new WebLoaderException("Conteúdo excede o tamanho máximo permitido.");
             }
-            ms.Write(buffer, 0, read);
+            await ms.WriteAsync(buffer.AsMemory(0, read), ct);
         }
         return Encoding.UTF8.GetString(ms.ToArray());
     }

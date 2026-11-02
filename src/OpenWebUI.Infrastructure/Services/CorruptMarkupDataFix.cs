@@ -33,7 +33,7 @@ public static class CorruptMarkupDataFix
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var count = await FixMessagesAsync(db, now, ct);
+        var count = await FixMessagesAsync(db, ct);
 
         db.ConfigEntries.Add(new ConfigEntry
         {
@@ -47,7 +47,7 @@ public static class CorruptMarkupDataFix
     }
 
     private static async Task<int> FixMessagesAsync(
-        AppDbContext db, long now, CancellationToken ct)
+        AppDbContext db, CancellationToken ct)
     {
         var count = 0;
         // Candidatos: content/versions com marcador ou token órfão —

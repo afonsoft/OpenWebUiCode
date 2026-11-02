@@ -409,7 +409,7 @@ public sealed class LspClient : IAsyncDisposable
         }
     }
 
-    private List<LspDiagnostic> ParseDiagnostics(JsonElement @params, string uri)
+    private static List<LspDiagnostic> ParseDiagnostics(JsonElement @params, string uri)
     {
         var list = new List<LspDiagnostic>();
         if (!@params.TryGetProperty("diagnostics", out var diags)

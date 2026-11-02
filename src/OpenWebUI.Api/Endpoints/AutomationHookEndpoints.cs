@@ -330,11 +330,11 @@ public static class AutomationHookEndpoints
         var (hook, content, model, deliveryKey, eventType, securityWarning) = req;
         if (hook.AgentMode is { Length: > 0 } mode)
         {
-            hook.Chat.Mode = mode;
+            hook.Chat!.Mode = mode;
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var (leafPosition, leafId) = await ResolveLeafAsync(db, hook.Chat, ct);
+        var (leafPosition, leafId) = await ResolveLeafAsync(db, hook.Chat!, ct);
 
         // Persona do hook (RF-D2): Skill ativa vira system message da run.
         var personaPrompt = await ResolvePersonaPromptAsync(db, hook, ct);
@@ -349,7 +349,7 @@ public static class AutomationHookEndpoints
             ParentId = leafId,
         };
         db.ChatMessages.Add(message);
-        hook.Chat.LeafMessageId = message.Id;
+        hook.Chat!.LeafMessageId = message.Id;
 
         var run = new ChatRun
         {

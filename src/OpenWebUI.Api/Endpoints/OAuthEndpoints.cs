@@ -11,7 +11,7 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>Endpoints OAuth/OIDC, espelhando <c>/oauth/{provider}/*</c> do upstream.</summary>
 public static class OAuthEndpoints
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const string GithubEmailsUrl = "https://api.github.com/user/emails";
 
     /// <summary>Mapeia as rotas de login/callback OAuth.</summary>
     public static RouteGroupBuilder MapOAuthEndpoints(this IEndpointRouteBuilder app)
@@ -206,7 +206,7 @@ public static class OAuthEndpoints
         HttpClient http, string accessToken, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, "https://api.github.com/user/emails");
+            HttpMethod.Get, GithubEmailsUrl);
         request.Headers.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
         request.Headers.UserAgent.ParseAdd("OpenWebUI");

@@ -39,8 +39,8 @@ public static class CalendarEndpoints
 
         var all = await db.Calendars.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
         var groups = await access.GetGroupIdsAsync(user.Id, ct);
-        var items = access
-            .FilterReadable(user, all, groups, c => c.UserId, c => c.AccessGrantsJson)
+        var items =
+            AccessControlService.FilterReadable(user, all, groups, c => c.UserId, c => c.AccessGrantsJson)
             .Select(ToResponse)
             .ToList();
         return Results.Ok(items);
@@ -320,8 +320,8 @@ public static class CalendarEndpoints
     {
         var calendars = await db.Calendars.AsNoTracking().ToListAsync(ct);
         var groups = await access.GetGroupIdsAsync(user.Id, ct);
-        var readableIds = access
-            .FilterReadable(user, calendars, groups, c => c.UserId, c => c.AccessGrantsJson)
+        var readableIds =
+            AccessControlService.FilterReadable(user, calendars, groups, c => c.UserId, c => c.AccessGrantsJson)
             .Select(c => c.Id)
             .ToHashSet();
         return await db.CalendarEvents.AsNoTracking()

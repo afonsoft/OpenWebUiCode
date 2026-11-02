@@ -196,46 +196,71 @@ public static class GenContextValidator
 
         for (var i = 0; i < projects.Count; i++)
         {
-            var p = projects[i];
-            if (string.IsNullOrWhiteSpace(p.Title) || p.Title.Length > 120)
+            if (!TryValidateProject(projects[i], i, ref error))
             {
-                error = $"campo 'projects[{i}].title' obrigatório (máx 120 chars)";
                 return false;
             }
+        }
 
-            if (p.Summary is { Length: > 500 })
-            {
-                error = $"campo 'projects[{i}].summary' excede 500 chars";
-                return false;
-            }
+        return true;
+    }
 
-            if (p.Url is { } url)
-            {
-                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-                {
-                    error = $"campo 'projects[{i}].url' deve ser uma URI absoluta";
-                    return false;
-                }
+    private static bool TryValidateProject(
+        GenProject p, int i, ref string? error)
+    {
+        if (string.IsNullOrWhiteSpace(p.Title) || p.Title.Length > 120)
+        {
+            error = $"campo 'projects[{i}].title' obrigatório (máx 120 chars)";
+            return false;
+        }
 
-                if (!string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
-                {
-                    error = $"campo 'projects[{i}].url' aceita apenas https://";
-                    return false;
-                }
-            }
+        if (p.Summary is { Length: > 500 })
+        {
+            error = $"campo 'projects[{i}].summary' excede 500 chars";
+            return false;
+        }
 
-            if (p.Ref is { } r
-                && !r.StartsWith("ref://", StringComparison.Ordinal))
-            {
-                error = $"campo 'projects[{i}].ref' deve começar com ref://";
-                return false;
-            }
+        return TryValidateProjectUrl(p, i, ref error)
+            && TryValidateProjectRefAndTags(p, i, ref error);
+    }
 
-            if (p.Tags is { Count: > 8 })
-            {
-                error = $"campo 'projects[{i}].tags' excede 8 itens";
-                return false;
-            }
+    private static bool TryValidateProjectUrl(
+        GenProject p, int i, ref string? error)
+    {
+        if (p.Url is not { } url)
+        {
+            return true;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            error = $"campo 'projects[{i}].url' deve ser uma URI absoluta";
+            return false;
+        }
+
+        if (!string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+        {
+            error = $"campo 'projects[{i}].url' aceita apenas https://";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidateProjectRefAndTags(
+        GenProject p, int i, ref string? error)
+    {
+        if (p.Ref is { } r
+            && !r.StartsWith("ref://", StringComparison.Ordinal))
+        {
+            error = $"campo 'projects[{i}].ref' deve começar com ref://";
+            return false;
+        }
+
+        if (p.Tags is { Count: > 8 })
+        {
+            error = $"campo 'projects[{i}].tags' excede 8 itens";
+            return false;
         }
 
         return true;

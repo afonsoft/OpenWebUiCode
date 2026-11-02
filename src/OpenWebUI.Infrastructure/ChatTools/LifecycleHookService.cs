@@ -32,14 +32,9 @@ public sealed class LifecycleHookService(
     /// <summary>Stamp = soma dos ticks dos arquivos fonte existentes.</summary>
     private static long StampOf(string? workdir, string home)
     {
-        long stamp = 0;
-        foreach (var p in SourcesOf(workdir, home))
-        {
-            if (File.Exists(p))
-            {
-                stamp += new FileInfo(p).LastWriteTimeUtc.Ticks;
-            }
-        }
+        var stamp = SourcesOf(workdir, home)
+            .Where(File.Exists)
+            .Sum(p => new FileInfo(p).LastWriteTimeUtc.Ticks);
         return stamp;
     }
 
@@ -76,7 +71,8 @@ public sealed class LifecycleHookService(
     public static bool Matches(HookDefinition hook, string? toolName) =>
         hook.Matcher is null
         || toolName is null
-        || Regex.IsMatch(toolName, hook.Matcher, RegexOptions.IgnoreCase);
+        || Regex.IsMatch(toolName, hook.Matcher, RegexOptions.IgnoreCase,
+            TimeSpan.FromMilliseconds(500));
 
     /// <summary>
     /// Executa os hooks de um evento em ordem; primeiro <c>block</c>

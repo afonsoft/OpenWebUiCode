@@ -83,7 +83,7 @@ public static class RpcEndpoints
                     "chats.list" => await ChatsListAsync(deps.Db, user, parms, id, ct),
                     "chats.create" => await ChatsCreateAsync(
                         deps.Db, user, parms, id, ct),
-                    "runs.start" => await RunsStartAsync(http, deps, user, parms, id, ct),
+                    "runs.start" => await RunsStartAsync(http, deps, parms, id, ct),
                     "runs.get" => await RunsGetAsync(deps.Db, user, parms, id, ct),
                     _ => RpcError(id, MethodNotFound,
                         $"Method not found: {method}"),
@@ -141,7 +141,7 @@ public static class RpcEndpoints
 
     private static async Task<IResult> RunsStartAsync(
         HttpContext http, ChatRunEndpoints.EnqueueRunDeps deps,
-        User user, JsonElement? p, JsonElement? id, CancellationToken ct)
+        JsonElement? p, JsonElement? id, CancellationToken ct)
     {
         var chatId = Str(p, "chatId")
             ?? throw new RpcParamsException("params.chatId é obrigatório");

@@ -7,8 +7,9 @@ using OpenWebUI.Mcp;
 //   OPENWEBUI_API_KEY  — chave sk-* do usuário (tools falham fechado sem ela)
 // Logs nunca vão pro stdout (é protocolo) — erros de boot vão pro stderr.
 
+const string DefaultBaseUrl = "http://localhost:8080";
 var baseUrl = Environment.GetEnvironmentVariable("OPENWEBUI_URL")
-    ?? "http://localhost:8080";
+    ?? DefaultBaseUrl;
 var apiKey = Environment.GetEnvironmentVariable("OPENWEBUI_API_KEY");
 
 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };

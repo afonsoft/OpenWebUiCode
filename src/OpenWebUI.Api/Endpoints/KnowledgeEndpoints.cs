@@ -47,8 +47,8 @@ public static class KnowledgeEndpoints
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
         var groups = await access.GetGroupIdsAsync(user.Id, ct);
-        var collections = access
-            .FilterReadable(user, all, groups, k => k.UserId, k => k.AccessGrantsJson)
+        var collections =
+            AccessControlService.FilterReadable(user, all, groups, k => k.UserId, k => k.AccessGrantsJson)
             .Select(k => new KnowledgeResponse(
                 k.Id, k.Name, k.Description, fileCounts.GetValueOrDefault(k.Id), k.CreatedAt))
             .ToList();

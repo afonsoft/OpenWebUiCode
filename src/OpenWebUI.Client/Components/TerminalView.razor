@@ -56,10 +56,10 @@ else
             }
             else
             {
-                @foreach (var session in _sessions)
+                @foreach (var sessionId in _sessions.Select(s => s.Id))
                 {
-                    <div id="term-@session.Id"
-                         class="h-full w-full rounded-xl overflow-hidden bg-[#0d1117] @(session.Id == _active ? "" : "hidden")"></div>
+                    <div id="term-@sessionId"
+                         class="h-full w-full rounded-xl overflow-hidden bg-[#0d1117] @(sessionId == _active ? "" : "hidden")"></div>
                 }
             }
         </div>

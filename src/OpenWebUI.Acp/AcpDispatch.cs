@@ -7,6 +7,7 @@ namespace OpenWebUI.Acp;
 
 public static class AcpDispatch
 {
+    private const string EndTurn = "end_turn";
     /// <summary>Despacha um request já parseado: initialize /
     /// session/new / session/prompt / cancel; desconhecido → -32601
     /// (só quando tem id), erro de handler → -32603.</summary>
@@ -172,7 +173,7 @@ internal static async Task<string> RelayRunAsync(
                 return done;
             }
         }
-        return "end_turn";
+        return EndTurn;
     }
     catch (Exception)
     {
@@ -208,7 +209,7 @@ private static string? DispatchSseLine(
         }
         return type switch
         {
-            "run.completed" or "completed" => "end_turn",
+            "run.completed" or "completed" => EndTurn,
             "run.failed" or "failed" => "error",
             "run.stopped" or "stopped" => "cancelled",
             _ => null,
@@ -253,7 +254,7 @@ private static async Task<string> PollRunStatusAsync(
             var status = r is { } el
                 && el.TryGetProperty("status", out var s)
                 ? s.GetString() : null;
-            if (status is "completed") return "end_turn";
+            if (status is "completed") return EndTurn;
             if (status is "failed") return "error";
             if (status is "stopped" or "interrupted") return "cancelled";
         }
@@ -262,7 +263,7 @@ private static async Task<string> PollRunStatusAsync(
             // tenta de novo no próximo tick
         }
     }
-    return "end_turn";
+    return EndTurn;
 }
 
 }

@@ -29,12 +29,10 @@ public sealed class ExternalAccessRegistry
     /// <summary>Remove todas as liberações da run (fim da run).</summary>
     public void Clear(string runId)
     {
-        foreach (var key in _allowed.Keys)
+        foreach (var key in _allowed.Keys
+            .Where(k => k.StartsWith(runId + "|", StringComparison.Ordinal)))
         {
-            if (key.StartsWith(runId + "|", StringComparison.Ordinal))
-            {
-                _allowed.TryRemove(key, out _);
-            }
+            _allowed.TryRemove(key, out _);
         }
     }
 

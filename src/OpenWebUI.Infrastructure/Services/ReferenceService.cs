@@ -340,12 +340,11 @@ public class ReferenceService(
                 return candidate;
             }
         }
-        foreach (var fallback in (string[])["/usr/bin/git", "/usr/local/bin/git", "/bin/git"])
+        var fallback = ((string[])["/usr/bin/git", "/usr/local/bin/git", "/bin/git"])
+            .FirstOrDefault(File.Exists);
+        if (fallback is not null)
         {
-            if (File.Exists(fallback))
-            {
-                return fallback;
-            }
+            return fallback;
         }
         throw new FileNotFoundException(
             "git não encontrado no PATH nem nos paths padrão de container.");

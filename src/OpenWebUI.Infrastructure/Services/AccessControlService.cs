@@ -118,7 +118,7 @@ public class AccessControlService(AppDbContext db)
         await LevelAsync(user, ownerUserId, grantsJson, ct) is Write;
 
     /// <summary>Filtra uma lista em memória para os itens com pelo menos leitura.</summary>
-    public List<T> FilterReadable<T>(
+    public static List<T> FilterReadable<T>(
         User user, IEnumerable<T> items, HashSet<string> userGroupIds,
         Func<T, string> owner, Func<T, string?> grants) =>
         items.Where(i => Level(user, owner(i), grants(i), userGroupIds) is not None).ToList();

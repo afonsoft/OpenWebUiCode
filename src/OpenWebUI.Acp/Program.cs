@@ -10,8 +10,9 @@
 // y <see cref="OpenWebUI.Acp.AcpDispatch"/>.
 using OpenWebUI.Acp;
 
+const string DefaultBaseUrl = "http://localhost:8080";
 var baseUrl = (Environment.GetEnvironmentVariable("OPENWEBUI_URL")
-    ?? "http://localhost:8080").TrimEnd('/');
+    ?? DefaultBaseUrl).TrimEnd('/');
 var host = new AcpHost(baseUrl,
     Environment.GetEnvironmentVariable("OPENWEBUI_ACP_TOKEN"));
 

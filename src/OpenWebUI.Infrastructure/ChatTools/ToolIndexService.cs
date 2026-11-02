@@ -108,7 +108,7 @@ public sealed class ToolIndexService(IConfiguration cfg)
     /// Bloco "## Available on demand" para o system prompt — null quando
     /// não há tools deferidas (feature inativa → prompt idêntico ao atual).
     /// </summary>
-    public string? BuildIndex(IReadOnlyList<Tool> deferred)
+    public static string? BuildIndex(IReadOnlyList<Tool> deferred)
     {
         if (deferred.Count == 0)
         {
@@ -148,7 +148,7 @@ public sealed class ToolIndexService(IConfiguration cfg)
     /// Busca substring sobre nome + descrição + keywords; matches no nome
     /// rankeiam primeiro. <paramref name="limit"/> default 5.
     /// </summary>
-    public IReadOnlyList<Tool> Search(
+    public static IReadOnlyList<Tool> Search(
         IReadOnlyList<Tool> deferred, string query, int limit = 5)
     {
         var q = query.Trim();
