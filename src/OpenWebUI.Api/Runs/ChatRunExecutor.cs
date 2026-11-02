@@ -2619,21 +2619,24 @@ public sealed class ChatRunExecutor(
     /// <c>AgentLoop:CacheKeepaliveSeconds</c> (default 0 = desligado);
     /// falhas são ignoradas — nunca interfere na run.
     /// </summary>
+    /// <summary>Parâmetros da espera de aprovação (S107).</summary>
+    private sealed record ApprovalWait(
+        string RunId, string ChatId, string CallId, string ToolName,
+        string ArgPattern, object? AskedPayload, string? UserId);
+
     private async Task<ChatRunApprovals.ApprovalResult> WaitApprovalAsync(
-        string runId, string chatId, string callId, string toolName,
-        CancellationToken ct, string argPattern = "*",
-        object? askedPayload = null, string? userId = null)
+        ApprovalWait w, CancellationToken ct)
     {
         var interval = int.TryParse(cfg["AgentLoop:CacheKeepaliveSeconds"], out var ka) ? ka : 0;
         if (interval <= 0)
         {
-            return await approvals.WaitAsync(runId, chatId, callId,
-                toolName, ct, argPattern, askedPayload);
+            return await approvals.WaitAsync(w.RunId, w.ChatId, w.CallId,
+                w.ToolName, ct, w.ArgPattern, w.AskedPayload);
         }
-        var wait = approvals.WaitAsync(runId, chatId, callId,
-            toolName, ct, argPattern, askedPayload);
+        var wait = approvals.WaitAsync(w.RunId, w.ChatId, w.CallId,
+            w.ToolName, ct, w.ArgPattern, w.AskedPayload);
         var delay = TimeSpan.FromSeconds(interval);
-        var model = runId is null ? null : ModelOfRun(runId);
+        var model = w.RunId is null ? null : ModelOfRun(w.RunId);
         while (!wait.IsCompleted)
         {
             var done = await Task.WhenAny(wait, Task.Delay(delay, CancellationToken.None));
@@ -2655,7 +2658,7 @@ public sealed class ChatRunExecutor(
                 }
                 await providers.CompleteAsync(new ChatCompletionRequest(
                     model, [new ChatCompletionMessage("user", ".")],
-                    Stream: false), userId, CancellationToken.None);
+                    Stream: false), w.UserId, CancellationToken.None);
             }
             catch (Exception)
             {
@@ -2710,9 +2713,10 @@ public sealed class ChatRunExecutor(
         broadcaster.Publish(run.Id,
             $"event: approval_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
         await KickAdvisorAsync(run, "pause", builtinContext, ct);
-        var result = await WaitApprovalAsync(run.Id, run.ChatId, call.Id,
-            call.Name, ct, PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson),
-            asked, run.UserId);
+        var result = await WaitApprovalAsync(
+            new ApprovalWait(run.Id, run.ChatId, call.Id, call.Name,
+                PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson),
+                asked, run.UserId), ct);
         var message = string.IsNullOrWhiteSpace(result.Message)
             ? null
             : Scrub(Truncate(result.Message, PreviewChars));
@@ -2758,8 +2762,8 @@ public sealed class ChatRunExecutor(
             broadcaster.Publish(run.Id,
                 $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
             var result = await WaitApprovalAsync(
-                run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked,
-                userId: run.UserId);
+                new ApprovalWait(run.Id, run.ChatId, call.Id, call.Name,
+                    "*", asked, run.UserId), ct);
 
             if (!result.Approved)
             {
@@ -2851,8 +2855,8 @@ public sealed class ChatRunExecutor(
             $"event: question_asked\ndata: {JsonSerializer.Serialize(asked, JsonOptions)}");
 
         var result = await WaitApprovalAsync(
-            run.Id, run.ChatId, call.Id, call.Name, ct, "*", asked,
-            userId: run.UserId);
+            new ApprovalWait(run.Id, run.ChatId, call.Id, call.Name,
+                "*", asked, run.UserId), ct);
 
         // RF-004: deny/skip devolve recusa — a run segue, o modelo decide.
         if (!result.Approved || string.IsNullOrWhiteSpace(result.Message))

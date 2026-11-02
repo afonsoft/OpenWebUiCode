@@ -598,6 +598,23 @@ public class ChatToolsEdgeTests
     }
 
     [Test]
+    public void Diff_TresHunks_CursoresAcumulanCorrectamente()
+    {
+        // Regresión S107 (HunkCtx): con ≥3 hunks los cursores ai/bi deben
+        // reanudarse donde quedó el hunk anterior — si se reiniciaran,
+        // los números de línea del segundo hunk en adelante saldrían mal.
+        var a = string.Join('\n', Enumerable.Range(1, 40).Select(i => $"l{i}"));
+        var b = a.Replace("l5", "L5").Replace("l20", "L20").Replace("l35", "L35");
+        var r = UnifiedDiff.Compute("f.txt", a, b);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text.Split("@@ -").Length - 1, Is.EqualTo(3));
+            Assert.That(r.Text, Does.Contain("-l5").And.Contain("-l20").And.Contain("-l35"));
+            Assert.That(r.Text, Does.Contain("+L5").And.Contain("+L20").And.Contain("+L35"));
+        });
+    }
+
+    [Test]
     public void Diff_MudancaNasBordas()
     {
         // Mudança na primeira e última linha → clamping de contexto.
