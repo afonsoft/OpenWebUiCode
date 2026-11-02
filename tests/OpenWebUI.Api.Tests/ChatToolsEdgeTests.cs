@@ -512,6 +512,23 @@ public class ChatToolsEdgeTests
     }
 
     [Test]
+    public void Diff_MultiplosHunks_EmiteHunksSeparados()
+    {
+        var a = string.Join('\n', Enumerable.Range(1, 30).Select(i => $"l{i}"));
+        var b = a.Replace("l5", "L5").Replace("l25", "L25");
+        var r = UnifiedDiff.Compute("f.txt", a, b);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Added, Is.EqualTo(2));
+            Assert.That(r.Removed, Is.EqualTo(2));
+            // Dois hunks separados por >3 linhas de contexto.
+            Assert.That(r.Text.Split("@@ -").Length - 1, Is.EqualTo(2));
+            Assert.That(r.Text, Does.Contain("-l5").And.Contain("+L5"));
+            Assert.That(r.Text, Does.Contain("-l25").And.Contain("+L25"));
+        });
+    }
+
+    [Test]
     public void Diff_AdicaoPura()
     {
         var r = UnifiedDiff.Compute("f.txt", "a\nc", "a\nb\nc");
