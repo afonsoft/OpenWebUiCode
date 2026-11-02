@@ -1810,6 +1810,23 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<bool> DeleteSavedApprovalAsync(string id) =>
         SendStatusAsync(HttpMethod.Delete, $"/api/v1/permissions/approvals/{id}");
 
+    // ---------------- Gen-context wizard (SPEC-20261027-context-gen-wizard) ----------------
+
+    /// <summary>Contexto de geração ativo do usuário (null quando nenhum).</summary>
+    /// <returns>Elemento JSON; ValueKind Undefined quando nenhum existe.</returns>
+    public Task<JsonElement> GetGenContextAsync() =>
+        SendAsync<JsonElement>(HttpMethod.Get, "/api/v1/gen-context");
+
+    /// <summary>Upsert do contexto — devolve o detail do erro (400).</summary>
+    public Task<(JsonElement Result, string? Error)> SaveGenContextAsync(object context) =>
+        SendOrErrorAsync<JsonElement>(HttpMethod.Post, "/api/v1/gen-context", context);
+
+    /// <summary>Cria chat + run a partir do contexto salvo.</summary>
+    public Task<(GenContextGenerateResponse? Result, string? Error)> GenerateFromContextAsync(
+        GenContextGenerateRequest request) =>
+        SendOrErrorAsync<GenContextGenerateResponse>(
+            HttpMethod.Post, "/api/v1/gen-context/generate", request);
+
     private async Task<T?> SendAsync<T>(HttpMethod method, string uri, object? body = null)
     {
         using var request = auth.CreateRequest(method, uri);

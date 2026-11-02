@@ -1,0 +1,284 @@
+@page "/generate"
+@inject ApiService Api
+@inject GenContextClientService Gen
+@inject LocalizationService L
+@inject NavigationManager Nav
+
+@* Wizard de geração (SPEC-20261027-context-gen-wizard RF-002): 4 passos
+   navegáveis — persona → projetos → look & feel → prompt livre — com
+   rascunho em localStorage e submit que cria chat + run. *@
+
+<PageTitle>@L["generate.title"] — Open WebUI</PageTitle>
+
+<div class="page">
+    <div class="page-header">
+        <h1 class="page-title" tabindex="-1">@L["generate.title"]</h1>
+        <div class="text-sm text-gray-500">@string.Format(L["generate.step"], _step, 4)</div>
+    </div>
+
+    @if (_presets is null)
+    {
+        <div class="sidebar-empty">@L["common.loading"]</div>
+    }
+    else
+    {
+        <div class="mb-4 flex gap-2" role="tablist" aria-label="@L["generate.steps"]">
+            @for (var i = 1; i <= 4; i++)
+            {
+                var step = i;
+                <button type="button" role="tab" aria-selected="@(_step == step)"
+                        class="auth-submit @(_step == step ? "" : "opacity-50")"
+                        @onclick="() => GoTo(step)">
+                    @L[$"generate.step{step}"]
+                </button>
+            }
+        </div>
+
+        @if (_step == 1)
+        {
+            <div class="card-list mb-4">
+                @foreach (var p in _presets)
+                {
+                    <button type="button"
+                            class="card-row w-full text-left @(_draft.Persona == p.Id ? "ring-2 ring-blue-500" : "")"
+                            @onclick="() => PickPersona(p)">
+                        <div class="card-main">
+                            <div class="font-medium">@p.Label</div>
+                            <div class="text-sm text-gray-500">@p.Description</div>
+                        </div>
+                    </button>
+                }
+            </div>
+            @if (_draft.Persona == "custom")
+            {
+                <div class="field mb-4">
+                    <label for="gen-persona-custom">@L["generate.persona.custom"]</label>
+                    <input class="input" id="gen-persona-custom"
+                           @bind="_draft.PersonaCustom" maxlength="200" />
+                </div>
+            }
+        }
+        else if (_step == 2)
+        {
+            @for (var i = 0; i < _draft.Projects.Count; i++)
+            {
+                var idx = i;
+                <div class="card-row mb-3">
+                    <div class="card-main w-full">
+                        <div class="grid md:grid-cols-2 gap-3">
+                            <div class="field">
+                                <label for="gen-proj-title-@idx">@L["generate.project.title"]</label>
+                                <input class="input" id="gen-proj-title-@idx"
+                                       aria-label="@L["generate.project.title"]"
+                                       @bind="_draft.Projects[idx].Title" maxlength="120" />
+                            </div>
+                            <div class="field">
+                                <label for="gen-proj-url-@idx">@L["generate.project.url"]</label>
+                                <input class="input" id="gen-proj-url-@idx"
+                                       aria-label="@L["generate.project.url"]"
+                                       @bind="_draft.Projects[idx].Url" placeholder="https://…" />
+                            </div>
+                            <div class="field">
+                                <label for="gen-proj-summary-@idx">@L["generate.project.summary"]</label>
+                                <input class="input" id="gen-proj-summary-@idx"
+                                       aria-label="@L["generate.project.summary"]"
+                                       @bind="_draft.Projects[idx].Summary" maxlength="500" />
+                            </div>
+                            <div class="field">
+                                <label for="gen-proj-tags-@idx">@L["generate.project.tags"]</label>
+                                <input class="input" id="gen-proj-tags-@idx"
+                                       aria-label="@L["generate.project.tags"]"
+                                       @bind="_draft.Projects[idx].TagsCsv" />
+                            </div>
+                        </div>
+                        <button type="button" class="text-sm text-red-500 mt-2"
+                                @onclick="() => _draft.Projects.RemoveAt(idx)">
+                            @L["common.remove"]
+                        </button>
+                    </div>
+                </div>
+            }
+            <button type="button" class="auth-submit" @onclick="AddProject"
+                    disabled="@(_draft.Projects.Count >= 20)">
+                @L["generate.project.add"]
+            </button>
+        }
+        else if (_step == 3)
+        {
+            <div class="grid md:grid-cols-3 gap-3 mb-4">
+                <div class="field">
+                    <label for="gen-style-preset">@L["generate.style.preset"]</label>
+                    <select class="input" id="gen-style-preset" @bind="_draft.StylePreset">
+                        <option value="terminal">terminal</option>
+                        <option value="minimal">minimal</option>
+                        <option value="editorial">editorial</option>
+                        <option value="bold">bold</option>
+                        <option value="custom">custom</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="gen-style-mode">@L["generate.style.mode"]</label>
+                    <select class="input" id="gen-style-mode" @bind="_draft.Mode">
+                        <option value="system">system</option>
+                        <option value="light">light</option>
+                        <option value="dark">dark</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="gen-style-density">@L["generate.style.density"]</label>
+                    <select class="input" id="gen-style-density" @bind="_draft.Density">
+                        <option value="compact">compact</option>
+                        <option value="comfortable">comfortable</option>
+                        <option value="spacious">spacious</option>
+                    </select>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="field mb-4">
+                <label for="gen-free-prompt">@L["generate.freeprompt"]</label>
+                <textarea class="input" id="gen-free-prompt" rows="5"
+                          @bind="_draft.FreePrompt" maxlength="4000"></textarea>
+            </div>
+            <div class="field mb-4">
+                <label for="gen-model">@L["automations.model"]</label>
+                <select class="input" id="gen-model" @bind="_model">
+                    @foreach (var m in _models)
+                    {
+                        <option value="@m.Id">@m.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="card-row mb-4">
+                <div class="card-main">
+                    <div class="font-medium">@L["generate.summary"]</div>
+                    <div class="text-sm text-gray-500">
+                        @_draft.Persona · @_draft.StylePreset/@_draft.Mode/@_draft.Density
+                        · @string.Format(L["generate.summary.projects"], _draft.Projects.Count)
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (_error is not null)
+        {
+            <div class="text-sm text-red-500 mb-3" role="alert">@_error</div>
+        }
+
+        <div class="flex gap-2">
+            <button type="button" class="auth-submit opacity-70"
+                    @onclick="Back" disabled="@(_step == 1 || _busy)">
+                @L["common.back"]
+            </button>
+            @if (_step < 4)
+            {
+                <button type="button" class="auth-submit" @onclick="Next"
+                        disabled="@(!StepValid() || _busy)">
+                    @L["common.next"]
+                </button>
+            }
+            else
+            {
+                <button type="button" class="auth-submit" @onclick="SubmitAsync"
+                        disabled="@(!StepValid() || _busy)">
+                    @L["generate.submit"]
+                </button>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<GenContextClientService.PersonaPreset>? _presets;
+    private List<OpenWebUI.Application.Contracts.ModelInfo> _models = [];
+    private GenContextClientService.Draft _draft = new();
+    private int _step = 1;
+    private string _model = string.Empty;
+    private string? _error;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _presets = await Gen.LoadPresetsAsync();
+        _draft = await Gen.LoadDraftAsync();
+        _models = await Api.GetModelsAsync();
+        if (_models.Count > 0)
+        {
+            _model = _models[0].Id;
+        }
+    }
+
+    private void PickPersona(GenContextClientService.PersonaPreset p)
+    {
+        _draft.Persona = p.Id;
+        _draft.StylePreset = p.Style.Preset;
+        _draft.Mode = p.Style.Mode;
+        _draft.Density = p.Style.Density;
+    }
+
+    private void AddProject() => _draft.Projects.Add(
+        new GenContextClientService.DraftProject());
+
+    private bool StepValid() => _step switch
+    {
+        1 => _draft.Persona != "custom"
+            || !string.IsNullOrWhiteSpace(_draft.PersonaCustom),
+        2 => _draft.Projects.All(p => !string.IsNullOrWhiteSpace(p.Title)),
+        4 => !string.IsNullOrWhiteSpace(_model),
+        _ => true,
+    };
+
+    private void GoTo(int step)
+    {
+        if (step <= _step || StepValid())
+        {
+            _step = step;
+        }
+    }
+
+    private async Task Next()
+    {
+        if (StepValid() && _step < 4)
+        {
+            _step++;
+            await Gen.SaveDraftAsync(_draft);
+        }
+    }
+
+    private async Task Back()
+    {
+        if (_step > 1)
+        {
+            _step--;
+            await Gen.SaveDraftAsync(_draft);
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _error = null;
+        var payload = GenContextClientService.ToPayload(_draft);
+        var (saved, saveErr) = await Api.SaveGenContextAsync(payload);
+        if (saveErr is not null)
+        {
+            _error = saveErr;
+            _busy = false;
+            return;
+        }
+
+        var (result, genErr) = await Api.GenerateFromContextAsync(
+            new OpenWebUI.Application.Contracts.GenContextGenerateRequest(
+                _model, _draft.FreePrompt, null));
+        if (result is null)
+        {
+            _error = genErr ?? L["generate.error"];
+            _busy = false;
+            return;
+        }
+
+        await Gen.ClearDraftAsync();
+        Nav.NavigateTo($"/c/{result.ChatId}");
+    }
+}

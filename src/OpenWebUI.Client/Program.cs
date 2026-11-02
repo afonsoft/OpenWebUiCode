@@ -24,6 +24,7 @@ builder.Services.AddScoped<ChatNotificationsService>();
 builder.Services.AddScoped<AttentionInboxState>();
 builder.Services.AddScoped<LocalizationService>();
 builder.Services.AddScoped<DialogService>();
+builder.Services.AddScoped<GenContextClientService>();
 builder.Services.AddScoped<IdeTestRunService>();
 
 var host = builder.Build();

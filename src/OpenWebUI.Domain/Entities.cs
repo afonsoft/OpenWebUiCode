@@ -2530,3 +2530,30 @@ public class SavedApproval
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 }
+
+/// <summary>
+/// Contexto estruturado do wizard de geração
+/// (SPEC-20261027-context-gen-wizard RF-001): persona, estilo, projetos e
+/// integrações capturados antes do primeiro prompt — um registro ativo
+/// por usuário (upsert no POST).
+/// </summary>
+public class GenerationContextEntry
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono do contexto — único (1 contexto ativo por usuário).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Payload JSON validado (GenerationContext, schema version="1").</summary>
+    public string Json { get; set; } = "{}";
+
+    /// <summary>Último chat criado via <c>POST /gen-context/generate</c>.</summary>
+    public string? LastChatId { get; set; }
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}

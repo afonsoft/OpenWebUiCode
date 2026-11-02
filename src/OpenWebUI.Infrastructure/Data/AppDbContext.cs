@@ -51,6 +51,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Temas customizados enviados por usuário.</summary>
     public DbSet<UserTheme> UserThemes => Set<UserTheme>();
 
+    /// <summary>Contextos estruturados do wizard de geração (SPEC-20261027-context-gen-wizard).</summary>
+    public DbSet<GenerationContextEntry> GenerationContexts => Set<GenerationContextEntry>();
+
     /// <summary>Batalhas de arena com voto pendente ou registrado.</summary>
     public DbSet<ArenaBattle> ArenaBattles => Set<ArenaBattle>();
 
@@ -343,6 +346,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             entity.HasKey(t => t.Id);
             entity.HasIndex(t => new { t.UserId, t.ThemeId }).IsUnique();
+        });
+
+        // Wizard de geração (SPEC-20261027-context-gen-wizard): um
+        // contexto ativo por usuário.
+        modelBuilder.Entity<GenerationContextEntry>(entity =>
+        {
+            entity.HasKey(g => g.Id);
+            entity.HasIndex(g => g.UserId).IsUnique();
         });
 
         modelBuilder.Entity<MemoryEntry>(entity =>

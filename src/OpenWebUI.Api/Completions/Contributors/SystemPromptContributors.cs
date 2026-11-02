@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Endpoints;
+using OpenWebUI.Application.Contracts;
 using OpenWebUI.Infrastructure.SystemPrompt;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.ChatTools;
@@ -46,6 +47,7 @@ public static class SystemPromptContributors
         .. (IEnumerable<ISystemPromptContributor>)(d.Instincts is null
             ? []
             : [new InstinctContributor(d.Instincts, d.Config)]),
+        new GenContextContributor(d.Db),
         new DelegationPolicyContributor(d.Agents, d.Db),
         new MentionsContributor(),
         new AgentModeContributor(),
@@ -803,5 +805,51 @@ public sealed class DeferredToolIndexContributor(
         var block = index.BuildIndex(state.Deferred(chatId));
         return Task.FromResult<IReadOnlyList<string>>(
             block is null ? [] : [block]);
+    }
+}
+
+/// <summary>
+/// System prompt do wizard de geração
+/// (SPEC-20261027-context-gen-wizard RF-004): quando a run traz
+/// <c>Params["gen_context"]</c>, injeta o prompt restritivo construído
+/// pelo <see cref="PromptBuilderService"/> a partir do contexto salvo —
+/// validado de novo na borda e sempre limitado ao dono da run (nunca
+/// vaza contexto de outro usuário).
+/// </summary>
+public sealed class GenContextContributor(AppDbContext db)
+    : ISystemPromptContributor
+{
+    /// <inheritdoc />
+    public int Order => 5;
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
+    {
+        if (ctx.Request.Params?.TryGetValue("gen_context", out var raw) != true)
+        {
+            return [];
+        }
+
+        var ctxId = raw switch
+        {
+            string s => s,
+            JsonElement el when el.ValueKind == JsonValueKind.String => el.GetString(),
+            _ => null,
+        };
+        if (string.IsNullOrWhiteSpace(ctxId))
+        {
+            return [];
+        }
+
+        var entry = await db.GenerationContexts.AsNoTracking()
+            .FirstOrDefaultAsync(
+                g => g.Id == ctxId && g.UserId == ctx.User.Id, ctx.Ct);
+        if (entry is null
+            || !GenContextValidator.TryParse(entry.Json, out var gen, out _))
+        {
+            return [];
+        }
+
+        return [PromptBuilderService.BuildSystemPrompt(gen!)];
     }
 }
