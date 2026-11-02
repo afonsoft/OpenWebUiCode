@@ -486,7 +486,7 @@ public class BuiltinToolsTests
     public async Task JobService_StartAsync_LeConfigSemContextoDescartado()
     {
         // Regressão: o escopo do ConfigService morria antes das leituras
-        // (ObjectDisposedException: AppDbContext em todo StartAsync).
+        // (ObjectDisposedException: AppDbContext em cada StartAsync).
         var jobs = NewJobService();
         var job = await jobs.StartAsync("echo config-ok", Ctx(), default);
 
@@ -1057,7 +1057,7 @@ public class BuiltinToolsTests
         Assert.That(l.Text, Does.Contain("sub/").And.Contain("um.cs").And.Contain("dois.md"));
     }
 
-    // ---------------- todo_write (P10) ----------------
+    // ---------------- task tracker (P10) ----------------
 
     [Test]
     public async Task TodoWrite_SnapshotValido_RetornaTasks()

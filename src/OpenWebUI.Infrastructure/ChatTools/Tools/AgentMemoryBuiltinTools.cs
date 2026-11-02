@@ -9,7 +9,7 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// <summary>
 /// <c>builtin:memory_save</c> — grava uma memória durável do agente
 /// (SPEC-20261010-agent-memory): fatos/decisões que devem sobreviver à
-/// sessão. Escopo <c>global</c> (todo chat do usuário) ou <c>repo</c>
+/// sessão. Escopo <c>global</c> (qualquer chat do usuário) ou <c>repo</c>
 /// (amarrada ao repo bound do chat — só entra no prompt ali). Upsert por
 /// (usuário, escopo, repo, título): salvar de novo com o mesmo título
 /// atualiza. As memórias recentes são injetadas automaticamente no
@@ -431,7 +431,7 @@ public sealed class MemoryLearnBuiltinTool(AppDbContext db) : IBuiltinChatTool
     }
 }
 
-/// <summary>Escopos das memórias de agente (global = todo chat do usuário).</summary>
+/// <summary>Escopos das memórias de agente (global = qualquer chat do usuário).</summary>
 file static class MemoryToolScopes
 {
     internal const string Global = "global";

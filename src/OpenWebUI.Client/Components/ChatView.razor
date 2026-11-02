@@ -3222,7 +3222,7 @@
     private const int StallMs = 45_000;
     // Cadência de retry: até SoftEmptyAttaches o backoff exponencial é
     // rápido (0,5–4s); depois disso o attach continua em ~8s enquanto a
-    // run estiver viva — proxies corporativos derrubam todo attach antes
+    // run estiver viva — proxies corporativos derrubam qualquer attach antes
     // do primeiro evento, e desistir cedo congelava a UI até o F5.
     private const int SoftEmptyAttaches = 5;
     // ~40 attaches vazios (~35min de stall de 45s + 8s cada) sem ver a

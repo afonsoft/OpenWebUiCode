@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 
 /// <summary>
-/// <c>builtin:todo_write</c> — atualiza a lista de tarefas da run
+/// <c>builtin task-tracker</c> — atualiza a lista de tarefas da run
 /// (SPEC-20261007-chat-agent-parity RF-010): o plano de trabalho do
 /// agente vira um snapshot emitido como evento SSE <c>tasks</c> (o
 /// executor republica o array <c>tasks</c> do payload estruturado) e fica

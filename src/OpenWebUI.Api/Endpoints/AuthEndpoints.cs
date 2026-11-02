@@ -432,7 +432,7 @@ public static class AuthEndpoints
     }
 
     /// <summary>
-    /// Filtra todo um grupo (ou rota) pela permissão granular "seção.flag" —
+    /// Filtra um grupo inteiro (ou rota) pela permissão granular "seção.flag" —
     /// 401 sem usuário, 403 sem permissão. Funciona em <see cref="RouteGroupBuilder"/>
     /// e <see cref="RouteHandlerBuilder"/>.
     /// </summary>

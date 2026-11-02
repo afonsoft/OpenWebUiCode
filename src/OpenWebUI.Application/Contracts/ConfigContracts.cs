@@ -40,10 +40,10 @@ public static class ProviderTypes
 /// <param name="BaseUrl">URL base do endpoint (oficial pré-preenchida, editável).</param>
 /// <param name="ApiKey">Chave de API da conexão (obrigatória para anthropic/google).</param>
 /// <param name="Name">Nome de exibição opcional.</param>
-/// <param name="Headers">Overlay de headers aplicado a todo request do provider
+/// <param name="Headers">Overlay de headers aplicado a cada request do provider
 /// (SPEC-20261018-model-variants RF-004) — nunca sobrescreve
 /// <c>Authorization</c>/<c>Content-Type</c>.</param>
-/// <param name="Body">Overlay profundo mesclado ao payload de todo request.</param>
+/// <param name="Body">Overlay profundo mesclado ao payload de cada request.</param>
 /// <param name="Settings">Defaults de parâmetros de geração do provider
 /// (menor precedência — model/variant/persona vencem).</param>
 public sealed record ProviderConnection(

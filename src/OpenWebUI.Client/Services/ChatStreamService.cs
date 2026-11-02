@@ -74,7 +74,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
 
         /// <summary>
         /// Snapshot da lista de tarefas da run (evento <c>tasks</c> —
-        /// SPEC-20261007-chat-agent-parity RF-010, emitido por todo_write).
+        /// SPEC-20261007-chat-agent-parity RF-010, emitido pela tool de tasks).
         /// </summary>
         public sealed record Tasks(RunTasksEvent Snapshot) : ChatStreamEvent;
 

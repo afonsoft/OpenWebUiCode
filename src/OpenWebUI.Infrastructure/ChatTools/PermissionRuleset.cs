@@ -56,7 +56,7 @@ public static class PermissionRuleset
 
     /// <summary>
     /// Built-ins permitidas no modo plan: read/list/grep/glob, web/fetch,
-    /// ask, todo, plan_exit, readers de jobs/screenshot/workflows e a
+    /// ask, task-tracker, plan_exit, readers de jobs/screenshot/workflows e a
     /// leitura estrutural do projeto — <c>worktree_diff</c>, <c>specs</c>
     /// (o ciclo SDD é jailed em <c>.specs/</c> — a tool mutável segue o
     /// preset na op transition) e as tools LSP (diagnóstico/símbolos são

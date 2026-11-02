@@ -81,7 +81,7 @@ public sealed class HistoryResourceService(AppDbContext db)
         return (Format(messages!), null);
     }
 
-    /// <summary>Aplica o seletor do URI sobre o caminho ativo / o conjunto todo.</summary>
+    /// <summary>Aplica o seletor do URI sobre o caminho ativo / o conjunto inteiro.</summary>
     private static (List<ChatMessage>? Messages, string? Error) Select(
         string? selector, List<ChatMessage> activePath,
         List<ChatMessage> all, string chatId)

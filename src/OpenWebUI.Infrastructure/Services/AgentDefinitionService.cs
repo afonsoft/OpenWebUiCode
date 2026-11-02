@@ -48,7 +48,7 @@ public sealed record AgentDefinition(
 /// vence; o catálogo registra o <see cref="AgentDefinition.Source"/>
 /// vencedor (provenance, padrão RF-006 de config-layers).
 /// <para>
-/// Todo diretório dedicado a agentes aceita <c>*.md</c> (que cobre
+/// Cada diretório dedicado a agentes aceita <c>*.md</c> (que cobre
 /// <c>*.agent.md</c>) — <c>name</c>+<c>description</c> no frontmatter
 /// continuam obrigatórios, então READMEs soltos são ignorados pelo parser.
 /// Frontmatter estilo Claude Code é compatibilizado: <c>tools: Read, Grep,

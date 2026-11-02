@@ -27,7 +27,7 @@ public sealed class AgentRunEventBus(
     /// Timeout para eventos terminais (<c>run.completed/stopped/failed</c>):
     /// a run já encerrou e observers pós-run fazem trabalho pesado — o
     /// InstinctExtractor chama o LLM e sempre estourava os 5s dos
-    /// interceptors (TaskCanceledException em todo run.completed).
+    /// interceptors (TaskCanceledException em cada run.completed).
     /// <c>observers.timeout_ms</c>, default 90s.
     /// </summary>
     private int TerminalTimeoutMs { get; } =

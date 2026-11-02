@@ -1931,7 +1931,7 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>
-    /// todo_write publica o snapshot de tarefas como evento <c>tasks</c>
+    /// A tool de tasks publica o snapshot de tarefas como evento <c>tasks</c>
     /// (RF-010 chat-agent-parity) — replay cobre attach tardio.
     /// </summary>
     private void PublishTasksSnapshot(ChatRun run, JsonElement? result)

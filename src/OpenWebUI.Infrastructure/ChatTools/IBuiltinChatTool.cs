@@ -70,7 +70,7 @@ public interface IBuiltinChatTool
     /// Se a tool é pura de leitura e pode executar concorrente com outras
     /// paralelizáveis no mesmo round (SPEC-20261016-parallel-tool-calls
     /// RF-001). Default conservador <c>false</c>: <see cref="Tier"/> Read
-    /// não basta — tools sem gate mas com efeito (todo_write, ask_user,
+    /// não basta — tools sem gate mas com efeito (task tracker, ask_user,
     /// generate_*) continuam sequenciais. Tools externas (HTTP/MCP/python)
     /// nunca paralelizam nesta fase.
     /// </summary>

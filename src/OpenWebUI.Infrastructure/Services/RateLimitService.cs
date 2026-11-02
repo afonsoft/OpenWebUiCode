@@ -70,7 +70,7 @@ public sealed class RateLimitService
     /// <summary>Limpa falhas/lockout da chave (login bem-sucedido).</summary>
     public void ResetLogin(string key) => _logins.TryRemove(key, out _);
 
-    /// <summary>Limpa todo lockout de um e-mail (todas as origens IP) — uso administrativo.</summary>
+    /// <summary>Limpa o lockout inteiro de um e-mail (todas as origens IP) — uso administrativo.</summary>
     /// <returns>Quantidade de entradas removidas.</returns>
     public int ResetLoginByEmail(string email)
     {
