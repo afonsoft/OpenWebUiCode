@@ -815,20 +815,7 @@ public class ProviderService(
         Func<string, CancellationToken, Task>? onReasoning,
         CancellationToken ct)
     {
-        var (index, baseUrl) = FirstOpenAiConnection(connections);
-        using var httpRequest = new HttpRequestMessage(
-            HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
-        {
-            Content = new StringContent(
-                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
-        };
-        var apiKey = connections.OpenAiApiKeys.ElementAtOrDefault(index);
-        if (!string.IsNullOrEmpty(apiKey))
-        {
-            httpRequest.Headers.Authorization =
-                new AuthenticationHeaderValue(BearerScheme, apiKey);
-        }
-        ApplyExtraHeaders(httpRequest, request);
+        using var httpRequest = BuildOpenAiRequest(request, connections, payload);
 
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -837,20 +824,8 @@ public class ProviderService(
         if (!string.Equals(response.Content.Headers.ContentType?.MediaType,
                 "text/event-stream", StringComparison.OrdinalIgnoreCase))
         {
-            // Endpoint ignorou stream:true (compat/proxy) e devolveu a
-            // completion de uma vez — parseia buffered e entrega o texto
-            // num delta só, mantendo a semântica do método.
-            var buffered = ParseCompletionMessage(
-                JsonNode.Parse(await response.Content.ReadAsStringAsync(ct)), openAi: true);
-            if (buffered.Content.Length > 0 && onDelta is not null)
-            {
-                await onDelta(buffered.Content, ct);
-            }
-            if (!string.IsNullOrEmpty(buffered.Reasoning) && onReasoning is not null)
-            {
-                await onReasoning(buffered.Reasoning, ct);
-            }
-            return buffered;
+            return await ReadBufferedOpenAiResponseAsync(
+                response, onDelta, onReasoning, ct);
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -909,6 +884,50 @@ public class ProviderService(
             onDelta, onReasoning, ct);
     }
 
+    private HttpRequestMessage BuildOpenAiRequest(
+        ChatCompletionRequest request,
+        ConnectionsConfig connections,
+        JsonObject payload)
+    {
+        var (index, baseUrl) = FirstOpenAiConnection(connections);
+        var httpRequest = new HttpRequestMessage(
+            HttpMethod.Post, $"{TrimSlash(baseUrl)}/chat/completions")
+        {
+            Content = new StringContent(
+                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
+        };
+        var apiKey = connections.OpenAiApiKeys.ElementAtOrDefault(index);
+        if (!string.IsNullOrEmpty(apiKey))
+        {
+            httpRequest.Headers.Authorization =
+                new AuthenticationHeaderValue(BearerScheme, apiKey);
+        }
+        ApplyExtraHeaders(httpRequest, request);
+        return httpRequest;
+    }
+
+    /// <summary>Endpoint ignorou <c>stream:true</c> (compat/proxy) e devolveu a
+    /// completion de uma vez — parseia buffered e entrega o texto num delta só,
+    /// mantendo a semântica do método.</summary>
+    private async Task<ProviderCompletion> ReadBufferedOpenAiResponseAsync(
+        HttpResponseMessage response,
+        Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        var buffered = ParseCompletionMessage(
+            JsonNode.Parse(await response.Content.ReadAsStringAsync(ct)), openAi: true);
+        if (buffered.Content.Length > 0 && onDelta is not null)
+        {
+            await onDelta(buffered.Content, ct);
+        }
+        if (!string.IsNullOrEmpty(buffered.Reasoning) && onReasoning is not null)
+        {
+            await onReasoning(buffered.Reasoning, ct);
+        }
+        return buffered;
+    }
+
     /// <summary>
     /// Processa um chunk SSE do stream OpenAI: content, reasoning e
     /// tool_calls fragmentadas por <c>index</c>.
@@ -954,55 +973,84 @@ public class ProviderService(
         {
             diag.StreamUsage = ParseUsage(node, openAi: true);
         }
-        // content chega string ou array de parts (CoerceText); um delta
-        // escalar solto — gateway que não estrutura o objeto — vale
-        // como o próprio texto.
+
+        await EmitContentDeltaAsync(
+            delta, content, dsmlContent, onDelta, onReasoning, ct);
+        await EmitReasoningDeltaAsync(delta, diag, dsmlReasoning, onReasoning, ct);
+        AccumulateOpenAiToolCalls(delta, diag, callBuffers);
+    }
+
+    /// <summary>content chega string ou array de parts (<c>CoerceText</c>); um
+    /// delta escalar solto — gateway que não estrutura o objeto — vale como o
+    /// próprio texto. Raciocínio extraído de tags inline
+    /// (<c>&lt;think&gt;</c>…, <c>&lt;|channel&gt;</c>…) dentro do content sai
+    /// pelo canal próprio.</summary>
+    private static async Task EmitContentDeltaAsync(
+        JsonNode? delta,
+        StringBuilder content,
+        DeltaFilterChain dsmlContent,
+        Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
         var piece = CoerceText(Prop(delta, ContentKey));
         if (piece.Length == 0 && delta is JsonValue)
         {
             piece = Str(delta) ?? string.Empty;
         }
-        if (!string.IsNullOrEmpty(piece))
+        if (string.IsNullOrEmpty(piece))
         {
-            var visible = dsmlContent.Feed(piece);
-            if (visible.Length > 0)
+            return;
+        }
+        var visible = dsmlContent.Feed(piece);
+        if (visible.Length > 0)
+        {
+            content.Append(visible);
+            if (onDelta is not null)
             {
-                content.Append(visible);
-                if (onDelta is not null)
-                {
-                    await onDelta(visible, ct);
-                }
-            }
-            // Raciocínio extraído de tags inline (<think>…,
-            // <|channel>…) dentro do content sai pelo canal próprio.
-            if (onReasoning is not null
-                && dsmlContent.Markup.TakeReasoning() is { Length: > 0 } lifted)
-            {
-                await onReasoning(lifted, ct);
+                await onDelta(visible, ct);
             }
         }
-
-        // Reasoning/thinking de gateways OpenAI-compatíveis (deepseek,
-        // openrouter, OmniRoute): reasoning_content | reasoning |
-        // reasoning_details[].text — canal separado do content.
-        if (ExtractOpenAiReasoning(delta) is { Length: > 0 } thought)
+        if (onReasoning is not null
+            && dsmlContent.Markup.TakeReasoning() is { Length: > 0 } lifted)
         {
-            diag.ReasoningChars += thought.Length;
-            if (onReasoning is not null)
-            {
-                var clean = dsmlReasoning.Feed(thought);
-                if (clean.Length > 0)
-                {
-                    await onReasoning(clean, ct);
-                }
-            }
+            await onReasoning(lifted, ct);
         }
+    }
 
+    /// <summary>Reasoning/thinking de gateways OpenAI-compatíveis (deepseek,
+    /// openrouter, OmniRoute): <c>reasoning_content</c> | <c>reasoning</c> |
+    /// <c>reasoning_details[].text</c> — canal separado do content.</summary>
+    private static async Task EmitReasoningDeltaAsync(
+        JsonNode? delta,
+        OpenAiStreamDiag diag,
+        DeltaFilterChain dsmlReasoning,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        if (ExtractOpenAiReasoning(delta) is not { Length: > 0 } thought)
+        {
+            return;
+        }
+        diag.ReasoningChars += thought.Length;
+        if (onReasoning is not null
+            && dsmlReasoning.Feed(thought) is { Length: > 0 } clean)
+        {
+            await onReasoning(clean, ct);
+        }
+    }
+
+    /// <summary>Acumula parts de <c>tool_calls</c> nos buffers por index.
+    /// Gateway emitiu tool_calls fora do shape OpenAI (objeto solto, string
+    /// etc.) — contar em vez de engolir em silêncio.</summary>
+    private static void AccumulateOpenAiToolCalls(
+        JsonNode? delta,
+        OpenAiStreamDiag diag,
+        SortedDictionary<int, OpenAiToolCallBuffer> callBuffers)
+    {
         var callsNode = Prop(delta, ToolCallsKey);
         if (callsNode is not JsonArray callParts)
         {
-            // Gateway emitiu tool_calls fora do shape OpenAI (objeto
-            // solto, string etc.) — contar em vez de engolir em silêncio.
             if (callsNode is not null)
             {
                 diag.NonArrayToolCalls++;
@@ -1631,6 +1679,52 @@ public class ProviderService(
     private static JsonObject BuildAnthropicPayload(
         ChatCompletionRequest request, bool stream, bool cacheAllowed = true)
     {
+        var (system, messages) = BuildAnthropicMessages(request);
+
+        var payload = new JsonObject
+        {
+            [ModelKey] = request.Model,
+            [MaxTokensKey] = 4096,
+            ["messages"] = new JsonArray(messages.Cast<JsonNode>().ToArray()),
+            ["stream"] = stream,
+        };
+        if (system.Count > 0)
+        {
+            payload[RoleSystem] = string.Join("\n", system);
+        }
+
+        if (request.Tools is { Count: > 0 })
+        {
+            var tools = BuildAnthropicTools(request.Tools);
+            if (tools.Count > 0)
+            {
+                payload[ToolsKey] = tools;
+            }
+        }
+
+        ApplyAnthropicParams(payload, request);
+
+        // SPEC-20261018-model-variants RF-003: cache_format anthropic →
+        // cache_control ephemeral em system/tools/última user text; e
+        // overlay de body da variant por cima de tudo.
+        if (cacheAllowed && string.Equals(request.CacheFormat, ProviderTypes.Anthropic,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyAnthropicCacheControl(payload);
+        }
+        if (request.ExtraBody is { Count: > 0 } overlay)
+        {
+            ModelVariantService.DeepMerge(payload, overlay);
+        }
+
+        return payload;
+    }
+
+    /// <summary>Mapeia cada mensagem OpenAI-shaped para os blocos da
+    /// Messages API, separando <c>system</c> (top-level) das mensagens.</summary>
+    private static (List<string> System, List<JsonObject> Messages)
+        BuildAnthropicMessages(ChatCompletionRequest request)
+    {
         var system = new List<string>();
         var messages = new List<JsonObject>();
         foreach (var m in request.Messages)
@@ -1670,44 +1764,7 @@ public class ProviderService(
                 [ContentKey] = m.Content,
             });
         }
-
-        var payload = new JsonObject
-        {
-            [ModelKey] = request.Model,
-            [MaxTokensKey] = 4096,
-            ["messages"] = new JsonArray(messages.Cast<JsonNode>().ToArray()),
-            ["stream"] = stream,
-        };
-        if (system.Count > 0)
-        {
-            payload[RoleSystem] = string.Join("\n", system);
-        }
-
-        if (request.Tools is { Count: > 0 })
-        {
-            var tools = BuildAnthropicTools(request.Tools);
-            if (tools.Count > 0)
-            {
-                payload[ToolsKey] = tools;
-            }
-        }
-
-        ApplyAnthropicParams(payload, request);
-
-        // SPEC-20261018-model-variants RF-003: cache_format anthropic →
-        // cache_control ephemeral em system/tools/última user text; e
-        // overlay de body da variant por cima de tudo.
-        if (cacheAllowed && string.Equals(request.CacheFormat, ProviderTypes.Anthropic,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            ApplyAnthropicCacheControl(payload);
-        }
-        if (request.ExtraBody is { Count: > 0 } overlay)
-        {
-            ModelVariantService.DeepMerge(payload, overlay);
-        }
-
-        return payload;
+        return (system, messages);
     }
 
     /// <summary>
@@ -2252,42 +2309,66 @@ public class ProviderService(
         var deltaType = Str(Prop(delta, "type"));
         if (deltaType == "text_delta")
         {
-            var text = Str(Prop(delta, TextKey));
-            if (!string.IsNullOrEmpty(text))
-            {
-                var visible = markupContent.Feed(text);
-                if (visible.Length > 0)
-                {
-                    content.Append(visible);
-                    if (onDelta is not null)
-                    {
-                        await onDelta(visible, ct);
-                    }
-                }
-                if (onReasoning is not null
-                    && markupContent.TakeReasoning() is { Length: > 0 } lifted)
-                {
-                    await onReasoning(lifted, ct);
-                }
-            }
+            await EmitAnthropicTextAsync(
+                delta, content, markupContent, onDelta, onReasoning, ct);
         }
         else if (deltaType == "thinking_delta")
         {
-            // Canal separado: thinking não entra no content da run.
-            var thinking = Str(Prop(delta, ThinkingKey));
-            if (!string.IsNullOrEmpty(thinking) && onReasoning is not null)
-            {
-                var clean = markupReasoning.Feed(thinking);
-                if (clean.Length > 0)
-                {
-                    await onReasoning(clean, ct);
-                }
-            }
+            await EmitAnthropicThinkingAsync(
+                delta, markupReasoning, onReasoning, ct);
         }
         else if (deltaType == "input_json_delta"
             && openTools.TryGetValue(index, out var tool))
         {
             tool.Args.Append(Str(Prop(delta, "partial_json")));
+        }
+    }
+
+    private static async Task EmitAnthropicTextAsync(
+        JsonNode? delta,
+        StringBuilder content,
+        ReasoningMarkupFilter markupContent,
+        Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        var text = Str(Prop(delta, TextKey));
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+        var visible = markupContent.Feed(text);
+        if (visible.Length > 0)
+        {
+            content.Append(visible);
+            if (onDelta is not null)
+            {
+                await onDelta(visible, ct);
+            }
+        }
+        if (onReasoning is not null
+            && markupContent.TakeReasoning() is { Length: > 0 } lifted)
+        {
+            await onReasoning(lifted, ct);
+        }
+    }
+
+    /// <summary>Canal separado: thinking não entra no content da run.</summary>
+    private static async Task EmitAnthropicThinkingAsync(
+        JsonNode? delta,
+        ReasoningMarkupFilter markupReasoning,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        var thinking = Str(Prop(delta, ThinkingKey));
+        if (onReasoning is null || string.IsNullOrEmpty(thinking))
+        {
+            return;
+        }
+        var clean = markupReasoning.Feed(thinking);
+        if (clean.Length > 0)
+        {
+            await onReasoning(clean, ct);
         }
     }
 
@@ -2329,38 +2410,7 @@ public class ProviderService(
     /// </summary>
     private static JsonObject BuildGooglePayload(ChatCompletionRequest request)
     {
-        var system = new List<string>();
-        var contents = new List<JsonObject>();
-        var toolNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var m in request.Messages)
-        {
-            if (m.Role == RoleSystem)
-            {
-                if (!string.IsNullOrWhiteSpace(m.Content))
-                {
-                    system.Add(m.Content);
-                }
-                continue;
-            }
-
-            if (m.ToolCallId is not null || m.Role == "tool")
-            {
-                AppendGoogleToolResponse(m, contents, toolNames);
-                continue;
-            }
-
-            if (m.Role == RoleAssistant)
-            {
-                contents.Add(BuildGoogleModelContent(m, toolNames));
-                continue;
-            }
-
-            contents.Add(new JsonObject
-            {
-                ["role"] = "user",
-                [PartsKey] = new JsonArray(new JsonObject { [TextKey] = m.Content }),
-            });
-        }
+        var (system, contents) = BuildGoogleContents(request);
 
         var payload = new JsonObject
         {
@@ -2395,6 +2445,46 @@ public class ProviderService(
         }
 
         return payload;
+    }
+
+    /// <summary>Mapeia cada mensagem para os <c>contents</c> Gemini, separando
+    /// <c>systemInstruction</c> e populando o mapa id→nome das tool calls.</summary>
+    private static (List<string> System, List<JsonObject> Contents)
+        BuildGoogleContents(ChatCompletionRequest request)
+    {
+        var system = new List<string>();
+        var contents = new List<JsonObject>();
+        var toolNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in request.Messages)
+        {
+            if (m.Role == RoleSystem)
+            {
+                if (!string.IsNullOrWhiteSpace(m.Content))
+                {
+                    system.Add(m.Content);
+                }
+                continue;
+            }
+
+            if (m.ToolCallId is not null || m.Role == "tool")
+            {
+                AppendGoogleToolResponse(m, contents, toolNames);
+                continue;
+            }
+
+            if (m.Role == RoleAssistant)
+            {
+                contents.Add(BuildGoogleModelContent(m, toolNames));
+                continue;
+            }
+
+            contents.Add(new JsonObject
+            {
+                ["role"] = "user",
+                [PartsKey] = new JsonArray(new JsonObject { [TextKey] = m.Content }),
+            });
+        }
+        return (system, contents);
     }
 
     /// <summary>
@@ -2450,39 +2540,50 @@ public class ProviderService(
         {
             foreach (var call in JsonNode.Parse(m.ToolCallsJson)!.AsArray())
             {
-                var name = call?[FunctionKey]?["name"]?.GetValue<string>();
-                if (name is null)
+                if (BuildGoogleFunctionCallPart(call, toolNames) is { } part)
                 {
-                    continue;
+                    parts.Add(part);
                 }
-                var id = call?["id"]?.GetValue<string>();
-                if (id is not null)
-                {
-                    toolNames[id] = name;
-                }
-                var argsRaw = call?[FunctionKey]?[ArgumentsKey];
-                JsonNode? args;
-                try
-                {
-                    args = argsRaw is JsonValue s
-                        ? JsonNode.Parse(s.GetValue<string>())
-                        : argsRaw?.DeepClone();
-                }
-                catch (Exception)
-                {
-                    args = new JsonObject();
-                }
-                parts.Add(new JsonObject
-                {
-                    ["functionCall"] = new JsonObject
-                    {
-                        ["name"] = name,
-                        ["args"] = args ?? new JsonObject(),
-                    },
-                });
             }
         }
         return new JsonObject { ["role"] = ModelKey, [PartsKey] = parts };
+    }
+
+    /// <summary>Uma tool call OpenAI-shaped → parte <c>functionCall</c> Gemini;
+    /// <c>null</c> quando a call não traz nome.</summary>
+    private static JsonObject? BuildGoogleFunctionCallPart(
+        JsonNode? call, Dictionary<string, string> toolNames)
+    {
+        var name = call?[FunctionKey]?["name"]?.GetValue<string>();
+        if (name is null)
+        {
+            return null;
+        }
+        var id = call?["id"]?.GetValue<string>();
+        if (id is not null)
+        {
+            toolNames[id] = name;
+        }
+        var argsRaw = call?[FunctionKey]?[ArgumentsKey];
+        JsonNode? args;
+        try
+        {
+            args = argsRaw is JsonValue s
+                ? JsonNode.Parse(s.GetValue<string>())
+                : argsRaw?.DeepClone();
+        }
+        catch (Exception)
+        {
+            args = new JsonObject();
+        }
+        return new JsonObject
+        {
+            ["functionCall"] = new JsonObject
+            {
+                ["name"] = name,
+                ["args"] = args ?? new JsonObject(),
+            },
+        };
     }
 
     /// <summary>Converte as tools OpenAI-shaped em <c>functionDeclarations</c>.</summary>
@@ -2656,83 +2757,91 @@ public class ProviderService(
                 : null;
             foreach (var part in parts ?? [])
             {
-                var text = Str(Prop(part, TextKey));
-                if (string.IsNullOrEmpty(text))
+                if (BuildGoogleDelta(part, markupContent, markupReasoning)
+                        is { Count: > 0 } delta)
                 {
-                    continue;
+                    yield return $"data: {NewChunkDelta(delta).ToJsonString()}";
                 }
-                // thought:true = raciocínio do modelo → delta.reasoning.
-                var isThought = Prop(part, "thought") is JsonValue flag
-                    && flag.TryGetValue<bool>(out var b) && b;
-                var filtered = isThought
-                    ? markupReasoning.Feed(text)
-                    : markupContent.Feed(text);
-                var reasoning = markupContent.TakeReasoning();
-                var delta = new JsonObject();
-                if (isThought)
-                {
-                    // Thinking + raciocínio extraído do content vão ao
-                    // mesmo canal.
-                    if (filtered.Length + reasoning.Length > 0)
-                    {
-                        delta[ReasoningKey] = filtered + reasoning;
-                    }
-                }
-                else
-                {
-                    if (filtered.Length > 0)
-                    {
-                        delta["content"] = filtered;
-                    }
-                    if (reasoning.Length > 0)
-                    {
-                        delta[ReasoningKey] = reasoning;
-                    }
-                }
-                if (delta.Count == 0)
-                {
-                    continue;
-                }
-                var chunk = new JsonObject
-                {
-                    [ObjectKey] = "chat.completion.chunk",
-                    [ChoicesKey] = new JsonArray(new JsonObject
-                    {
-                        [IndexKey] = 0,
-                        [DeltaKey] = delta,
-                    }),
-                };
-                yield return $"data: {chunk.ToJsonString()}";
             }
         }
         // Fim do SSE: solta o que os filtros seguraram antes do [DONE].
-        var googleBridgeTail = markupContent.Flush();
-        var googleBridgeReasoning = markupReasoning.Flush()
-            + markupContent.TakeReasoning();
-        if (googleBridgeTail.Length > 0 || googleBridgeReasoning.Length > 0)
+        if (BuildGoogleTailDelta(markupContent, markupReasoning)
+                is { Count: > 0 } tailDelta)
         {
-            var tailDelta = new JsonObject();
-            if (googleBridgeTail.Length > 0)
-            {
-                tailDelta["content"] = googleBridgeTail;
-            }
-            if (googleBridgeReasoning.Length > 0)
-            {
-                tailDelta[ReasoningKey] = googleBridgeReasoning;
-            }
-            var tailChunk = new JsonObject
-            {
-                [ObjectKey] = "chat.completion.chunk",
-                [ChoicesKey] = new JsonArray(new JsonObject
-                {
-                    [IndexKey] = 0,
-                    [DeltaKey] = tailDelta,
-                }),
-            };
-            yield return $"data: {tailChunk.ToJsonString()}";
+            yield return $"data: {NewChunkDelta(tailDelta).ToJsonString()}";
         }
         yield return SseDoneLine;
     }
+
+    /// <summary>Uma part Gemini → delta OpenAI-shaped; <c>null</c>/vazio quando
+    /// não há nada a emitir. <c>thought:true</c> = raciocínio do modelo →
+    /// <c>delta.reasoning</c>; thinking e raciocínio extraído do content vão ao
+    /// mesmo canal.</summary>
+    private static JsonObject? BuildGoogleDelta(
+        JsonNode? part,
+        ReasoningMarkupFilter markupContent,
+        ReasoningMarkupFilter markupReasoning)
+    {
+        var text = Str(Prop(part, TextKey));
+        if (string.IsNullOrEmpty(text))
+        {
+            return null;
+        }
+        var isThought = Prop(part, "thought") is JsonValue flag
+            && flag.TryGetValue<bool>(out var b) && b;
+        var filtered = isThought
+            ? markupReasoning.Feed(text)
+            : markupContent.Feed(text);
+        var reasoning = markupContent.TakeReasoning();
+        var delta = new JsonObject();
+        if (isThought)
+        {
+            if (filtered.Length + reasoning.Length > 0)
+            {
+                delta[ReasoningKey] = filtered + reasoning;
+            }
+        }
+        else
+        {
+            if (filtered.Length > 0)
+            {
+                delta["content"] = filtered;
+            }
+            if (reasoning.Length > 0)
+            {
+                delta[ReasoningKey] = reasoning;
+            }
+        }
+        return delta.Count > 0 ? delta : null;
+    }
+
+    private static JsonObject? BuildGoogleTailDelta(
+        ReasoningMarkupFilter markupContent,
+        ReasoningMarkupFilter markupReasoning)
+    {
+        var tail = markupContent.Flush();
+        var reasoning = markupReasoning.Flush() + markupContent.TakeReasoning();
+        var delta = new JsonObject();
+        if (tail.Length > 0)
+        {
+            delta["content"] = tail;
+        }
+        if (reasoning.Length > 0)
+        {
+            delta[ReasoningKey] = reasoning;
+        }
+        return delta.Count > 0 ? delta : null;
+    }
+
+    private static JsonObject NewChunkDelta(JsonObject delta) => new()
+    {
+        [ObjectKey] = "chat.completion.chunk",
+        [ChoicesKey] = new JsonArray(new JsonObject
+        {
+            [IndexKey] = 0,
+            [DeltaKey] = delta,
+        }),
+    };
 
     /// <summary>
     /// Round streamed Gemini: chunks trazem parts com text (deltas) ou
@@ -2825,37 +2934,9 @@ public class ProviderService(
     {
         if (Str(Prop(part, TextKey)) is { } text)
         {
-            if (string.IsNullOrEmpty(text))
-            {
-                return;
-            }
-            // part.thought=true é a cadeia de raciocínio do Gemini —
-            // antes vazava para o content persistido da resposta.
-            var isThought = Prop(part, "thought") is JsonValue flag
-                && flag.TryGetValue<bool>(out var b) && b;
-            if (isThought)
-            {
-                var cleanThought = markupReasoning.Feed(text);
-                if (cleanThought.Length > 0 && onReasoning is not null)
-                {
-                    await onReasoning(cleanThought, ct);
-                }
-                return;
-            }
-            var visible = markupContent.Feed(text);
-            if (visible.Length > 0)
-            {
-                content.Append(visible);
-                if (onDelta is not null)
-                {
-                    await onDelta(visible, ct);
-                }
-            }
-            if (onReasoning is not null
-                && markupContent.TakeReasoning() is { Length: > 0 } lifted)
-            {
-                await onReasoning(lifted, ct);
-            }
+            await EmitGoogleTextPartAsync(
+                part, text, content, markupContent, markupReasoning,
+                onDelta, onReasoning, ct);
             return;
         }
         if (Prop(part, "functionCall") is JsonObject call)
@@ -2874,6 +2955,50 @@ public class ProviderService(
                     [ArgumentsKey] = args,
                 },
             });
+        }
+    }
+
+    /// <summary><c>part.thought=true</c> é a cadeia de raciocínio do Gemini —
+    /// antes vazava para o content persistido da resposta; texto comum alimenta
+    /// o filtro de markup e emite <c>onDelta</c>/<c>onReasoning</c>.</summary>
+    private static async Task EmitGoogleTextPartAsync(
+        JsonNode? part,
+        string text,
+        StringBuilder content,
+        ReasoningMarkupFilter markupContent,
+        ReasoningMarkupFilter markupReasoning,
+        Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+        var isThought = Prop(part, "thought") is JsonValue flag
+            && flag.TryGetValue<bool>(out var b) && b;
+        if (isThought)
+        {
+            var cleanThought = markupReasoning.Feed(text);
+            if (cleanThought.Length > 0 && onReasoning is not null)
+            {
+                await onReasoning(cleanThought, ct);
+            }
+            return;
+        }
+        var visible = markupContent.Feed(text);
+        if (visible.Length > 0)
+        {
+            content.Append(visible);
+            if (onDelta is not null)
+            {
+                await onDelta(visible, ct);
+            }
+        }
+        if (onReasoning is not null
+            && markupContent.TakeReasoning() is { Length: > 0 } lifted)
+        {
+            await onReasoning(lifted, ct);
         }
     }
 
@@ -3163,22 +3288,7 @@ public class ProviderService(
             ?? throw new InvalidOperationException(NoOllamaUrlMessage);
 
         var payload = BuildPayload(request, stream: true, ProviderTypes.Ollama);
-        // Ollama aceita "options" em vez de parâmetros de topo: move extras para lá.
-        if (request.Params is { Count: > 0 })
-        {
-            var options = new JsonObject();
-            foreach (var key in new[] { TemperatureKey, TopPKey, TopKKey, "num_predict", "repeat_penalty", "seed", "stop" }
-                .Where(payload.ContainsKey))
-            {
-                payload.Remove(key, out var value);
-                options[MapOllamaParam(key)] = value;
-            }
-
-            if (options.Count > 0)
-            {
-                payload["options"] = options;
-            }
-        }
+        MoveOllamaParamsToOptions(request, payload);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{TrimSlash(baseUrl)}/api/chat")
         {
@@ -3200,24 +3310,7 @@ public class ProviderService(
 
         while (await reader.ReadLineAsync(ct) is { } line)
         {
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
-
-            JsonNode? node;
-            try
-            {
-                node = JsonNode.Parse(line);
-            }
-            catch (JsonException)
-            {
-                continue;
-            }
-            // Linha escalar (heartbeat "keepalive" etc.) ou message fora de
-            // objeto — mesmo guarda do stream OpenAI (SPEC-20261019): pular
-            // em vez de quebrar o bridge com InvalidOperationException.
-            if (node is not JsonObject)
+            if (ParseOllamaLine(line) is not { } node)
             {
                 continue;
             }
@@ -3225,22 +3318,8 @@ public class ProviderService(
             var done = Prop(node, "done") is JsonValue doneValue
                 && doneValue.TryGetValue<bool>(out var doneFlag)
                 && doneFlag;
-            var message = Prop(node, MessageKey);
-            var piece = Str(Prop(message, ContentKey));
-            var visible = piece is null ? string.Empty : markupContent.Feed(piece);
-            // Modelos "think" do Ollama: message.thinking sai separado —
-            // soma o raciocínio extraído de tags inline no content.
-            var reasoningText =
-                (Str(Prop(message, ThinkingKey)) is { Length: > 0 } thinking
-                    ? markupReasoning.Feed(thinking) : string.Empty)
-                + markupContent.TakeReasoning();
-            if (done)
-            {
-                // Linha final: solta o que os filtros seguraram.
-                visible += markupContent.Flush();
-                reasoningText += markupReasoning.Flush()
-                    + markupContent.TakeReasoning();
-            }
+            var (visible, reasoningText) = ComputeOllamaDeltas(
+                node, done, markupContent, markupReasoning);
             yield return $"data: {BuildOllamaChunk(visible, reasoningText, done, request.Model).ToJsonString()}";
 
             if (done)
@@ -3260,6 +3339,74 @@ public class ProviderService(
         }
 
         yield return SseDoneLine;
+    }
+
+    /// <summary>Ollama aceita <c>options</c> em vez de parâmetros de topo:
+    /// move os extras conhecidos para lá.</summary>
+    private static void MoveOllamaParamsToOptions(
+        ChatCompletionRequest request, JsonObject payload)
+    {
+        if (request.Params is not { Count: > 0 })
+        {
+            return;
+        }
+        var options = new JsonObject();
+        foreach (var key in new[] { TemperatureKey, TopPKey, TopKKey, "num_predict", "repeat_penalty", "seed", "stop" }
+            .Where(payload.ContainsKey))
+        {
+            payload.Remove(key, out var value);
+            options[MapOllamaParam(key)] = value;
+        }
+        if (options.Count > 0)
+        {
+            payload["options"] = options;
+        }
+    }
+
+    /// <summary>Parseia uma linha NDJSON; <c>null</c> para linha vazia,
+    /// JSON inválido ou linha escalar (heartbeat "keepalive" etc.) — mesmo
+    /// guarda do stream OpenAI (SPEC-20261019): pular em vez de quebrar o
+    /// bridge com InvalidOperationException.</summary>
+    private static JsonObject? ParseOllamaLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return null;
+        }
+        try
+        {
+            return JsonNode.Parse(line) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Extrai os deltas visível/raciocínio da linha. Modelos "think"
+    /// do Ollama emitem <c>message.thinking</c> separado — soma o raciocínio
+    /// extraído de tags inline no content; na linha final (<c>done</c>) solta
+    /// o que os filtros seguraram.</summary>
+    private static (string Visible, string Reasoning) ComputeOllamaDeltas(
+        JsonObject node,
+        bool done,
+        ReasoningMarkupFilter markupContent,
+        ReasoningMarkupFilter markupReasoning)
+    {
+        var message = Prop(node, MessageKey);
+        var piece = Str(Prop(message, ContentKey));
+        var visible = piece is null ? string.Empty : markupContent.Feed(piece);
+        var reasoningText =
+            (Str(Prop(message, ThinkingKey)) is { Length: > 0 } thinking
+                ? markupReasoning.Feed(thinking) : string.Empty)
+            + markupContent.TakeReasoning();
+        if (done)
+        {
+            visible += markupContent.Flush();
+            reasoningText += markupReasoning.Flush()
+                + markupContent.TakeReasoning();
+        }
+        return (visible, reasoningText);
     }
 
     /// <summary>
