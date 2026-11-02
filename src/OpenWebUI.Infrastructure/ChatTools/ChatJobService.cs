@@ -287,11 +287,10 @@ public sealed class ChatJobService(IServiceScopeFactory scopeFactory, ILogger<Ch
             string command, BuiltinToolContext context, AgentEnv env,
             CancellationToken ct)
     {
-        ConfigService? config;
-        await using (var cfgScope = scopeFactory.CreateAsyncScope())
-        {
-            config = cfgScope.ServiceProvider.GetService<ConfigService>();
-        }
+        // O escopo precisa viver durante TODAS as leituras de config —
+        // o AppDbContext dentro do ConfigService morre com o escopo.
+        await using var cfgScope = scopeFactory.CreateAsyncScope();
+        var config = cfgScope.ServiceProvider.GetService<ConfigService>();
         if (config is null
             || !await SandboxExec.EnabledAsync(config, ct))
         {
