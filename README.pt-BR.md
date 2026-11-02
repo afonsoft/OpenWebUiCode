@@ -112,6 +112,10 @@ remoto para `shell_exec`/terminal/`lsp_*`).
 |---|---|---|
 | ![chat](docs/screenshots/chat-light.png) | ![workspace](docs/screenshots/workspace-panel.png) | ![terminal](docs/screenshots/terminal.png) |
 
+| Regras de permissão v2 | Autenticação |
+|---|---|
+| ![Configurações → Permissões](docs/screenshots/settings-permissions.png) | ![auth](docs/screenshots/auth-light.png) |
+
 ## Recursos de agente (novos — camada aditiva sobre a paridade upstream)
 
 - **`delegate_task`** — cria chat filho + run server-side: `wait:false` retorna
@@ -228,6 +232,40 @@ remoto para `shell_exec`/terminal/`lsp_*`).
   chats/memórias com dry-run e "executar agora".
 - **Hierarquia de chats** — `ParentChatId`/`ParentRunId`, `GET /chats/{id}/children`,
   árvore aninhada na sidebar, marcadores de conclusão postados no chat pai.
+- **Sidekicks persistentes** — `delegate_task` com `persistent` + `sidekick_id`
+  reutiliza um chat filho nomeado (persistido via kv) com `SidekickGate`
+  serializado; profiles builtin `explore`/`general`, alias `max_nesting` e
+  alternância fg/bg de aprovação (`approve-mutations`/`allow-readonly`).
+- **Carregamento diferido de tools** — tiers core/deferred (opt-in
+  `BuiltinTools:Deferred`) mantêm o system prompt enxuto: índice
+  `## Available on demand` + a tool `builtin_tool_search` revela schemas sob
+  demanda e as funde por iteração; MCPs deferem por volume de servidores.
+- **Plan mode v2** — tool builtin `write_plan`, prompt de 5 fases e
+  `GET /workspace/repo/plans`; planos aprovados são salvos em
+  `.openwebui/plans/`.
+- **Hooks de ciclo de vida** — hooks de comando (`{matcher, command}`) e de
+  prompt em `PreToolUse`/`PostToolUse`/`Stop`/`SessionStart`/`SessionEnd`/
+  `SubagentStop`/`Notification`/`UserPromptSubmit`/`PreCompact`, configurados
+  via `.openwebui/hooks.json`; decisões de bloqueio injetam notas de steering
+  na rodada seguinte.
+- **Permissão inteligente (juiz LLM)** — preset `smart` auto-responde pedidos
+  de baixo risco e escala o restante por um classificador LLM por run, com
+  nonce no prompt e dedup por sessão.
+- **Execução em sandbox** — `Sandbox:Enabled` confina `shell_exec`/jobs em
+  `bubblewrap` (home fake, ro-binds, rede off) atrás de um proxy de allowlist
+  de domínios; exclusões de tools por escopo e preset `autonomous`
+  correspondente; `GET /api/v1/system/sandbox` expõe o status.
+- **Permissões v2** — regras ordenadas do usuário `{ação, recurso glob, efeito}`
+  (última correspondência vence) avaliadas entre as policies de admin e os
+  presets de risco; respostas "Sempre" persistem como `SavedApproval`s por
+  workdir, revogáveis individualmente; fronteira `external_directory` cobre
+  tools de arquivo + `apply_patch`; tudo gerenciado em Configurações →
+  Permissões (screenshot abaixo).
+- **Pacote de loop do agente** — footer de paralelismo nos resultados de tools,
+  `unseen_messages` (steers pendentes), `instant_context` via execução
+  restrita (XML `<ANSWER>`), `extend_context` com budget (pula 1 compactação
+  emergencial, teto 2), watchdog de stall com nudge (threshold 4) e keepalive
+  de prompt-cache durante aprovações.
 
 Detalhes por funcionalidade (com screenshots): [docs/pt/RECURSOS-AGENTE.md](docs/pt/RECURSOS-AGENTE.md) · [docs/en/AGENT-FEATURES.md](docs/en/AGENT-FEATURES.md)
 
