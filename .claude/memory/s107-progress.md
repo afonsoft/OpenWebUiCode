@@ -6,4 +6,4 @@ Remaining (SonarCloud, 2026-11-02) — apply private sealed record + destructure
 - ApiEndpoints.cs: 289 (13p), 462 (12p)
 - DelegateTaskBuiltinTool.cs: 607 (12p — PersistentSidekickDispatchAsync)
 - ProviderService.cs: 935 (9p), 1105 (8p), 1489 (10p), 2245 (12p), 2305 (9p), 2931 (9p)
-DONE: UnifiedDiff.EmitHunk (HunkCtx class + flush), TeamBuiltinTools.MutateTaskAsync (TaskMutation record), GatewayInboundService.EnqueueRunAsync (InboundRun record)
+DONE (all 24): UnifiedDiff.EmitHunk (HunkCtx), TeamBuiltinTools.MutateTaskAsync (TaskMutation), GatewayInboundService.EnqueueRunAsync (InboundRun), ChatRunExecutor (AttemptCtx/ToolLoopRunCtx/CallbackDeps/RunCompletion/RunFailure/ToolResultEvent + OnToolResult), ChatPipeline (ToolCallLoopCtx x4), ApiEndpoints (IServiceProvider handler + OpenApiLoopDeps), ProviderService (ProviderStreamCtx/OpenAiStreamCtx/AnthropicStreamCtx x6), DelegateTaskBuiltinTool (SidekickDispatch). PR #615 open — verify SonarCloud S107 -> 0 post-merge.
