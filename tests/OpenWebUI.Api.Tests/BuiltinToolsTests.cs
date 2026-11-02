@@ -483,6 +483,29 @@ public class BuiltinToolsTests
     }
 
     [Test]
+    public async Task JobService_StartAsync_LeConfigSemContextoDescartado()
+    {
+        // Regressão: o escopo do ConfigService morria antes das leituras
+        // (ObjectDisposedException: AppDbContext em todo StartAsync).
+        var jobs = NewJobService();
+        var job = await jobs.StartAsync("echo config-ok", Ctx(), default);
+
+        ChatJob? final = null;
+        for (var i = 0; i < 100; i++)
+        {
+            await Task.Delay(100);
+            final = await jobs.GetAsync("u1", job.Id, default);
+            if (final!.Status != ChatJobStatus.Running) break;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(final!.Status, Is.EqualTo(ChatJobStatus.Completed));
+            Assert.That(final.Error ?? string.Empty, Does.Not.Contain("disposed"));
+        });
+    }
+
+    [Test]
     public async Task JobService_SweepMarcaOrfaosComoKilled()
     {
         await using var scope = _provider.CreateAsyncScope();
