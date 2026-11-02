@@ -54,23 +54,9 @@ public sealed class PromptHookEvaluator(
     internal static HookOutcome Parse(string content, HookDefinition hook)
     {
         var text = content.Trim();
-        if (text.StartsWith('{'))
+        if (TryParseJson(text, hook) is { } outcome)
         {
-            try
-            {
-                using var doc = JsonDocument.Parse(text);
-                if (doc.RootElement.TryGetProperty("pass", out var p)
-                    && p.ValueKind is JsonValueKind.True or JsonValueKind.False)
-                {
-                    return new HookOutcome(
-                        p.GetBoolean() ? HookDecision.Approve : HookDecision.Block,
-                        null, p.GetBoolean() ? null : hook.Source, null, []);
-                }
-            }
-            catch (JsonException)
-            {
-                // cai no parse textual abaixo
-            }
+            return outcome;
         }
         var first = text.Split('\n', 2);
         var decision = first[0].Trim().ToLowerInvariant();
@@ -83,5 +69,31 @@ public sealed class PromptHookEvaluator(
             "approve" or "true" => HookOutcome.ApproveNone,
             _ => HookOutcome.ApproveNone,
         };
+    }
+
+    /// <summary>Variante JSON <c>{"pass": bool}</c> — <c>null</c> quando o
+    /// texto não é JSON desse shape (cai no parse textual).</summary>
+    private static HookOutcome? TryParseJson(string text, HookDefinition hook)
+    {
+        if (!text.StartsWith('{'))
+        {
+            return null;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.TryGetProperty("pass", out var p)
+                && p.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return new HookOutcome(
+                    p.GetBoolean() ? HookDecision.Approve : HookDecision.Block,
+                    null, p.GetBoolean() ? null : hook.Source, null, []);
+            }
+        }
+        catch (JsonException)
+        {
+            // cai no parse textual
+        }
+        return null;
     }
 }

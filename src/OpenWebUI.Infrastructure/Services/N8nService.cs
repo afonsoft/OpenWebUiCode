@@ -96,16 +96,10 @@ public sealed class N8nService(IHttpClientFactory httpClientFactory,
             {
                 foreach (var wf in data.EnumerateArray())
                 {
-                    var id = wf.TryGetProperty("id", out var i) ? i.ToString() : null;
-                    var name = wf.TryGetProperty("name", out var n) ? n.GetString() : null;
-                    if (id is null || name is null)
+                    if (ParseWorkflowItem(wf) is { } item)
                     {
-                        continue;
+                        items.Add(item);
                     }
-
-                    var active = wf.TryGetProperty("active", out var a)
-                                 && a.ValueKind == JsonValueKind.True;
-                    items.Add(new N8nWorkflowItem(id, name, active));
                 }
             }
         }
@@ -115,6 +109,20 @@ public sealed class N8nService(IHttpClientFactory httpClientFactory,
         }
 
         return items;
+    }
+
+    /// <summary>Um item do array — <c>null</c> sem id ou name.</summary>
+    private static N8nWorkflowItem? ParseWorkflowItem(JsonElement wf)
+    {
+        var id = wf.TryGetProperty("id", out var i) ? i.ToString() : null;
+        var name = wf.TryGetProperty("name", out var n) ? n.GetString() : null;
+        if (id is null || name is null)
+        {
+            return null;
+        }
+        var active = wf.TryGetProperty("active", out var a)
+                     && a.ValueKind == JsonValueKind.True;
+        return new N8nWorkflowItem(id, name, active);
     }
 
     /// <summary>
