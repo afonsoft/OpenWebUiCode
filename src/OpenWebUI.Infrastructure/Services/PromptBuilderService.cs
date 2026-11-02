@@ -71,70 +71,13 @@ public static class PromptBuilderService
         sb.Append("prompt_version=").Append(PromptVersion).Append('\n');
 
         sb.Append("\n## Persona\n");
-        if (ctx.Persona == "custom")
-        {
-            sb.Append(ctx.PersonaCustom).Append('\n');
-        }
-        else if (PersonaPresets.TryGetValue(ctx.Persona, out var persona))
-        {
-            sb.Append(persona).Append('\n');
-        }
+        AppendPersona(sb, ctx);
 
         sb.Append("\n## Visual style\n");
-        if (StyleDirectives.TryGetValue(ctx.Style.Preset, out var directive))
-        {
-            sb.Append("- preset ").Append(ctx.Style.Preset)
-                .Append(": ").Append(directive).Append('\n');
-        }
-        if (ctx.Style.Mode is { } mode)
-        {
-            sb.Append("- mode: ").Append(mode).Append('\n');
-        }
-        if (ctx.Style.Density is { } density)
-        {
-            sb.Append("- density: ").Append(density).Append('\n');
-        }
-        if (ctx.Style.Palette is { Count: > 0 } palette)
-        {
-            sb.Append("- palette tokens:\n");
-            foreach (var (name, value) in palette)
-            {
-                sb.Append("  - ").Append(name).Append(" = ")
-                    .Append(value).Append('\n');
-            }
-        }
+        AppendStyle(sb, ctx.Style);
 
-        if (ctx.Projects is { Count: > 0 } projects)
-        {
-            sb.Append("\n## Projects (ordered by priority)\n");
-            var baseLen = sb.Length + 512;
-            var included = 0;
-            foreach (var p in projects)
-            {
-                var line = JsonSerializer.Serialize(p, JsonOptions);
-                if (baseLen + sb.Length + line.Length > MaxPromptChars)
-                {
-                    break;
-                }
-                sb.Append("- ").Append(line).Append('\n');
-                included++;
-            }
-            if (included < projects.Count)
-            {
-                sb.Append("- ... ").Append(projects.Count - included)
-                    .Append(" more project(s) truncated.\n");
-            }
-        }
-
-        if (ctx.Integrations is { Count: > 0 } integrations)
-        {
-            sb.Append("\n## Declared integrations (metadata only — no "
-                + "connector in v1)\n");
-            foreach (var item in integrations)
-            {
-                sb.Append("- ").Append(item).Append('\n');
-            }
-        }
+        AppendProjects(sb, ctx);
+        AppendIntegrations(sb, ctx);
 
         sb.Append("\n## Output rules\n")
             .Append("- Semantic, accessible HTML; production quality, "
@@ -145,5 +88,85 @@ public static class PromptBuilderService
 
         var prompt = sb.ToString();
         return prompt.Length <= MaxPromptChars ? prompt : prompt[..MaxPromptChars];
+    }
+
+    private static void AppendPersona(StringBuilder sb, GenerationContext ctx)
+    {
+        if (ctx.Persona == "custom")
+        {
+            sb.Append(ctx.PersonaCustom).Append('\n');
+        }
+        else if (PersonaPresets.TryGetValue(ctx.Persona, out var persona))
+        {
+            sb.Append(persona).Append('\n');
+        }
+    }
+
+    private static void AppendStyle(StringBuilder sb, GenStyle style)
+    {
+        if (StyleDirectives.TryGetValue(style.Preset, out var directive))
+        {
+            sb.Append("- preset ").Append(style.Preset)
+                .Append(": ").Append(directive).Append('\n');
+        }
+        if (style.Mode is { } mode)
+        {
+            sb.Append("- mode: ").Append(mode).Append('\n');
+        }
+        if (style.Density is { } density)
+        {
+            sb.Append("- density: ").Append(density).Append('\n');
+        }
+        if (style.Palette is { Count: > 0 } palette)
+        {
+            sb.Append("- palette tokens:\n");
+            foreach (var (name, value) in palette)
+            {
+                sb.Append("  - ").Append(name).Append(" = ")
+                    .Append(value).Append('\n');
+            }
+        }
+    }
+
+    private static void AppendProjects(StringBuilder sb, GenerationContext ctx)
+    {
+        if (ctx.Projects is not { Count: > 0 } projects)
+        {
+            return;
+        }
+
+        sb.Append("\n## Projects (ordered by priority)\n");
+        var baseLen = sb.Length + 512;
+        var included = 0;
+        foreach (var p in projects)
+        {
+            var line = JsonSerializer.Serialize(p, JsonOptions);
+            if (baseLen + sb.Length + line.Length > MaxPromptChars)
+            {
+                break;
+            }
+            sb.Append("- ").Append(line).Append('\n');
+            included++;
+        }
+        if (included < projects.Count)
+        {
+            sb.Append("- ... ").Append(projects.Count - included)
+                .Append(" more project(s) truncated.\n");
+        }
+    }
+
+    private static void AppendIntegrations(StringBuilder sb, GenerationContext ctx)
+    {
+        if (ctx.Integrations is not { Count: > 0 } integrations)
+        {
+            return;
+        }
+
+        sb.Append("\n## Declared integrations (metadata only — no "
+            + "connector in v1)\n");
+        foreach (var item in integrations)
+        {
+            sb.Append("- ").Append(item).Append('\n');
+        }
     }
 }

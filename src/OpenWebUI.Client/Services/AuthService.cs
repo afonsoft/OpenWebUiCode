@@ -172,9 +172,13 @@ public class AuthService(
         {
             throw new ArgumentException("URI deve ser um path relativo de mesma origem.", nameof(uri));
         }
+        // Anti API-traversal (S7044): valida o path cru E o decodificado
+        // — "%2e%2e" não pode escapar a conferência de segmentos.
+        var decoded = Uri.UnescapeDataString(path);
         if (!uri.StartsWith('/') || uri.StartsWith("//", StringComparison.Ordinal)
-            || path.IndexOf('\\') >= 0
-            || path.Split('/').Any(static s => s is ".."))
+            || path.IndexOf('\\') >= 0 || decoded.IndexOf('\\') >= 0
+            || path.Split('/').Any(static s => s is "..")
+            || decoded.Split('/').Any(static s => s is ".."))
         {
             throw new ArgumentException("URI deve ser um path relativo de mesma origem.", nameof(uri));
         }

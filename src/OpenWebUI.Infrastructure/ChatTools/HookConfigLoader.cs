@@ -182,7 +182,8 @@ public static class HookConfigLoader
     {
         try
         {
-            _ = new System.Text.RegularExpressions.Regex(pattern);
+            _ = new System.Text.RegularExpressions.Regex(pattern, System.Text.RegularExpressions.RegexOptions.None,
+                TimeSpan.FromMilliseconds(500));
             return true;
         }
         catch (ArgumentException)

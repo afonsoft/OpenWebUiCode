@@ -76,7 +76,8 @@ public sealed class LifecycleHookService(
     public static bool Matches(HookDefinition hook, string? toolName) =>
         hook.Matcher is null
         || toolName is null
-        || Regex.IsMatch(toolName, hook.Matcher, RegexOptions.IgnoreCase);
+        || Regex.IsMatch(toolName, hook.Matcher, RegexOptions.IgnoreCase,
+            TimeSpan.FromMilliseconds(500));
 
     /// <summary>
     /// Executa os hooks de um evento em ordem; primeiro <c>block</c>

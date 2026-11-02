@@ -41,19 +41,22 @@ public sealed class SmartPermissionClassifier(
     /// Categorias always-ask (RF-004): padrões que nunca passam pelo
     /// juiz — nem dedup libera.
     /// </summary>
+    private static readonly TimeSpan RegexTimeout =
+        TimeSpan.FromMilliseconds(500);
+
     public static readonly Regex[] AlwaysAskPatterns =
     [
         new(@"\b(npm|yarn|pnpm|pip|pip3|apt|apt-get|brew|choco)\s+(add|install)\b",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
         new(@"\bgit\s+(commit|push|reset|rebase|checkout\s+--|clean\s+-f|restore)\b",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"\b(rm|rmdir|del)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"\b(sudo|doas)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"\bterraform\s+(apply|destroy)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"\bkubectl\s+delete\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"\bdocker\s+(rm|rmi)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
+        new(@"\b(rm|rmdir|del)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
+        new(@"\b(sudo|doas)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
+        new(@"\bterraform\s+(apply|destroy)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
+        new(@"\bkubectl\s+delete\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
+        new(@"\bdocker\s+(rm|rmi)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
         new(@"\.env\b|\.pem\b|id_rsa|\.ssh[/\\]|\.aws[/\\]|credentials",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
     ];
 
     /// <summary>A ação cai numa categoria sempre-ask?</summary>
@@ -70,7 +73,8 @@ public sealed class SmartPermissionClassifier(
     public static string FingerprintOf(string tool, string? argumentsJson)
     {
         var raw = tool + "|" + (argumentsJson ?? "");
-        var normalized = Regex.Replace(raw, @"\s+", " ").Trim();
+        var normalized = Regex.Replace(raw, @"\s+", " ",
+            RegexOptions.None, RegexTimeout).Trim();
         return Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))[..16];
     }

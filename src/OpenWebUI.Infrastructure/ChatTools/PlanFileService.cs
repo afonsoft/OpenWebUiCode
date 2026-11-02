@@ -148,7 +148,8 @@ public sealed partial class PlanFileService
     /// <summary>Match de heading `## Seção` case-insensitive.</summary>
     public static Regex SectionRegex(string section) =>
         new($@"^#{1,3}\s+{Regex.Escape(section)}\s*$",
-            RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
+            RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled,
+            TimeSpan.FromMilliseconds(500));
 
     /// <summary>Primeiro heading `# ` do arquivo (ou primeira linha).</summary>
     private static string? FirstHeading(string path)
