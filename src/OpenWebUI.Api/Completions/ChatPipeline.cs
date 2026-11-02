@@ -842,32 +842,56 @@ public static class ChatPipeline
             catch (Exception ex)
                 when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
             {
-                if (ProviderRetryPolicy.IsContextOverflow(ex))
+                var nextTimeouts = await ResolveRetryAsync(
+                    state, new RetryCtx(providers, callbacks, log),
+                    ex, attempt, timeouts, ct);
+                if (nextTimeouts is null)
                 {
-                    await CompactOverflowAsync(state, callbacks, log, ex, ct);
-                    attempt++;
-                    continue;
-                }
-
-                timeouts = ex is TaskCanceledException or TimeoutException
-                    ? timeouts + 1 : 0;
-                var decision = ProviderRetryPolicy.Decide(
-                    ex, attempt, timeouts, options: providers.RetryOptions);
-                if (!decision.Retry)
-                {
-                    if (RetryFailCode(decision) is { } code)
-                    {
-                        throw new InvalidOperationException(
-                            $"{code}: a chamada ao provedor falhou após "
-                            + $"{attempt + 1} tentativa(s).", ex);
-                    }
                     throw;
                 }
-                await NotifyRetryAsync(
-                    log, callbacks, providers, ex, attempt, decision, ct);
+                timeouts = nextTimeouts.Value;
                 attempt++;
             }
         }
+    }
+
+    /// <summary>Decide o destino de uma falha de completion: compacta
+    /// overflow, notifica retry e devolve o novo contador de timeouts —
+    /// ou <c>null</c> para relançar a exceção original (falha definitiva
+    /// sem código tipado; com código → lança InvalidOperationException).</summary>
+    private sealed record RetryCtx(
+        ProviderService Providers, ToolLoopCallbacks? Callbacks,
+        Microsoft.Extensions.Logging.ILogger? Log);
+
+    private static async Task<int?> ResolveRetryAsync(
+        ToolLoopMutable state, RetryCtx ctx,
+        Exception ex, int attempt, int timeouts, CancellationToken ct)
+    {
+        if (ProviderRetryPolicy.IsContextOverflow(ex))
+        {
+            await CompactOverflowAsync(
+                state, ctx.Callbacks, ctx.Log, ex, ct);
+            return timeouts;
+        }
+
+        var nextTimeouts = ex is TaskCanceledException or TimeoutException
+            ? timeouts + 1 : 0;
+        var decision = ProviderRetryPolicy.Decide(
+            ex, attempt, nextTimeouts,
+            options: ctx.Providers.RetryOptions);
+        if (!decision.Retry)
+        {
+            if (RetryFailCode(decision) is { } code)
+            {
+                throw new InvalidOperationException(
+                    $"{code}: a chamada ao provedor falhou após "
+                    + $"{attempt + 1} tentativa(s).", ex);
+            }
+            return null;
+        }
+        await NotifyRetryAsync(
+            ctx.Log, ctx.Callbacks, ctx.Providers, ex, attempt, decision, ct);
+        return nextTimeouts;
     }
 
     /// <summary>Código tipado da falha definitiva do retry loop —

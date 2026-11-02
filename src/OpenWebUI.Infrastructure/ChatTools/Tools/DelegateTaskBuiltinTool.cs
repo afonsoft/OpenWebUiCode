@@ -137,15 +137,7 @@ public sealed class DelegateTaskBuiltinTool(
             return new BuiltinToolResult("Parâmetro 'prompt' é obrigatório.");
         }
 
-        var extra = ReadString(args, "context", MaxContextChars);
-        var waitExplicit = args.TryGetProperty("wait", out var waitEl)
-            ? waitEl.ValueKind == JsonValueKind.True
-            : (bool?)null;
-        var autoMerge = args.TryGetProperty("merge", out var mergeEl)
-            && mergeEl.ValueKind == JsonValueKind.True;
-        var fullPrompt = string.IsNullOrWhiteSpace(extra)
-            ? prompt
-            : $"{prompt}\n\nContexto adicional:\n{extra}";
+        var fullPrompt = BuildFullPrompt(args, prompt);
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -174,23 +166,41 @@ public sealed class DelegateTaskBuiltinTool(
                 scope, agentName["ext:".Length..], fullPrompt, context, ct);
         }
 
+        return await RouteDispatchAsync(
+            new DispatchRoute(args, scope, db, config, context, agentName,
+                personaSkill, prompt, fullPrompt), ct);
+    }
+
+    private static string BuildFullPrompt(JsonElement args, string prompt)
+    {
+        var extra = ReadString(args, "context", MaxContextChars);
+        return string.IsNullOrWhiteSpace(extra)
+            ? prompt
+            : $"{prompt}\n\nContexto adicional:\n{extra}";
+    }
+
+    /// <summary>Gate de spawn → resolução do agente → run pai → rota de
+    /// dispatch (sidekick persistente, resume ou one-shot).</summary>
+    private async Task<BuiltinToolResult> RouteDispatchAsync(
+        DispatchRoute r, CancellationToken ct)
+    {
         var (gateError, allowedCsv) = await CheckSpawnGateAsync(
-            config, context, agentName, ct);
+            r.Config, r.Context, r.AgentName, ct);
         if (gateError is not null)
         {
             return gateError;
         }
 
         var (agent, agentError) = await ResolveAgentAsync(
-            scope, context, agentName, allowedCsv, personaSkill, ct);
+            r.Scope, r.Context, r.AgentName, allowedCsv, r.PersonaSkill, ct);
         if (agentError is not null)
         {
             return agentError;
         }
 
-        var parentRun = context.RunId is { } parentId
-            ? await db.ChatRuns.AsNoTracking()
-                .FirstOrDefaultAsync(r => r.Id == parentId, ct)
+        var parentRun = r.Context.RunId is { } parentId
+            ? await r.Db.ChatRuns.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == parentId, ct)
             : null;
         if (parentRun is null)
         {
@@ -198,41 +208,53 @@ public sealed class DelegateTaskBuiltinTool(
                 "delegate_task só pode ser chamada dentro de uma run de chat.");
         }
 
+        var waitExplicit = r.Args.TryGetProperty("wait", out var waitEl)
+            ? waitEl.ValueKind == JsonValueKind.True
+            : (bool?)null;
+        var autoMerge = r.Args.TryGetProperty("merge", out var mergeEl)
+            && mergeEl.ValueKind == JsonValueKind.True;
         // SPEC-20261021-harness-seams RF-E1: `team` junta o filho ao team
         // do chamador (roster durável); `resume_chat_id` reutiliza um chat
         // filho existente — subagente continuável em vez de one-shot.
-        var joinTeam = args.TryGetProperty("team", out var teamEl)
+        var joinTeam = r.Args.TryGetProperty("team", out var teamEl)
             && teamEl.ValueKind == JsonValueKind.True;
-        var resumeChatId = args.TryGetProperty("resume_chat_id", out var resumeEl)
+        var resumeChatId = r.Args.TryGetProperty("resume_chat_id", out var resumeEl)
             && resumeEl.ValueKind == JsonValueKind.String
                 ? resumeEl.GetString() : null;
         // SPEC-20261031-sidekick-orchestration RF-002: `persistent:true`
         // reutiliza o chat filho do sidekick entre dispatches do mesmo pai
         // (kv r:{parentRun}:sidekick:{id} → chatId; semáforo serializa
         // dispatches concorrentes no mesmo sidekick).
-        var persistent = args.TryGetProperty("persistent", out var persEl)
+        var persistent = r.Args.TryGetProperty("persistent", out var persEl)
             && persEl.ValueKind == JsonValueKind.True;
         if (persistent)
         {
             return await PersistentSidekickDispatchAsync(
-                new SidekickDispatch(args, config, agent, personaSkill,
-                    prompt, fullPrompt, waitExplicit, autoMerge, joinTeam,
-                    scope, db, context, parentRun), ct);
+                new SidekickDispatch(r.Args, r.Config, agent, r.PersonaSkill,
+                    r.Prompt, r.FullPrompt, waitExplicit, autoMerge, joinTeam,
+                    r.Scope, r.Db, r.Context, parentRun), ct);
         }
         if (resumeChatId is not null)
         {
             return await ResumeInExistingChatAsync(
-                new ResumeRequest(scope, db, context, parentRun, resumeChatId,
-                    fullPrompt, waitExplicit ?? true, joinTeam), ct);
+                new ResumeRequest(r.Scope, r.Db, r.Context, parentRun,
+                    resumeChatId, r.FullPrompt, waitExplicit ?? true,
+                    joinTeam), ct);
         }
 
         var dispatch = await CreateDispatchAsync(
-            new DispatchRequest(args, config, agent, fullPrompt,
+            new DispatchRequest(r.Args, r.Config, agent, r.FullPrompt,
                 waitExplicit, autoMerge, joinTeam,
-                personaSkill?.Content, prompt),
-            scope, db, context, parentRun, ct);
+                r.PersonaSkill?.Content, r.Prompt),
+            r.Scope, r.Db, r.Context, parentRun, ct);
         return dispatch.Result;
     }
+
+    /// <summary>Parâmetros do roteamento de dispatch (S3776/S107).</summary>
+    private sealed record DispatchRoute(
+        JsonElement Args, IServiceScope Scope, AppDbContext Db,
+        ConfigService Config, BuiltinToolContext Context, string? AgentName,
+        Skill? PersonaSkill, string Prompt, string FullPrompt);
 
     /// <summary>Parâmetros do dispatch do sidekick (S107).</summary>
     private sealed record SidekickDispatch(

@@ -77,6 +77,56 @@ internal static class AcpDispatch
             agentInfo = new { name = "open-webui", version = "1.0" },
         });
     }
+    /// <summary>Params do session/prompt: sessionId, prompt (blocos
+    /// text) e model (default "default" quando ausente).</summary>
+    internal static (string? SessionId, string? Prompt, string Model)
+        ExtractPromptParams(JsonElement? parms)
+    {
+        var sessionId = parms is { } p1
+            && p1.TryGetProperty("sessionId", out var s)
+            ? s.GetString() : null;
+        var prompt = ExtractPrompt(parms);
+        var model = parms is { } p2
+            && p2.TryGetProperty("model", out var mm)
+            && mm.ValueKind == JsonValueKind.String
+            ? mm.GetString() : "default";
+        return (sessionId, prompt, model ?? "default");
+    }
+
+    /// <summary>Loop principal: lê linhas JSON-RPC do stdin até EOF;
+    /// linha não-JSON devolve -32700 e segue.</summary>
+    internal static async Task RunStdinLoopAsync(
+        Action<object> send, Func<JsonElement, Task> handleAsync)
+    {
+        string? line;
+        while ((line = await Console.In.ReadLineAsync()) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+            JsonDocument req;
+            try
+            {
+                req = JsonDocument.Parse(line);
+            }
+            catch (JsonException)
+            {
+                send(new
+                {
+                    jsonrpc = "2.0",
+                    id = (object?)null,
+                    error = new { code = -32700, message = "Parse error" },
+                });
+                continue;
+            }
+            using (req)
+            {
+                await handleAsync(req.RootElement);
+            }
+        }
+    }
+
 internal static string? ExtractPrompt(JsonElement? parms)
 {
     if (parms is not { } p
@@ -116,58 +166,10 @@ internal static async Task<string> RelayRunAsync(
         string? sline;
         while ((sline = await reader.ReadLineAsync(ct)) is not null)
         {
-            if (!sline.StartsWith("data:", StringComparison.Ordinal))
+            var done = DispatchSseLine(sline, send, sessionId);
+            if (done is not null)
             {
-                continue;
-            }
-            var data = sline[5..].Trim();
-            if (data.Length == 0 || data == "[DONE]")
-            {
-                continue;
-            }
-            try
-            {
-                var evt = JsonDocument.Parse(data);
-                var type = evt.RootElement.TryGetProperty("type", out var t)
-                    ? t.GetString() : null;
-                if (type is "content.delta" or "content_delta"
-                    && evt.RootElement.TryGetProperty("delta", out var d))
-                {
-                    send(new
-                    {
-                        jsonrpc = "2.0",
-                        method = "session/update",
-                        @params = new
-                        {
-                            sessionId,
-                            update = new
-                            {
-                                sessionUpdate = "agent_message_chunk",
-                                content = new
-                                {
-                                    type = "text",
-                                    text = d.GetString() ?? "",
-                                },
-                            },
-                        },
-                    });
-                }
-                else if (type is "run.completed" or "completed")
-                {
-                    return "end_turn";
-                }
-                else if (type is "run.failed" or "failed")
-                {
-                    return "error";
-                }
-                else if (type is "run.stopped" or "stopped")
-                {
-                    return "cancelled";
-                }
-            }
-            catch (JsonException)
-            {
-                // linha não-JSON — ignora
+                return done;
             }
         }
         return "end_turn";
@@ -175,27 +177,92 @@ internal static async Task<string> RelayRunAsync(
     catch (Exception)
     {
         // Fallback: polling do status até terminal.
-        for (var i = 0; i < 720; i++)
-        {
-            await Task.Delay(500, ct);
-            try
-            {
-                var r = await rpcAsync("runs.get",
-                    new { runId }, ct);
-                var status = r is { } el
-                    && el.TryGetProperty("status", out var s)
-                    ? s.GetString() : null;
-                if (status is "completed") return "end_turn";
-                if (status is "failed") return "error";
-                if (status is "stopped" or "interrupted") return "cancelled";
-            }
-            catch (Exception)
-            {
-                // tenta de novo no próximo tick
-            }
-        }
-        return "end_turn";
+        return await PollRunStatusAsync(rpcAsync, runId, ct);
     }
+}
+
+/// <summary>Processa uma linha SSE: devolve o motivo de término quando a
+/// run chega a um evento terminal, <c>null</c> para continuar.</summary>
+private static string? DispatchSseLine(
+    string sline, Action<object> send, string sessionId)
+{
+    if (!sline.StartsWith("data:", StringComparison.Ordinal))
+    {
+        return null;
+    }
+    var data = sline[5..].Trim();
+    if (data.Length == 0 || data == "[DONE]")
+    {
+        return null;
+    }
+    try
+    {
+        var evt = JsonDocument.Parse(data);
+        var type = evt.RootElement.TryGetProperty("type", out var t)
+            ? t.GetString() : null;
+        if (type is "content.delta" or "content_delta"
+            && evt.RootElement.TryGetProperty("delta", out var d))
+        {
+            SendDelta(send, sessionId, d.GetString() ?? "");
+            return null;
+        }
+        return type switch
+        {
+            "run.completed" or "completed" => "end_turn",
+            "run.failed" or "failed" => "error",
+            "run.stopped" or "stopped" => "cancelled",
+            _ => null,
+        };
+    }
+    catch (JsonException)
+    {
+        // linha não-JSON — ignora
+        return null;
+    }
+}
+
+private static void SendDelta(
+    Action<object> send, string sessionId, string text)
+{
+    send(new
+    {
+        jsonrpc = "2.0",
+        method = "session/update",
+        @params = new
+        {
+            sessionId,
+            update = new
+            {
+                sessionUpdate = "agent_message_chunk",
+                content = new { type = "text", text },
+            },
+        },
+    });
+}
+
+private static async Task<string> PollRunStatusAsync(
+    Func<string, object?, CancellationToken, Task<JsonElement?>> rpcAsync,
+    string runId, CancellationToken ct)
+{
+    for (var i = 0; i < 720; i++)
+    {
+        await Task.Delay(500, ct);
+        try
+        {
+            var r = await rpcAsync("runs.get", new { runId }, ct);
+            var status = r is { } el
+                && el.TryGetProperty("status", out var s)
+                ? s.GetString() : null;
+            if (status is "completed") return "end_turn";
+            if (status is "failed") return "error";
+            if (status is "stopped" or "interrupted") return "cancelled";
+        }
+        catch (Exception)
+        {
+            // tenta de novo no próximo tick
+        }
+    }
+    return "end_turn";
 }
 
 }

@@ -1395,6 +1395,29 @@ public class BuiltinToolsTests
     }
 
     [Test]
+    public async Task Delegate_Context_ConcatenaContextoAdicionalNoPromptDoFilho()
+    {
+        SeedParentChatRun();
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"revise","context":"diff da PR","wait":false}"""),
+            Ctx(), default);
+
+        Assert.That(res.Refused, Is.False, res.Text);
+        using var db = NewDb();
+        var filha = db.ChatRuns.Single(r => r.ParentRunId == "r1");
+        var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
+            filha.RequestJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var userMsg = req.Messages.Single(m => m.Role == "user");
+        Assert.Multiple(() =>
+        {
+            Assert.That(userMsg.Content, Does.Contain("revise"));
+            Assert.That(userMsg.Content,
+                Does.Contain("Contexto adicional:\ndiff da PR"));
+        });
+    }
+
+    [Test]
     public async Task Delegate_ResumeChatId_Invalidos_RetornamErro_SemEnfileirar()
     {
         SeedParentChatRun();

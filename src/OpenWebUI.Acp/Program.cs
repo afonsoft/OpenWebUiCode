@@ -82,24 +82,13 @@ async Task NewSessionAsync(JsonElement? id)
 
 async Task PromptAsync(JsonElement? id, JsonElement? parms)
 {
-    var sessionId = parms is { } p1
-        && p1.TryGetProperty("sessionId", out var s)
-        ? s.GetString() : null;
-    var prompt = AcpDispatch.ExtractPrompt(parms);
+    var (sessionId, prompt, model) = AcpDispatch.ExtractPromptParams(parms);
     if (sessionId is null || prompt is null)
     {
         ReplyError(id, -32602,
             "params: sessionId e prompt são obrigatórios");
         return;
     }
-    // Modelo vem do chat; RPC exige params.model — usa
-    // o primeiro modelo do chat via runs.start é
-    // simplificado: o cliente ACP pode passar
-    // params.model opcional.
-    var model = parms is { } p2
-        && p2.TryGetProperty("model", out var mm)
-        && mm.ValueKind == JsonValueKind.String
-        ? mm.GetString() : "default";
     var started = await RpcAsync("runs.start",
         new { chatId = sessionId, prompt, model },
         CancellationToken.None);
@@ -117,30 +106,7 @@ async Task PromptAsync(JsonElement? id, JsonElement? parms)
     Reply(id, new { stopReason = stop });
 }
 
-string? line;
-while ((line = await Console.In.ReadLineAsync()) is not null)
-{
-    if (string.IsNullOrWhiteSpace(line))
-    {
-        continue;
-    }
-
-    JsonDocument req;
-    try
-    {
-        req = JsonDocument.Parse(line);
-    }
-    catch (JsonException)
-    {
-        Send(new { jsonrpc = "2.0", id = (object?)null,
-            error = new { code = -32700, message = "Parse error" } });
-        continue;
-    }
-
-    using (req)
-    {
-        await AcpDispatch.HandleAsync(
-            req.RootElement, token, Reply, ReplyError,
-            NewSessionAsync, PromptAsync);
-    }
-}
+await AcpDispatch.RunStdinLoopAsync(
+    Send,
+    root => AcpDispatch.HandleAsync(
+        root, token, Reply, ReplyError, NewSessionAsync, PromptAsync));
