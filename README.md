@@ -111,6 +111,10 @@ execution-provider seam (remote sandbox for `shell_exec`/terminal/`lsp_*`).
 |---|---|---|
 | ![chat](docs/screenshots/chat-light.png) | ![workspace](docs/screenshots/workspace-panel.png) | ![terminal](docs/screenshots/terminal.png) |
 
+| Permissions v2 rules | Auth (pt-BR) |
+|---|---|
+| ![Settings → Permissões](docs/screenshots/settings-permissions.png) | ![auth](docs/screenshots/auth-light.png) |
+
 ## Agent features (new — additive layer over upstream parity)
 
 - **`delegate_task`** — spawns a child chat + server-side run: `wait:false` returns
@@ -226,6 +230,37 @@ execution-provider seam (remote sandbox for `shell_exec`/terminal/`lsp_*`).
   "run now".
 - **Chat hierarchy** — `ParentChatId`/`ParentRunId`, `GET /chats/{id}/children`,
   nested sidebar tree, completion markers posted back to the parent chat.
+- **Persistent sidekick sub-agents** — `delegate_task` with `persistent` +
+  `sidekick_id` reuses a named child chat (kv-backed) with a serialized
+  `SidekickGate`; builtin `explore`/`general` profiles, `max_nesting` alias and
+  foreground/background approval switch (`approve-mutations`/`allow-readonly`).
+- **Deferred tool loading** — core/deferred tiers (opt-in `BuiltinTools:Deferred`)
+  keep the system prompt light: a `## Available on demand` index plus the
+  `builtin_tool_search` loader reveals schemas on demand and merges them per
+  iteration; MCP servers defer by volume.
+- **Plan mode v2** — builtin `write_plan` tool, 5-phase plan-mode prompt and
+  `GET /workspace/repo/plans` listing; approved plans save to
+  `.openwebui/plans/`.
+- **Lifecycle hooks** — command (`{matcher, command}`) and prompt hooks across
+  `PreToolUse`/`PostToolUse`/`Stop`/`SessionStart`/`SessionEnd`/`SubagentStop`/
+  `Notification`/`UserPromptSubmit`/`PreCompact`, configured via `.openwebui/
+  hooks.json`; block decisions inject steering notes into the next round.
+- **Smart permission (LLM judge)** — `smart` preset auto-answers low-risk asks
+  and escalates the rest through a per-run LLM classifier with nonce prompt and
+  session dedup.
+- **Sandboxed execution** — `Sandbox:Enabled` confines `shell_exec`/background
+  jobs inside `bubblewrap` (fake home, ro-binds, net off) behind a
+  domain-allowlist network proxy; per-scope tool exclusions and a matching
+  `autonomous` approval preset; `GET /api/v1/system/sandbox` reports status.
+- **Permissions v2** — ordered user rules `{action, resource glob, effect}`
+  (last match wins) evaluated between admin policies and risk presets; "Sempre"
+  answers persist as per-workdir `SavedApproval`s revocable individually;
+  `external_directory` boundary covers file tools + `apply_patch`; all managed
+  in Settings → Permissões (see screenshot below).
+- **Agent loop pack** — parallelism footer on tool results, `unseen_messages`
+  steer readback, `instant_context` restricted-exec collector (`<ANSWER>`
+  XML), `extend_context` budget (skips 1 emergency compaction, cap 2), stall
+  watchdog nudge (threshold 4) and prompt-cache keepalive during approvals.
 
 Full details per feature (with screenshots): [docs/en/AGENT-FEATURES.md](docs/en/AGENT-FEATURES.md) · [docs/pt/RECURSOS-AGENTE.md](docs/pt/RECURSOS-AGENTE.md)
 
