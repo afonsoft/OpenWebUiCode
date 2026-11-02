@@ -139,62 +139,9 @@ while ((line = await Console.In.ReadLineAsync()) is not null)
 
     using (req)
     {
-        var root = req.RootElement;
-        JsonElement? id = root.TryGetProperty("id", out var idEl)
-            ? idEl.Clone() : null;
-        var method = root.TryGetProperty("method", out var m)
-            && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
-        var parms = root.TryGetProperty("params", out var p)
-            && p.ValueKind == JsonValueKind.Object ? p.Clone() : (JsonElement?)null;
-
-        try
-        {
-            switch (method)
-            {
-                case "initialize":
-                    if (string.IsNullOrEmpty(token))
-                    {
-                        ReplyError(id, -32001,
-                            "unauthorized: OPENWEBUI_ACP_TOKEN ausente no ambiente");
-                        break;
-                    }
-                    Reply(id, new
-                    {
-                        protocolVersion = 1,
-                        agentCapabilities = new
-                        {
-                            loadSession = false,
-                            promptCapabilities = new { image = false, audio = false },
-                        },
-                        agentInfo = new { name = "open-webui", version = "1.0" },
-                    });
-                    break;
-
-                case "session/new":
-                    await NewSessionAsync(id);
-                    break;
-
-                case "session/prompt":
-                    await PromptAsync(id, parms);
-                    break;
-
-                case "session/cancel":
-                case "cancel":
-                    Reply(id, new { });
-                    break;
-
-                default:
-                    if (id is not null)
-                    {
-                        ReplyError(id, -32601, $"Method not found: {method}");
-                    }
-                    break;
-            }
-        }
-        catch (Exception ex)
-        {
-            ReplyError(id, -32603, ex.Message);
-        }
+        await AcpDispatch.HandleAsync(
+            req.RootElement, token, Reply, ReplyError,
+            NewSessionAsync, PromptAsync);
     }
 }
 
