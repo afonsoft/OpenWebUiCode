@@ -327,6 +327,7 @@ public sealed class ChatRunExecutor(
         public int SinceCheckpoint;
         public ChatPipeline.ToolLoopOutcome? LoopOutcome;
         public IReadOnlyList<ChatCompletionMessage>? ToolMessages;
+        public int CheckpointTurn;
     }
 
     /// <summary>Resolve o prelúdio da run — request, usuário, gate de
@@ -751,9 +752,9 @@ public sealed class ChatRunExecutor(
         // Checkpoints do workdir (SPEC-20261009-checkpoints-revert):
         // turn 0 = estado pré-run; cada tool mutável depois — o
         // evento `checkpoint` alimenta o Revert da aba Changes.
-        var checkpointTurn = 0;
+        state.CheckpointTurn = 0;
         await PublishCheckpointAsync(
-            run, builtinContext.WorkspacePath, checkpointTurn, ct);
+            run, builtinContext.WorkspacePath, state.CheckpointTurn, ct);
         // plan_exit entra no catálogo sintético da run (RF-003): só
         // é anunciado em modo plan; em build fica invisível — o gate
         // o conhece para interceptar a call se ela escapar.
@@ -945,79 +946,10 @@ public sealed class ChatRunExecutor(
             ToolResultFooter: cfg["AgentLoop:ToolResultFooter"] is { Length: > 0 } footer
                 ? footer
                 : "First privately list what you need next; then request every item that doesn't depend on another's result in this one response",
-            OnResultAsync: async (call, output, result, denied, t) =>
-            {
-                await PublishToolResultAsync(run, call, output, result, denied);
-                // RF-001: tool_result é o fato que liquida a call na
-                // retomada — gravação mandatória (SPEC run-recovery).
-                await runEvents.AppendAsync(run.Id,
-                    RunEventWriter.Types.ToolResult,
-                    new
-                    {
-                        callId = call.Id,
-                        output,
-                        denied,
-                    }, t);
-                lock (_recentTools)
-                {
-                    _recentTools.Enqueue(
-                        $"{call.Name} → {Scrub(Truncate(output, 120)).ReplaceLineEndings(" ")}");
-                    while (_recentTools.Count > 8)
-                    {
-                        _recentTools.Dequeue();
-                    }
-                }
-                // PostToolUse (SPEC-20261031-lifecycle-hooks RF-004):
-                // observação + feedback — o efeito já aconteceu; block/
-                // additionalContext viram nota no próximo round.
-                var postHook = await hooks.RunAsync("PostToolUse",
-                    builtinContext.WorkspacePath, run, call.Name,
-                    new { tool_input = call.ArgumentsJson,
-                          tool_response = output }, t);
-                var hookNotes = postHook.AdditionalContexts.ToList();
-                if (postHook.Decision is HookDecision.Block)
-                {
-                    hookNotes.Add(
-                        $"Feedback de hook ({postHook.DecidedBy}): "
-                        + (postHook.Reason ?? "bloqueado")
-                        + " — o efeito já ocorreu; ajuste o rumo.");
-                }
-                foreach (var note in hookNotes)
-                {
-                    lock (_contextNotes)
-                    {
-                        _contextNotes.Enqueue(
-                            new ChatCompletionMessage(RoleSystem, note));
-                    }
-                }
-                // RF-005 stall watch (agent-prompt-pack): mesma tool+args
-                // com resultado idêntico K vezes seguidas → nudge.
-                if (stallWatch.Record(run.Id, call.Name, call.ArgumentsJson,
-                        output, int.TryParse(cfg["AgentLoop:StallThreshold"], out var st) ? st : 4) is { } nudge)
-                {
-                    lock (_contextNotes)
-                    {
-                        _contextNotes.Enqueue(
-                            new ChatCompletionMessage(RoleSystem, nudge));
-                    }
-                }
-                // Burst de tools (RF-001): a cada 5 resultados uma
-                // revisão — no máx. 1 por burst, cap/cooldown no kick.
-                if (++_toolResultsSinceAdvise >= 5)
-                {
-                    _toolResultsSinceAdvise = 0;
-                    await KickAdvisorAsync(run, "tool_burst", builtinContext, t);
-                }
-                if (!denied && ToolExecutor.FindTool(tools, call.Name) is { } tool
-                    && (ToolCallRiskClassifier.IsFileMutation(
-                            tool, call.ArgumentsJson, builtinContext.WorkspacePath)
-                        || IsApplyPatch(call.Name)))
-                {
-                    checkpointTurn++;
-                    await PublishCheckpointAsync(
-                        run, builtinContext.WorkspacePath, checkpointTurn, t);
-                }
-            },
+            OnResultAsync: (call, output, result, denied, t) =>
+                OnToolResultAsync(
+                    run, tools, builtinContext, state,
+                    call, output, result, denied, t),
             // Texto do modelo sai delta a delta — sem isso a resposta
             // inteira só aparecia num blob no fim da run.
             OnDeltaAsync: async (piece, t) =>
@@ -3397,6 +3329,86 @@ public sealed class ChatRunExecutor(
                 JsonSerializer.Serialize(
                     new { status = run.Status, error = run.Error }, JsonOptions)),
             CancellationToken.None);
+
+    /// <summary>Pós-processa cada tool result: publica, grava o evento
+    /// de liquidação, alimenta hooks de ciclo de vida (PostToolUse), o
+    /// stall watch, o burst do advisor e os checkpoints de mutação.</summary>
+    private async Task OnToolResultAsync(
+        ChatRun run, List<Tool> tools, BuiltinToolContext builtinContext,
+        RunStreamState state, ProviderToolCall call, string output,
+        JsonElement? result, bool denied, CancellationToken t)
+    {
+        await PublishToolResultAsync(run, call, output, result, denied);
+        // RF-001: tool_result é o fato que liquida a call na
+        // retomada — gravação mandatória (SPEC run-recovery).
+        await runEvents.AppendAsync(run.Id,
+            RunEventWriter.Types.ToolResult,
+            new
+            {
+                callId = call.Id,
+                output,
+                denied,
+            }, t);
+        lock (_recentTools)
+        {
+            _recentTools.Enqueue(
+                $"{call.Name} → {Scrub(Truncate(output, 120)).ReplaceLineEndings(" ")}");
+            while (_recentTools.Count > 8)
+            {
+                _recentTools.Dequeue();
+            }
+        }
+        // PostToolUse (SPEC-20261031-lifecycle-hooks RF-004):
+        // observação + feedback — o efeito já aconteceu; block/
+        // additionalContext viram nota no próximo round.
+        var postHook = await hooks.RunAsync("PostToolUse",
+            builtinContext.WorkspacePath, run, call.Name,
+            new { tool_input = call.ArgumentsJson,
+                  tool_response = output }, t);
+        var hookNotes = postHook.AdditionalContexts.ToList();
+        if (postHook.Decision is HookDecision.Block)
+        {
+            hookNotes.Add(
+                $"Feedback de hook ({postHook.DecidedBy}): "
+                + (postHook.Reason ?? "bloqueado")
+                + " — o efeito já ocorreu; ajuste o rumo.");
+        }
+        foreach (var note in hookNotes)
+        {
+            lock (_contextNotes)
+            {
+                _contextNotes.Enqueue(
+                    new ChatCompletionMessage(RoleSystem, note));
+            }
+        }
+        // RF-005 stall watch (agent-prompt-pack): mesma tool+args
+        // com resultado idêntico K vezes seguidas → nudge.
+        if (stallWatch.Record(run.Id, call.Name, call.ArgumentsJson,
+                output, int.TryParse(cfg["AgentLoop:StallThreshold"], out var st) ? st : 4) is { } nudge)
+        {
+            lock (_contextNotes)
+            {
+                _contextNotes.Enqueue(
+                    new ChatCompletionMessage(RoleSystem, nudge));
+            }
+        }
+        // Burst de tools (RF-001): a cada 5 resultados uma
+        // revisão — no máx. 1 por burst, cap/cooldown no kick.
+        if (++_toolResultsSinceAdvise >= 5)
+        {
+            _toolResultsSinceAdvise = 0;
+            await KickAdvisorAsync(run, "tool_burst", builtinContext, t);
+        }
+        if (!denied && ToolExecutor.FindTool(tools, call.Name) is { } tool
+            && (ToolCallRiskClassifier.IsFileMutation(
+                    tool, call.ArgumentsJson, builtinContext.WorkspacePath)
+                || IsApplyPatch(call.Name)))
+        {
+            state.CheckpointTurn++;
+            await PublishCheckpointAsync(
+                run, builtinContext.WorkspacePath, state.CheckpointTurn, t);
+        }
+    }
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max] + "…";
