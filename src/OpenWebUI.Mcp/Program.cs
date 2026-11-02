@@ -7,7 +7,8 @@ using OpenWebUI.Mcp;
 //   OPENWEBUI_API_KEY  — chave sk-* do usuário (tools falham fechado sem ela)
 // Logs nunca vão pro stdout (é protocolo) — erros de boot vão pro stderr.
 
-const string DefaultBaseUrl = "http://localhost:8080";
+// S1075 won't-fix: default local documentado, sobrescrito por OPENWEBUI_URL.
+const string DefaultBaseUrl = "http://localhost:8080"; // NOSONAR
 var baseUrl = Environment.GetEnvironmentVariable("OPENWEBUI_URL")
     ?? DefaultBaseUrl;
 var apiKey = Environment.GetEnvironmentVariable("OPENWEBUI_API_KEY");

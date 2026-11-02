@@ -10,7 +10,8 @@
 // y <see cref="OpenWebUI.Acp.AcpDispatch"/>.
 using OpenWebUI.Acp;
 
-const string DefaultBaseUrl = "http://localhost:8080";
+// S1075 won't-fix: default local documentado, sobrescrito por OPENWEBUI_URL.
+const string DefaultBaseUrl = "http://localhost:8080"; // NOSONAR
 var baseUrl = (Environment.GetEnvironmentVariable("OPENWEBUI_URL")
     ?? DefaultBaseUrl).TrimEnd('/');
 var host = new AcpHost(baseUrl,
