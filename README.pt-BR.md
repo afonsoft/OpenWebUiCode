@@ -13,6 +13,16 @@ estilo VS Code e pipeline de revisão em worktree.
 [![Security Scan](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/security-scan.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/security-scan.yml)
 [![Accessibility Audit](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/a11y-audit.yml/badge.svg)](https://github.com/afonsoft/OpenWebUiCode/actions/workflows/a11y-audit.yml)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=alert_status)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=bugs)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=vulnerabilities)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=code_smells)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=coverage)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Duplicated Lines](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=duplicated_lines_density)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=sqale_rating)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=reliability_rating)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=security_rating)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=sqale_index)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
+[![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=afonsoft_open-webui&metric=ncloc)](https://sonarcloud.io/project/overview?id=afonsoft_open-webui)
 
 > **English version:** [README.md](README.md)
 
