@@ -875,13 +875,16 @@ public class ProviderService(
             }
 
             await ProcessOpenAiChunkAsync(
-                obj, diag, content, callBuffers, dsmlContent, dsmlReasoning,
-                onDelta, onReasoning, ct);
+                obj,
+                new OpenAiStreamCtx(diag, content, callBuffers,
+                    dsmlContent, dsmlReasoning, onDelta, onReasoning),
+                ct);
         }
 
         return await FinalizeOpenAiStreamAsync(
-            diag, content, callBuffers, dsmlContent, dsmlReasoning,
-            onDelta, onReasoning, ct);
+            new OpenAiStreamCtx(diag, content, callBuffers,
+                dsmlContent, dsmlReasoning, onDelta, onReasoning),
+            ct);
     }
 
     private HttpRequestMessage BuildOpenAiRequest(
@@ -933,16 +936,10 @@ public class ProviderService(
     /// tool_calls fragmentadas por <c>index</c>.
     /// </summary>
     private async Task ProcessOpenAiChunkAsync(
-        JsonObject node,
-        OpenAiStreamDiag diag,
-        StringBuilder content,
-        SortedDictionary<int, OpenAiToolCallBuffer> callBuffers,
-        DeltaFilterChain dsmlContent,
-        DeltaFilterChain dsmlReasoning,
-        Func<string, CancellationToken, Task>? onDelta,
-        Func<string, CancellationToken, Task>? onReasoning,
-        CancellationToken ct)
+        JsonObject node, OpenAiStreamCtx ctx, CancellationToken ct)
     {
+        var (diag, content, callBuffers, dsmlContent, dsmlReasoning,
+            onDelta, onReasoning) = ctx;
         // {"error": ...} mid-stream: erro honesto de provider que a
         // retry policy classifica — antes era engolido em silêncio.
         if (Prop(node, ErrorKey) is { } errorNode)
@@ -1103,15 +1100,10 @@ public class ProviderService(
     /// vazio) e o <see cref="ProviderCompletion"/> final.
     /// </summary>
     private async Task<ProviderCompletion> FinalizeOpenAiStreamAsync(
-        OpenAiStreamDiag diag,
-        StringBuilder content,
-        SortedDictionary<int, OpenAiToolCallBuffer> callBuffers,
-        DeltaFilterChain dsmlContent,
-        DeltaFilterChain dsmlReasoning,
-        Func<string, CancellationToken, Task>? onDelta,
-        Func<string, CancellationToken, Task>? onReasoning,
-        CancellationToken ct)
+        OpenAiStreamCtx ctx, CancellationToken ct)
     {
+        var (diag, content, callBuffers, dsmlContent, dsmlReasoning,
+            onDelta, onReasoning) = ctx;
         // [DONE]: solta o que os filtros seguraram (texto normal segue;
         // markup truncado já entregou os invokes completos que couberam).
         var tailContent = dsmlContent.Flush();
@@ -1452,8 +1444,9 @@ public class ProviderService(
             }
 
             (usage, doneReason) = await ProcessOllamaLineAsync(
-                node, usage, doneReason, content, callNodes,
-                markupContent, markupReasoning, onDelta, onReasoning, ct);
+                node, usage, doneReason, callNodes,
+                new ProviderStreamCtx(content, markupContent, markupReasoning,
+                    onDelta, onReasoning), ct);
         }
 
         // Fim do NDJSON: solta o que os filtros seguraram.
@@ -1486,18 +1479,44 @@ public class ProviderService(
     /// separado, tool_calls clonadas, usage da linha final e
     /// <c>done_reason</c>. Retorna o par (usage, doneReason) atualizado.
     /// </summary>
+
+    /// <summary>Sinks compartilhados dos streams (buffer + filtros de
+    /// markup + callbacks) — agrupa parâmetros repetidos (S107).</summary>
+    private sealed record ProviderStreamCtx(
+        StringBuilder Content,
+        ReasoningMarkupFilter MarkupContent,
+        ReasoningMarkupFilter MarkupReasoning,
+        Func<string, CancellationToken, Task>? OnDelta,
+        Func<string, CancellationToken, Task>? OnReasoning);
+
+    /// <summary>Estado compartilhado do stream OpenAI (S107).</summary>
+    private sealed record OpenAiStreamCtx(
+        OpenAiStreamDiag Diag,
+        StringBuilder Content,
+        SortedDictionary<int, OpenAiToolCallBuffer> CallBuffers,
+        DeltaFilterChain DsmlContent,
+        DeltaFilterChain DsmlReasoning,
+        Func<string, CancellationToken, Task>? OnDelta,
+        Func<string, CancellationToken, Task>? OnReasoning);
+
+    /// <summary>Estado compartilhado do stream Anthropic (S107).</summary>
+    private sealed record AnthropicStreamCtx(
+        AnthropicStreamState State,
+        StringBuilder Content,
+        List<ProviderToolCall> Calls,
+        JsonArray CallsJson,
+        Dictionary<int, (string Id, string Name, StringBuilder Args)> OpenTools,
+        ProviderStreamCtx Sink);
+
     private async Task<(ProviderUsage? Usage, string? DoneReason)> ProcessOllamaLineAsync(
         JsonNode? node,
         ProviderUsage? usage,
         string? doneReason,
-        StringBuilder content,
         List<JsonNode> callNodes,
-        ReasoningMarkupFilter markupContent,
-        ReasoningMarkupFilter markupReasoning,
-        Func<string, CancellationToken, Task>? onDelta,
-        Func<string, CancellationToken, Task>? onReasoning,
+        ProviderStreamCtx sink,
         CancellationToken ct)
     {
+        var (content, markupContent, markupReasoning, onDelta, onReasoning) = sink;
         if (Prop(node, ErrorKey) is { } errorNode)
         {
             throw MidStreamProviderError(errorNode);
@@ -2233,8 +2252,12 @@ public class ProviderService(
                 throw MidStreamProviderError(errorNode);
             }
             await ProcessAnthropicEventAsync(
-                eventName, data, state, content, calls, callsJson, openTools,
-                markupContent, markupReasoning, onDelta, onReasoning, ct);
+                eventName, data,
+                new AnthropicStreamCtx(state, content, calls, callsJson,
+                    openTools,
+                    new ProviderStreamCtx(content, markupContent,
+                        markupReasoning, onDelta, onReasoning)),
+                ct);
         }
 
         // Fim do SSE: solta o que os filtros de markup seguraram.
@@ -2267,19 +2290,18 @@ public class ProviderService(
 
     /// <summary>Despacha um evento SSE do stream Anthropic por nome/tipo.</summary>
     private static async Task ProcessAnthropicEventAsync(
-        string eventName,
-        JsonNode? data,
-        AnthropicStreamState state,
-        StringBuilder content,
-        List<ProviderToolCall> calls,
-        JsonArray callsJson,
-        Dictionary<int, (string Id, string Name, StringBuilder Args)> openTools,
-        ReasoningMarkupFilter markupContent,
-        ReasoningMarkupFilter markupReasoning,
-        Func<string, CancellationToken, Task>? onDelta,
-        Func<string, CancellationToken, Task>? onReasoning,
+        string eventName, JsonNode? data, AnthropicStreamCtx actx,
         CancellationToken ct)
     {
+        var state = actx.State;
+        var content = actx.Content;
+        var calls = actx.Calls;
+        var callsJson = actx.CallsJson;
+        var openTools = actx.OpenTools;
+        var markupContent = actx.Sink.MarkupContent;
+        var markupReasoning = actx.Sink.MarkupReasoning;
+        var onDelta = actx.Sink.OnDelta;
+        var onReasoning = actx.Sink.OnReasoning;
         var index = IntNum(Prop(data, IndexKey)) ?? 0;
         var block = Prop(data, "content_block");
         if (eventName == "content_block_start"
@@ -2293,8 +2315,7 @@ public class ProviderService(
         else if (eventName == "content_block_delta")
         {
             await ProcessAnthropicDeltaAsync(
-                Prop(data, DeltaKey), index, content, openTools,
-                markupContent, markupReasoning, onDelta, onReasoning, ct);
+                Prop(data, DeltaKey), index, openTools, actx.Sink, ct);
         }
         else if (eventName == "content_block_stop"
             && openTools.Remove(index, out var closed))
@@ -2329,14 +2350,11 @@ public class ProviderService(
     private static async Task ProcessAnthropicDeltaAsync(
         JsonNode? delta,
         int index,
-        StringBuilder content,
         Dictionary<int, (string Id, string Name, StringBuilder Args)> openTools,
-        ReasoningMarkupFilter markupContent,
-        ReasoningMarkupFilter markupReasoning,
-        Func<string, CancellationToken, Task>? onDelta,
-        Func<string, CancellationToken, Task>? onReasoning,
+        ProviderStreamCtx sink,
         CancellationToken ct)
     {
+        var (content, markupContent, markupReasoning, onDelta, onReasoning) = sink;
         var deltaType = Str(Prop(delta, "type"));
         if (deltaType == "text_delta")
         {
@@ -2920,8 +2938,9 @@ public class ProviderService(
             foreach (var part in parts ?? [])
             {
                 await ProcessGooglePartAsync(
-                    part, content, calls, callsJson,
-                    markupContent, markupReasoning, onDelta, onReasoning, ct);
+                    part, calls, callsJson,
+                    new ProviderStreamCtx(content, markupContent,
+                        markupReasoning, onDelta, onReasoning), ct);
             }
         }
 
@@ -2954,15 +2973,12 @@ public class ProviderService(
     /// </summary>
     private static async Task ProcessGooglePartAsync(
         JsonNode? part,
-        StringBuilder content,
         List<ProviderToolCall> calls,
         JsonArray callsJson,
-        ReasoningMarkupFilter markupContent,
-        ReasoningMarkupFilter markupReasoning,
-        Func<string, CancellationToken, Task>? onDelta,
-        Func<string, CancellationToken, Task>? onReasoning,
+        ProviderStreamCtx sink,
         CancellationToken ct)
     {
+        var (content, markupContent, markupReasoning, onDelta, onReasoning) = sink;
         if (Str(Prop(part, TextKey)) is { } text)
         {
             await EmitGoogleTextPartAsync(

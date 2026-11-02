@@ -15,7 +15,6 @@ using OpenWebUI.Acp;
 var baseUrl = (Environment.GetEnvironmentVariable("OPENWEBUI_URL")
     ?? "http://localhost:8080").TrimEnd('/');
 var token = Environment.GetEnvironmentVariable("OPENWEBUI_ACP_TOKEN");
-const string EndTurnReason = "end_turn";
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var http = new HttpClient { BaseAddress = new Uri(baseUrl) };
 if (!string.IsNullOrEmpty(token))

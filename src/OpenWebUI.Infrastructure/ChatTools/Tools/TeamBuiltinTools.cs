@@ -110,7 +110,7 @@ public sealed class TeamTaskBuiltinTool(IServiceScopeFactory scopeFactory)
             "list" => await ListTasksAsync(db, teamId, ct),
             "create" => await CreateTaskAsync(db, args, context, teamId, now, ct),
             "claim" or "update" or "complete" => await MutateTaskAsync(
-                db, args, context, teamId, taskId, op, now, ct),
+                new TaskMutation(db, args, context, teamId, taskId, op, now), ct),
             _ => new BuiltinToolResult(
                 "op deve ser list|create|claim|update|complete."),
         };
@@ -162,11 +162,15 @@ public sealed class TeamTaskBuiltinTool(IServiceScopeFactory scopeFactory)
             new { taskId = task.Id, status = task.Status });
     }
 
+    /// <summary>Parâmetros da mutação de tarefa (S107).</summary>
+    private sealed record TaskMutation(
+        AppDbContext Db, JsonElement Args, BuiltinToolContext Context,
+        string TeamId, string? TaskId, string Op, long Now);
+
     private static async Task<BuiltinToolResult> MutateTaskAsync(
-        AppDbContext db, JsonElement args, BuiltinToolContext context,
-        string teamId, string? taskId, string op, long now,
-        CancellationToken ct)
+        TaskMutation m, CancellationToken ct)
     {
+        var (db, args, context, teamId, taskId, op, now) = m;
         if (taskId is null)
         {
             return new BuiltinToolResult("'task_id' é obrigatório.");

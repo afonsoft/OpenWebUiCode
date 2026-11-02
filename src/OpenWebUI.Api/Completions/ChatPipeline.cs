@@ -610,8 +610,9 @@ public static class ChatPipeline
             // com cap, (3) publicação sequencial na ordem. Calls mutáveis
             // e grupos de 1 seguem o caminho sequencial de sempre.
             await RunToolCallsAsync(
-                state, step.ToolCalls, tools, toolExecutor, builtinContext,
-                maxParallelTools, callbacks, log, ct);
+                new ToolCallLoopCtx(state, tools, toolExecutor,
+                    builtinContext, maxParallelTools, callbacks, log),
+                step.ToolCalls, ct);
             state.Round++;
 
         }
@@ -1186,10 +1187,9 @@ public static class ChatPipeline
     /// Devin Review PR#458). Exceção aqui nunca escapa e derruba a run.</summary>
     private static async Task<ToolExecutionOutcome> ExecuteCallAsync(
         ProviderToolCall call, ToolGateDecision gate, SemaphoreSlim? cap,
-        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
-        BuiltinToolContext? builtinContext,
-        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+        ToolCallLoopCtx ctx, CancellationToken ct)
     {
+        var (_, tools, toolExecutor, builtinContext, _, _, log) = ctx;
         if (!gate.Approved)
         {
             return new ToolExecutionOutcome(
@@ -1256,11 +1256,11 @@ public static class ChatPipeline
     /// pendentes (reabre o budget de nudges), evento OnResult e a
     /// mensagem role=tool na janela e no tail.</summary>
     private static async Task PublishCallResultAsync(
-        ToolLoopMutable state, ProviderToolCall call,
+        ToolCallLoopCtx ctx, ProviderToolCall call,
         ToolGateDecision gate, ToolExecutionOutcome outcome,
-        TimeSpan elapsed, ToolLoopCallbacks? callbacks,
-        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+        TimeSpan elapsed, CancellationToken ct)
     {
+        var (state, _, _, _, _, callbacks, log) = ctx;
         var denied = !gate.Approved;
         var output = outcome.Text;
         log?.LogInformation(
@@ -1298,13 +1298,22 @@ public static class ChatPipeline
     /// <summary>Execução do batch de calls: grupos contíguos de
     /// paralelizáveis (≥2) rodam gate→exec concorrente→publish na ordem;
     /// calls mutáveis ou solitárias seguem o caminho sequencial.</summary>
+
+    /// <summary>Contexto compartilhado do loop de tool calls (S107):
+    /// estado mutável, catálogo, executor, contexto builtin, cap de
+    /// paralelismo, callbacks e log.</summary>
+    private sealed record ToolCallLoopCtx(
+        ToolLoopMutable State, IReadOnlyList<Tool> Tools,
+        ToolExecutor ToolExecutor, BuiltinToolContext? BuiltinContext,
+        int MaxParallelTools, ToolLoopCallbacks? Callbacks,
+        Microsoft.Extensions.Logging.ILogger? Log);
+
     private static async Task RunToolCallsAsync(
-        ToolLoopMutable state, IReadOnlyList<ProviderToolCall> calls,
-        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
-        BuiltinToolContext? builtinContext, int maxParallelTools,
-        ToolLoopCallbacks? callbacks,
-        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+        ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
+        CancellationToken ct)
     {
+        var (state, tools, toolExecutor, builtinContext, maxParallelTools,
+            callbacks, log) = ctx;
         for (var k = 0; k < calls.Count;)
         {
             // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
@@ -1317,8 +1326,7 @@ public static class ChatPipeline
             if (end - k >= 2)
             {
                 await RunParallelCallGroupAsync(
-                    state, calls, k, end - k, tools, toolExecutor,
-                    builtinContext, maxParallelTools, callbacks, log, ct);
+                    ctx, calls, k, end - k, ct);
                 k = end;
                 continue;
             }
@@ -1327,12 +1335,10 @@ public static class ChatPipeline
             var callSw = Stopwatch.StartNew();
             var gate = await PrepareCallAsync(call, callbacks, ct);
             var outcome = await ExecuteCallAsync(
-                call, gate, null, tools, toolExecutor,
-                builtinContext, log, ct);
+                call, gate, null, ctx, ct);
             callSw.Stop();
             await PublishCallResultAsync(
-                state, call, gate, outcome, callSw.Elapsed,
-                callbacks, log, ct);
+                ctx, call, gate, outcome, callSw.Elapsed, ct);
             k = Math.Max(k + 1, end);
         }
     }
@@ -1341,13 +1347,11 @@ public static class ChatPipeline
     /// (2) execução concorrente com cap, (3) publicação sequencial na
     /// ordem (SPEC-20261016-parallel-tool-calls).</summary>
     private static async Task RunParallelCallGroupAsync(
-        ToolLoopMutable state, IReadOnlyList<ProviderToolCall> calls,
-        int start, int count,
-        IReadOnlyList<Tool> tools, ToolExecutor toolExecutor,
-        BuiltinToolContext? builtinContext, int maxParallelTools,
-        ToolLoopCallbacks? callbacks,
-        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+        ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
+        int start, int count, CancellationToken ct)
     {
+        var (state, tools, toolExecutor, builtinContext, maxParallelTools,
+            callbacks, log) = ctx;
         var gates = new ToolGateDecision[count];
         for (var g = 0; g < count; g++)
         {
@@ -1364,8 +1368,7 @@ public static class ChatPipeline
                 try
                 {
                     outcomes[g] = await ExecuteCallAsync(
-                        calls[start + g], gates[g], cap,
-                        tools, toolExecutor, builtinContext, log, ct);
+                        calls[start + g], gates[g], cap, ctx, ct);
                 }
                 catch (Exception ex)
                 {
@@ -1377,8 +1380,7 @@ public static class ChatPipeline
         for (var g = 0; g < count; g++)
         {
             await PublishCallResultAsync(
-                state, calls[start + g], gates[g], outcomes[g], elapsed[g],
-                callbacks, log, ct);
+                ctx, calls[start + g], gates[g], outcomes[g], elapsed[g], ct);
         }
         log?.LogInformation(
             "Batch paralelo: {Count} tools em {Elapsed}ms.",

@@ -215,9 +215,9 @@ public sealed class DelegateTaskBuiltinTool(
         if (persistent)
         {
             return await PersistentSidekickDispatchAsync(
-                args, config, agent, personaSkill, prompt, fullPrompt,
-                waitExplicit, autoMerge, joinTeam,
-                scope, db, context, parentRun, ct);
+                new SidekickDispatch(args, config, agent, personaSkill,
+                    prompt, fullPrompt, waitExplicit, autoMerge, joinTeam,
+                    scope, db, context, parentRun), ct);
         }
         if (resumeChatId is not null)
         {
@@ -234,18 +234,32 @@ public sealed class DelegateTaskBuiltinTool(
         return dispatch.Result;
     }
 
+    /// <summary>Parâmetros do dispatch do sidekick (S107).</summary>
+    private sealed record SidekickDispatch(
+        JsonElement Args, ConfigService Config, AgentDefinition? Agent,
+        Skill? PersonaSkill, string Prompt, string FullPrompt,
+        bool? WaitExplicit, bool AutoMerge, bool JoinTeam,
+        IServiceScope Scope, AppDbContext Db, BuiltinToolContext Context,
+        ChatRun ParentRun);
+
+    /// <summary>Parâmetros da criação do chat filho (S107).</summary>
+    private sealed record ChildChatSpec(
+        AppDbContext Db, BuiltinToolContext Context, AgentDefinition? Agent,
+        string ChildModel, IReadOnlyList<string>? ChildToolIds,
+        string? SystemPrompt, string Preset, string Prompt,
+        string FullPrompt, bool JoinTeam, long Now);
+
     /// <summary>
     /// Caminho do sidekick persistente (SPEC-20261031-sidekick-orchestration
     /// RF-002): kv do pai resolve o chat filho entre dispatches e o
     /// semáforo serializa dispatches concorrentes do mesmo sidekick.
     /// </summary>
     private async Task<BuiltinToolResult> PersistentSidekickDispatchAsync(
-        JsonElement args, ConfigService config, AgentDefinition? agent,
-        Skill? personaSkill, string prompt, string fullPrompt,
-        bool? waitExplicit, bool autoMerge, bool joinTeam,
-        IServiceScope scope, AppDbContext db, BuiltinToolContext context,
-        ChatRun parentRun, CancellationToken ct)
+        SidekickDispatch d, CancellationToken ct)
     {
+        var (args, config, agent, personaSkill, prompt, fullPrompt,
+            waitExplicit, autoMerge, joinTeam, scope, db, context,
+            parentRun) = d;
         var sidekickId = ReadString(args, "sidekick_id", 100)?.Trim();
         if (string.IsNullOrEmpty(sidekickId))
         {
@@ -331,8 +345,8 @@ public sealed class DelegateTaskBuiltinTool(
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var childChat = await CreateChildChatAsync(
-            db, context, agent, childModel!, plan.ToolIds, systemPrompt,
-            preset, prompt, fullPrompt, joinTeam, now, ct);
+            new ChildChatSpec(db, context, agent, childModel!, plan.ToolIds,
+                systemPrompt, preset, prompt, fullPrompt, joinTeam, now), ct);
 
         var childRequest = new ChatCompletionRequest(
             childModel!,
@@ -623,11 +637,10 @@ public sealed class DelegateTaskBuiltinTool(
     /// raiz quando <c>team:true</c> (leader na primeira delegação).
     /// </summary>
     private static async Task<Chat> CreateChildChatAsync(
-        AppDbContext db, BuiltinToolContext context, AgentDefinition? agent,
-        string childModel, IReadOnlyList<string>? childToolIds,
-        string? systemPrompt, string preset, string prompt,
-        string fullPrompt, bool joinTeam, long now, CancellationToken ct)
+        ChildChatSpec s, CancellationToken ct)
     {
+        var (db, context, agent, childModel, childToolIds, systemPrompt,
+            preset, prompt, fullPrompt, joinTeam, now) = s;
         var title = prompt.Length > MaxTitleChars
             ? prompt[..MaxTitleChars] + "…"
             : prompt;
