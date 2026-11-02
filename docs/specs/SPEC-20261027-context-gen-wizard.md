@@ -9,7 +9,7 @@
 | Stack | `.NET` (ASP.NET Core + EF Core + Blazor WASM) |
 | Repository | `/home/ubuntu/repos/open-webui` |
 | Branch | `feature/Devin-20261027-context-gen-wizard` |
-| Status | `Delivered` |
+| Status | `Completed` |
 | Parent | Análise Lovable `build/portfolio-website-builder` (2026-10-27) |
 
 ## 1. User Story
@@ -162,4 +162,4 @@ src/OpenWebUI.Infrastructure/Data/AppDbContext.cs   # DbSet + config
 - [x] System prompt contém persona/style/projects e `prompt_version`
 - [x] Iteração via chat preserva contexto da sessão
 - [x] Coverage ratchet não regride; `check-spec-status.py` OK
-- [ ] SPEC arquivada em `docs/specs/` com Status `Completed` + issue/épico atualizados
+- [x] SPEC arquivada em `docs/specs/` com Status `Completed` + issue/épico atualizados
