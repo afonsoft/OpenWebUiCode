@@ -112,7 +112,7 @@ public sealed class TodoWriteBuiltinTool : IBuiltinChatTool
             {
                 continue;
             }
-            var (id, content, status) = norm;
+            var (id, content, status) = norm.Value;
 
             if (status == "completed")
             {
