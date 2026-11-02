@@ -312,6 +312,22 @@ public class RunCoverageTests
     }
 
     [Test]
+    public async Task Executor_ParamsAgentInexistente_SegueParaProvider()
+    {
+        // Regressão do refactor S3776 (ApplyCommandOverridesAsync): params.agent
+        // sem definição não interrompe a run — segue até falhar no provider.
+        var auth = await SignUpAsync("AgentOv", $"agentov-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+        var run = await ExecutarDiretoAsync(chat.Id, auth.User.Id,
+            "{\"model\":\"llama3\",\"connection\":\"bogus\","
+            + "\"params\":{\"agent\":\"agente-que-nao-existe\"},"
+            + "\"messages\":[{\"role\":\"user\",\"content\":\"oi\"}]}");
+        Assert.That(run.Status, Is.EqualTo(ChatRunStatus.Failed));
+        Assert.That(run.Error, Is.Not.Null.And.Not.Empty);
+    }
+
+    [Test]
     public async Task Stop_RunFinalizada_RetornaConflito()
     {
         var auth = await SignUpAsync("Stop", "stop@cov.local");
