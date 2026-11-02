@@ -146,6 +146,59 @@ public class ClientServiceEdgeTests
         Assert.That(req.RequestUri!.OriginalString, Is.EqualTo("/api/v1/files?x=1#f"));
     }
 
+    // CS9113 cleanup (fix/client-warnings): GenContextClientService deixou
+    // de receber ApiService — o generate acontece em Generate.razor. O
+    // serviço segue resolvendo só com HttpClient + BrowserStorage e o
+    // payload do wizard continua no schema v1.
+    [Test]
+    public void GenContext_ConstroiSemApiService()
+    {
+        var service = new GenContextClientService(
+            new HttpClient { BaseAddress = new Uri("http://localhost/") },
+            new BrowserStorage(new FakeJs()));
+        Assert.That(service, Is.Not.Null);
+    }
+
+    [Test]
+    public void GenContext_ToPayload_FiltraProjetoSemTituloESeparaTags()
+    {
+        var draft = new GenContextClientService.Draft
+        {
+            Persona = "custom",
+            PersonaCustom = "designer",
+            Projects =
+            [
+                new() { Title = " ok ", TagsCsv = "a, b ,,c" },
+                new() { Title = "  ", Summary = "NAO_DEVE_ENTRAR" },
+            ],
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            GenContextClientService.ToPayload(draft));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(json, Does.Contain("\"persona\":\"custom\""));
+            Assert.That(json, Does.Contain("\"personaCustom\":\"designer\""));
+            Assert.That(json, Does.Contain("\"title\":\"ok\""));
+            Assert.That(json, Does.Contain("\"tags\":[\"a\",\"b\",\"c\"]"));
+            Assert.That(json, Does.Not.Contain("NAO_DEVE_ENTRAR"));
+        });
+    }
+
+    [Test]
+    public async Task GenContext_LoadDraft_JsonCorrompido_RetornaDraftNovo()
+    {
+        var js = new FakeJs { ["gen-context-draft"] = "{invalido" };
+        var service = new GenContextClientService(
+            new HttpClient { BaseAddress = new Uri("http://localhost/") },
+            new BrowserStorage(js));
+
+        var draft = await service.LoadDraftAsync();
+
+        Assert.That(draft.Persona, Is.EqualTo("developer"));
+    }
+
     private static AuthService NewAuthService()
     {
         var js = new FakeJs();
