@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/anthropic-messages-v2-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#661` |
 | Status | `Approved` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 

@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/provider-contract-tests-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#660` |
 | Status | `Approved` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 

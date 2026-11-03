@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/providers-usage-tokens-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#658` |
 | Status | `Approved` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 

@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/gemini-native-tools-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#662` |
 | Status | `Approved` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 

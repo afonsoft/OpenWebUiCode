@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/anthropic-thinking-config-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#659` |
 | Status | `Approved` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
