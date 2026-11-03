@@ -333,11 +333,19 @@ Coverage gate via Coverlet + ratchet (`.ci/coverage-baseline.txt` only goes up).
 
 | Workflow | Covers |
 |---|---|
-| `ci-build-test.yml` | Release build, all tests + coverage gate, WASM payload, tailwind freshness, Docker build, baseline ratchet |
-| `a11y-audit.yml` | axe-core (Playwright) mobile+desktop |
+| `ci-build-test.yml` | Release build, all tests + coverage gate (Coverlet + baseline ratchet in `.ci/`), WASM drift guards, Tailwind freshness, Docker build, admission gate |
+| `a11y-audit.yml` | axe-core + usability/visual smoke (Playwright, mobile+desktop) |
+| `chat-e2e.yml` | Real-provider chat E2E (secrets-gated, skips green without `LLM_*`) |
 | `code-quality.yml` | Qodana + [SonarCloud](https://sonarcloud.io/project/overview?id=afonsoft_open-webui) |
-| `security-scan.yml` | CodeQL (C#+JS), Trivy, GitGuardian, Snyk |
-| `release.yml` | Tag `vX.Y.Z` → multi-arch (amd64+arm64) GHCR + Docker Hub image |
+| `security-scan.yml` | CodeQL (C#+JS), gitleaks, actionlint+zizmor, OSV-Scanner, hadolint, Snyk, Trivy |
+| `scorecard.yml` | OpenSSF Scorecard (SARIF, weekly) |
+| `perf.yml` | Weekly load test — aiohttp harness in `tools/perf/` + aggregate-rps gate |
+| `release.yml` | Tag `vX.Y.Z` → artifacts + multi-arch (amd64+arm64) GHCR + Docker Hub image |
+| `dockerhub-overview.yml` | Syncs `docs/dockerhub/overview.md` to Docker Hub (manual) |
+| `cleanup-artifacts.yml` | Nightly cleanup of artifacts older than 30 days |
+
+Full pipeline & tooling map: [docs/en/CI-CD.md](docs/en/CI-CD.md) ·
+[docs/pt/CI-CD.md](docs/pt/CI-CD.md)
 
 ## Documentation
 
