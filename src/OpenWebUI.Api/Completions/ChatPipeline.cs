@@ -104,23 +104,38 @@ public static class ChatPipeline
     {
         var messages = request.Messages.ToList();
         var pctx = BuildPromptContext(request, user, messages, deps, agentMode, chatId, ct);
-        var systemParts = await CollectSystemPartsAsync(pctx, deps, log);
+        var (staticParts, dynamicParts) = await CollectSystemPartsAsync(pctx, deps, log);
 
         var model = pctx.Model;
         var parameters = pctx.Parameters;
 
-        // 4. Mescla partes de sistema numa única mensagem inicial.
-        if (systemParts.Count > 0)
+        // 4. Mescla partes de sistema — SPEC-20261103-agent-prompt-cache
+        // RF-001: contribuidores Static viram o prefixo cacheável (1ª msg
+        // system); Dynamic formam a 2ª msg, após o breakpoint. Providers
+        // sem cache ignoram a divisão (ordem preservada).
+        if (staticParts.Count > 0 || dynamicParts.Count > 0)
         {
-            var merged = string.Join("\n\n", systemParts);
             var existing = messages.FindIndex(m => m.Role == "system");
+            var existingContent = existing >= 0 ? messages[existing].Content : null;
             if (existing >= 0)
             {
-                messages[existing] = messages[existing] with { Content = $"{merged}\n\n{messages[existing].Content}" };
+                messages.RemoveAt(existing);
             }
-            else
+            // O system do request é conteúdo do usuário — vai ao bloco
+            // dinâmico (não invalida o prefixo cacheável).
+            var dyn = string.Join("\n\n",
+                dynamicParts.Concat(existingContent is { Length: > 0 } e ? [e] : []));
+            if (dyn.Length > 0)
             {
-                messages.Insert(0, new ChatCompletionMessage("system", merged));
+                messages.Insert(0, new ChatCompletionMessage("system", dyn));
+            }
+            if (staticParts.Count > 0)
+            {
+                var stat = string.Join("\n\n", staticParts);
+                messages.Insert(0, new ChatCompletionMessage("system", stat));
+                log?.LogDebug("prompt_block sha256={Hash} chars={Chars}",
+                    Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes(stat)))[..16], stat.Length);
             }
         }
 
@@ -139,6 +154,15 @@ public static class ChatPipeline
                 ? pctx.AttachedRefs.ToList()
                 : null,
         };
+
+        // SPEC-20261103-agent-prompt-cache RF-005: prompt_cache:enabled
+        // desliga a marcação de cache (CacheFormat=null) — request
+        // byte-idêntico ao comportamento sem cache.
+        if (built.CacheFormat is not null
+            && !await deps.Config.GetAsync("prompt_cache:enabled", true, ct))
+        {
+            built = built with { CacheFormat = null };
+        }
 
         // 5. Filtros declarativos do modelo custom (inlet) em ordem estável.
         var inletFilters = ModelFilterService.Parse(pctx.CustomModel?.MetaJson);
@@ -174,17 +198,19 @@ public static class ChatPipeline
     /// verificada pelo teste golden). Um contributor que lança exceção é
     /// pulado com LogWarning — mesma tolerância dos blocos inline.
     /// </summary>
-    private static async Task<List<string>> CollectSystemPartsAsync(
+    private static async Task<(List<string> Static, List<string> Dynamic)>
+        CollectSystemPartsAsync(
         OpenWebUI.Infrastructure.SystemPrompt.PromptContext pctx,
         EnrichDeps deps, Microsoft.Extensions.Logging.ILogger? log)
     {
-        var systemParts = new List<string>();
+        var staticParts = new List<string>();
+        var dynamicParts = new List<string>();
         var orderedContributors = deps.PromptContributors.OrderBy(c => c.Order).ToList();
         if (orderedContributors.Count == 0)
         {
             // Sem DI (host headless mínimo/teste avulso): pelo menos o
             // prompt base nunca pode sumir.
-            systemParts.Add(DefaultSystemPrompt);
+            staticParts.Add(DefaultSystemPrompt);
         }
         foreach (var contributor in orderedContributors)
         {
@@ -193,7 +219,11 @@ public static class ChatPipeline
                 var sections = await contributor.ContributeAsync(pctx);
                 if (sections is { Count: > 0 })
                 {
-                    systemParts.AddRange(sections);
+                    // SPEC-20261103-agent-prompt-cache RF-001: tier decide
+                    // o lado do breakpoint (ordem dentro do tier = Order).
+                    (contributor.CacheTier ==
+                        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic
+                        ? dynamicParts : staticParts).AddRange(sections);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException
@@ -204,7 +234,7 @@ public static class ChatPipeline
                     contributor.GetType().Name);
             }
         }
-        return systemParts;
+        return (staticParts, dynamicParts);
     }
 
     /// <summary>

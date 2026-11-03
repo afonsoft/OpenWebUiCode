@@ -1733,7 +1733,12 @@ public class ProviderService(
         };
         if (system.Count > 0)
         {
-            payload[RoleSystem] = string.Join("\n", system);
+            // SPEC-20261103-agent-prompt-cache RF-001/RF-002: system como
+            // array de blocos — um por mensagem system do request, na
+            // ordem. O bloco 0 é o prefixo estático (recebe cache_control);
+            // os demais ficam depois do breakpoint.
+            payload[RoleSystem] = new JsonArray(system.Select(s =>
+                (JsonNode)new JsonObject { ["type"] = TextKey, [TextKey] = s }).ToArray());
         }
 
         if (request.Tools is { Count: > 0 })
@@ -1983,16 +1988,18 @@ public class ProviderService(
     private static void ApplyAnthropicCacheControl(JsonObject payload)
     {
         JsonObject Marker() => new() { ["type"] = "ephemeral" };
-        if (payload[RoleSystem] is JsonValue sys)
+        // SPEC-20261103-agent-prompt-cache RF-002: marca todos os blocos
+        // menos o último — com o split estático/dinâmico do pipeline, o
+        // bloco dinâmico (último) fica fora do prefixo cacheável.
+        if (payload[RoleSystem] is JsonArray sysBlocks && sysBlocks.Count > 0)
         {
-            // System como array de blocos habilita cache_control por bloco.
-            payload[RoleSystem] = new JsonArray(
-                new JsonObject
+            for (var i = 0; i < sysBlocks.Count - 1 || sysBlocks.Count == 1 && i == 0; i++)
+            {
+                if (sysBlocks[i] is JsonObject b)
                 {
-                    ["type"] = TextKey,
-                    [TextKey] = sys.GetValue<string>(),
-                    [CacheControlKey] = Marker(),
-                });
+                    b[CacheControlKey] = Marker();
+                }
+            }
         }
         if (payload[ToolsKey] is JsonArray tools && tools.Count > 0
             && tools[^1] is JsonObject lastTool)

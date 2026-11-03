@@ -361,9 +361,11 @@ public class ModelEndpointsTests
         Assert.That(_lastChatBody, Is.Not.Null);
         var payload = JsonNode.Parse(_lastChatBody!)!;
         Assert.That(payload["model"]!.GetValue<string>(), Is.EqualTo("fake:1"));
-        var system = payload["messages"]!.AsArray()
-            .FirstOrDefault(m => m?["role"]?.GetValue<string>() == "system");
-        Assert.That(system, Is.Not.Null);
-        Assert.That(system!["content"]!.GetValue<string>(), Does.Contain("Responda em pt-BR"));
+        // SPEC-20261103-agent-prompt-cache RF-001: system vem em dois
+        // blocos — o system do modelo custom é tier Dynamic (último bloco).
+        var system = string.Join("\n", payload["messages"]!.AsArray()
+            .Where(m => m?["role"]?.GetValue<string>() == "system")
+            .Select(m => m!["content"]!.GetValue<string>()));
+        Assert.That(system, Does.Contain("Responda em pt-BR"));
     }
 }

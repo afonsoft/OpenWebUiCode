@@ -168,14 +168,17 @@ public class ApiSurfaceTests
 
     private static string SystemContent(JsonElement payload)
     {
+        // SPEC-20261103-agent-prompt-cache RF-001: o system vem em dois
+        // blocos (estático/dinâmico) — junta todos para as assertivas.
+        var sb = new System.Text.StringBuilder();
         foreach (var message in payload.GetProperty("messages").EnumerateArray())
         {
             if (message.GetProperty("role").GetString() == "system")
             {
-                return message.GetProperty("content").GetString() ?? string.Empty;
+                sb.AppendLine(message.GetProperty("content").GetString());
             }
         }
-        return string.Empty;
+        return sb.ToString();
     }
 
     private static string LastUserContent(JsonElement payload)
