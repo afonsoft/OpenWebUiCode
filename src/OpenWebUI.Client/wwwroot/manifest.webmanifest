@@ -1,7 +1,7 @@
 {
-  "name": "Open WebUI",
-  "short_name": "Open WebUI",
-  "description": "Open WebUI — interface de chat .NET / Blazor.",
+  "name": "Open WebUI+Code",
+  "short_name": "Open WebUI+Code",
+  "description": "Open WebUI+Code — interface de chat .NET / Blazor.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
