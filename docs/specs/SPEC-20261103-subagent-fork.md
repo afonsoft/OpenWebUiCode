@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-subagent-fork` |
 | Ticket | `#641` |
-| Status | `Done` |
+| Status | `Completed` |
 
 ## 1. User Story
 
@@ -123,3 +123,8 @@ tests/OpenWebUI.Api.Tests/
 ## Open Questions / Pending Ambiguity
 
 - O `fork` herda também os arquivos/artefatos referenciados via `history://`? → **recomendo sim** (mesma store de recursos da sessão).
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/646 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/641
