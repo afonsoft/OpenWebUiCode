@@ -519,13 +519,15 @@ public sealed class ContextCompactionService(
     }
 
     /// <summary>
-    /// RF-007: JSON <c>todos</c> do último <c>builtin_todo_write</c> no
+    /// RF-007: JSON <c>todos</c> do último <c>builtin:todo_write</c> no
     /// head — o snapshot do plano sobrevive à compactação. Parse falho →
-    /// omite a seção (nunca falha a run). Cap de 4k chars.
+    /// omite a seção (nunca falha a run). Cap de 4k chars. O nome
+    /// persistido pode chegar com prefixo <c>builtin:</c> (tool_call do
+    /// provider) ou <c>builtin_</c> (formas internas) — casa os dois.
     /// </summary>
     private static string? ExtractTodosJson(IReadOnlyList<ChatCompletionMessage> head)
     {
-        const string toolName = "builtin_todo_write";
+        const string toolName = "todo_write";
         const int maxChars = 4_000;
         for (var i = head.Count - 1; i >= 0; i--)
         {
@@ -539,10 +541,12 @@ public sealed class ContextCompactionService(
                 using var doc = JsonDocument.Parse(calls);
                 foreach (var call in doc.RootElement.EnumerateArray())
                 {
-                    if (!call.TryGetProperty("function", out var fn)
-                        || !fn.TryGetProperty("name", out var name)
-                        || name.GetString() != toolName
-                        || !fn.TryGetProperty("arguments", out var argsEl))
+                    var fnName = call.TryGetProperty("function", out var fn)
+                        && fn.TryGetProperty("name", out var name)
+                            ? name.GetString() : null;
+                    var isTodo = fnName is "builtin:todo_write" or "builtin_todo_write"
+                        or "todo_write";
+                    if (!isTodo || !fn.TryGetProperty("arguments", out var argsEl))
                     {
                         continue;
                     }
@@ -1048,9 +1052,12 @@ public sealed class ContextCompactionService(
         return idx;
     }
 
-    /// <summary>Se o resumo carrega digest estruturado (alguma lista preenchida).</summary>
+    /// <summary>Se o resumo carrega digest estruturado — qualquer seção
+    /// v2 preenchida (alinhado com o que <see cref="FormatSummary"/> renderiza).</summary>
     private static bool HasDigest(ContextSummary s) =>
-        s.Files.Count > 0 || s.Decisions.Count > 0 || s.Pending.Count > 0;
+        s.Files.Count > 0 || s.Decisions.Count > 0 || s.Pending.Count > 0
+        || !string.IsNullOrWhiteSpace(s.State)
+        || s.Breadcrumbs is { Count: > 0 };
 
     /// <summary>
     /// Renderiza o prefixo do turno cortado (RF-004): texto das mensagens

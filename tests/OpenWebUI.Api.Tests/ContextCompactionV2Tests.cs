@@ -338,7 +338,7 @@ public class ContextCompactionV2Tests
         var history = Msgs(16, 5).ToList();
         history[3] = new ChatCompletionMessage("assistant", string.Empty,
             ToolCallsJson:
-            """[{"id":"c1","type":"function","function":{"name":"builtin_todo_write","arguments":"{\"todos\":[{\"id\":\"t1\",\"content\":\"TAREFA-UM\",\"status\":\"completed\"},{\"id\":\"t2\",\"content\":\"TAREFA-DOIS\",\"status\":\"in_progress\"}]}"}}]""");
+            """[{"id":"c1","type":"function","function":{"name":"builtin:todo_write","arguments":"{\"todos\":[{\"id\":\"t1\",\"content\":\"TAREFA-UM\",\"status\":\"completed\"},{\"id\":\"t2\",\"content\":\"TAREFA-DOIS\",\"status\":\"in_progress\"}]}"}}]""");
         history[4] = new ChatCompletionMessage("tool", "Plano atualizado: 2 tarefa(s)",
             ToolCallId: "c1");
 
@@ -389,35 +389,342 @@ public class ContextCompactionV2Tests
         });
     }
 
+    // ---- Cobertura dirigida dos caminhos novos ----
+
+    // Infra: o scheduler garante single-flight, expõe InFlight e Clear
+    // libera o slot sem matar a task em voo.
+    [Test]
+    public async Task Scheduler_SingleFlight_InFlight_Clear()
+    {
+        var sched = new AsyncCompactionScheduler();
+        var gate = new TaskCompletionSource();
+        Assert.Multiple(() =>
+        {
+            Assert.That(sched.InFlight("c1"), Is.False);
+            Assert.That(sched.TryStart("c1", _ => gate.Task), Is.True);
+            Assert.That(sched.InFlight("c1"), Is.True);
+            Assert.That(sched.TryStart("c1", _ => Task.CompletedTask), Is.False);
+        });
+        sched.Clear("c1");
+        Assert.That(sched.InFlight("c1"), Is.False);
+        gate.SetResult();
+        await Task.Delay(100);
+        // Slot limpo: WaitAsync não acha task e TryStart libera novo spawn.
+        Assert.That(await sched.WaitAsync(
+            "c1", TimeSpan.FromMilliseconds(10), CancellationToken.None),
+            Is.False);
+        Assert.That(sched.TryStart("c1", _ => Task.CompletedTask), Is.True);
+        await Task.Delay(100);
+        Assert.That(sched.InFlight("c1"), Is.False);
+    }
+
+    // RF-004: abaixo do hard o hard-wait é no-op instantâneo.
+    [Test]
+    public async Task HardWait_AbaixoDoHard_NaoEspera()
+    {
+        await using var db = NewDb();
+        var svc = NewService(db, new FakeSummarizer("x"));
+        var r = await svc.HardWaitAsync(
+            "c1", Msgs(4), "m", CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Waited, Is.False);
+            Assert.That(r.Applied, Is.False);
+            Assert.That(r.FailedStage, Is.Null);
+        });
+    }
+
+    // RF-004: ≥ hard com pendente pronto → o wait aplica e reporta cutoff.
+    [Test]
+    public async Task HardWait_ComPendente_AplicaEReporta()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("chat:c1:compaction:pending", new
+        {
+            state = new { cutoff = 2, summary = "PENDENTE HARD" },
+            spawnedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            estimateTokens = 50,
+        });
+        var svc = NewService(db, new FakeSummarizer("x"), config);
+
+        var r = await svc.HardWaitAsync(
+            "c1", Msgs(40, 5), "m", CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Waited, Is.True);
+            Assert.That(r.Applied, Is.True);
+            Assert.That(r.Cutoff, Is.EqualTo(2));
+            Assert.That(r.SpawnedAt, Is.Not.Null);
+        });
+    }
+
+    // RF-001: ≥ hard o spawn não dispara — a compactação síncrona cuida.
+    [Test]
+    public async Task Spawn_AcimaDoHard_NaoDispara()
+    {
+        await using var db = NewDb();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        var svc = NewService(db, new FakeSummarizer("x"), config);
+        var r = await svc.MaybeSpawnAsync(
+            "c1", Msgs(40, 5), "m", null, CancellationToken.None);
+        Assert.That(r.Spawned, Is.False);
+    }
+
+    // RF-005/006/007/009: o estado aplicado renderiza digest (estado,
+    // breadcrumbs), records verbatim, tarefas e o ponteiro history://.
+    [Test]
+    public async Task Apply_RenderizaSecoesV2()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("chat:c1:compaction", new
+        {
+            cutoff = 2,
+            summary = "RESUMO BASE",
+            digest = new
+            {
+                text = "TEXTO DIGEST",
+                state = "Ajustando o loop",
+                breadcrumbs = new[] { "[2] pedido de merge" },
+                files = new[] { "src/a.cs" },
+                decisions = Array.Empty<string>(),
+                pending = Array.Empty<string>(),
+            },
+            userMessages = new[] { "PEDIDO-UM", "PEDIDO-DOIS" },
+            todosJson = "[{\"content\":\"t1\"}]",
+        });
+        var svc = NewService(db, new FakeSummarizer("x"), config);
+
+        var window = await svc.ApplyAsync(
+            "c1", Msgs(12, 5), CancellationToken.None);
+        var summary = window[0].Content!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("TEXTO DIGEST"));
+            Assert.That(summary, Does.Contain("Estado atual: Ajustando o loop"));
+            Assert.That(summary, Does.Contain("[2] pedido de merge"));
+            Assert.That(summary, Does.Contain("PEDIDO-UM"));
+            Assert.That(summary, Does.Contain("Tarefas:"));
+            Assert.That(summary, Does.Contain("history://c1"));
+        });
+    }
+
+    // RF-006: mais de 20 pedidos → últimos 20 + marcador de omissão;
+    // mensagens sintéticas nunca viram record.
+    [Test]
+    public async Task Records_Cap20_MarcadorESinteticasFora()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var svc = NewService(db, new FakeSummarizer("RESUMO"), config);
+        var history = Msgs(50, 5).ToList();
+        for (var i = 0; i < 48; i += 2)
+        {
+            history[i] = new ChatCompletionMessage("user", $"PEDIDO-{i:D2}");
+        }
+        // Sintéticas dentro do head: resumo anterior + nota de contexto.
+        history[0] = new ChatCompletionMessage(
+            "user", ContextCompactionService.SummaryPrefix + "resumo velho");
+        history[2] = new ChatCompletionMessage("user", "[contexto] nota efêmera");
+
+        await svc.MaybeCompactAsync("c1", history, "m", CancellationToken.None, force: true);
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+        var summary = window[0].Content!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("Pedidos do usuário"));
+            Assert.That(summary, Does.Contain("PEDIDO-46"));
+            Assert.That(summary, Does.Contain("anteriores omitidas"));
+            Assert.That(summary, Does.Not.Contain("PEDIDO-04"));
+            Assert.That(summary, Does.Not.Contain("resumo velho"));
+            Assert.That(summary, Does.Not.Contain("nota efêmera"));
+        });
+    }
+
+    // RF-005: breadcrumbs [pos] fora do range do transcript são
+    // descartados; âncoras válidas e termos livres sobrevivem.
+    [Test]
+    public async Task Compact_Breadcrumbs_ForaDoRange_Descartados()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var digest = new ContextSummary("RESUMO BC", [], [], [],
+            Breadcrumbs: ["[999] fora do range", "[2] valida", "termo livre"]);
+        var svc = NewService(db, new FakeSummarizer(digest), config);
+
+        var history = Msgs(16, 5).ToList();
+        await svc.MaybeCompactAsync("c1", history, "m", CancellationToken.None, force: true);
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+        var summary = window[0].Content!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary, Does.Contain("[2] valida"));
+            Assert.That(summary, Does.Contain("termo livre"));
+            Assert.That(summary, Does.Not.Contain("[999]"));
+        });
+    }
+
+    // RF-002: sem IServiceScopeFactory a task usa os deps do próprio
+    // serviço — pendente grava e aplica igual.
+    [Test]
+    public async Task Spawn_SemScopeFactory_GravaEAplica()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var fake = new FakeSummarizer("RESUMO SEM-SCOPE");
+        var svc = NewService(db, fake, config, withScopes: false);
+
+        Assert.That((await svc.MaybeSpawnAsync(
+            "c1", Msgs(16, 5), "m", null, CancellationToken.None)).Spawned, Is.True);
+        Assert.That((await svc.WaitPendingAsync(
+            "c1", TimeSpan.FromSeconds(10), CancellationToken.None)).Applied, Is.True);
+        Assert.That(fake.Calls, Is.EqualTo(1));
+        var window = await svc.ApplyAsync("c1", Msgs(16, 5), CancellationToken.None);
+        Assert.That(window[0].Content, Does.Contain("RESUMO SEM-SCOPE"));
+    }
+
+    // RF-003: pending corrompido no kv → descartado sem falhar.
+    [Test]
+    public async Task ApplyPending_JsonCorrompido_Descarta()
+    {
+        await using var db = NewDb();
+        db.ConfigEntries.Add(new ConfigEntry
+        {
+            Key = "chat:c1:compaction:pending", ValueJson = "{lixo sem fecha",
+        });
+        await db.SaveChangesAsync();
+        var svc = NewService(db, new FakeSummarizer("x"));
+        Assert.That((await svc.ApplyPendingAsync(
+            "c1", 10, CancellationToken.None)).Applied, Is.False);
+    }
+
+    // RF-007: a forma interna builtin_todo_write (underline) também casa
+    // — o tool_call pode persistir nos dois prefixos.
+    [Test]
+    public async Task Compact_Todos_NomeUnderline_TambemCasa()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var svc = NewService(db, new FakeSummarizer("RESUMO"), config);
+        var history = Msgs(16, 5).ToList();
+        history[3] = new ChatCompletionMessage("assistant", string.Empty,
+            ToolCallsJson:
+            """[{"id":"c1","type":"function","function":{"name":"builtin_todo_write","arguments":"{\"todos\":[{\"id\":\"t1\",\"content\":\"TAREFA-UNDERLINE\",\"status\":\"in_progress\"}]}"}}]""");
+
+        await svc.MaybeCompactAsync("c1", history, "m", CancellationToken.None, force: true);
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+        Assert.That(window[0].Content, Does.Contain("TAREFA-UNDERLINE"));
+    }
+
+    // Defesa: dependências indisponíveis (db disposto) viram
+    // FailedStage/false — nunca propagam exceção ao executor.
+    [Test]
+    public async Task Catchs_DbDisposto_FailedStageEFalse()
+    {
+        var db = NewDb();
+        var svc = NewService(db, new FakeSummarizer("x"));
+        await db.DisposeAsync();
+
+        var spawn = await svc.MaybeSpawnAsync(
+            "c1", Msgs(4), "m", null, CancellationToken.None);
+        var wait = await svc.HardWaitAsync(
+            "c1", Msgs(4), "m", CancellationToken.None);
+        var compact = await svc.MaybeCompactAsync(
+            "c1", Msgs(4), "m", CancellationToken.None, force: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(spawn.FailedStage, Is.EqualTo("spawn"));
+            Assert.That(wait.FailedStage, Is.EqualTo("hard_wait"));
+            Assert.That(compact, Is.False);
+        });
+    }
+
+    // RF-007: arguments também chega como objeto JSON (não só string
+    // encodada) e o nome curto "todo_write" casa.
+    [Test]
+    public async Task Compact_Todos_ArgumentosObjeto_TambemExtrai()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var svc = NewService(db, new FakeSummarizer("RESUMO"), config);
+        var history = Msgs(16, 5).ToList();
+        history[3] = new ChatCompletionMessage("assistant", string.Empty,
+            ToolCallsJson:
+            """[{"id":"c1","type":"function","function":{"name":"todo_write","arguments":{"todos":[{"content":"TAREFA-OBJ"}]}}}]""");
+
+        await svc.MaybeCompactAsync("c1", history, "m", CancellationToken.None, force: true);
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+        Assert.That(window[0].Content, Does.Contain("TAREFA-OBJ"));
+    }
+
     private ContextCompactionService NewService(
-        AppDbContext db, IContextSummarizer summarizer, ConfigService? config = null)
+        AppDbContext db, IContextSummarizer summarizer,
+        ConfigService? config = null, bool withScopes = true)
     {
         var cfg = config ?? new ConfigService(db, TestCache.Create());
         var logs = new ListLogger<ContextCompactionService>();
-        // Scope factory real: a task de background resolve DbContext/
-        // ConfigService/Summarizer frescos no mesmo arquivo SQLite — sem
-        // corrida com o contexto do chamador.
-        var dbPath = _dbPath;
-        var services = new ServiceCollection()
-            .AddScoped(_ => new AppDbContext(
-                new DbContextOptionsBuilder<AppDbContext>()
-                    .UseSqlite($"Data Source={dbPath}").Options))
-            .AddScoped(sp => new ConfigService(
-                sp.GetRequiredService<AppDbContext>(), TestCache.Create()))
-            .AddSingleton<IContextSummarizer>(summarizer)
-            .AddScoped(sp => new ModelRoleResolver(
-                sp.GetRequiredService<AppDbContext>(),
-                sp.GetRequiredService<ConfigService>(),
-                _ => Task.FromResult(new List<ModelInfo>()),
-                NullLogger<ModelRoleResolver>.Instance))
-            .BuildServiceProvider();
+        IServiceScopeFactory? scopes = null;
+        if (withScopes)
+        {
+            // Scope factory real: a task de background resolve DbContext/
+            // ConfigService/Summarizer frescos no mesmo arquivo SQLite —
+            // sem corrida com o contexto do chamador.
+            var dbPath = _dbPath;
+            var services = new ServiceCollection()
+                .AddScoped(_ => new AppDbContext(
+                    new DbContextOptionsBuilder<AppDbContext>()
+                        .UseSqlite($"Data Source={dbPath}").Options))
+                .AddScoped(sp => new ConfigService(
+                    sp.GetRequiredService<AppDbContext>(), TestCache.Create()))
+                .AddSingleton<IContextSummarizer>(summarizer)
+                .AddScoped(sp => new ModelRoleResolver(
+                    sp.GetRequiredService<AppDbContext>(),
+                    sp.GetRequiredService<ConfigService>(),
+                    _ => Task.FromResult(new List<ModelInfo>()),
+                    NullLogger<ModelRoleResolver>.Instance))
+                .BuildServiceProvider();
+            scopes = services.GetRequiredService<IServiceScopeFactory>();
+        }
         return new(db, cfg, summarizer,
             new ModelRoleResolver(db, cfg,
                 _ => Task.FromResult(new List<ModelInfo>()),
                 NullLogger<ModelRoleResolver>.Instance),
             logs,
-            new CompactionDeps(
-                Scopes: services.GetRequiredService<IServiceScopeFactory>()),
+            new CompactionDeps(Scopes: scopes),
             new AsyncCompactionScheduler());
     }
 
@@ -431,15 +738,22 @@ public class ContextCompactionV2Tests
             Messages.Enqueue($"{logLevel}: {formatter(state, exception)} {exception}");
     }
 
-    private sealed class FakeSummarizer(string? result) : IContextSummarizer
+    private sealed class FakeSummarizer : IContextSummarizer
     {
+        private readonly ContextSummary? _result;
+
+        public FakeSummarizer(string? result) =>
+            _result = result is null ? null
+                : new ContextSummary(result, [], [], []);
+
+        public FakeSummarizer(ContextSummary? result) => _result = result;
+
         public int Calls { get; private set; }
 
         public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
         {
             Calls++;
-            return Task.FromResult(result is null ? null
-                : new ContextSummary(result, [], [], []));
+            return Task.FromResult(_result);
         }
     }
 
