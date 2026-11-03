@@ -9,8 +9,8 @@
 | Stack | `.NET` |
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-compactor-v3-delta` |
-| Ticket | `TBD` |
-| Status | `Draft` |
+| Ticket | `#642` |
+| Status | `Approved` |
 
 ## 1. User Story
 

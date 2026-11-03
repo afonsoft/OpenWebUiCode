@@ -9,8 +9,8 @@
 | Stack | `.NET` |
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-subagent-fork` |
-| Ticket | `TBD` |
-| Status | `Draft` |
+| Ticket | `#641` |
+| Status | `Approved` |
 
 ## 1. User Story
 

@@ -9,8 +9,8 @@
 | Stack | `.NET` |
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-agent-turn-guard` |
-| Ticket | `TBD` |
-| Status | `Draft` |
+| Ticket | `#640` |
+| Status | `Approved` |
 
 ## 1. User Story
 
