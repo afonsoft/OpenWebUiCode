@@ -6,7 +6,7 @@
 @inject LocalizationService L
 @inject ThemeService Theme
 
-<PageTitle>@L["page.auth"] — Open WebUI</PageTitle>
+<PageTitle>@L["page.auth"] — Open WebUI+Code</PageTitle>
 
 <div class="w-full h-screen max-h-[100dvh] text-white relative">
     <div class="w-full h-full absolute top-0 left-0 bg-white dark:bg-black"></div>
@@ -32,7 +32,7 @@
                         {
                             <div class="mb-1">
                                 <h1 class="text-2xl font-normal" tabindex="-1">
-                                    @(_signUp ? L["auth.signup_title"] : L["auth.signin_title"]) Open WebUI
+                                    @(_signUp ? L["auth.signup_title"] : L["auth.signin_title"]) Open WebUI+Code
                                 </h1>
                                 <div class="mt-1 text-xs font-normal text-gray-600 dark:text-gray-500">
                                     @(_signUp
@@ -101,7 +101,7 @@
                         else
                         {
                             <div class="mb-1">
-                                <div class="text-2xl font-normal">Open WebUI</div>
+                                <div class="text-2xl font-normal">Open WebUI+Code</div>
                                 <div class="mt-1 text-xs font-normal text-gray-600 dark:text-gray-500">
                                     @L["auth.authenticated_as"] <strong>@AuthService.CurrentUser?.Email</strong>
                                 </div>

@@ -11,5 +11,5 @@
     /// <summary>Id do chat na rota /c/{id}; null na página inicial.</summary>
     [Parameter] public string? ChatId { get; set; }
 
-    private string _title => ChatId is null ? "Open WebUI" : $"{L["page.chat"]} — Open WebUI";
+    private string _title => ChatId is null ? "Open WebUI+Code" : $"{L["page.chat"]} — Open WebUI+Code";
 }
