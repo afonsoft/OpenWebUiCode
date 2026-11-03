@@ -338,11 +338,19 @@ Gate de cobertura via Coverlet + ratchet (`.ci/coverage-baseline.txt` só sobe).
 
 | Workflow | O que cobre |
 |---|---|
-| `ci-build-test.yml` | Build Release, todos os testes + gate de cobertura, payload WASM, freshness do tailwind, build Docker, ratchet do baseline |
-| `a11y-audit.yml` | axe-core (Playwright) mobile+desktop |
+| `ci-build-test.yml` | Build Release, todos os testes + gate de cobertura (Coverlet + ratchet de baseline em `.ci/`), drift guards do WASM, freshness do Tailwind, build Docker, gate de admissão |
+| `a11y-audit.yml` | axe-core + smoke de usabilidade/visual (Playwright, mobile+desktop) |
+| `chat-e2e.yml` | E2E de chat com provider real (gate por secrets, sai verde sem `LLM_*`) |
 | `code-quality.yml` | Qodana + [SonarCloud](https://sonarcloud.io/project/overview?id=afonsoft_open-webui) |
-| `security-scan.yml` | CodeQL (C#+JS), Trivy, GitGuardian, Snyk |
-| `release.yml` | Tag `vX.Y.Z` → imagem multi-arch (amd64+arm64) GHCR + Docker Hub |
+| `security-scan.yml` | CodeQL (C#+JS), gitleaks, actionlint+zizmor, OSV-Scanner, hadolint, Snyk, Trivy |
+| `scorecard.yml` | OpenSSF Scorecard (SARIF, semanal) |
+| `perf.yml` | Teste de carga semanal — harness aiohttp em `tools/perf/` + gate de rps agregado |
+| `release.yml` | Tag `vX.Y.Z` → artefatos + imagem multi-arch (amd64+arm64) GHCR + Docker Hub |
+| `dockerhub-overview.yml` | Sincroniza `docs/dockerhub/overview.md` para o Docker Hub (manual) |
+| `cleanup-artifacts.yml` | Limpeza noturna de artifacts com mais de 30 dias |
+
+Mapa completo de pipelines e ferramentas: [docs/pt/CI-CD.md](docs/pt/CI-CD.md) ·
+[docs/en/CI-CD.md](docs/en/CI-CD.md)
 
 ## Documentação
 

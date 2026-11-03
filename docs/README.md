@@ -42,6 +42,7 @@ Primeiro usuário registrado vira admin — ou semeado no primeiro boot via `ADM
 
 ## Referências
 
+- [en/CI-CD.md](./en/CI-CD.md) / [pt/CI-CD.md](./pt/CI-CD.md) — mapa de CI/CD: os 10 workflows, tools de cada pipeline, gate de cobertura/ratchet e catálogo de `tools/` + `scripts/`
 - [en/DEPLOY-DOCKER.md](./en/DEPLOY-DOCKER.md) / [pt/DEPLOY-DOCKER.md](./pt/DEPLOY-DOCKER.md) — deploy com Docker (imagem publicada, compose, `.env`, volumes)
 - [en/ADE-HARNESS.md](./en/ADE-HARNESS.md) / [pt/ADE-HARNESS.md](./pt/ADE-HARNESS.md) — ADE / AI Orchestrator: event seams, superfícies (headless, RPC, ACP, MCP), webhooks v2, agent teams, terminal ADE, inbox de atenção
 - [dockerhub/overview.md](./dockerhub/overview.md) — overview publicado na página do Docker Hub

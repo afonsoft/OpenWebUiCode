@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-compactor-v3-delta` |
 | Ticket | `#642` |
-| Status | `Done` |
+| Status | `Completed` |
 
 ## 1. User Story
 
@@ -125,3 +125,8 @@ tests/OpenWebUI.Api.Tests/ContextCompactionV2Tests.cs   (+testes)
 ## Open Questions / Pending Ambiguity
 
 - `attachment_bytes` por metadado real ou estimativa por chars? → **recomendo real quando presente, estimativa `chars×0.75` senão**.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/645 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/642

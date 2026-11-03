@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-agent-prompt-cache` |
 | Ticket | `#639` |
-| Status | `Done` |
+| Status | `Completed` |
 
 ## 1. User Story
 
@@ -130,3 +130,8 @@ tests/OpenWebUI.Api.Tests/                             (fixture nova)
 ## Open Questions / Pending Ambiguity
 
 - Anthropic aceita até 4 breakpoints — usar só 1 (system) nesta fase? → **recomendo sim**.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/643 (merged)
+- Issue: https://github.com/afonsoft/OpenWebUiCode/issues/639
