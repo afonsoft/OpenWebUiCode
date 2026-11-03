@@ -647,6 +647,7 @@ public sealed class ChatRunExecutor(
                 {
                     status = "compaction_spawned",
                     tokens = spawn.EstimateTokens,
+                    trigger = spawn.Trigger,
                 }, ct);
         }
         if (spawn.FailedStage is not null)
