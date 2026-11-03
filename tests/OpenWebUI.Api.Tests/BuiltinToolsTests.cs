@@ -1308,6 +1308,187 @@ public class BuiltinToolsTests
         new(_provider.GetRequiredService<IServiceScopeFactory>(),
             _fakeDispatcher);
 
+    // --------- delegate_task subagent_type=fork (SPEC-20261103-subagent-fork) ---------
+
+    private void SeedForkTranscript()
+    {
+        SeedParentChatRun();
+        using var seedDb = NewDb();
+        seedDb.ChatMessages.AddRange(
+            new ChatMessage { ChatId = "c1", Role = "user", Content = "PEDIDO-INICIAL", Position = 1 },
+            new ChatMessage { ChatId = "c1", Role = "assistant", Content = "RESPOSTA-UM", Position = 2 },
+            new ChatMessage { ChatId = "c1", Role = "tool", Content = "TOOL-OUT-SEGREDO", Position = 3, ToolCallId = "t1" },
+            new ChatMessage { ChatId = "c1", Role = "compaction", Content = "RESUMO-HEAD compactado", Position = 4 },
+            new ChatMessage { ChatId = "c1", Role = "user", Content = "PEDIDO-RECENTE", Position = 5 });
+        seedDb.SaveChanges();
+    }
+
+    // RF-001/RF-004: fork injeta transcript do pai com [fork of] — tool
+    // messages e notas efêmeras ficam de fora; o resumo sobrevive.
+    [Test]
+    public async Task Delegate_Fork_InjetaTranscriptDoPai()
+    {
+        SeedForkTranscript();
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"continue o trabalho","subagent_type":"fork","wait":false}"""),
+            Ctx(), default);
+        Assert.That(res.Refused, Is.False, res.Text);
+
+        using var db = NewDb();
+        var filha = db.ChatRuns.Single(r => r.ParentRunId == "r1");
+        var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
+            filha.RequestJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var joined = string.Join("\n", req.Messages.Select(m => m.Content));
+        Assert.Multiple(() =>
+        {
+            Assert.That(joined, Does.Contain("[fork of r1]"));
+            Assert.That(joined, Does.Contain("do not re-delegate"));
+            Assert.That(joined, Does.Contain("PEDIDO-INICIAL"));
+            Assert.That(joined, Does.Contain("RESPOSTA-UM"));
+            Assert.That(joined, Does.Contain("PEDIDO-RECENTE"));
+            Assert.That(joined, Does.Contain("RESUMO-HEAD compactado"));
+            Assert.That(joined, Does.Not.Contain("TOOL-OUT-SEGREDO"));
+            Assert.That(joined, Does.Contain("continue o trabalho"));
+        });
+        // O kv marca o filho como fork (RF-003).
+        using var scope = _provider.CreateScope();
+        var cfg = scope.ServiceProvider.GetRequiredService<ConfigService>();
+        Assert.That(await cfg.GetAsync<bool?>(
+            $"r:{filha.Id}:agent.fork", null, default), Is.True);
+    }
+
+    // RF-001: subagent_type ausente → fresh (comportamento atual —
+    // só o prompt, sem transcript).
+    [Test]
+    public async Task Delegate_SemSubagentType_FreshNaoInjetaTranscript()
+    {
+        SeedForkTranscript();
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"x","wait":false}"""), Ctx(), default);
+        Assert.That(res.Refused, Is.False, res.Text);
+
+        using var db = NewDb();
+        var filha = db.ChatRuns.Single(r => r.ParentRunId == "r1");
+        var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
+            filha.RequestJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(req.Messages, Has.Count.EqualTo(1));
+            Assert.That(req.Messages[0].Content, Is.EqualTo("x"));
+        });
+    }
+
+    // RF-003: run nascida de fork não cria outro fork — fresh continua ok.
+    [Test]
+    public async Task Delegate_Fork_ForkNaoFork_Denial()
+    {
+        SeedParentChatRun();
+        using (var scope = _provider.CreateScope())
+        {
+            var cfg = scope.ServiceProvider.GetRequiredService<ConfigService>();
+            await cfg.SetAsync("r:r1:agent.fork", true);
+        }
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"x","subagent_type":"fork","wait":false}"""),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("forks cannot create forks"));
+            Assert.That(_fakeDispatcher.Enqueued, Is.Empty);
+        });
+
+        // Fresh do fork é permitido.
+        var ok = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"y","wait":false}"""), Ctx(), default);
+        Assert.That(ok.Refused, Is.False, ok.Text);
+        Assert.That(_fakeDispatcher.Enqueued, Has.Count.EqualTo(1));
+    }
+
+    // RF-005: flag global off → denial claro.
+    [Test]
+    public async Task Delegate_Fork_FlagOff_Denial()
+    {
+        SeedParentChatRun();
+        using (var scope = _provider.CreateScope())
+        {
+            var cfg = scope.ServiceProvider.GetRequiredService<ConfigService>();
+            await cfg.SetAsync("agent:subagent_fork", false);
+        }
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"x","subagent_type":"fork","wait":false}"""),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("desabilitado"));
+            Assert.That(_fakeDispatcher.Enqueued, Is.Empty);
+        });
+    }
+
+    // RF-001: fork-background ≡ fork + wait=false — devolve na hora.
+    [Test]
+    public async Task Delegate_ForkBackground_DevolveImediato()
+    {
+        SeedForkTranscript();
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"bg","subagent_type":"fork-background"}"""),
+            Ctx(), default);
+        Assert.That(res.Refused, Is.False, res.Text);
+        var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            JsonSerializer.Serialize(res.Result))!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(data["status"].GetString(), Is.EqualTo("queued"));
+            Assert.That(data["childRunId"].GetString(), Is.Not.Null);
+        });
+        using var db = NewDb();
+        var filha = db.ChatRuns.Single(r => r.ParentRunId == "r1");
+        var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
+            filha.RequestJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        Assert.That(req.Messages.Any(m => m.Content.Contains("[fork of")), Is.True);
+    }
+
+    // RF-001: subagent_type inválido → erro claro, sem enfileirar.
+    [Test]
+    public async Task Delegate_SubagentTypeInvalido_Erro()
+    {
+        SeedParentChatRun();
+        var res = await NovaDelegateTool().ExecuteAsync(
+            Args("""{"prompt":"x","subagent_type":"weird"}"""),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(res.Text, Does.Contain("inválido"));
+            Assert.That(_fakeDispatcher.Enqueued, Is.Empty);
+        });
+    }
+
+    // RF-006: fork emite fork_spawned na run pai (wait=false → só spawned).
+    [Test]
+    public async Task Delegate_Fork_EmiteEventoSpawned()
+    {
+        SeedForkTranscript();
+        var events = new RunEventWriter(NewDb(),
+            Microsoft.Extensions.Logging.Abstractions
+                .NullLogger<RunEventWriter>.Instance);
+        var tool = new DelegateTaskBuiltinTool(
+            _provider.GetRequiredService<IServiceScopeFactory>(),
+            _fakeDispatcher, events);
+        var res = await tool.ExecuteAsync(
+            Args("""{"prompt":"x","subagent_type":"fork","wait":false}"""),
+            Ctx(), default);
+        Assert.That(res.Refused, Is.False, res.Text);
+
+        using var db = NewDb();
+        var evts = db.ChatRunEvents
+            .Where(e => e.RunId == "r1").AsEnumerable()
+            .Select(e => e.PayloadJson).ToList();
+        Assert.That(evts.Any(p => p.Contains("fork_spawned")), Is.True,
+            string.Join(" | ", evts));
+    }
+
     [Test]
     public async Task Delegate_TeamTrue_RaizViraLeader_E_FilhoMember()
     {

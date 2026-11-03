@@ -32,10 +32,16 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// </summary>
 public sealed class DelegateTaskBuiltinTool(
     IServiceScopeFactory scopeFactory,
-    IChatRunDispatcher dispatcher) : IBuiltinChatTool
+    IChatRunDispatcher dispatcher,
+    RunEventWriter? events = null) : IBuiltinChatTool
 {
     /// <summary>Tempo máximo de espera pela run filha (SPEC: 5min).</summary>
     private const int TimeoutSeconds = 300;
+
+    /// <summary>Teto do transcript do pai injetado no fork
+    /// (SPEC-20261103-subagent-fork RF-001): os mais recentes ganham o
+    /// orçamento — summaries de compactação sempre entram.</summary>
+    private const int MaxForkTranscriptChars = 60_000;
 
     /// <summary>Intervalo entre polls de status da run filha.</summary>
     private const int PollMs = 1500;
@@ -60,7 +66,12 @@ public sealed class DelegateTaskBuiltinTool(
     /// <inheritdoc />
     public string Description =>
         "Delegate to a child agent — call for parallel work. "
-            + "Set wait=false to run in background and collect later via builtin_run_result.";
+            + "Never delegate understanding: include file paths, line numbers "
+            + "and what to change — don't write 'based on your findings'. "
+            + "Set wait=false to run in background and collect later via "
+            + "builtin_run_result. subagent_type='fork' inherits this "
+            + "conversation's context (its tool output still stays out of "
+            + "your transcript); 'fork-background' is fork + wait=false.";
 
     /// <inheritdoc />
     public string ParametersJson => """
@@ -118,6 +129,11 @@ public sealed class DelegateTaskBuiltinTool(
             "sidekick_id": {
               "type": "string",
               "description": "Stable id of the persistent sidekick within this parent run (auto-generated when persistent:true and omitted)."
+            },
+            "subagent_type": {
+              "type": "string",
+              "enum": ["fresh", "fork", "fork-background"],
+              "description": "fresh (default): zero-context child. fork: the child inherits this conversation's transcript minus tool output — multi-step work that continues your reasoning. fork-background: fork + wait=false. Not valid with persistent/resume_chat_id/ext:*. Forks cannot create forks — a fork calling fork gets denied."
             }
           },
           "required": ["prompt"]
@@ -138,6 +154,18 @@ public sealed class DelegateTaskBuiltinTool(
         }
 
         var fullPrompt = BuildFullPrompt(args, prompt);
+
+        // SPEC-20261103-subagent-fork RF-001: `subagent_type` escolhe o
+        // modo do filho — fresh (default, comportamento atual), fork
+        // (herda o transcript do pai) ou fork-background (fork + wait=false).
+        var subagentType = ReadString(args, "subagent_type", 30)
+            ?.Trim().ToLowerInvariant() ?? "fresh";
+        if (subagentType is not ("fresh" or "fork" or "fork-background"))
+        {
+            return new BuiltinToolResult(
+                $"subagent_type '{subagentType}' inválido — use "
+                    + "fresh, fork ou fork-background.");
+        }
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -162,13 +190,19 @@ public sealed class DelegateTaskBuiltinTool(
         // coberto pelo gate da tool) — sem run filha.
         if (agentName?.StartsWith("ext:", StringComparison.OrdinalIgnoreCase) == true)
         {
+            if (subagentType != "fresh")
+            {
+                return new BuiltinToolResult(
+                    "subagent_type 'fork' não se aplica a agentes ext:* "
+                        + "(não há run filha para herdar contexto).");
+            }
             return await RunExternalAgentAsync(
                 scope, agentName["ext:".Length..], fullPrompt, context, ct);
         }
 
         return await RouteDispatchAsync(
             new DispatchRoute(args, scope, db, config, context, agentName,
-                personaSkill, prompt, fullPrompt), ct);
+                personaSkill, prompt, fullPrompt, subagentType), ct);
     }
 
     private static string BuildFullPrompt(JsonElement args, string prompt)
@@ -227,6 +261,33 @@ public sealed class DelegateTaskBuiltinTool(
         // dispatches concorrentes no mesmo sidekick).
         var persistent = r.Args.TryGetProperty("persistent", out var persEl)
             && persEl.ValueKind == JsonValueKind.True;
+
+        // SPEC-20261103-subagent-fork RF-003/RF-005: flag global desligada
+        // → denial claro; run nascida de fork (kv r:{run}:agent.fork) não
+        // cria outro fork — "If you ARE the fork, execute directly".
+        if (r.SubagentType != "fresh")
+        {
+            if (!await r.Config.GetAsync("agent:subagent_fork", true, ct))
+            {
+                return new BuiltinToolResult(
+                    "subagent_type 'fork' está desabilitado "
+                        + "(agent:subagent_fork=false).");
+            }
+            if (await r.Config.GetAsync<bool?>(
+                    $"r:{r.Context.RunId}:agent.fork", null, ct) == true)
+            {
+                return new BuiltinToolResult(
+                    "forks cannot create forks — execute directly; "
+                        + "do not re-delegate.");
+            }
+            if (persistent || resumeChatId is not null)
+            {
+                return new BuiltinToolResult(
+                    "subagent_type 'fork' não combina com 'persistent' "
+                        + "nem 'resume_chat_id'.");
+            }
+        }
+
         if (persistent)
         {
             return await PersistentSidekickDispatchAsync(
@@ -245,7 +306,7 @@ public sealed class DelegateTaskBuiltinTool(
         var dispatch = await CreateDispatchAsync(
             new DispatchRequest(r.Args, r.Config, agent, r.FullPrompt,
                 waitExplicit, autoMerge, joinTeam,
-                r.PersonaSkill?.Content, r.Prompt),
+                r.PersonaSkill?.Content, r.Prompt, r.SubagentType),
             r.Scope, r.Db, r.Context, parentRun, ct);
         return dispatch.Result;
     }
@@ -254,7 +315,8 @@ public sealed class DelegateTaskBuiltinTool(
     private sealed record DispatchRoute(
         JsonElement Args, IServiceScope Scope, AppDbContext Db,
         ConfigService Config, BuiltinToolContext Context, string? AgentName,
-        Skill? PersonaSkill, string Prompt, string FullPrompt);
+        Skill? PersonaSkill, string Prompt, string FullPrompt,
+        string SubagentType);
 
     /// <summary>Parâmetros do dispatch do sidekick (S107).</summary>
     private sealed record SidekickDispatch(
@@ -303,7 +365,7 @@ public sealed class DelegateTaskBuiltinTool(
             var created = await CreateDispatchAsync(
                 new DispatchRequest(args, config, agent, fullPrompt,
                     waitExplicit, autoMerge, joinTeam,
-                    personaSkill?.Content, prompt),
+                    personaSkill?.Content, prompt, "fresh"),
                 scope, db, context, parentRun, ct);
             if (created.ChatId is { } createdChatId)
             {
@@ -329,7 +391,8 @@ public sealed class DelegateTaskBuiltinTool(
             BuiltinToolContext context, ChatRun parentRun, CancellationToken ct)
     {
         var (args, config, agent, fullPrompt, waitExplicit, autoMerge,
-            joinTeam, personaPrompt, prompt) = input;
+            joinTeam, personaPrompt, prompt, subagentType) = input;
+        var isFork = subagentType is "fork" or "fork-background";
         // Profundidade da cadeia pai (depth 0 = raiz). Runs de profundidade
         // ≥ MaxDepth perdem a tool delegate_task — o filho não pode delegar
         // além do limite (SPEC-20261010-async-delegate).
@@ -350,8 +413,11 @@ public sealed class DelegateTaskBuiltinTool(
             return (modelError, null);
         }
 
-        // `blocking` do agente é o default de wait (o arg explícito vence).
-        var wait = waitExplicit ?? agent?.Blocking ?? true;
+        // `blocking` do agente é o default de wait (o arg explícito vence);
+        // `fork-background` (SPEC-20261103) equivale a wait=false.
+        var wait = waitExplicit
+            ?? (subagentType == "fork-background" ? false : agent?.Blocking)
+            ?? true;
 
         // RF-001 `skills`: slugs de skills pessoais ativas autoload —
         // conteúdo concatenado ao system prompt do agente.
@@ -370,12 +436,20 @@ public sealed class DelegateTaskBuiltinTool(
             new ChildChatSpec(db, context, agent, childModel!, plan.ToolIds,
                 systemPrompt, preset, prompt, fullPrompt, joinTeam, now), ct);
 
+        // SPEC-20261103-subagent-fork RF-001/RF-004: `fork` injeta o
+        // transcript do pai (sem tool-output nem notas efêmeras) entre o
+        // system e o prompt — o filho continua o raciocínio em vez de
+        // nascer fresh.
+        var forkPrefix = isFork
+            ? await BuildForkPrefixAsync(db, context, parentRun, ct)
+            : [];
         var childRequest = new ChatCompletionRequest(
             childModel!,
             [
                 .. systemPrompt is null
                     ? Array.Empty<ChatCompletionMessage>()
                     : new[] { new ChatCompletionMessage("system", systemPrompt) },
+                .. forkPrefix,
                 new ChatCompletionMessage("user", fullPrompt),
             ],
             Stream: true,
@@ -398,6 +472,14 @@ public sealed class DelegateTaskBuiltinTool(
         await PersistChildConstraintsAsync(
             config, agent, childRun, plan, parentMaxTier, ct);
 
+        // RF-003 (SPEC-20261103): run nascida de fork carrega a marca —
+        // o delegate_task dela nega fork-in-fork ("forks cannot create
+        // forks — execute directly").
+        if (isFork)
+        {
+            await config.SetAsync($"r:{childRun.Id}:agent.fork", true, ct);
+        }
+
         // SPEC-20261010-chat-repo-binding: o filho herda o binding POR CHAT
         // do pai (não o global). SPEC-15: herda repo/branch mas com
         // worktree próprio — subtarefa não escreve no worktree do pai.
@@ -414,6 +496,19 @@ public sealed class DelegateTaskBuiltinTool(
         }
 
         dispatcher.Enqueue(childRun.Id);
+
+        // RF-006 (SPEC-20261103): telemetria do fork na run pai.
+        var forkSpawnedAt = DateTimeOffset.UtcNow;
+        if (isFork && events is not null && context.RunId is { } parentRunId)
+        {
+            await events.AppendAsync(parentRunId, RunEventWriter.Types.Note,
+                new
+                {
+                    status = "fork_spawned",
+                    parent_run = parentRun.Id,
+                    mode = subagentType,
+                }, ct);
+        }
 
         var link = $"/c/{childChat.Id}";
         if (!wait)
@@ -432,9 +527,104 @@ public sealed class DelegateTaskBuiltinTool(
                 }), childChat.Id);
         }
 
-        return (await WaitForChildAsync(
+        var waitResult = await WaitForChildAsync(
             new ChildWait(db, scope, context, childChat, childRun,
-                autoMerge, link), ct), childChat.Id);
+                autoMerge, link), ct);
+        if (isFork && events is not null && context.RunId is { } doneRunId)
+        {
+            await events.AppendAsync(doneRunId, RunEventWriter.Types.Note,
+                new
+                {
+                    status = "fork_completed",
+                    duration_ms = (long)(DateTimeOffset.UtcNow
+                        - forkSpawnedAt).TotalMilliseconds,
+                    output_tokens = await ForkOutputTokensAsync(
+                        db, childRun.Id, ct),
+                }, ct);
+        }
+        return (waitResult, childChat.Id);
+    }
+
+    /// <summary>Completion tokens da run filha via
+    /// <see cref="ChatRun.MetaJson"/> (<c>usage.completionTokens</c>) —
+    /// null quando o provider não reporta.</summary>
+    private static async Task<int?> ForkOutputTokensAsync(
+        AppDbContext db, string childRunId, CancellationToken ct)
+    {
+        var meta = await db.ChatRuns.AsNoTracking()
+            .Where(r => r.Id == childRunId)
+            .Select(r => r.MetaJson)
+            .FirstOrDefaultAsync(ct);
+        if (meta is null)
+        {
+            return null;
+        }
+        try
+        {
+            return JsonDocument.Parse(meta).RootElement
+                .TryGetProperty("usage", out var u)
+                && u.TryGetProperty("completionTokens", out var tok)
+                && tok.ValueKind == JsonValueKind.Number
+                    ? tok.GetInt32() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Prefixo de contexto do fork (SPEC-20261103 RF-001/RF-004):
+    /// <c>[fork of {runId}]</c> + transcript do chat pai filtrado —
+    /// <c>user</c>/<c>assistant</c> (texto) e marcadores
+    /// <c>compaction</c> (o resumo corrente sobrevive); <c>tool</c> e
+    /// notas efêmeras (<c>&lt;context_usage&gt;</c>, turn reminders)
+    /// ficam de fora. Os mais recentes ganham o orçamento
+    /// <see cref="MaxForkTranscriptChars"/>; summaries sempre entram.
+    /// </summary>
+    private static async Task<List<ChatCompletionMessage>> BuildForkPrefixAsync(
+        AppDbContext db, BuiltinToolContext context,
+        ChatRun parentRun, CancellationToken ct)
+    {
+        var prefix = new List<ChatCompletionMessage>
+        {
+            new("user",
+                $"[fork of {parentRun.Id}] contexto herdado do pai — "
+                    + "If you ARE the fork, execute directly; "
+                    + "do not re-delegate forks."),
+        };
+        if (context.ChatId is null)
+        {
+            return prefix; // Edge case: transcript vazio → contexto mínimo.
+        }
+        var msgs = await db.ChatMessages.AsNoTracking()
+            .Where(m => m.ChatId == context.ChatId)
+            .OrderBy(m => m.Position)
+            .Select(m => new { m.Role, m.Content })
+            .ToListAsync(ct);
+        var kept = msgs.Where(m =>
+            m.Role is "user" or "assistant" or "compaction"
+            && !string.IsNullOrWhiteSpace(m.Content)
+            && !m.Content.StartsWith("<context_usage", StringComparison.Ordinal)
+            && !m.Content.StartsWith("turn_reminder", StringComparison.Ordinal))
+            .ToList();
+        var summaries = kept.Where(m => m.Role == "compaction").ToList();
+        var rest = kept.Where(m => m.Role != "compaction").ToList();
+        var budget = MaxForkTranscriptChars;
+        var tail = new List<(string Role, string Content)>();
+        for (var i = rest.Count - 1; i >= 0 && budget > 0; i--)
+        {
+            var m = rest[i];
+            budget -= m.Content.Length;
+            tail.Insert(0, (m.Role, m.Content));
+        }
+        foreach (var m in summaries.Concat(tail.Select(t =>
+            new { t.Role, t.Content })))
+        {
+            prefix.Add(new ChatCompletionMessage(
+                m.Role == "assistant" ? "assistant" : "user", m.Content));
+        }
+        return prefix;
     }
 
     /// <summary>
@@ -445,7 +635,7 @@ public sealed class DelegateTaskBuiltinTool(
     private sealed record DispatchRequest(
         JsonElement Args, ConfigService Config, AgentDefinition? Agent,
         string FullPrompt, bool? WaitExplicit, bool AutoMerge, bool JoinTeam,
-        string? PersonaPrompt, string Prompt);
+        string? PersonaPrompt, string Prompt, string SubagentType);
 
     private static class SidekickGate
     {
