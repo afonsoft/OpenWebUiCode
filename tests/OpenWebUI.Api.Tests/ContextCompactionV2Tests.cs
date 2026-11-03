@@ -691,6 +691,204 @@ public class ContextCompactionV2Tests
         Assert.That(window[0].Content, Does.Contain("TAREFA-OBJ"));
     }
 
+    // RF-001: parser-v3 extrai `errors[]` e `next_step{text,quote}`.
+    [Test]
+    public void SummarizerV3_Parse_ExtraiErrorsENextStep()
+    {
+        var parsed = LlmContextSummarizer.Parse(
+            """{"summary":"## Overview\nWork","errors":["build quebrou por CS8602 — corrigido com default"],"next_step":{"text":"Rerun the migration","quote":"roda dotnet ef migrations"},"files":[],"decisions":[],"pending":[]}""");
+        Assert.Multiple(() =>
+        {
+            Assert.That(parsed.Errors, Has.Count.EqualTo(1));
+            Assert.That(parsed.NextStep, Is.Not.Null);
+            Assert.That(parsed.NextStep!.Quote,
+                Is.EqualTo("roda dotnet ef migrations"));
+        });
+    }
+
+    // RF-003: digest v2 (sem errors/next_step) desserializa normal —
+    // campos novos vêm vazios/nulos.
+    [Test]
+    public void SummarizerV3_Parse_LegacyV2_Compat()
+    {
+        var parsed = LlmContextSummarizer.Parse(
+            """{"summary":"texto","files":[],"decisions":[],"pending":[]}""");
+        Assert.Multiple(() =>
+        {
+            Assert.That(parsed.Errors, Is.Empty);
+            Assert.That(parsed.NextStep, Is.Null);
+        });
+    }
+
+    // RF-001: digest com errors+next_step renderiza "## Errors and fixes"
+    // e "## Optional Next Step" com a citação verbatim.
+    [Test]
+    public async Task Compact_ErrorsENextStep_RenderizamComCitacao()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var summary = new ContextSummary("RESUMO V3", [], [], [],
+            Errors: ["ERRO-X resolvido com retry"],
+            NextStep: new ContextNextStep("Apply the fix", "commitar agora"));
+        var svc = NewService(db, new FakeSummarizer(summary), config);
+
+        var history = Msgs(16, 5);
+        await svc.MaybeCompactAsync("c1", history, "m",
+            CancellationToken.None, force: true);
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window[0].Content, Does.Contain("## Errors and fixes"));
+            Assert.That(window[0].Content, Does.Contain("ERRO-X resolvido"));
+            Assert.That(window[0].Content, Does.Contain("## Optional Next Step"));
+            Assert.That(window[0].Content, Does.Contain("Apply the fix"));
+            Assert.That(window[0].Content, Does.Contain("> \"commitar agora\""));
+        });
+    }
+
+    // RF-004: next_step sem quote → seção descartada (apply não quebra)
+    // + nota compaction_next_step_no_quote no log.
+    [Test]
+    public async Task Compact_NextStepSemQuote_SecaoDescartada()
+    {
+        ListLogger<ContextCompactionService>.Messages.Clear();
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var summary = new ContextSummary("RESUMO", [], [], [],
+            NextStep: new ContextNextStep("sem citação", string.Empty));
+        var svc = NewService(db, new FakeSummarizer(summary), config);
+
+        var history = Msgs(16, 5);
+        await svc.MaybeCompactAsync("c1", history, "m",
+            CancellationToken.None, force: true);
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window[0].Content, Does.Not.Contain("Optional Next Step"));
+            Assert.That(window[0].Content, Does.Contain("RESUMO"));
+        });
+        Assert.That(
+            ListLogger<ContextCompactionService>.Messages.Any(
+                m => m.Contains("compaction_next_step_no_quote")), Is.True);
+    }
+
+    // RF-002: attachment_bytes acima do threshold disparam spawn mesmo
+    // com tokens abaixo do spawn-ratio — trigger="attachments".
+    [Test]
+    public async Task Spawn_AttachmentsAcimaDoLimiar_DisparaComTrigger()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        // 20 chars de texto << spawn; imagem de 20 chars base64 = 15 bytes > 10.
+        await config.SetAsync("compaction:attachment_threshold_bytes", 10L);
+        var svc = NewService(db, new FakeSummarizer("RESUMO"), config);
+        var history = Msgs(4, 5).ToList();
+        history[1] = new ChatCompletionMessage("user", "img",
+            Images: [new ChatImageData("image/png", new string('a', 20))]);
+
+        var spawn = await svc.MaybeSpawnAsync(
+            "c1", history, "m", null, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(spawn.Spawned, Is.True,
+                string.Join(" | ", ListLogger<ContextCompactionService>.Messages));
+            Assert.That(spawn.Trigger, Is.EqualTo("attachments"));
+        });
+    }
+
+    // RF-002: FileIds resolvem FileEntry.Size do banco; ids ausentes
+    // caem na estimativa chars×0.75.
+    [Test]
+    public async Task Spawn_Attachments_FileIdsSomaTamanho()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        db.Files.Add(new FileEntry { Id = "f-big", UserId = "u1", Size = 50 });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:attachment_threshold_bytes", 10L);
+        var svc = NewService(db, new FakeSummarizer("RESUMO"), config);
+        var history = Msgs(4, 5).ToList();
+        history[1] = new ChatCompletionMessage("user", "anexo",
+            FileIds: ["f-big"]);
+
+        var spawn = await svc.MaybeSpawnAsync(
+            "c1", history, "m", null, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(spawn.Spawned, Is.True);
+            Assert.That(spawn.Trigger, Is.EqualTo("attachments"));
+        });
+    }
+
+    // RF-006: banda [spawn,hard) por tokens → trigger="tokens".
+    [Test]
+    public async Task Spawn_Tokens_TriggerTokens()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var svc = NewService(db, new FakeSummarizer("RESUMO"), config);
+
+        var spawn = await svc.MaybeSpawnAsync(
+            "c1", Msgs(16, 5), "m", null, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(spawn.Spawned, Is.True);
+            Assert.That(spawn.Trigger, Is.EqualTo("tokens"));
+        });
+    }
+
+    // RF-005: compaction:summarizer_v3=false → seções v3 não renderizam
+    // mesmo com digest carregando errors/next_step.
+    [Test]
+    public async Task Compact_FlagV3Off_NaoRenderizaSecoesNovas()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        await config.SetAsync("compaction:summarizer_v3", false);
+        var summary = new ContextSummary("RESUMO", [], [], [],
+            Errors: ["ERRO-Y"], NextStep: new ContextNextStep("step", "q"));
+        var svc = NewService(db, new FakeSummarizer(summary), config);
+
+        var history = Msgs(16, 5);
+        await svc.MaybeCompactAsync("c1", history, "m",
+            CancellationToken.None, force: true);
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(window[0].Content, Does.Not.Contain("Errors and fixes"));
+            Assert.That(window[0].Content, Does.Not.Contain("Optional Next Step"));
+            Assert.That(window[0].Content, Does.Contain("RESUMO"));
+        });
+    }
+
     private ContextCompactionService NewService(
         AppDbContext db, IContextSummarizer summarizer,
         ConfigService? config = null, bool withScopes = true)
