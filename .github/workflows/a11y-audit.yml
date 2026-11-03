@@ -16,7 +16,11 @@ concurrency:
 jobs:
   audit:
     name: ${{ matrix.check.run_name }}
-    runs-on: ubuntu-latest
+    # Pinned em 24.04: ubuntu-latest migrou p/ 26.04 e o playwright 1.56.1
+    # (pinado no package-lock) não conhece a imagem — `playwright install
+    # --with-deps chromium` falhava com "does not support chromium on
+    # ubuntu26.04-x64". Repinar para latest ao atualizar playwright >=1.57.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
