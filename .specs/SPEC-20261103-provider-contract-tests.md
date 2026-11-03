@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/provider-contract-tests-20261103` |
 | Ticket | `GH#660` |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story
@@ -19,7 +19,9 @@
 **I want** testes de contrato com fixtures reais (SSE + JSON) para Anthropic e Google
 **So that** refactors no `ProviderService` (hoje ~3800 linhas) e os SPECs irmãos desta tranche tenham rede de segurança determinística.
 
-**Problem context:** os paths Anthropic (`BuildAnthropicPayload`, `AnthropicStreamCtx`, tool_use/tool_result, cache_control) e Google (`generationConfig` remap, `functionCall` parts, `part.thought`) não têm testes dedicados — só `ModelVariantTests` os toca indiretamente; `ProviderServiceTests` cobre dispatch/listagem. Qualquer refactor de shape (ex.: os 4 SPECs acima) pode quebrar o wire sem alarme.
+**Problem context:** os paths Anthropic/Google do `ProviderService` são críticos e refactors de shape (os SPECs irmãos desta tranche) podem quebrar o wire sem alarme.
+
+**Escopo refinado em 2026-11-03 (análise pré-implementação):** a cobertura existente em `ProviderServiceTests.cs` já é ampla — `ListModels_Anthropic/Google` (headers auth), `CompleteAnthropic_Payload_SystemTopLevelEToolResult`, `CompleteAnthropic_Params_Whitelist`, `CompleteAnthropic_MensagemComImagem_BlocoImageBase64`, `CompleteAnthropic_ThinkingBlock_ViraReasoning`, `StreamAnthropic_TextoViraChunkOpenAi`, `StreamAnthropicTools_ToolUseAcumulado` (input_json_delta), `StreamAnthropicTools_ThinkingDelta_ViraOnReasoning`, `CompleteGoogle_Payload_ModelRolesEFunctionResponse`, `CompleteGoogle_ThoughtPart_SaiDoContent`, `StreamGoogle_TextoEFunctionCall`, `StreamGoogleTools_*`. **Gap residual real:** (a) error-path contract — `anthropic-error` SSE event, Google `promptFeedback.BLOCK`/`error` object, classificação 429/529/`overloaded`; (b) golden fixtures file-based versionadas (hoje tudo é string inline).
 
 ## 2. Scope
 
