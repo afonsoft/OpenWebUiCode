@@ -27,7 +27,19 @@ public sealed record ContextSummary(
     /// <summary>Âncoras de busca para recuperar detalhe do head
     /// (<c>[pos]</c> do transcript ou <c>history://{chatId}/msg:{id}</c>),
     /// cap 20 itens.</summary>
-    IReadOnlyList<string>? Breadcrumbs = null);
+    IReadOnlyList<string>? Breadcrumbs = null,
+    /// <summary>Errors and fixes (summarizer-v3, SPEC-20261103 RF-001):
+    /// erros encontrados e como foram corrigidos — cap 20 itens.</summary>
+    IReadOnlyList<string>? Errors = null,
+    /// <summary>Next step alinhado ao pedido mais recente do usuário, com
+    /// citação verbatim de onde o trabalho parou (RF-004: sem
+    /// <c>quote</c> a seção é descartada no render).</summary>
+    ContextNextStep? NextStep = null);
+
+/// <summary>Próximo passo do resumo-v3: <paramref name="Text"/> descreve
+/// a ação; <paramref name="Quote"/> é a citação verbatim do ponto de
+/// parada ("verbatim to ensure there's no drift").</summary>
+public sealed record ContextNextStep(string Text, string Quote);
 
 /// <summary>
 /// Seam de sumarização para compactação de contexto (SPEC-20261010-context-compaction):
@@ -99,7 +111,8 @@ public sealed class ProviderNativeCompactor(ProviderService providers)
 }
 
 /// <summary>Sumarizador real: completion única não-streaming no modelo da própria run.</summary>
-public sealed class LlmContextSummarizer(ProviderService providers) : IContextSummarizer
+public sealed class LlmContextSummarizer(
+    ProviderService providers, ConfigService? config = null) : IContextSummarizer
 {
     private const string Prompt =
         "Resuma esta conversa para retomar o trabalho sem o histórico. " +
@@ -114,12 +127,38 @@ public sealed class LlmContextSummarizer(ProviderService providers) : IContextSu
         "elas serão re-injetadas depois. Sem preâmbulo, sem markdown fora " +
         "do JSON.\n\n";
 
+    /// <summary>Summarizer-v3 (SPEC-20261103 RF-001): acrescenta
+    /// <c>errors[]</c> ("errors encountered and how they were fixed") e
+    /// <c>next_step{text,quote}</c> — o next step pede uma citação
+    /// verbatim de onde o trabalho parou ("verbatim to ensure there's
+    /// no drift").</summary>
+    private const string PromptV3 =
+        "Resuma esta conversa para retomar o trabalho sem o histórico. " +
+        "Responda SÓ com um JSON no formato {\"summary\": \"<## Overview — " +
+        "1-2 frases do objetivo>\", \"state\": \"<Current State — tarefa " +
+        "imediata, próximos passos, bloqueios>\", \"breadcrumbs\": " +
+        "[\"<âncoras de busca para recuperar detalhe: posições [n] do " +
+        "transcript ou termos-chave>\"], \"files\": [\"caminhos de arquivos " +
+        "citados ou modificados\"], \"decisions\": [\"decisões tomadas\"], " +
+        "\"pending\": [\"tarefas pendentes\"], \"errors\": [\"erros " +
+        "encontrados e como foram corrigidos\"], \"next_step\": " +
+        "{\"text\": \"<Optional Next Step — o passo mais diretamente " +
+        "alinhado ao pedido mais recente do usuário>\", \"quote\": " +
+        "\"<citação verbatim do transcript de onde o trabalho parou, " +
+        "para garantir que não haja desvio>\"}} — listas vazias quando " +
+        "não houver nada e next_step null quando não houver passo claro. " +
+        "NÃO recite rules/instruções de sistema verbatim — elas serão " +
+        "re-injetadas depois. Sem preâmbulo, sem markdown fora do JSON.\n\n";
+
     /// <inheritdoc />
     public async Task<ContextSummary?> SummarizeAsync(
         string model, string transcript, string? userId, CancellationToken ct)
     {
+        var prompt = config is null
+            || await config.GetAsync("compaction:summarizer_v3", true, ct)
+                ? PromptV3 : Prompt;
         var request = new ChatCompletionRequest(model,
-            [new ChatCompletionMessage("user", Prompt + transcript)], Stream: false);
+            [new ChatCompletionMessage("user", prompt + transcript)], Stream: false);
         var result = await providers.CompleteAsync(request, userId, ct);
         return string.IsNullOrWhiteSpace(result) ? null : Parse(result.Trim());
     }
@@ -147,7 +186,9 @@ public sealed class LlmContextSummarizer(ProviderService providers) : IContextSu
                         doc.TryGetProperty("state", out var st)
                             && st.ValueKind == JsonValueKind.String
                                 ? st.GetString() : null,
-                        List(doc, "breadcrumbs").Take(20).ToList());
+                        List(doc, "breadcrumbs").Take(20).ToList(),
+                        List(doc, "errors").Take(20).ToList(),
+                        ParseNextStep(doc));
                 }
             }
         }
@@ -165,6 +206,24 @@ public sealed class LlmContextSummarizer(ProviderService providers) : IContextSu
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Select(s => s!.Trim()).ToList()
             : [];
+
+    /// <summary><c>next_step{text,quote}</c> do resumo-v3 — null quando
+    /// ausente, não-objeto ou sem texto.</summary>
+    private static ContextNextStep? ParseNextStep(JsonElement doc)
+    {
+        if (!doc.TryGetProperty("next_step", out var ns)
+            || ns.ValueKind != JsonValueKind.Object
+            || !ns.TryGetProperty("text", out var txt)
+            || txt.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(txt.GetString()))
+        {
+            return null;
+        }
+        var quote = ns.TryGetProperty("quote", out var q)
+            && q.ValueKind == JsonValueKind.String
+                ? q.GetString() ?? string.Empty : string.Empty;
+        return new ContextNextStep(txt.GetString()!.Trim(), quote.Trim());
+    }
 }
 
 /// <summary>
@@ -227,6 +286,10 @@ public sealed class ContextCompactionService(
     /// espelha o spawn do Devin (~183k de 262k); clamps impedem spawn
     /// precoce/tardio demais.</summary>
     private const double DefaultSpawnRatio = 0.70;
+
+    /// <summary>Teto default do gatilho por attachments (SPEC-20261103
+    /// RF-002): 8 MB acumulados na janela disparam spawn de compactação.</summary>
+    private const long DefaultAttachmentThresholdBytes = 8_000_000;
     private const double MinSpawnRatio = 0.30;
     private const double MaxSpawnRatio = 0.95;
 
@@ -261,7 +324,11 @@ public sealed class ContextCompactionService(
     internal sealed record Thresholds(
         int TotalChars, int TailMessages, int TailChars,
         int ThresholdTokens = int.MaxValue,
-        int SpawnTokens = int.MaxValue, long SpawnChars = long.MaxValue);
+        int SpawnTokens = int.MaxValue, long SpawnChars = long.MaxValue,
+        /// <summary>Gatilho por acúmulo de attachments (SPEC-20261103
+        /// RF-002): bytes de imagens/arquivos na janela acima disso
+        /// disparam spawn mesmo abaixo do spawn-ratio — default 8 MB.</summary>
+        long AttachmentThresholdBytes = long.MaxValue);
 
     private static string KvKey(string chatId) => $"chat:{chatId}:compaction";
     private static string KvKeyPending(string chatId) =>
@@ -288,7 +355,9 @@ public sealed class ContextCompactionService(
         {
             window = history.Skip(state.Cutoff).ToList();
             window.Insert(0, new ChatCompletionMessage(
-                "user", SummaryPrefix + FormatSummary(state, chatId)));
+                "user", SummaryPrefix + FormatSummary(state, chatId,
+                    await config.GetAsync(
+                        "compaction:summarizer_v3", true, ct))));
             if (!string.IsNullOrWhiteSpace(state.TurnPrefix))
             {
                 window.Insert(1, new ChatCompletionMessage(
@@ -300,13 +369,11 @@ public sealed class ContextCompactionService(
 
     /// <summary>Resumo + digest + seções v2 (estado, breadcrumbs, records,
     /// tarefas) + ponteiro <c>history://</c> para recuperar o transcript.</summary>
-    private static string FormatSummary(CompactionState state, string chatId)
+    private string FormatSummary(
+        CompactionState state, string chatId, bool renderV3 = true)
     {
         var d = state.Digest;
-        var hasDigest = d is not null
-            && (d.Files.Count > 0 || d.Decisions.Count > 0 || d.Pending.Count > 0
-                || !string.IsNullOrWhiteSpace(d.State)
-                || d.Breadcrumbs is { Count: > 0 });
+        var hasDigest = HasDigest(d);
         var hasExtras = state.UserMessages is { Count: > 0 }
             || !string.IsNullOrWhiteSpace(state.TodosJson);
         if (!hasDigest && !hasExtras)
@@ -324,6 +391,25 @@ public sealed class ContextCompactionService(
             AppendSection(sb, "Decisões", d.Decisions);
             AppendSection(sb, "Pendências", d.Pending);
             AppendSection(sb, "Breadcrumbs", d.Breadcrumbs ?? []);
+            if (renderV3)
+            {
+                AppendSection(sb, "## Errors and fixes", d.Errors ?? []);
+                // RF-004: next_step sem quote é descartado — a citação
+                // verbatim é a garantia contra drift ("sem drift").
+                if (d.NextStep is { } ns && !string.IsNullOrWhiteSpace(ns.Quote))
+                {
+                    sb.Append("\n\n## Optional Next Step\n")
+                        .Append(ns.Text.Trim())
+                        .Append("\n> \"").Append(ns.Quote.Trim()).Append('"');
+                }
+                else if (d.NextStep is { } nsNoQuote
+                    && !string.IsNullOrWhiteSpace(nsNoQuote.Text))
+                {
+                    logger.LogWarning(
+                        "compaction_next_step_no_quote: seção descartada na compactação do chat {ChatId}.",
+                        chatId);
+                }
+            }
         }
         AppendSection(sb, "Pedidos do usuário (verbatim)", state.UserMessages ?? []);
         if (!string.IsNullOrWhiteSpace(state.TodosJson))
@@ -580,7 +666,11 @@ public sealed class ContextCompactionService(
     /// sinaliza exceção no disparo para <c>compaction.failed</c>.
     /// </summary>
     public sealed record SpawnResult(
-        bool Spawned, int EstimateTokens, string? FailedStage = null);
+        bool Spawned, int EstimateTokens, string? FailedStage = null,
+        /// <summary>Causa do disparo (SPEC-20261103 RF-006):
+        /// <c>"tokens"</c> ou <c>"attachments"</c> — attachments vencem
+        /// quando ambos os gatilhos batem (maior severidade).</summary>
+        string? Trigger = null);
 
     /// <summary>
     /// Spawn 3-tier (SPEC-20261102 RF-002): estimativa ≥ spawn e &lt; hard
@@ -598,9 +688,15 @@ public sealed class ContextCompactionService(
             var total = history.Sum(m =>
                 (m.Content?.Length ?? 0) + (m.ToolCallsJson?.Length ?? 0));
             var estimate = ContextTokens.Estimate(total);
+            // RF-002: overflow por attachments dispara spawn mesmo
+            // abaixo do spawn-ratio (Claude: "accumulated images and
+            // attachments pushed the request over the limit").
+            var attachBytes = await AttachmentBytesAsync(history, ct);
+            var byTokens = estimate >= t.SpawnTokens || total >= t.SpawnChars;
+            var byAttachments = attachBytes > t.AttachmentThresholdBytes;
             // Abaixo do spawn → cedo; ≥ hard → a compactação síncrona do
             // executor cuida (o spawn perdeu a janela).
-            if (estimate < t.SpawnTokens && total < t.SpawnChars)
+            if (!byTokens && !byAttachments)
             {
                 return new SpawnResult(false, estimate);
             }
@@ -626,7 +722,8 @@ public sealed class ContextCompactionService(
                     "Compactação em background disparada para chat {ChatId} ({Tokens} tokens estimados).",
                     chatId, estimateTokens);
             }
-            return new SpawnResult(spawned, estimateTokens);
+            return new SpawnResult(spawned, estimateTokens,
+                Trigger: byAttachments ? "attachments" : "tokens");
         }
         catch (Exception ex)
         {
@@ -634,6 +731,66 @@ public sealed class ContextCompactionService(
                 "Spawn de compactação falhou para chat {ChatId}.", chatId);
             return new SpawnResult(false, 0, "spawn");
         }
+    }
+
+    /// <summary>
+    /// Bytes acumulados de attachments na janela (RF-002):
+    /// <c>Images</c> contam pelo tamanho base64×0.75; <c>FileIds</c>
+    /// resolvem <see cref="FileEntry.Size"/> numa única query — arquivo
+    /// sem registro cai na estimativa chars×0.75 do content da mensagem
+    /// (edge case "metadado ausente").
+    /// </summary>
+    private async Task<long> AttachmentBytesAsync(
+        IReadOnlyList<ChatCompletionMessage> history, CancellationToken ct)
+    {
+        long bytes = 0;
+        HashSet<string>? fileIds = null;
+        foreach (var m in history)
+        {
+            if (m.Images is { Count: > 0 } images)
+            {
+                foreach (var img in images)
+                {
+                    bytes += (img.Base64Data?.Length ?? 0) * 3 / 4;
+                }
+            }
+            if (m.FileIds is { Count: > 0 } ids)
+            {
+                fileIds ??= new HashSet<string>(StringComparer.Ordinal);
+                foreach (var id in ids)
+                {
+                    fileIds.Add(id);
+                }
+            }
+        }
+        if (fileIds is null || fileIds.Count == 0)
+        {
+            return bytes;
+        }
+        var found = await db.Files.AsNoTracking()
+            .Where(f => fileIds.Contains(f.Id))
+            .Select(f => new { f.Id, f.Size })
+            .ToListAsync(ct);
+        var foundIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var f in found)
+        {
+            bytes += Math.Max(0L, f.Size);
+            foundIds.Add(f.Id);
+        }
+        foreach (var m in history)
+        {
+            if (m.FileIds is { Count: > 0 } ids)
+            {
+                foreach (var id in ids)
+                {
+                    if (!foundIds.Contains(id))
+                    {
+                        bytes += (long)((m.Content?.Length ?? 0) * 0.75);
+                    }
+                }
+            }
+        }
+        return bytes;
     }
 
     /// <summary>Task de background: resume o head do snapshot e grava
@@ -1053,11 +1210,15 @@ public sealed class ContextCompactionService(
     }
 
     /// <summary>Se o resumo carrega digest estruturado — qualquer seção
-    /// v2 preenchida (alinhado com o que <see cref="FormatSummary"/> renderiza).</summary>
-    private static bool HasDigest(ContextSummary s) =>
-        s.Files.Count > 0 || s.Decisions.Count > 0 || s.Pending.Count > 0
-        || !string.IsNullOrWhiteSpace(s.State)
-        || s.Breadcrumbs is { Count: > 0 };
+    /// v2/v3 preenchida (alinhado com o que <see cref="FormatSummary"/>
+    /// renderiza, SPEC-20261103 RF-003).</summary>
+    private static bool HasDigest(ContextSummary? s) =>
+        s is not null
+        && (s.Files.Count > 0 || s.Decisions.Count > 0 || s.Pending.Count > 0
+            || !string.IsNullOrWhiteSpace(s.State)
+            || s.Breadcrumbs is { Count: > 0 }
+            || s.Errors is { Count: > 0 }
+            || s.NextStep is not null);
 
     /// <summary>
     /// Renderiza o prefixo do turno cortado (RF-004): texto das mensagens
@@ -1106,9 +1267,13 @@ public sealed class ContextCompactionService(
             thresholdTokens - 1);
         var spawnChars = Math.Clamp(
             (long)(total * ratio), 1L, Math.Max(1L, (long)total - 1));
+        var attachBytes = Math.Max(1L,
+            await config.GetAsync(
+                "compaction:attachment_threshold_bytes",
+                DefaultAttachmentThresholdBytes, ct));
         return new Thresholds(
             total, tailMsgs, tailChars,
-            thresholdTokens, spawnTokens, spawnChars);
+            thresholdTokens, spawnTokens, spawnChars, attachBytes);
     }
 
     /// <summary>Lê <c>compaction:{model}:{suffix}</c> com fallback à chave
