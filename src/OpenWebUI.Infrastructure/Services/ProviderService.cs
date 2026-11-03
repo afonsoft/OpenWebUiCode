@@ -2001,17 +2001,6 @@ public class ProviderService(
                 }
             }
         }
-        else if (payload[RoleSystem] is JsonValue sys)
-        {
-            // System como array de blocos habilita cache_control por bloco.
-            payload[RoleSystem] = new JsonArray(
-                new JsonObject
-                {
-                    ["type"] = TextKey,
-                    [TextKey] = sys.GetValue<string>(),
-                    [CacheControlKey] = Marker(),
-                });
-        }
         if (payload[ToolsKey] is JsonArray tools && tools.Count > 0
             && tools[^1] is JsonObject lastTool)
         {

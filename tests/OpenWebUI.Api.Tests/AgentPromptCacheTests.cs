@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using OpenWebUI.Api.Completions;
+using OpenWebUI.Api.Completions.Contributors;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
@@ -161,6 +162,44 @@ public class AgentPromptCacheTests
         var effective = await ChatPipeline.EnrichRequestAsync(
             request, Usuario, Deps(new StubContributor(0, "S")), default);
         Assert.That(effective.CacheFormat, Is.Null);
+    }
+
+    // Covers RF-001: sem contribuidores o prompt base vai ao bloco
+    // estático (fallback headless — nunca some).
+    [Test]
+    public async Task Split_SemContribuidores_PromptBaseNoEstatico()
+    {
+        var request = new ChatCompletionRequest(
+            "fake:1", [new ChatCompletionMessage("user", "oi")]);
+        var effective = await ChatPipeline.EnrichRequestAsync(
+            request, Usuario, Deps(), default);
+
+        var systems = effective.Messages.Where(m => m.Role == "system").ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(systems, Has.Count.EqualTo(1));
+            Assert.That(systems[0].Content, Is.Not.Null.And.Not.Empty);
+        });
+    }
+
+    // Covers RF-001: os contributors por-request reais declaram tier
+    // Dynamic — regressão contra tier errado num contribuidor ruidoso.
+    [Test]
+    public void CacheTier_ContribuidoresPorRequest_SaoDinamicos()
+    {
+        // Deps null! são seguras: só a propriedade de metadado é lida.
+        ISystemPromptContributor[] dinamicos =
+        [
+            new WebSearchContributor(null!),
+            new AgentMemoryContributor(_db, _config),
+            new MentionsContributor(),
+            new GenContextContributor(_db),
+        ];
+        foreach (var c in dinamicos)
+        {
+            Assert.That(c.CacheTier, Is.EqualTo(PromptCacheTier.Dynamic),
+                c.GetType().Name);
+        }
     }
 
     // ---------- provider: cache_control por bloco ----------
