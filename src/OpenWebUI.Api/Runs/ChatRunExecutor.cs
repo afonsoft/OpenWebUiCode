@@ -1045,6 +1045,10 @@ public sealed class ChatRunExecutor(
             OnContextUsageAsync: (msgs, t) =>
                 compaction.WithContextUsageAsync(
                     run.ChatId, msgs, run.Model, t),
+            // SPEC-20261103-agent-turn-guard RF-001: plano/promessa sem
+            // tool-call → reminder; run filha viva → turn_end_wait.
+            OnTurnEndGuardAsync: (text, t) =>
+                TurnEndGuardAsync(run, text, t),
             GateAsync: (call, t) => GateWithInterceptorsAsync(
                 run, cbTools, call, builtinContext, t),
             // Modo relido por rodada — o plan_exit aprovado
@@ -1089,6 +1093,67 @@ public sealed class ChatRunExecutor(
             // são scrubados do mesmo jeito.
             OnReasoningAsync: (piece, t) =>
                 PublishReasoningDeltaAsync(run, piece, outletRules, t));
+    }
+
+    /// <summary>Padrões de "plano/promessa sem execução" — override via
+    /// <c>agent:turn_guard_patterns</c> (JSON array). pt+en por default.</summary>
+    private static readonly string[] DefaultTurnGuardPatterns =
+    [
+        "i will ", "i'll ", "i would ", "let me know when", "next steps",
+        "next step", "if you'd like", "would you like me to", "shall i",
+        "vou fazer", "vou agora", "posso continuar", "quer que eu",
+        "deixe-me saber", "se quiser, eu", "aguardando sua",
+        "i can do that next", "once you confirm",
+    ];
+
+    private const string TurnGuardReminder =
+        "[turn_reminder] Before ending your turn, check your last "
+        + "paragraph: if it was a plan, an analysis, a question, a list "
+        + "of next steps, or a promise about work you have not done "
+        + "('I'll…', 'let me know when…'), do that work now with tool "
+        + "calls instead of describing it. Do not stop because the "
+        + "context or session is long.";
+
+    /// <summary>
+    /// SPEC-20261103-agent-turn-guard: guarda de fim de turno —
+    /// run filha viva → <c>turn_end_wait</c> (encerra sem nudge);
+    /// texto final casando padrão de plano/promessa → reminder +
+    /// <c>turn_nudge</c>. Flag <c>agent:turn_guard</c> (default true).
+    /// </summary>
+    private async Task<string?> TurnEndGuardAsync(
+        ChatRun run, string finalText, CancellationToken t)
+    {
+        if (!await config.GetAsync("agent:turn_guard", true, t))
+        {
+            return null;
+        }
+        // RF-002: com run filha viva (delegate_task/async) o turno pode
+        // encerrar — a notificação chega quando ela terminar.
+        var waitingOn = await db.ChatRuns.AsNoTracking()
+            .Where(r => r.ParentRunId == run.Id
+                && (r.Status == ChatRunStatus.Running
+                    || r.Status == ChatRunStatus.Queued))
+            .Select(r => r.Id)
+            .FirstOrDefaultAsync(t);
+        if (waitingOn is not null)
+        {
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new { status = "turn_end_wait", waiting_on = waitingOn }, t);
+            return null;
+        }
+        var patterns = await config.GetAsync<string[]?>(
+            "agent:turn_guard_patterns", null, t)
+            ?? DefaultTurnGuardPatterns;
+        var lastPara = finalText.Split('\n')
+            .LastOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
+        var hay = lastPara.ToLowerInvariant();
+        if (!patterns.Any(p => hay.Contains(p.ToLowerInvariant())))
+        {
+            return null;
+        }
+        await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+            new { status = "turn_nudge", reason = "plan_promise" }, t);
+        return TurnGuardReminder;
     }
 
     /// <summary>Compactação de emergência por overflow — extend_context
