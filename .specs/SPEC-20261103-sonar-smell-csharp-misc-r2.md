@@ -9,7 +9,7 @@
 | Stack | `.NET` (C#/Blazor) |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-csharp-misc-r2-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#657` |
 | Status | `Approved` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 

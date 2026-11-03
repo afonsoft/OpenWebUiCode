@@ -9,7 +9,7 @@
 | Stack | `.NET` (C#/Blazor) + `Docker` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-vuln-code-r2-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#650` |
 | Status | `Approved` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 

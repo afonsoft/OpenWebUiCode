@@ -9,7 +9,7 @@
 | Stack | `.NET` (JSON i18n) |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-vuln-i18n-fp-20261103` |
-| Ticket | `GH#TBD` |
+| Ticket | `GH#651` |
 | Status | `Approved` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
