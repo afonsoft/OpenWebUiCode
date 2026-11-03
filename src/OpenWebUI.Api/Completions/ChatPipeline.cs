@@ -499,7 +499,15 @@ public static class ChatPipeline
         /// interceptor pre-step do harness não consegue parar a run — o
         /// veto real acontece aqui, onde o próximo step é decidido).
         /// </summary>
-        Func<CancellationToken, Task<string?>>? OnBudgetCheckAsync = null);
+        Func<CancellationToken, Task<string?>>? OnBudgetCheckAsync = null,
+        /// <summary>
+        /// Nota de orçamento <c>&lt;context_usage&gt;</c> por chamada ao
+        /// provider (SPEC-20261102-context-compactor-v2 RF-008): recebe a
+        /// janela do round e devolve a janela com a nota de sistema
+        /// final. Efêmera — nunca entra em <c>state.Messages</c>; null
+        /// envia a janela como está.
+        /// </summary>
+        Func<IReadOnlyList<ChatCompletionMessage>, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnContextUsageAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -834,10 +842,29 @@ public static class ChatPipeline
         var attempt = 0;
         while (true)
         {
+            // RF-008 compactor-v2: a nota <context_usage> é efêmera e
+            // best-effort — falha ao montá-la nunca entra no retry do
+            // provider (senão repetiria indefinidamente); a janela segue
+            // sem a nota.
+            List<ChatCompletionMessage> window;
+            try
+            {
+                window = callbacks?.OnContextUsageAsync is { } usage
+                    ? (await usage(state.Messages, ct)).ToList()
+                    : state.Messages;
+            }
+            catch (Exception usageEx)
+                when (!(usageEx is OperationCanceledException
+                    && ct.IsCancellationRequested))
+            {
+                log?.LogWarning(usageEx,
+                    "Nota <context_usage> falhou — a rodada segue sem ela.");
+                window = state.Messages;
+            }
             try
             {
                 return await CompleteRoundAsync(
-                    providers, makeRequest(state.Messages), callbacks, ct, uid);
+                    providers, makeRequest(window), callbacks, ct, uid);
             }
             catch (Exception ex)
                 when (!(ex is OperationCanceledException && ct.IsCancellationRequested))

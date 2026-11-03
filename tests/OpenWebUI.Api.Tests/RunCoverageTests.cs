@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -355,6 +356,110 @@ public class RunCoverageTests
 
         var stop = await _client.PostAsync($"/api/v1/chats/{chat.Id}/runs/{run.Id}/stop", null);
         Assert.That(stop.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+    }
+
+    // ---- Executor: wiring da compactação 3-tier (SPEC-20261102) ----
+
+    /// <summary>Semeia configs de compactação num scope curto.</summary>
+    private async Task SeedCompactionAsync(string chatId, int threshold,
+        double? spawnRatio, int tailMessages, object? pending)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var cfg = scope.ServiceProvider
+            .GetRequiredService<OpenWebUI.Infrastructure.Services.ConfigService>();
+        await cfg.SetAsync("compaction:threshold", threshold);
+        await cfg.SetAsync("compaction:tail_messages", tailMessages);
+        if (spawnRatio is not null)
+        {
+            await cfg.SetAsync("compaction:spawn_ratio", spawnRatio.Value);
+        }
+        if (pending is not null)
+        {
+            await cfg.SetAsync($"chat:{chatId}:compaction:pending", pending);
+        }
+    }
+
+    /// <summary>Restaura as configs globais de compactação (vazam entre
+    /// testes do fixture se ficarem).</summary>
+    private async Task ResetCompactionAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var cfg = scope.ServiceProvider
+            .GetRequiredService<OpenWebUI.Infrastructure.Services.ConfigService>();
+        await cfg.SetAsync<int?>("compaction:threshold", null);
+        await cfg.SetAsync<int?>("compaction:tail_messages", null);
+        await cfg.SetAsync<double?>("compaction:spawn_ratio", null);
+    }
+
+    private static string MsgsJson(int count) =>
+        string.Join(",", Enumerable.Range(0, count)
+            .Select(i => $"{{\"role\":\"user\",\"content\":\"m{i:00}xx\"}}"));
+
+    // RF-003/004/010: pendente semeado + histórico ≥ hard — aplica na
+    // fronteira, registra hard-wait e cai na compactação síncrona; a
+    // janela sai compactada (fase "compacting") antes do provider falhar.
+    [Test]
+    public async Task Executor_Compactacao_PendenteEHardWait_Eventos()
+    {
+        var auth = await SignUpAsync("CompHW", $"comphw-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+        await SeedCompactionAsync(chat.Id, threshold: 100, spawnRatio: null,
+            tailMessages: 2, pending: new
+            {
+                state = new { cutoff = 5, summary = "PENDENTE SEMEADO" },
+                spawnedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                estimateTokens = 40,
+            });
+        try
+        {
+            var run = await ExecutarDiretoAsync(chat.Id, auth.User.Id,
+                "{\"model\":\"llama3\",\"connection\":\"bogus\","
+                + $"\"messages\":[{MsgsJson(40)}]}}");
+            Assert.That(run.Status, Is.EqualTo(ChatRunStatus.Failed));
+
+            using var scope = _factory.Services.CreateScope();
+            var cfg = scope.ServiceProvider
+                .GetRequiredService<OpenWebUI.Infrastructure.Services.ConfigService>();
+            // Pendente consumido e estado de compactação persistido.
+            var pend = await cfg.GetAsync<JsonElement?>(
+                $"chat:{chat.Id}:compaction:pending", null, CancellationToken.None);
+            var state = await cfg.GetAsync<JsonElement?>(
+                $"chat:{chat.Id}:compaction", null, CancellationToken.None);
+            Assert.Multiple(() =>
+            {
+                Assert.That(pend, Is.Null);
+                Assert.That(state, Is.Not.Null);
+            });
+        }
+        finally
+        {
+            await ResetCompactionAsync();
+        }
+    }
+
+    // RF-002/010: histórico na banda [spawn, hard) — o spawn dispara em
+    // background sem bloquear o turno (evento compaction_spawned).
+    [Test]
+    public async Task Executor_Compactacao_Spawn_Evento()
+    {
+        var auth = await SignUpAsync("CompSp", $"compsp-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+        // Banda [0.5*200, 200): 35 msgs * ~5 chars = ~175 chars dentro.
+        await SeedCompactionAsync(chat.Id, threshold: 200, spawnRatio: 0.5,
+            tailMessages: 2, pending: null);
+        try
+        {
+            var run = await ExecutarDiretoAsync(chat.Id, auth.User.Id,
+                "{\"model\":\"llama3\",\"connection\":\"bogus\","
+                + $"\"messages\":[{MsgsJson(35)}]}}");
+            Assert.That(run.Status, Is.EqualTo(ChatRunStatus.Failed));
+        }
+        finally
+        {
+            await ResetCompactionAsync();
+        }
     }
 
     // ---- Webhooks ----
