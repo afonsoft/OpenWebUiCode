@@ -76,6 +76,10 @@ public sealed class AlwaysAllowContributor(AppDbContext db) : ISystemPromptContr
     public int Order => 10;
 
     /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
     {
         if (ctx.ChatId is null
@@ -170,6 +174,10 @@ public sealed class CustomModelContributor(AppDbContext db) : ISystemPromptContr
 {
     /// <inheritdoc />
     public int Order => 20;
+
+    /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
@@ -327,6 +335,10 @@ public sealed class ModelSkillsContributor(AppDbContext db) : ISystemPromptContr
     public int Order => 30;
 
     /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
     {
         if (ctx.CustomModel?.MetaJson is null)
@@ -368,6 +380,10 @@ public sealed class FileContextContributor(AppDbContext db, RagService rag)
     public int Order => 40;
 
     /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
     {
         var referenced = await ChatPipeline.ResolveReferenceFileIdsAsync(
@@ -396,6 +412,10 @@ public sealed class WebSearchContributor(WebSearchService webSearch)
 {
     /// <inheritdoc />
     public int Order => 50;
+
+    /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
@@ -434,6 +454,10 @@ public sealed class MemoriesContributor(AppDbContext db, ConfigService config)
 {
     /// <inheritdoc />
     public int Order => 60;
+
+    /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
@@ -505,6 +529,10 @@ public sealed class AgentMemoryContributor(AppDbContext db, ConfigService config
     public int Order => 80;
 
     /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
     {
         var memAdminOff = await config.GetAsync<bool?>(
@@ -554,6 +582,10 @@ public sealed class DelegationPolicyContributor(
 {
     /// <inheritdoc />
     public int Order => 85;
+
+    /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
@@ -643,6 +675,10 @@ public sealed class MentionsContributor(ReferenceService? refs = null)
 {
     /// <inheritdoc />
     public int Order => 90;
+
+    /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
@@ -736,6 +772,10 @@ public sealed class AgentModeContributor : ISystemPromptContributor
     public int Order => 100;
 
     /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
+
+    /// <inheritdoc />
     public Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
     {
         if (PermissionRuleset.Normalize(ctx.AgentMode) == PermissionRuleset.PlanMode)
@@ -821,6 +861,10 @@ public sealed class GenContextContributor(AppDbContext db)
 {
     /// <inheritdoc />
     public int Order => 5;
+
+    /// <inheritdoc />
+    public OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier CacheTier =>
+        OpenWebUI.Infrastructure.SystemPrompt.PromptCacheTier.Dynamic;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)

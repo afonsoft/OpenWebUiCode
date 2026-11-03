@@ -93,10 +93,31 @@ public sealed class PromptContext
 /// (<see cref="System.Collections.Generic.IEnumerable{T}"/>); exceção de
 /// um contributor é tolerada pelo composer (seção omitida + LogWarning).
 /// </summary>
+/// <summary>
+/// Tier de cache do contributor (SPEC-20261103-agent-prompt-cache RF-001):
+/// <see cref="PromptCacheTier.Static"/> (default) vai para o prefixo
+/// cacheável; <see cref="PromptCacheTier.Dynamic"/> sai depois do
+/// breakpoint — mudanças nele não invalidam o bloco estático.
+/// </summary>
+public enum PromptCacheTier
+{
+    /// <summary>Conteúdo estável entre chamadas — entra no prefixo cacheável.</summary>
+    Static = 0,
+
+    /// <summary>Conteúdo por-request (modo, data, reminders) — após o breakpoint.</summary>
+    Dynamic = 1,
+}
+
 public interface ISystemPromptContributor
 {
     /// <summary>Posição na concatenação (menor primeiro).</summary>
     int Order { get; }
+
+    /// <summary>
+    /// Tier de cache (SPEC-20261103-agent-prompt-cache RF-001) —
+    /// default <see cref="PromptCacheTier.Static"/>.
+    /// </summary>
+    PromptCacheTier CacheTier => PromptCacheTier.Static;
 
     /// <summary>
     /// Produz as seções de system prompt do contributor (0..N strings;

@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-agent-prompt-cache` |
 | Ticket | `#639` |
-| Status | `Approved` |
+| Status | `In implementation` |
 
 ## 1. User Story
 

@@ -368,8 +368,11 @@ public class GitHubWorkspaceTests
             OpenWebUI.Api.Completions.Contributors.SystemPromptContributors
                 .Default(new OpenWebUI.Api.Completions.Contributors.SystemPromptContributors.ContributorDeps(_db, _config, null!, null!, _repos, null!, null!))), default,
             chatId: chat.Id);
-        var system = effective.Messages.FirstOrDefault(m => m.Role == "system");
-        Assert.That(system?.Content, Does.Contain("always-allow")
+        // SPEC-20261103-agent-prompt-cache RF-001: a diretiva é tier
+        // Dynamic — vive na 2ª mensagem system, após o breakpoint.
+        var system = string.Join("\n", effective.Messages
+            .Where(m => m.Role == "system").Select(m => m.Content));
+        Assert.That(system, Does.Contain("always-allow")
             .And.Contain("do not ask for confirmation"));
     }
 

@@ -558,8 +558,13 @@ public class ModelVariantTests
             ct: CancellationToken.None);
 
         var body = JsonNode.Parse(h.LastBody!)!.AsObject();
-        Assert.That(body["system"]!.GetValue<string>(), Is.EqualTo("sys"),
-            "system permanece string simples quando OmniRoute gerencia o cache");
+        var system = body["system"]!.AsArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(system[0]!["text"]!.GetValue<string>(), Is.EqualTo("sys"));
+            Assert.That(system[0]!["cache_control"], Is.Null,
+                "nenhum cache_control quando OmniRoute gerencia o cache");
+        });
     }
 }
 

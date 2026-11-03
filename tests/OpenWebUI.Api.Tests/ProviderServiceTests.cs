@@ -798,7 +798,9 @@ public class ProviderServiceTests
         var messages = body["messages"]!.AsArray();
         Assert.Multiple(() =>
         {
-            Assert.That(body["system"]!.GetValue<string>(), Is.EqualTo("seja direto"));
+            // SPEC-20261103-agent-prompt-cache RF-002: system é array de blocos.
+            Assert.That(body["system"]!.AsArray()[0]!["text"]!.GetValue<string>(),
+                Is.EqualTo("seja direto"));
             // system fora das messages; tool_calls -> blocos tool_use; tools -> input_schema.
             Assert.That(messages.Select(m => m!["role"]!.GetValue<string>()),
                 Is.EqualTo(new[] { "user", "assistant", "user" }));
