@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-agent-turn-guard` |
 | Ticket | `#640` |
-| Status | `Approved` |
+| Status | `In implementation` |
 
 ## 1. User Story
 

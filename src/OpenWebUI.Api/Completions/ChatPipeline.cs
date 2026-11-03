@@ -537,7 +537,15 @@ public static class ChatPipeline
         /// final. Efêmera — nunca entra em <c>state.Messages</c>; null
         /// envia a janela como está.
         /// </summary>
-        Func<IReadOnlyList<ChatCompletionMessage>, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnContextUsageAsync = null);
+        Func<IReadOnlyList<ChatCompletionMessage>, CancellationToken, Task<IReadOnlyList<ChatCompletionMessage>>>? OnContextUsageAsync = null,
+        /// <summary>
+        /// Guarda de fim de turno (SPEC-20261103-agent-turn-guard RF-001):
+        /// chamada quando a run terminaria sem tool_calls — recebe o texto
+        /// final; retorno não-nulo é um reminder user-note a injetar e
+        /// re-promptar (máx <see cref="MaxTurnNudges"/> por turno); null
+        /// permite o encerramento.
+        /// </summary>
+        Func<string, CancellationToken, Task<string?>>? OnTurnEndGuardAsync = null);
 
     /// <summary>
     /// Loop de tool calling: chama o modelo com tools até resposta final
@@ -745,6 +753,9 @@ public static class ChatPipeline
     // injeta um nudge e segue para a próxima tarefa em vez de esperar
     // o usuário. Cap de nudges para o modelo insistente poder parar.
     private const int MaxAutoContinues = 3;
+
+    /// <summary>Máx 1 nudge de plano/promessa por turno — anti-loop.</summary>
+    private const int MaxTurnNudges = 1;
     // Continuações sintéticas de resposta truncada (finish_reason=length)
     // antes do erro output-limit (SPEC-20261016-provider-resilience RF-003).
     private const int MaxLengthContinuations = 3;
@@ -766,6 +777,8 @@ public static class ChatPipeline
         public int OverflowRetries;
         public int AutoContinues;
         public int PendingTodos = -1;
+        /// <summary>Nudges de fim-de-turno já injetados (SPEC-20261103-agent-turn-guard RF-001).</summary>
+        public int TurnNudges;
     }
 
     /// <summary>Fronteira de rodada: promove steers pendentes — o turno
@@ -1099,6 +1112,16 @@ public static class ChatPipeline
             await RetryEmptyRoundAsync(state, callbacks, log, ct);
             return null;
         }
+        // SPEC-20261103-agent-turn-guard RF-001/RF-005: plano/promessa sem
+        // tool-call → reminder + re-prompt (máx MaxTurnNudges por turno).
+        if (state.TurnNudges < MaxTurnNudges
+            && callbacks?.OnTurnEndGuardAsync is { } guard
+            && await guard(step.Content ?? string.Empty, ct) is { } reminder)
+        {
+            state.TurnNudges++;
+            await InjectTurnGuardNudgeAsync(state, step, reminder, callbacks, log, ct);
+            return null;
+        }
         // lastStep = último round toolless (MaxStepsPrompt): a saída
         // graciosa do cap passa por aqui — marcar HitStepCap igual ao
         // caminho de exaustão do for (SPEC-20261019 RF-001); steer/queued
@@ -1167,6 +1190,39 @@ public static class ChatPipeline
             "user", PendingTasksPrompt(state.PendingTodos));
         // Idem: preserva o texto da rodada no histórico antes do nudge
         // (senão ele só vive no stream efêmero).
+        var interim = string.IsNullOrWhiteSpace(step.Content)
+            ? null
+            : new ChatCompletionMessage(RoleAssistant, step.Content);
+        if (interim is not null)
+        {
+            state.Messages.Add(interim);
+            state.ToolMessages.Add(interim);
+        }
+        state.Messages.Add(nudge);
+        if (callbacks?.OnMessagesAddedAsync is { } added)
+        {
+            await added(
+                interim is null ? [nudge] : [interim, nudge],
+                interim is null ? [] : [interim], ct);
+        }
+        state.Round++;
+    }
+
+    /// <summary>
+    /// SPEC-20261103-agent-turn-guard RF-001: o texto da rodada entra no
+    /// histórico como assistant interim + reminder user-note — mesma
+    /// mecânica do nudge de todos (a promessa não some do contexto).
+    /// </summary>
+    private static async Task InjectTurnGuardNudgeAsync(
+        ToolLoopMutable state, ProviderCompletion step, string reminder,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+    {
+        log?.LogInformation(
+            "Turno encerrado com plano/promessa sem tool-call — "
+            + "nudge {N}/{Max} injetado.",
+            state.TurnNudges, MaxTurnNudges);
+        var nudge = new ChatCompletionMessage("user", reminder);
         var interim = string.IsNullOrWhiteSpace(step.Content)
             ? null
             : new ChatCompletionMessage(RoleAssistant, step.Content);
