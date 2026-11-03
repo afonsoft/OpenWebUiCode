@@ -83,6 +83,7 @@ builder.Services.AddScoped<PermissionRuleEvaluator>();
 builder.Services.AddSingleton<OpenWebUI.Infrastructure.Context.RestrictedExecRunner>();
 builder.Services.AddSingleton<OpenWebUI.Infrastructure.Context.StallWatchdog>();
 builder.Services.AddSingleton<OpenWebUI.Infrastructure.Context.ExtendContextBudget>();
+builder.Services.AddSingleton<OpenWebUI.Infrastructure.Context.AsyncCompactionScheduler>();
 builder.Services.AddSingleton<ExternalAccessRegistry>();
 builder.Services.AddSingleton<ChatRunPauses>();
 builder.Services.AddSingleton<ChatRunDispatcher>();

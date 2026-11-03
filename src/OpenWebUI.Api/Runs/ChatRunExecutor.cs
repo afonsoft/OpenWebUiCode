@@ -619,11 +619,81 @@ public sealed class ChatRunExecutor(
         // Best-effort: uma falha de publish nunca derruba a run.
         await PublishPhaseAsync(run, "preparing_context", null);
 
-        // Compactação de contexto (SPEC-20261010-context-compaction): aplica
-        // o resumo persistido, compacta o head se o histórico estourou o
-        // limiar e re-aplica — a janela ao modelo sai [resumo] + tail.
-        await compaction.MaybeCompactAsync(
-            run.ChatId, request.Messages, request.Model, ct, run.UserId);
+        // Compactação 3-tier (SPEC-20261102-context-compactor-v2): aplica
+        // pendente pronto na fronteira, dispara spawn na banda
+        // [spawn, hard) sem bloquear e, estourando o hard, espera bounded
+        // pelo resumo em voo antes de cair na compactação síncrona — a
+        // janela ao modelo sai [resumo] + tail.
+        var pendingApply = await compaction.ApplyPendingAsync(
+            run.ChatId, request.Messages.Count, ct);
+        if (pendingApply.Applied)
+        {
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new
+                {
+                    status = "compaction_applied",
+                    cutoff = pendingApply.Cutoff,
+                    spawned_at = pendingApply.SpawnedAt,
+                    applied_at = DateTimeOffset.UtcNow
+                        .ToUnixTimeMilliseconds(),
+                }, ct);
+        }
+        var spawn = await compaction.MaybeSpawnAsync(
+            run.ChatId, request.Messages, request.Model, run.UserId, ct);
+        if (spawn.Spawned)
+        {
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new
+                {
+                    status = "compaction_spawned",
+                    tokens = spawn.EstimateTokens,
+                }, ct);
+        }
+        if (spawn.FailedStage is not null)
+        {
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new { status = "compaction_failed", stage = spawn.FailedStage }, ct);
+        }
+        var hardWait = await compaction.HardWaitAsync(
+            run.ChatId, request.Messages, request.Model, ct);
+        if (hardWait.Waited)
+        {
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new
+                {
+                    status = "compaction_hard_wait",
+                    waited_ms = hardWait.WaitedMs,
+                    timed_out = !hardWait.Applied,
+                }, ct);
+            if (hardWait.Applied)
+            {
+                await runEvents.AppendAsync(run.Id,
+                    RunEventWriter.Types.Note,
+                    new
+                    {
+                        status = "compaction_applied",
+                        cutoff = hardWait.Cutoff,
+                        spawned_at = hardWait.SpawnedAt,
+                        applied_at = DateTimeOffset.UtcNow
+                            .ToUnixTimeMilliseconds(),
+                        waited_ms = hardWait.WaitedMs,
+                    }, ct);
+            }
+        }
+        if (hardWait.FailedStage is not null)
+        {
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new
+                {
+                    status = "compaction_failed",
+                    stage = hardWait.FailedStage,
+                }, ct);
+        }
+        if (!hardWait.Applied)
+        {
+            await compaction.MaybeCompactAsync(
+                run.ChatId, request.Messages, request.Model, ct, run.UserId);
+        }
         var compacted = await compaction.ApplyAsync(
             run.ChatId, request.Messages, ct);
         if (compacted.Count != request.Messages.Count)
@@ -969,6 +1039,11 @@ public sealed class ChatRunExecutor(
             // se os caps da política ainda tiverem folga.
             OnBudgetCheckAsync: t =>
                 RunBudgetCheckAsync(run, budgetLimits, t),
+            // <context_usage> por chamada (SPEC-20261102 RF-008):
+            // nota de orçamento efêmera, recomputada na janela real.
+            OnContextUsageAsync: (msgs, t) =>
+                compaction.WithContextUsageAsync(
+                    run.ChatId, msgs, run.Model, t),
             GateAsync: (call, t) => GateWithInterceptorsAsync(
                 run, cbTools, call, builtinContext, t),
             // Modo relido por rodada — o plan_exit aprovado
@@ -1028,6 +1103,24 @@ public sealed class ChatRunExecutor(
                 RunEventWriter.Types.Note,
                 new { status = "context_extended" }, t);
             return history;
+        }
+        // Fronteira pós-overflow (SPEC-20261102 RF-003): resumo pendente
+        // pronto cobre o overflow sem pagar outra compactação síncrona.
+        var overflowApply = await compaction.WaitPendingAsync(
+            run.ChatId, TimeSpan.Zero, t, history.Count);
+        if (overflowApply.Applied)
+        {
+            await PublishPhaseAsync(run, "compacting", null);
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new
+                {
+                    status = "compaction_applied",
+                    cutoff = overflowApply.Cutoff,
+                    spawned_at = overflowApply.SpawnedAt,
+                    applied_at = DateTimeOffset.UtcNow
+                        .ToUnixTimeMilliseconds(),
+                }, t);
+            return await compaction.ApplyAsync(run.ChatId, history, t);
         }
         var didCompact = await compaction.MaybeCompactAsync(
             run.ChatId, history, effective.Model, t, run.UserId,

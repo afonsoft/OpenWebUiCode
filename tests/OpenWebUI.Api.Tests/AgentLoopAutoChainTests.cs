@@ -182,6 +182,18 @@ public class AgentLoopAutoChainTests
                     // todo_write (evita o reset do budget de nudges).
                     var hasTools = body.Contains("\"tools\"", StringComparison.Ordinal);
                     var lastRole = body.LastIndexOf("\"role\":\"", StringComparison.Ordinal);
+                    // A nota efêmera <context_usage> (SPEC-20261102 RF-008)
+                    // senta no fim do request — a mensagem efetiva é a
+                    // anterior a ela. No JSON ela chega escapada como
+                    // \<context_usage\> — "context_usage" basta.
+                    if (lastRole >= 0
+                        && body.AsSpan(lastRole).StartsWith(
+                            "\"role\":\"system\"", StringComparison.Ordinal)
+                        && body.Contains("context_usage", StringComparison.Ordinal))
+                    {
+                        lastRole = body.LastIndexOf(
+                            "\"role\":\"", lastRole - 1, StringComparison.Ordinal);
+                    }
                     var lastIsTool = lastRole >= 0
                         && body.AsSpan(lastRole).StartsWith(
                             "\"role\":\"tool\"", StringComparison.Ordinal);
