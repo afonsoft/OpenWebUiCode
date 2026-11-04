@@ -119,6 +119,65 @@ public sealed class InsightsPanelTests
     }
 
     [Test]
+    public void Panel_ApplyKnowledge_MarcaApplied()
+    {
+        var posts = new List<string>();
+        using var ctx = Setup(req =>
+        {
+            if (req.Method == HttpMethod.Post && req.RequestUri!.AbsolutePath.EndsWith("/apply"))
+            {
+                posts.Add(req.Content!.ReadAsStringAsync().Result);
+                return Json(new { applied = new[] { new { kind = "knowledge", refId = "n1", title = "use pino v2" } }, skipped = Array.Empty<object>() });
+            }
+            return Json(new
+            {
+                sizeClass = "M", category = "feature",
+                metrics = new { tokensIn = 1L, tokensOut = 1L, costUsd = 0, runs = 1, userMessages = 1 },
+                issues = Array.Empty<object>(), timeline = Array.Empty<object>(),
+                analysis = new
+                {
+                    summary = "s", issues = Array.Empty<string>(), improvedPrompt = (string?)null,
+                    changes = Array.Empty<object>(),
+                    actionItems = new[] { new { kind = "knowledge", text = "use pino v2" } },
+                    knowledgeUsed = Array.Empty<string>(), modelId = "m", generatedAt = 1L,
+                },
+            });
+        });
+        var cut = ctx.Render<InsightsPanel>(p => p.Add(c => c.ChatId, "c1"));
+
+        var btn = cut.WaitForElement("button.msg-action:not([disabled])", TimeSpan.FromSeconds(5));
+        btn.Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("insights.applied"));
+            Assert.That(posts, Has.Count.EqualTo(1));
+        }, TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public void Panel_SkillItem_MostraBotaoEditar()
+    {
+        using var ctx = Setup(_ => Json(new
+        {
+            sizeClass = "M", category = "feature",
+            metrics = new { tokensIn = 1L, tokensOut = 1L, costUsd = 0, runs = 1, userMessages = 1 },
+            issues = Array.Empty<object>(), timeline = Array.Empty<object>(),
+            analysis = new
+            {
+                summary = "s", issues = Array.Empty<string>(), improvedPrompt = (string?)null,
+                changes = Array.Empty<object>(),
+                actionItems = new[] { new { kind = "skill", text = "crie skill" } },
+                knowledgeUsed = Array.Empty<string>(), modelId = "m", generatedAt = 1L,
+            },
+        }));
+        var cut = ctx.Render<InsightsPanel>(p => p.Add(c => c.ChatId, "c1"));
+
+        cut.WaitForAssertion(() =>
+            Assert.That(cut.Markup, Does.Contain("insights.edit_skill")), TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
     public void Panel_SemChat_NaoCarrega()
     {
         var called = false;

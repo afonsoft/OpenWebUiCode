@@ -1377,5 +1377,14 @@
   "insights.admin_sizes": "大小分布",
   "insights.admin_categories": "按类别",
   "insights.admin_top_issues": "主要问题",
-  "chat.hash_knowledge": ""
+  "chat.hash_knowledge": "",
+  "insights.apply": "保存",
+  "insights.applied": "已保存",
+  "insights.apply_all": "全部应用",
+  "insights.edit_skill": "作为技能编辑",
+  "insights.skip_duplicate": "重复",
+  "insights.skip_failed": "失败",
+  "insights.skip_unsupported": "不支持",
+  "insights.skip_requires_draft": "需要草稿",
+  "insights.skip_empty": "空"
 }

@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-dreaming-lite` |
 | Ticket | `GH#697` — https://github.com/afonsoft/OpenWebUiCode/issues/697 |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 
@@ -100,20 +100,20 @@ tests/OpenWebUI.Client.Tests/InsightsPanelTests.cs   (+2)
 
 ## 6. Acceptance Criteria
 
-- [ ] **Dado** insight com item `knowledge` **quando** clica "Salvar" **então** `KnowledgeNote` pessoal criada e botão vira `applied`.
-- [ ] **Dado** item `memory` em chat com repo bound **quando** aplicado **então** `AgentMemory{Scope:repo, RepoSlug}` upsertada.
-- [ ] **Dado** item `skill` **quando** clicado **então** navega para `/customize?tab=skills&draft=...` com editor pré-preenchido.
-- [ ] **Dado** nota com mesmo título já existente **quando** reaplicada **então** `skipped:duplicate`, sem duplicar.
-- [ ] **Dado** chat de outro usuário **quando** POST apply **então** 404.
-- [ ] **Dado** "Aplicar todas" com 3 items **quando** 1 falha **então** 2 aplicados + 1 skipped — sem rollback indevido.
+- [x] **Dado** insight com item `knowledge` **quando** clica "Salvar" **então** `KnowledgeNote` pessoal criada e botão vira `applied`.
+- [x] **Dado** item `memory` em chat com repo bound **quando** aplicado **então** `AgentMemory{Scope:repo, RepoSlug}` upsertada.
+- [x] **Dado** item `skill` **quando** clicado **então** navega para `/customize?tab=skills&draft=...` com editor pré-preenchido.
+- [x] **Dado** nota com mesmo título já existente **quando** reaplicada **então** `skipped:duplicate`, sem duplicar.
+- [x] **Dado** chat de outro usuário **quando** POST apply **então** 404.
+- [x] **Dado** "Aplicar todas" com 3 items **quando** 1 falha **então** 2 aplicados + 1 skipped — sem rollback indevido.
 
 ## 7. Task Plan
 
-- [ ] **T1:** `ApplyActionItemsAsync` no `ChatInsightsService` + contratos + endpoint (TDD: testes primeiro).
-- [ ] **T2:** `ApiService.ApplyInsightSuggestionsAsync` + botões no `InsightsPanel`.
-- [ ] **T3:** `Customize.razor` — query `draft` → pré-preencher editor de skill.
-- [ ] **T4:** i18n ×8 + tailwind.
-- [ ] **T5:** testes NUnit + bUnit; build+guards+DoD → PR.
+- [x] **T1:** `ApplyActionItemsAsync` no `ChatInsightsService` + contratos + endpoint (TDD: testes primeiro).
+- [x] **T2:** `ApiService.ApplyInsightSuggestionsAsync` + botões no `InsightsPanel`.
+- [x] **T3:** `Customize.razor` — query `draft` → pré-preencher editor de skill.
+- [x] **T4:** i18n ×8 + tailwind.
+- [x] **T5:** testes NUnit + bUnit; build+guards+DoD → PR.
 
 ## 8. Organization Guardrails
 
@@ -124,12 +124,22 @@ tests/OpenWebUI.Client.Tests/InsightsPanelTests.cs   (+2)
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-005 + critérios BDD cobertos por testes.
-- [ ] Build Release + suites verdes; drift guards.
-- [ ] i18n paridade; SPEC → `Done` + arquivada.
+- [x] RF-001..RF-005 + critérios BDD cobertos por testes.
+- [x] Build Release + suites verdes; drift guards.
+- [x] i18n paridade; SPEC → `Done` + arquivada.
 
 **Next action after DoD is complete:** PR `feature/Devin-20261104-dreaming-lite`.
 
 ## Open Questions / Pending Ambiguity
 
 - Extensão futura (fora de escopo, documentada): `DreamingScheduler` BackgroundService que varre insights com action items não aplicados e **sugere** (badge "N sugestões pendentes" no Customize hub) — nunca autocria.
+
+## Delivered
+
+PR [a preencher no squash]: `POST /chats/{id}/insights/apply` materializa
+action items — `knowledge`→KnowledgeNote pessoal (trigger=resumo),
+`memory`→AgentMemory (scope repo via WorkspaceRepoService binding, senão
+global; upsert dedup por título), `skill`→skipped requires_draft com
+editor `/customize/skills?draft=` pré-preenchido. InsightsPanel ganha
+botões por item + "Aplicar todas" + estados applied/skipped. 4 NUnit +
+2 bUnit; i18n ×8. Closes #697.

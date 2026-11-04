@@ -1377,5 +1377,14 @@
   "insights.admin_sizes": "Größenverteilung",
   "insights.admin_categories": "Nach Kategorie",
   "insights.admin_top_issues": "Top-Probleme",
-  "chat.hash_knowledge": "Wissen"
+  "chat.hash_knowledge": "Wissen",
+  "insights.apply": "Speichern",
+  "insights.applied": "gespeichert",
+  "insights.apply_all": "Alle anwenden",
+  "insights.edit_skill": "Als Skill bearbeiten",
+  "insights.skip_duplicate": "Duplikat",
+  "insights.skip_failed": "fehlgeschlagen",
+  "insights.skip_unsupported": "nicht unterstützt",
+  "insights.skip_requires_draft": "Entwurf nötig",
+  "insights.skip_empty": "leer"
 }

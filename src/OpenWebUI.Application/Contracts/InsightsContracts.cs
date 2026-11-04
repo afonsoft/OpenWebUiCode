@@ -81,3 +81,23 @@ public sealed record CategoryCount(string Category, int Count);
 
 /// <summary>Contagem por label de issue.</summary>
 public sealed record IssueCount(string Label, string Impact, int Count);
+
+/// <summary>Item de action item a materializar (SPEC-20261104-dreaming-lite).</summary>
+public sealed record InsightApplyItem(
+    /// <summary><c>knowledge</c> | <c>memory</c> | <c>skill</c> | outro.</summary>
+    string Kind,
+    string Text);
+
+/// <summary>Request do POST /chats/{id}/insights/apply.</summary>
+public sealed record InsightApplyRequest(List<InsightApplyItem> Items);
+
+/// <summary>Item materializado com sucesso.</summary>
+public sealed record InsightApplyResult(string Kind, string RefId, string Title);
+
+/// <summary>Item ignorado com o motivo.</summary>
+public sealed record InsightApplySkip(string Kind, string Reason);
+
+/// <summary>Resposta do apply — aplicados + ignorados.</summary>
+public sealed record InsightApplyResponse(
+    List<InsightApplyResult> Applied,
+    List<InsightApplySkip> Skipped);
