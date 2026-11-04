@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-chat-hash-collections` |
 | Ticket | `GH#696` — https://github.com/afonsoft/OpenWebUiCode/issues/696 |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 
@@ -80,19 +80,19 @@ Reusa `GET /api/v1/knowledge` (coleções) e o endpoint existente de arquivos po
 
 ## 6. Acceptance Criteria
 
-- [ ] **Dado** usuário com coleção "backend-docs" **quando** digita `#back` **então** vê `backend-docs` com badge `collection`.
-- [ ] **Dado** arquivo "api-spec.md" em knowledge **quando** digita `#api` **então** vê `api-spec.md` com badge `file`.
-- [ ] **Dado** seleção via Enter **quando** confirmada **então** input vira `#backend-docs ` e dropdown fecha.
-- [ ] **Dado** `oi#foo` **quando** digitado **então** dropdown não abre.
-- [ ] **Dado** dropdown aberto **quando** Esc **então** fecha sem alterar o input; `@` e `!` continuam funcionando.
+- [x] **Dado** usuário com coleção "backend-docs" **quando** digita `#back` **então** vê `backend-docs` com badge `collection`.
+- [x] **Dado** arquivo "api-spec.md" em knowledge **quando** digita `#api` **então** vê `api-spec.md` com badge `file`.
+- [x] **Dado** seleção via Enter **quando** confirmada **então** input vira `#backend-docs ` e dropdown fecha.
+- [x] **Dado** `oi#foo` **quando** digitado **então** dropdown não abre.
+- [x] **Dado** dropdown aberto **quando** Esc **então** fecha sem alterar o input; `@` e `!` continuam funcionando.
 
 ## 7. Task Plan
 
-- [ ] **T1:** estado `_hash*` + regex + `QueueHashLookup`/`RefreshHashSuggestionsAsync`/`SelectHash` no `ChatView.razor` (espelho do bang, inserção de token em vez de conteúdo).
-- [ ] **T2:** dropdown markup + integração teclado (mesmos pontos de `_bangItems`).
-- [ ] **T3:** i18n ×8 + tailwind rebuild.
-- [ ] **T4:** `ChatHashTests.cs` bUnit; regressão `ChatBangTests`/`ChatMentionTests`.
-- [ ] **T5:** build + guards + DoD → PR.
+- [x] **T1:** estado `_hash*` + regex + `QueueHashLookup`/`RefreshHashSuggestionsAsync`/`SelectHash` no `ChatView.razor` (espelho do bang, inserção de token em vez de conteúdo).
+- [x] **T2:** dropdown markup + integração teclado (mesmos pontos de `_bangItems`).
+- [x] **T3:** i18n ×8 + tailwind rebuild.
+- [x] **T4:** `ChatHashTests.cs` bUnit; regressão `ChatBangTests`/`ChatMentionTests`.
+- [x] **T5:** build + guards + DoD → PR.
 
 ## 8. Organization Guardrails
 
@@ -103,13 +103,21 @@ Reusa `GET /api/v1/knowledge` (coleções) e o endpoint existente de arquivos po
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-005 implementados e cobertos por testes passando.
-- [ ] `dotnet build` + suite client verdes; regressão `@`/`!`/`/` intacta.
-- [ ] Drift guards verdes; i18n paridade.
-- [ ] SPEC → `Done` + arquivada com `Delivered`.
+- [x] RF-001..RF-005 implementados e cobertos por testes passando.
+- [x] `dotnet build` + suite client verdes; regressão `@`/`!`/`/` intacta.
+- [x] Drift guards verdes; i18n paridade.
+- [x] SPEC → `Done` + arquivada com `Delivered`.
 
 **Next action after DoD is complete:** PR `feature/Devin-20261104-chat-hash-collections`.
 
 ## Open Questions / Pending Ambiguity
 
 - Nenhuma. Decisões: só coleções+arquivos do próprio usuário (server já enforça); seleção insere `#nome` (não chips — server resolve por nome).
+
+## Delivered
+
+PR [a preencher no squash]: dropdown `#` no composer — coleções RAG +
+arquivos do usuário (badges collection|file, substring filter, top-20,
+debounce 250ms, ↑↓/Enter/Tab/Esc); seleção insere `#nome ` resolvido
+server-side por `ResolveReferenceFileIdsAsync`; `_hashCts` disposed.
+4 bUnit (`ChatHashTests`); regressão `!`/`@` intacta. Closes #696.
