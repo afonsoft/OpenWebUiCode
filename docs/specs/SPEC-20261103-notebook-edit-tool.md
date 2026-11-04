@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/notebook-edit-tool-20261103` |
 | Ticket | `GH#671` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | builtin-tools improvement sweep 2026-11-03 (agent tool primitives) |
 
 ## 1. User Story
@@ -87,3 +87,10 @@ tests/OpenWebUI.Api.Tests/** (novo arquivo de testes da tool)
 ## 8. Effort Estimate
 
 `~4-6h`.
+
+## Delivered
+
+PR #676 (merged `9dec73b`): `builtin:notebook_read` + `builtin:notebook_edit`
+replace/insert/delete por index/cell_id; replace em code zera
+outputs/execution_count; ids únicos; metadados preservados; escrita
+atômica; PermissionRuleset (read→plan, edit→workspace).
