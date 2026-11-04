@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/providers-usage-tokens-20261103` |
 | Ticket | `GH#658` |
-| Status | `In implementation` |
+| Status | `Done` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story
@@ -85,3 +85,9 @@ tests/OpenWebUI.Api.Tests/** (fixtures + asserts)
 ## 8. Effort Estimate
 
 `~4-6h`.
+
+## Delivered
+
+PR #665 (merged `f0b6358`): ProviderUsage +CachedTokens/CacheWriteTokens;
+usage Anthropic (buffered + message_start/message_delta) e Gemini
+(usageMetadata buffered + último chunk) mapeados; 5 testes + fixtures.
