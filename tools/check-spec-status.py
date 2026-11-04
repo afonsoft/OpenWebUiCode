@@ -24,7 +24,10 @@ ACTIVE = ROOT / ".specs"
 ARCHIVE = ROOT / "docs" / "specs"
 
 STATUS_RE = [
-    re.compile(r"\|[ \t]*Status[ \t]*\|[ \t]*`?([^|`]+?)`?[ \t]*\|"),
+    # python:S8786 — [^|]+ greedy bounded por '|' é linear; backticks
+    # saem no .strip() do read_status (antes: lazy +? + `? opcionais
+    # com backtracking super-linear).
+    re.compile(r"\|[ \t]*Status[ \t]*\|[ \t]*([^|]+)[ \t]*\|"),
     re.compile(r"^[ \t]*Status[ \t]*:[ \t]*([^\n]+)", re.M),
     re.compile(r"\*\*Status\*\*[ \t]*:[ \t]*([^\n]+)"),
 ]
