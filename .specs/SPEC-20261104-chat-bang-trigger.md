@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-customize-hub` (mesmo branch hub) |
-| Ticket | `[A DEFINIR]` — criar Issue após aprovação |
+| Ticket | `GH#690` — https://github.com/afonsoft/OpenWebUiCode/issues/690 |
 | Status | `Approved` |
 | Depends on | `SPEC-20261104-customize-hub` (catálogo efetivo de skills `/api/v1/customize/skills`) |
 

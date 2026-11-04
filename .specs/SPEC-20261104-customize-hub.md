@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-customize-hub` |
-| Ticket | `[A DEFINIR]` — criar Issue após aprovação |
+| Ticket | `GH#689` — https://github.com/afonsoft/OpenWebUiCode/issues/689 |
 | Status | `Approved` |
 | Depends on | `SPEC-20261104-model-visibility-gate` (padrão de escopo user/global consolidado) |
 

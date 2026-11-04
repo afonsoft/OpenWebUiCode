@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-session-insights-v2` |
-| Ticket | `[A DEFINIR]` — criar Issue após aprovação |
+| Ticket | `GH#691` — https://github.com/afonsoft/OpenWebUiCode/issues/691 |
 | Status | `Approved` |
 
 ## 1. User Story
