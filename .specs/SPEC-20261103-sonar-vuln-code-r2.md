@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-vuln-code-r2-20261103` |
 | Ticket | `GH#650` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -100,3 +100,18 @@ N/A — sem mudança de payload; endpoints e headers funcionais preservados (CSP
 ## 8. Effort Estimate
 
 `~3-4h` (4 fixes independentes + testes + validação docker).
+
+## Delivered
+
+Verificação 2026-11-03: todos os findings já resolvidos em SPECs
+anteriores (o scan r2 reportou instâncias stale das mesmas regras):
+
+| Regra | Finding | Estado atual |
+| --- | --- | --- |
+| `csharpsquid:S7044` | path traversal em `AuthService.CreateRequest` | **Já fixado** — decode antes de validar (`%2e%2e`), rejeita `..`/`//`/backslash/host; testes em `ClientServiceEdgeTests` |
+| `csharpsquid:S7039` | CSP permissiva em `Program.cs` | **Já fixado** — `unsafe-eval` removido; `wasm-unsafe-eval`+`unsafe-inline` com justificativa documentada |
+| `csharpsquid:S5693` | upload sem limite em `ChatView`/`FileEndpoints` | **Já fixado** — `maxAllowedSize: MaxUploadBytes` client + `file.Length > MaxUploadBytes` server (100MB alinhado) |
+| `docker:S6471` | `USER root` na imagem final | **Won't-fix documentado** — SPEC-20261031-sonar-vuln-code: processo é o agente (shell_exec/apt), decisão de design single-tenant |
+| `docker:S7031` | RUNs consecutivas | **Já fixado** — apt+gh num único layer (mesmo RUN, comentário no Dockerfile) |
+
+Nenhuma mudança de código necessária — triage com evidência linha-a-linha.
