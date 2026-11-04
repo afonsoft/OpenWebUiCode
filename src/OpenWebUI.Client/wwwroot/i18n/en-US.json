@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "failed",
   "insights.skip_unsupported": "unsupported",
   "insights.skip_requires_draft": "needs draft",
-  "insights.skip_empty": "empty"
+  "insights.skip_empty": "empty",
+  "customize.field_allowed_tools": "Allowed tools (csv, optional)",
+  "customize.allowed_tools_hint": "Restricts which tools run while this skill is active. Empty = unrestricted.",
+  "customize.restricted_tools": "restricted tools",
+  "chat.bang_restricted": "restricted"
 }

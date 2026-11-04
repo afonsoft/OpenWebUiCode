@@ -35,7 +35,8 @@ public sealed record ChatRunToolsDeps(
     ExternalAccessRegistry ExternalAccess, IConfiguration Cfg,
     OpenWebUI.Infrastructure.Context.StallWatchdog StallWatch,
     OpenWebUI.Infrastructure.Context.ExtendContextBudget ExtendContext,
-    DeferredToolState Deferred, ToolIndexService ToolIndex);
+    DeferredToolState Deferred, ToolIndexService ToolIndex,
+    SkillToolRestrictionService SkillRestrictions);
 
 public sealed record ChatRunLifecycleDeps(
     ChatRunBroadcaster Broadcaster, ChatRunApprovals Approvals,
@@ -74,6 +75,7 @@ public sealed class ChatRunExecutor(
     private readonly IServiceScopeFactory scopes = tools.Scopes;
     private readonly DeferredToolState deferred = tools.Deferred;
     private readonly ToolIndexService toolIndex = tools.ToolIndex;
+    private readonly SkillToolRestrictionService skillRestrictions = tools.SkillRestrictions;
     private readonly PermissionRuleEvaluator rules = tools.Rules;
     private readonly LifecycleHookService hooks = lifecycle.Hooks;
     private readonly ExternalAccessRegistry externalAccess = tools.ExternalAccess;
@@ -819,10 +821,10 @@ public sealed class ChatRunExecutor(
         // .agents/mcp.json (global + projeto) materializa servers
         // env:* no boot da run (SPEC-20261016-global-agents-scope
         // RF-006). Falha de sync nunca quebra a run.
+        var workdir = await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct);
         try
         {
-            await mcp.SyncEnvServersAsync(
-                await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct), ct);
+            await mcp.SyncEnvServersAsync(workdir, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -830,6 +832,24 @@ public sealed class ChatRunExecutor(
         }
         var loadedTools = await toolExecutor.LoadEnabledAsync(
             user.Id, request.ToolIds, ct);
+        // SPEC-20261104-skills-allowed-tools-plugins RF-002: skills
+        // ativas com allowed-tools restringem o conjunto efetivo — filtra
+        // ANTES do split deferred p/ que tool_search não reintroduza
+        // tools bloqueadas.
+        var allowedTools = await skillRestrictions.ResolveAsync(
+            user.Id, request.Model, workdir, ct);
+        if (allowedTools is not null)
+        {
+            var kept = loadedTools
+                .Where(t => SkillToolRestrictionService.Permits(allowedTools, t))
+                .ToList();
+            if (kept.Count != loadedTools.Count)
+            {
+                await runEvents.AppendAsync(run.Id, "skills.allowed_tools",
+                    new { removed = loadedTools.Count - kept.Count, kept = kept.Count }, ct);
+            }
+            loadedTools = kept;
+        }
         // SPEC-20261031-tool-search-deferred RF-001/RF-005/RF-006: split
         // opt-in — tools deferidas saem do spec anunciado mas ficam
         // permitidas via builtin_tool_search. Auditoria com a estimativa

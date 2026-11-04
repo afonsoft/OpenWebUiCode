@@ -129,7 +129,7 @@ public sealed partial class SkillImportService(
                 continue;
             }
 
-            var (name, description, content) = ParseSkillMarkdown(body);
+            var (name, description, content, allowedTools) = ParseSkillMarkdown(body);
             if (string.IsNullOrWhiteSpace(name))
             {
                 name = dirName;
@@ -150,6 +150,7 @@ public sealed partial class SkillImportService(
                     Name = name,
                     Description = description,
                     Content = content,
+                    AllowedTools = allowedTools,
                     IsActive = true,
                     CreatedAt = now,
                     UpdatedAt = now,
@@ -159,6 +160,7 @@ public sealed partial class SkillImportService(
             {
                 existing.Description = description;
                 existing.Content = content;
+                existing.AllowedTools = allowedTools;
                 existing.UpdatedAt = now;
             }
             imported.Add(name);
@@ -175,11 +177,12 @@ public sealed partial class SkillImportService(
     /// O corpo retornado é o arquivo inteiro (frontmatter incluído) — o
     /// conteúdo injetável carrega os metadados junto, como no repo-skill.
     /// </summary>
-    public static (string? Name, string? Description, string Content) ParseSkillMarkdown(
+    public static (string? Name, string? Description, string Content, string? AllowedTools) ParseSkillMarkdown(
         string markdown)
     {
         string? name = null;
         string? description = null;
+        string? allowedTools = null;
         var span = markdown.AsSpan().TrimStart('\uFEFF');
         if (span.StartsWith("---"))
         {
@@ -197,8 +200,18 @@ public sealed partial class SkillImportService(
                 {
                     description = trimmed[12..].Trim().Trim('"', '\'');
                 }
+                else if (trimmed.StartsWith("allowed-tools:", StringComparison.OrdinalIgnoreCase)
+                    || trimmed.StartsWith("allowed_tools:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var raw = trimmed[(trimmed.IndexOf(':') + 1)..]
+                        .Trim().Trim('[', ']');
+                    var tools = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(t => t.Trim('"', '\'').ToLowerInvariant())
+                        .Where(t => t.Length > 0).Distinct().ToList();
+                    allowedTools = tools.Count == 0 ? null : string.Join(',', tools);
+                }
             }
         }
-        return (name, description, markdown);
+        return (name, description, markdown, allowedTools);
     }
 }

@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "fallito",
   "insights.skip_unsupported": "non supportato",
   "insights.skip_requires_draft": "richiede bozza",
-  "insights.skip_empty": "vuoto"
+  "insights.skip_empty": "vuoto",
+  "customize.field_allowed_tools": "Strumenti consentiti (csv, opzionale)",
+  "customize.allowed_tools_hint": "Limita gli strumenti mentre la skill è attiva. Vuoto = senza limiti.",
+  "customize.restricted_tools": "strumenti limitati",
+  "chat.bang_restricted": "limitata"
 }

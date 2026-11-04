@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "失败",
   "insights.skip_unsupported": "不支持",
   "insights.skip_requires_draft": "需要草稿",
-  "insights.skip_empty": "空"
+  "insights.skip_empty": "空",
+  "customize.field_allowed_tools": "允许的工具 (csv, 可选)",
+  "customize.allowed_tools_hint": "技能激活时限制可用的工具。留空 = 不限制。",
+  "customize.restricted_tools": "工具受限制",
+  "chat.bang_restricted": "受限"
 }

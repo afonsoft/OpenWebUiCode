@@ -40,6 +40,8 @@ public static class CustomizeEndpoints
         admin.MapGet("/disabled", GetAdminDisabledSkillsAsync);
         admin.MapPut("/disabled", SetAdminDisabledSkillsAsync);
         admin.MapPost("/import", ImportSkillsAsync);
+        app.MapPost("/api/v1/admin/plugins/import", ImportPluginAsync)
+            .RequireAuthorization();
     }
 
     // ---------------- Knowledge notes ----------------
@@ -243,7 +245,8 @@ public static class CustomizeEndpoints
                 enabled && !hidden.Contains(s.Name),
                 denied,
                 Editable: !global || isAdmin,
-                Content: s.Content));
+                Content: s.Content,
+                AllowedTools: s.AllowedTools));
         }
         foreach (var s in discovery.Scan(workdir: null).Skills)
         {
@@ -254,7 +257,9 @@ public static class CustomizeEndpoints
                 EnabledForMe: !hidden.Contains(s.Name),
                 DisabledByAdmin: denied,
                 Editable: false,
-                Content: null));
+                Content: null,
+                AllowedTools: s.AllowedTools is { Count: > 0 }
+                    ? string.Join(',', s.AllowedTools) : null));
         }
         return Results.Ok(new { data = items.OrderBy(i => i.Name).ToList() });
     }
@@ -293,6 +298,7 @@ public static class CustomizeEndpoints
             Name = name,
             Description = request.Description?.Trim(),
             Content = request.Content.Trim(),
+            AllowedTools = NormalizeAllowedTools(request.AllowedTools),
             IsActive = true,
             CreatedAt = now,
             UpdatedAt = now,
@@ -301,7 +307,8 @@ public static class CustomizeEndpoints
         await db.SaveChangesAsync(ct);
         return Results.Created($"/api/v1/customize/skills/{skill.Id}",
             new SkillCatalogItem(skill.Id, skill.Name, skill.Description,
-                global ? "global" : "personal", true, true, false, true, skill.Content));
+                global ? "global" : "personal", true, true, false, true,
+                skill.Content, skill.AllowedTools));
     }
 
     /// <summary>Edita skill DB — dono da pessoal ou admin da global.</summary>
@@ -334,6 +341,7 @@ public static class CustomizeEndpoints
         skill.Name = name;
         skill.Description = request.Description?.Trim();
         skill.Content = request.Content.Trim();
+        skill.AllowedTools = NormalizeAllowedTools(request.AllowedTools);
         skill.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         await db.SaveChangesAsync(ct);
         return Results.Ok(new { status = true });
@@ -461,6 +469,34 @@ public static class CustomizeEndpoints
         }
     }
 
+    /// <summary>Importa plugin.json de repositório público — skills/commands/MCPs globais (admin).</summary>
+    private static async Task<IResult> ImportPluginAsync(
+        [FromBody] PluginImportRequest request,
+        HttpContext http, AppDbContext db,
+        PluginImportService importer, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user?.Role != UserRoles.Admin)
+        {
+            return Results.Forbid();
+        }
+        if (string.IsNullOrWhiteSpace(request.RepoUrl))
+        {
+            return Results.BadRequest(new { detail = "repoUrl é obrigatório." });
+        }
+        try
+        {
+            return Results.Ok(await importer.ImportAsync(request.RepoUrl, ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ex.Message.StartsWith("invalid:", StringComparison.Ordinal)
+                ? Results.BadRequest(new { detail = ex.Message[8..].TrimStart() })
+                : Results.Problem(
+                    ex.Message, statusCode: StatusCodes.Status502BadGateway);
+        }
+    }
+
     // ---------------- Helpers ----------------
 
     private static async Task<KnowledgeNote?> FindNoteAsync(
@@ -529,5 +565,18 @@ public static class CustomizeEndpoints
         return string.IsNullOrWhiteSpace(r.Content)
             ? "Conteúdo é obrigatório."
             : null;
+    }
+
+    /// <summary>Normaliza allowed-tools: CSV trim/lower ou null quando vazio.</summary>
+    private static string? NormalizeAllowedTools(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+        var tools = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.ToLowerInvariant()).Distinct().ToList();
+        var joined = string.Join(',', tools);
+        return tools.Count == 0 ? null : joined.Length > 500 ? joined[..500] : joined;
     }
 }

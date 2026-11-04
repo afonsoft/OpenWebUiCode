@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "échec",
   "insights.skip_unsupported": "non pris en charge",
   "insights.skip_requires_draft": "brouillon requis",
-  "insights.skip_empty": "vide"
+  "insights.skip_empty": "vide",
+  "customize.field_allowed_tools": "Outils autorisés (csv, optionnel)",
+  "customize.allowed_tools_hint": "Restreint les outils tant que la skill est active. Vide = sans restriction.",
+  "customize.restricted_tools": "outils restreints",
+  "chat.bang_restricted": "restreinte"
 }

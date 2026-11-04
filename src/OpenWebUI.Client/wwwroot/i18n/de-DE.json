@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "fehlgeschlagen",
   "insights.skip_unsupported": "nicht unterstützt",
   "insights.skip_requires_draft": "Entwurf nötig",
-  "insights.skip_empty": "leer"
+  "insights.skip_empty": "leer",
+  "customize.field_allowed_tools": "Erlaubte Tools (csv, optional)",
+  "customize.allowed_tools_hint": "Schränkt die Tools ein, solange die Skill aktiv ist. Leer = uneingeschränkt.",
+  "customize.restricted_tools": "eingeschränkte Tools",
+  "chat.bang_restricted": "eingeschränkt"
 }

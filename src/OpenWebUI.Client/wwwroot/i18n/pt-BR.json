@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "falhou",
   "insights.skip_unsupported": "não suportado",
   "insights.skip_requires_draft": "requer rascunho",
-  "insights.skip_empty": "vazio"
+  "insights.skip_empty": "vazio",
+  "customize.field_allowed_tools": "Tools permitidas (csv, opcional)",
+  "customize.allowed_tools_hint": "Restringe as tools enquanto a skill estiver ativa. Vazio = sem restrição.",
+  "customize.restricted_tools": "tools restritas",
+  "chat.bang_restricted": "restrita"
 }
