@@ -65,3 +65,16 @@ D5–D7 stay documented as candidates (no SPEC) until prioritized; D10/D12 need 
 
 Approved order: S1 ✅ → S2 ✅ → **S3+S4 ✅ (PR #248)** → S5 (in progress) → S6 → S7 → S8/S9.
 Recommendation: the D-specs land **after S7** (checkpoints and @mentions change the chat/IDE surfaces they consume). D1 and D4 have the highest value for the "web IDE" goal; D2/D3 improve the daily usage loop.
+
+## 6. Addendum 2026-11-04 — docs.devin.ai deep-read (Customize / Skills / Memory / Insights / DeepWiki)
+
+Second pass driven by the product guides (skills, memory, session-insights, knowledge-onboarding, deepwiki-mcp). New findings:
+
+| # | Item (Devin) | Status | Comment |
+|---|---|---|---|
+| D13 | **Customize page** (Personal/Org scopes: Skills, Knowledge, Memory) | ✅ confirmed → SPECs | Our equivalents exist scattered (skills DB+repo, MCP admin+user, no knowledge-notes). `SPEC-20261104-customize-hub` unifies at `/customize`. |
+| D14 | **`!` skills trigger in composer** | ✅ confirmed → SPEC | `@` files+refs already shipped; `!` dedicated skills dropdown is greenfield. `SPEC-20261104-chat-bang-trigger`. |
+| D15 | **Session Insights** (size XS–XL, category, issue timeline, LLM improved-prompt/action-items, knowledge usage) | ✅ confirmed → SPEC | Data layer complete (`RunUsageLedger`, `/usage/*`, `/analytics`); UI is the gap. `SPEC-20261104-session-insights-v2`. |
+| D16 | **Devin Knowledge = deprecated** | ⚠️ noteworthy | Upstream migrates Knowledge → Skills-in-Plugins. We still ship Devin-style notes (context injection) but keep the concept thin — heavy lifting stays in Skills. |
+| D17 | **DeepWiki MCP** (`https://mcp.deepwiki.com/mcp`, tools: `read_wiki_structure`/`read_wiki_contents`/`ask_question`) | ✅ adopted | `.mcp.json` added at repo root; free/remote/no-auth. Repo `afonsoft/OpenWebUiCode` needs indexing at deepwiki.com (public repos only). |
+| D18 | Devin Memory (MEMORY.md git drive + Dreaming) | 🔶 candidate | We have `AgentMemory` (builtin memory_save/search, global/repo scope) — close enough; Dreaming-style consolidation is a possible follow-up SPEC. |

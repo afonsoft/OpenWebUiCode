@@ -22,6 +22,7 @@ Status detalhado de paridade com o upstream: ver `docs/MIGRACAO-DOTNET.md`.
 - **Agent tools builtin**: 30+ tools (`shell_exec` + jobs, `file_*` com diff, `code_interpreter`, `web_search` com failover `auto`, `fetch_url`, `todo_write`, `ask_user` multi-pergunta, `delegate_task`, `agent_catalog`, `apply_patch`, `browser_screenshot`, `browser_navigate`/`browser_act`/`browser_observe`/`browser_close` (sessão Playwright por chat, auto-install/auto-bake de Chromium na imagem, self-healing por texto/OCR tesseract), `generate_image`/`generate_video`, `memory_*`, `routine`/`reminder`, `skill`, `lsp_*`, `checkpoint`/`rewind`, `context_notes`, `new_context`, `context_save`/`context_recovery`/`context_compact` (snapshots versionados por chat), `plan_exit`, `worktree_diff`/`worktree_merge`, n8n), gate de aprovação por preset e risco LOW-MED-HIGH.
 - **Painel Workspace** no chat: tabs Tasks/Changes (diff da run)/Jobs/MCPs/Info, divisor arrastável.
 - **Slash commands**: `/` no composer — prompts do workspace + skills/commands do repo vinculado, com expansão server-side e overrides por run.
+- **Mentions `@`**: `@query` no composer lista arquivos do repo vinculado e referências (chips, dirs-first, debounce, seleção por teclado).
 - **Secrets de agente**: chave→valor (global admin + override por usuário) injetados no env de `shell_exec` e do terminal; `GITHUB_TOKEN` da integração incluído por padrão.
 - **Configurações**: modal com seções categorizadas (Geral, Conta, Memórias, Modelos, Combos, Agentes, Conexões, Admin, Manutenção, …) e barra de salvar unificada.
 - **Manutenção**: retenção de chats/memórias por usuário com dry-run e execução manual (Settings → Manutenção).
@@ -40,4 +41,11 @@ Status detalhado de paridade com o upstream: ver `docs/MIGRACAO-DOTNET.md`.
 
 ## Parcial / pendente (roadmap)
 
-Vault de secrets por usuário, árvore de runs filhas (visual), "meu uso" (analytics por usuário), boards, bot de review próprio — ver tabela de paridade.
+Vault de secrets por usuário, árvore de runs filhas (visual), boards, bot de review próprio — ver tabela de paridade.
+
+Em SPEC aprovada (docs.devin.ai como referência — ver `docs/en/ANALYSIS-DEVIN-WEBAPP.md` §6):
+
+- **Customize hub** (`SPEC-20261104-customize-hub`): página `/customize` com abas Knowledge (notas de contexto estilo Devin, org+pessoal, pin/trigger, injeção no system prompt), Skills (catálogo unificado global/pessoal/repo + import de `afonsoft/skills` + deny admin) e MCPs (seções organização/pessoal unificadas).
+- **Trigger `!` de skills** (`SPEC-20261104-chat-bang-trigger`): `!` no composer lista o catálogo efetivo de skills e injeta o conteúdo — estilo Devin web (`@` arquivos já existe).
+- **Session Insights v2** (`SPEC-20261104-session-insights-v2`): chip de tamanho XS–XL, categoria, timeline de issues, análise por LLM sob demanda (improved prompt + action items) e agregados no admin.
+- **DeepWiki MCP** configurado em `.mcp.json` (`https://mcp.deepwiki.com/mcp`) para contexto de repositório em sessões de agente.
