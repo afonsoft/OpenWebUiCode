@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261102-context-compactor-v2` |
 | Ticket | `#634` |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 
@@ -150,16 +150,16 @@ N/A — sem endpoints novos nem alteração de contrato externo. Configs novas:
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** histórico com estimativa ≥70% do hard e <hard **when** a run chega à fronteira **then** dispara spawn em background e a janela segue inalterada neste turno (sem esperar o summarizer).
-- [ ] **Given** resumo pendente gravado pela task **when** a próxima fronteira chega **then** a janela sai `[resumo+records+tarefas]+tail` e `compaction.applied` é emitido.
-- [ ] **Given** estimativa ≥hard com task em voo **when** estoura **then** aguarda até `hard_wait_ms`, aplica o resumo da task e emite `compaction.hard_wait` com `timed_out=false`.
-- [ ] **Given** estimativa ≥hard sem task (ou task falhou/expirou) **when** estoura **then** cai no caminho síncrono atual e a run continua.
-- [ ] **Given** head com mensagens do usuário "faça X sem Y" **when** compacta **then** o bloco injetado contém `Pedidos do usuário (verbatim):` com "faça X sem Y".
-- [ ] **Given** head com `builtin_todo_write` result `{"tasks":[a,b]}` **when** compacta **then** bloco contém `Tarefas:` com as 2 tasks.
-- [ ] **Given** summarizer respondendo prosa pura **when** compacta **then** resumo injetado normalmente (degradação tolerante).
-- [ ] **Given** `compaction:context_usage` true **when** a janela sai **then** contém `<context_usage>` com estimativa em k; flag false **then** ausente.
-- [ ] **Given** `compaction:gpt-4o:threshold_tokens=128000` e global 224k **when** run em `gpt-4o` **then** hard efetivo é 128k; em outro modelo, 224k.
-- [ ] **Given** dois spawns concorrentes para o mesmo chat **when** disparam **then** apenas uma task corre (single-flight).
+- [x] **Given** histórico com estimativa ≥70% do hard e <hard **when** a run chega à fronteira **then** dispara spawn em background e a janela segue inalterada neste turno (sem esperar o summarizer).
+- [x] **Given** resumo pendente gravado pela task **when** a próxima fronteira chega **then** a janela sai `[resumo+records+tarefas]+tail` e `compaction.applied` é emitido.
+- [x] **Given** estimativa ≥hard com task em voo **when** estoura **then** aguarda até `hard_wait_ms`, aplica o resumo da task e emite `compaction.hard_wait` com `timed_out=false`.
+- [x] **Given** estimativa ≥hard sem task (ou task falhou/expirou) **when** estoura **then** cai no caminho síncrono atual e a run continua.
+- [x] **Given** head com mensagens do usuário "faça X sem Y" **when** compacta **then** o bloco injetado contém `Pedidos do usuário (verbatim):` com "faça X sem Y".
+- [x] **Given** head com `builtin_todo_write` result `{"tasks":[a,b]}` **when** compacta **then** bloco contém `Tarefas:` com as 2 tasks.
+- [x] **Given** summarizer respondendo prosa pura **when** compacta **then** resumo injetado normalmente (degradação tolerante).
+- [x] **Given** `compaction:context_usage` true **when** a janela sai **then** contém `<context_usage>` com estimativa em k; flag false **then** ausente.
+- [x] **Given** `compaction:gpt-4o:threshold_tokens=128000` e global 224k **when** run em `gpt-4o` **then** hard efetivo é 128k; em outro modelo, 224k.
+- [x] **Given** dois spawns concorrentes para o mesmo chat **when** disparam **then** apenas uma task corre (single-flight).
 
 **Edge cases:**
 
@@ -176,14 +176,14 @@ N/A — sem endpoints novos nem alteração de contrato externo. Configs novas:
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** reler `ContextCompactionService`, `ChatRunExecutor` (fronteiras), `ExtendContextBudget`, `TodoWriteBuiltinTool`, fixtures de teste de compaction; mapear pontos de chamada exatos.
-- [ ] **T2 — Thresholds + scheduler:** `AsyncCompactionScheduler` (single-flight, pending kv), `Thresholds` 3-tier + overrides por modelo; testes RED→GREEN.
-- [ ] **T3 — Summarizer-v2:** prompt novo + `ContextSummary` estendido (`State`, `Breadcrumbs`) + parser tolerante + sanity de ids; testes.
-- [ ] **T4 — Records + todo:** extração mecânica no trecho compactado (pré-poda p/ todo) + `CompactionState` campos + `FormatSummary` seções; testes.
-- [ ] **T5 — `<context_usage>`:** injeção pós-poda na janela + flag; testes.
-- [ ] **T6 — Executor wiring:** consulta spawn/apply nas fronteiras + hard-wait bounded + eventos; testes de integração.
-- [ ] **T7 — Validação:** `dotnet test` suíte afetada + build 0 warnings + drift guards se `.razor`/i18n tocados (não previsto).
-- [ ] **T8 — QA + PR:** gate qa-analyst, Issue → in_review/in_pullrequest, PR `closes #TICKET`.
+- [x] **T1 — Discovery:** reler `ContextCompactionService`, `ChatRunExecutor` (fronteiras), `ExtendContextBudget`, `TodoWriteBuiltinTool`, fixtures de teste de compaction; mapear pontos de chamada exatos.
+- [x] **T2 — Thresholds + scheduler:** `AsyncCompactionScheduler` (single-flight, pending kv), `Thresholds` 3-tier + overrides por modelo; testes RED→GREEN.
+- [x] **T3 — Summarizer-v2:** prompt novo + `ContextSummary` estendido (`State`, `Breadcrumbs`) + parser tolerante + sanity de ids; testes.
+- [x] **T4 — Records + todo:** extração mecânica no trecho compactado (pré-poda p/ todo) + `CompactionState` campos + `FormatSummary` seções; testes.
+- [x] **T5 — `<context_usage>`:** injeção pós-poda na janela + flag; testes.
+- [x] **T6 — Executor wiring:** consulta spawn/apply nas fronteiras + hard-wait bounded + eventos; testes de integração.
+- [x] **T7 — Validação:** `dotnet test` suíte afetada + build 0 warnings + drift guards se `.razor`/i18n tocados (não previsto).
+- [x] **T8 — QA + PR:** gate qa-analyst, Issue → in_review/in_pullrequest, PR `closes #TICKET`.
 
 **7.1 Validation strategy:** .NET — unit tests para regras (thresholds, parser, extrações), integration tests para spawn→apply e hard-wait com summarizer fake; cobertura ≥80% nos arquivos novos/alterados; suíte completa verde.
 
@@ -198,11 +198,17 @@ N/A — sem endpoints novos nem alteração de contrato externo. Configs novas:
 
 ## 9. Definition of Done
 
-- [ ] Todos os RFs implementados.
-- [ ] Todos os acceptance criteria cobertos por testes passando.
-- [ ] Edge cases tratados.
-- [ ] `dotnet build` 0 warnings + `dotnet test` verde + cobertura dos arquivos novos ≥80%.
-- [ ] Guardrails respeitados; logs sem PII.
-- [ ] `docs/DEVIN-CLI-REA-ANALYSIS-V2.md` gap table marcada como entregue (itens 1,4,5,6,7 + context_usage).
+- [x] Todos os RFs implementados.
+- [x] Todos os acceptance criteria cobertos por testes passando.
+- [x] Edge cases tratados.
+- [x] `dotnet build` 0 warnings + `dotnet test` verde + cobertura dos arquivos novos ≥80%.
+- [x] Guardrails respeitados; logs sem PII.
+- [x] `docs/DEVIN-CLI-REA-ANALYSIS-V2.md` gap table marcada como entregue (itens 1,4,5,6,7 + context_usage).
 
 **Next action after DoD:** `Status = Done` + PR `closes #TICKET`.
+
+## Delivered
+
+PR #636 (merged `35402ee`) + follow-up #645 (`79fc345`→v3 sections):
+compactação 3-tier assíncrona + summarizer-v2/v3, preservation de
+records/todo, attachment-overflow trigger. Closes #634.

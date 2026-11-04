@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-customize-hub` (mesmo branch hub) |
 | Ticket | `GH#690` — https://github.com/afonsoft/OpenWebUiCode/issues/690 |
-| Status | `Approved` |
+| Status | `Done` |
 | Depends on | `SPEC-20261104-customize-hub` (catálogo efetivo de skills `/api/v1/customize/skills`) |
 
 ## 1. User Story
@@ -79,11 +79,11 @@ Nenhum endpoint novo **nesta** SPEC — consome `GET /api/v1/customize/skills` (
 
 ## 6. Acceptance Criteria
 
-- [ ] **Dado** composer vazio **quando** digito `!` **então** dropdown lista minhas skills efetivas com badge de origem.
-- [ ] **Dado** dropdown aberto **quando** digito `!wri` **então** filtra `write-specs`; Enter injeta o corpo no input.
-- [ ] **Dado** dropdown aberto **quando** pressiono Esc **então** fecha e o texto `!wri` permanece.
-- [ ] **Dado** skill com deny global **quando** abro `!` **então** ela não aparece.
-- [ ] **Dado** texto "oi!" **quando** digito **então** nenhum dropdown abre; `/` e `@` seguem funcionando.
+- [x] **Dado** composer vazio **quando** digito `!` **então** dropdown lista minhas skills efetivas com badge de origem.
+- [x] **Dado** dropdown aberto **quando** digito `!wri` **então** filtra `write-specs`; Enter injeta o corpo no input.
+- [x] **Dado** dropdown aberto **quando** pressiono Esc **então** fecha e o texto `!wri` permanece.
+- [x] **Dado** skill com deny global **quando** abro `!` **então** ela não aparece.
+- [x] **Dado** texto "oi!" **quando** digito **então** nenhum dropdown abre; `/` e `@` seguem funcionando.
 
 ## 7. Task Plan
 
@@ -106,4 +106,12 @@ Nenhum endpoint novo **nesta** SPEC — consome `GET /api/v1/customize/skills` (
 - [x] Navegação por teclado (↑↓/Enter/Tab/Esc) e a11y equivalentes ao `@`.
 - [x] Zero regressão nos testes de `/` e `@` existentes (12/12 no filtro combinado).
 - [x] i18n ×8 + drift guards; bUnit novos verdes (7); Issue linkada (GH#690).
-- [ ] SPEC arquivada em `docs/specs/` com `Status: Done` + `Delivered` (PR).
+- [x] SPEC arquivada em `docs/specs/` com `Status: Done` + `Delivered` (PR).
+
+## Delivered
+
+PR #692 (merged `f2f04ac`): trigger `!` no composer → dropdown do
+catálogo efetivo de skills (badge global|personal|repo, substring
+filter, top-20, debounce 250ms, ↑↓/Enter/Tab/Esc, injeção do corpo);
+deny/tombstone nunca listam; `@` preservado. 7 bUnit (`ChatBangTests`).
+Closes #690.
