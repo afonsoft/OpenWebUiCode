@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/gemini-context-caching-20261103` |
 | Ticket | `GH#663` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story
@@ -90,3 +90,18 @@ Request aditivo: `cachedContent` opcional; sem mudança quando flag off.
 ## 8. Effort Estimate
 
 `~6-8h`.
+
+## Delivered
+
+PR (merged): `GeminiContextCacheService` singleton (create/patch-ttl/
+delete, auth x-goog-api-key, hash SHA256 de base+model+system, TTL 60min,
+grace 5min) — RF-001; `TryApplyContextCacheAsync` nos 4 paths Google
+(buffered/tools/stream/tools-stream) com flag `context_caching` e
+threshold `context_caching_min_tokens` (default 4096, estimativa 4ch/tok)
+em `ProviderConnection.Settings` — RF-002; systemInstruction sai do
+payload quando cachedContent vai — RF-002; erro/4xx → warning + request
+inline (RF-003); `IAsyncDisposable` deleta caches criados (RF-004).
+Validado ao vivo (gemini-3.8-flash): create→generate retornou
+`cachedContentTokenCount:2102`, PATCH estendeu expireTime, DELETE ok.
+Escopo da fatia: cacheia systemInstruction (parte estática principal);
+conteúdo user/multimodal fica para fatia futura.

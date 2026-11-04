@@ -23,7 +23,8 @@ public class ProviderService(
     ILogger<ProviderService> logger,
     HybridCache cache,
     IConfiguration cfg,
-    PolicyService? policies = null)
+    PolicyService? policies = null,
+    GeminiContextCacheService? contextCache = null)
 {
     /// <summary>Limites de retry lidos de <c>Providers:*</c>
     /// (SPEC-20261016-provider-resilience).</summary>
@@ -2694,6 +2695,66 @@ public class ProviderService(
         return payload;
     }
 
+    /// <summary>
+    /// SPEC-20261103-gemini-context-caching RF-002/003: conexão com
+    /// <c>context_caching</c> ativa e systemInstruction acima do threshold
+    /// estimado → <c>cachedContent</c> referenciando um cachedContents
+    /// criado/reusado (system sai do payload, conforme a API exige).
+    /// Qualquer falha → degrade: request segue inline sem cache.
+    /// </summary>
+    private async Task TryApplyContextCacheAsync(
+        ChatCompletionRequest request,
+        ProviderConnection connection,
+        JsonObject payload,
+        CancellationToken ct)
+    {
+        if (contextCache is null || !GoogleContextCachingEnabled(connection))
+        {
+            return;
+        }
+        var sysText = Str(payload["systemInstruction"]?["parts"]?[0]?["text"]);
+        if (string.IsNullOrEmpty(sysText)
+            || EstimateTokens(sysText)
+                < GoogleContextCachingMinTokens(connection))
+        {
+            return;
+        }
+        try
+        {
+            var name = await contextCache.ResolveAsync(
+                connection, request.Model, sysText, ct);
+            if (name is not null)
+            {
+                payload.Remove("systemInstruction");
+                payload["cachedContent"] = name;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex,
+                "gemini context cache falhou — request segue sem cache.");
+        }
+    }
+
+    /// <summary>Flag <c>context_caching</c> por conexão (Settings) —
+    /// bool true ou string "true".</summary>
+    private static bool GoogleContextCachingEnabled(ProviderConnection conn) =>
+        conn.Settings?["context_caching"] is JsonValue v
+            && ((v.TryGetValue<bool>(out var b) && b)
+                || (v.TryGetValue<string>(out var s)
+                    && string.Equals(s, "true",
+                        StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>Threshold configurável
+    /// (<c>context_caching_min_tokens</c>, default ~4k tokens estimados).</summary>
+    private static int GoogleContextCachingMinTokens(ProviderConnection conn) =>
+        IntNum(conn.Settings?["context_caching_min_tokens"]) ?? 4096;
+
+    /// <summary>Estimativa ~4 chars/token (heurística documentada — evita
+    /// criar cache para prompts curtos).</summary>
+    private static int EstimateTokens(string text) =>
+        (int)Math.Ceiling(text.Length / 4.0);
+
     /// <summary>Mapeia cada mensagem para os <c>contents</c> Gemini, separando
     /// <c>systemInstruction</c> e populando o mapa id→nome das tool calls.</summary>
     private static (List<string> System, List<JsonObject> Contents)
@@ -2974,6 +3035,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
+        await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -2986,6 +3048,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
+        await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
         using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
@@ -3001,6 +3064,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
+        await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -3123,6 +3187,7 @@ public class ProviderService(
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
         var payload = BuildGooglePayload(request);
+        await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
         using var response = await httpClientFactory.CreateClient()
             .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
