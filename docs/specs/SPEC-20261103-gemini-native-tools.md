@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/gemini-native-tools-20261103` |
 | Ticket | `GH#662` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story
@@ -93,3 +93,15 @@ docs/en|pt/** (docs de conexão Google)
 ## 8. Effort Estimate
 
 `~5-7h`.
+
+## Delivered
+
+PR (merged): native_tools csv → entries `google_search`/`code_execution`/
+`url_context` no tools[] coexistindo com functionDeclarations (RF-001);
+`groundingMetadata.groundingChunks[].web` → lista "Fontes:" deduplicada em
+markdown no content — buffered e stream (RF-002); `executableCode` → bloco
+fenced e `codeExecutionResult` → bloco de saída demarcados no content
+(RF-003); `thinking_budget` → `generationConfig.thinkingConfig.thinkingBudget`
+(RF-004); payload sem native_tools byte-idêntico (RF-005). Validado ao vivo
+contra AI Studio (`gemini-3.8-flash`): os 3 tools aceitos, grounding chunks
+reais parseados, `thoughtsTokenCount` no usageMetadata.
