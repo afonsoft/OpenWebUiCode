@@ -72,7 +72,7 @@ public static class PermissionRuleset
         "worktree_diff", "specs",
         "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
         "lsp_definition", "lsp_references", "lsp_hover",
-        "notebook_read",
+        "notebook_read", "code_search",
     };
 
     /// <summary>
@@ -132,6 +132,7 @@ public static class PermissionRuleset
         "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
         "lsp_definition", "lsp_references", "lsp_hover",
         "notebook_read", "notebook_edit", "tool_install",
+        "code_search",
     };
 
     /// <summary>
