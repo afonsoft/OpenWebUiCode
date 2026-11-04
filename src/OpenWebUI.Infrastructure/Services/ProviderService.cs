@@ -584,7 +584,8 @@ public class ProviderService(
         }
         var status = HttpStatusCode.BadGateway;
         if (message.Contains("rate", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("quota", StringComparison.OrdinalIgnoreCase))
+            || message.Contains("quota", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("exhaust", StringComparison.OrdinalIgnoreCase))
         {
             status = HttpStatusCode.TooManyRequests;
         }
@@ -2046,6 +2047,13 @@ public class ProviderService(
     /// <summary>Parseia a resposta da Messages API: texto + tool_use normalizados.</summary>
     private static ProviderCompletion ParseAnthropicResponse(JsonNode? json)
     {
+        // Resposta buffered com {"error":...} (200 + corpo de erro, ex.:
+        // api_error/overloaded_error) — erro honesto, nunca conteúdo vazio.
+        if (Prop(json, ErrorKey) is { } bufferedError)
+        {
+            throw MidStreamProviderError(bufferedError);
+        }
+
         var content = new StringBuilder();
         var reasoning = new StringBuilder();
         var calls = new List<ProviderToolCall>();
