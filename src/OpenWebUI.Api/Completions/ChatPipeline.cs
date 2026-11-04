@@ -113,31 +113,7 @@ public static class ChatPipeline
         // RF-001: contribuidores Static viram o prefixo cacheável (1ª msg
         // system); Dynamic formam a 2ª msg, após o breakpoint. Providers
         // sem cache ignoram a divisão (ordem preservada).
-        if (staticParts.Count > 0 || dynamicParts.Count > 0)
-        {
-            var existing = messages.FindIndex(m => m.Role == "system");
-            var existingContent = existing >= 0 ? messages[existing].Content : null;
-            if (existing >= 0)
-            {
-                messages.RemoveAt(existing);
-            }
-            // O system do request é conteúdo do usuário — vai ao bloco
-            // dinâmico (não invalida o prefixo cacheável).
-            var dyn = string.Join("\n\n",
-                dynamicParts.Concat(existingContent is { Length: > 0 } e ? [e] : []));
-            if (dyn.Length > 0)
-            {
-                messages.Insert(0, new ChatCompletionMessage("system", dyn));
-            }
-            if (staticParts.Count > 0)
-            {
-                var stat = string.Join("\n\n", staticParts);
-                messages.Insert(0, new ChatCompletionMessage("system", stat));
-                log?.LogDebug("prompt_block sha256={Hash} chars={Chars}",
-                    Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                        System.Text.Encoding.UTF8.GetBytes(stat)))[..16], stat.Length);
-            }
-        }
+        MergeSystemParts(messages, staticParts, dynamicParts, log);
 
         messages = await InjectMediaAsync(messages, request, user, deps, log, ct);
 
@@ -169,6 +145,41 @@ public static class ChatPipeline
         return inletFilters.Count > 0
             ? ModelFilterService.ApplyInlet(built, inletFilters)
             : built;
+    }
+
+    /// <summary>Mescla partes Static/Dynamic no topo das mensagens —
+    /// o system do request entra no bloco dinâmico (S3776: extraído de
+    /// <see cref="EnrichRequestAsync"/>).</summary>
+    private static void MergeSystemParts(
+        List<ChatCompletionMessage> messages,
+        IReadOnlyList<string> staticParts,
+        IReadOnlyList<string> dynamicParts,
+        Microsoft.Extensions.Logging.ILogger? log)
+    {
+        if (staticParts.Count == 0 && dynamicParts.Count == 0)
+        {
+            return;
+        }
+        var existing = messages.FindIndex(m => m.Role == "system");
+        var existingContent = existing >= 0 ? messages[existing].Content : null;
+        if (existing >= 0)
+        {
+            messages.RemoveAt(existing);
+        }
+        var dyn = string.Join("\n\n",
+            dynamicParts.Concat(existingContent is { Length: > 0 } e ? [e] : []));
+        if (dyn.Length > 0)
+        {
+            messages.Insert(0, new ChatCompletionMessage("system", dyn));
+        }
+        if (staticParts.Count > 0)
+        {
+            var stat = string.Join("\n\n", staticParts);
+            messages.Insert(0, new ChatCompletionMessage("system", stat));
+            log?.LogDebug("prompt_block sha256={Hash} chars={Chars}",
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(stat)))[..16], stat.Length);
+        }
     }
 
     /// <summary>Monta o PromptContext compartilhado pelos contributors.</summary>
