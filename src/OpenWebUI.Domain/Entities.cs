@@ -2590,3 +2590,54 @@ public class GenerationContextEntry
     /// <summary>Última atualização (epoch seconds).</summary>
     public long UpdatedAt { get; set; }
 }
+
+/// <summary>
+/// Insight materializado de um chat (SPEC-20261104-session-insights-v2):
+/// classificação heurística (tamanho/categoria/issues) computada de forma
+/// incremental e última análise LLM gerada sob demanda — um registro por chat.
+/// </summary>
+public class ChatInsight
+{
+    /// <summary>Chat dono do insight — PK (1 insight por chat).</summary>
+    [System.ComponentModel.DataAnnotations.Key]
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Dono do chat (consultas admin agregadas por período).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Classe de tamanho: XS | S | M | L | XL.</summary>
+    public string SizeClass { get; set; } = "XS";
+
+    /// <summary>Categoria determinística (feature, bugfix, research…) ou
+    /// <c>uncategorized</c>.</summary>
+    public string Category { get; set; } = "uncategorized";
+
+    /// <summary>Issues agregadas das runs, JSON
+    /// <c>[{label, impact, description, count}]</c>.</summary>
+    public string IssuesJson { get; set; } = "[]";
+
+    /// <summary>Timeline de eventos relevantes, JSON
+    /// <c>[{at, kind, title, ref}]</c> (cap 100).</summary>
+    public string TimelineJson { get; set; } = "[]";
+
+    /// <summary>Métricas agregadas snapshot, JSON
+    /// <c>{tokensIn, tokensOut, costUsd, runs, userMessages}</c>.</summary>
+    public string MetricsJson { get; set; } = "{}";
+
+    /// <summary>Última análise LLM persistida, JSON
+    /// <c>{summary, issues[], improvedPrompt, changes[], actionItems[],
+    /// knowledgeUsed[]}</c>; null até o primeiro generate.</summary>
+    public string? AnalysisJson { get; set; }
+
+    /// <summary>Modelo que gerou a análise atual.</summary>
+    public string? ModelId { get; set; }
+
+    /// <summary>Último run incluído na heurística (recálculo incremental).</summary>
+    public string? LastRunId { get; set; }
+
+    /// <summary>Geração da análise atual (epoch seconds; null = nunca).</summary>
+    public long? GeneratedAt { get; set; }
+
+    /// <summary>Última atualização da heurística (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}

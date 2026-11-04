@@ -823,6 +823,55 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("Chats");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ChatInsight", b =>
+                {
+                    b.Property<string>("ChatId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AnalysisJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("GeneratedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("IssuesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastRunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MetricsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SizeClass")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimelineJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ChatId");
+
+                    b.ToTable("ChatInsights");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.ChatJob", b =>
                 {
                     b.Property<string>("Id")

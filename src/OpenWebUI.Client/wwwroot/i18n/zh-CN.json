@@ -1360,5 +1360,21 @@
   "chat.suggest_knowledge_prompt": "这个聊天中有什么值得记住的？",
   "chat.knowledge_saved": "知识笔记已保存。打开自定义页面？",
   "chat.bang_skills": "技能",
-  "chat.bang_load_failed": "无法加载技能内容。"
+  "chat.bang_load_failed": "无法加载技能内容。",
+  "insights.title": "会话洞察",
+  "insights.loading": "分析中…",
+  "insights.empty": "暂无洞察。",
+  "insights.unhealthy": "不健康",
+  "insights.timeline": "问题时间线",
+  "insights.improved_prompt": "改进的提示词",
+  "insights.use_prompt": "使用此提示词新建聊天",
+  "insights.action_items": "行动项",
+  "insights.generate": "生成分析",
+  "insights.regenerate": "重新生成",
+  "insights.generating": "生成中…",
+  "insights.generate_failed": "无法生成分析。",
+  "insights.admin_unhealthy": "不健康会话（L/XL）",
+  "insights.admin_sizes": "大小分布",
+  "insights.admin_categories": "按类别",
+  "insights.admin_top_issues": "主要问题"
 }

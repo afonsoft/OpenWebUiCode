@@ -160,6 +160,7 @@ builder.Services.AddScoped<ContextSnapshotService>();
 // Camadas de configuração por usuário (SPEC-20261014-config-layers).
 builder.Services.AddScoped<UserConfigOverlayService>();
 builder.Services.AddScoped<SkillImportService>();
+builder.Services.AddScoped<ChatInsightsService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
 builder.Services.AddScoped<HistoryResourceService>();
 // Referências nomeadas ref:// (SPEC-20261018-references): dir local ou
@@ -679,6 +680,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapMcpEndpoints();
     app.MapUserMcpEndpoints();
     app.MapCustomizeEndpoints();
+    app.MapInsightsEndpoints();
     app.MapMcpOAuthEndpoints();
     app.MapReferenceEndpoints();
     app.MapThemeEndpoints();

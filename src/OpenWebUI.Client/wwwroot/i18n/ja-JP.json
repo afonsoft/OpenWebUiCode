@@ -1360,5 +1360,21 @@
   "chat.suggest_knowledge_prompt": "このチャットから何を記憶しますか？",
   "chat.knowledge_saved": "ナレッジノートを保存しました。カスタマイズを開きますか？",
   "chat.bang_skills": "スキル",
-  "chat.bang_load_failed": "スキルの内容を読み込めませんでした。"
+  "chat.bang_load_failed": "スキルの内容を読み込めませんでした。",
+  "insights.title": "セッションインサイト",
+  "insights.loading": "分析中…",
+  "insights.empty": "インサイトはまだありません。",
+  "insights.unhealthy": "不健全",
+  "insights.timeline": "イシュータイムライン",
+  "insights.improved_prompt": "改善されたプロンプト",
+  "insights.use_prompt": "このプロンプトで新規チャット",
+  "insights.action_items": "アクションアイテム",
+  "insights.generate": "分析を生成",
+  "insights.regenerate": "再生成",
+  "insights.generating": "生成中…",
+  "insights.generate_failed": "分析を生成できませんでした。",
+  "insights.admin_unhealthy": "不健全なチャット（L/XL）",
+  "insights.admin_sizes": "サイズ分布",
+  "insights.admin_categories": "カテゴリ別",
+  "insights.admin_top_issues": "主なイシュー"
 }

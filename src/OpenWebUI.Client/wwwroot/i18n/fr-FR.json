@@ -1360,5 +1360,21 @@
   "chat.suggest_knowledge_prompt": "Que faut-il retenir de ce chat ?",
   "chat.knowledge_saved": "Note de connaissance enregistrée. Ouvrir Personnaliser ?",
   "chat.bang_skills": "Skills",
-  "chat.bang_load_failed": "Impossible de charger le contenu de la skill."
+  "chat.bang_load_failed": "Impossible de charger le contenu de la skill.",
+  "insights.title": "Insights de session",
+  "insights.loading": "Analyse…",
+  "insights.empty": "Pas encore d'insights.",
+  "insights.unhealthy": "malsaine",
+  "insights.timeline": "Chronologie des problèmes",
+  "insights.improved_prompt": "Prompt amélioré",
+  "insights.use_prompt": "Nouveau chat avec ce prompt",
+  "insights.action_items": "Actions",
+  "insights.generate": "Générer l'analyse",
+  "insights.regenerate": "Régénérer",
+  "insights.generating": "Génération…",
+  "insights.generate_failed": "Impossible de générer l'analyse.",
+  "insights.admin_unhealthy": "Chats malsains (L/XL)",
+  "insights.admin_sizes": "Distribution des tailles",
+  "insights.admin_categories": "Par catégorie",
+  "insights.admin_top_issues": "Principaux problèmes"
 }
