@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/anthropic-messages-v2-20261103` |
 | Ticket | `GH#661` |
-| Status | `Approved` |
+| Status | `In implementation` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story

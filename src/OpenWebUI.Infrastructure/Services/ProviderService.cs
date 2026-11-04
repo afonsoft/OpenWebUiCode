@@ -395,6 +395,9 @@ public class ProviderService(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
         request = ApplyProviderOverlay(request, provider, connections);
+        // SPEC-20261103-anthropic-messages-v2 RF-003: userId da run vira
+        // metadata.user_id na Messages API (só o builder Anthropic lê).
+        request = request with { UserId = userId };
 
         return provider switch
         {
@@ -440,6 +443,9 @@ public class ProviderService(
         }
 
         request = ApplyProviderOverlay(request, provider, connections);
+        // SPEC-20261103-anthropic-messages-v2 RF-003: userId da run vira
+        // metadata.user_id na Messages API (só o builder Anthropic lê).
+        request = request with { UserId = userId };
         var lines = provider switch
         {
             ProviderTypes.Ollama => StreamOllamaAsync(request, connections, ct),
@@ -470,6 +476,9 @@ public class ProviderService(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
         request = ApplyProviderOverlay(request, provider, connections);
+        // SPEC-20261103-anthropic-messages-v2 RF-003: userId da run vira
+        // metadata.user_id na Messages API (só o builder Anthropic lê).
+        request = request with { UserId = userId };
         var payload = BuildPayload(request, stream: false, provider);
         JsonNode? json;
         bool openAi = provider == ProviderTypes.OpenAi;
@@ -763,6 +772,9 @@ public class ProviderService(
             await config.GetConnectionsAsync(ct), userId, ct);
         var provider = await ResolveProviderAsync(request, connections, ct);
         request = ApplyProviderOverlay(request, provider, connections);
+        // SPEC-20261103-anthropic-messages-v2 RF-003: userId da run vira
+        // metadata.user_id na Messages API (só o builder Anthropic lê).
+        request = request with { UserId = userId };
         var payload = BuildPayload(request, stream: true, provider);
 
         try
@@ -1761,6 +1773,12 @@ public class ProviderService(
         {
             ApplyAnthropicCacheControl(payload);
         }
+        // RF-003: metadata.user_id — abuse tracking pedido pela Anthropic;
+        // vem do userId interno da run, nunca do client.
+        if (request.UserId is { Length: > 0 } uid)
+        {
+            payload["metadata"] = new JsonObject { ["user_id"] = uid };
+        }
         if (request.ExtraBody is { Count: > 0 } overlay)
         {
             ModelVariantService.DeepMerge(payload, overlay);
@@ -1910,6 +1928,25 @@ public class ProviderService(
         };
         foreach (var img in images)
         {
+            // SPEC-20261103-anthropic-messages-v2 RF-001: PDFs viram blocos
+            // document (com citations habilitado — a API cita o conteúdo);
+            // demais mídias seguem como image.
+            if (string.Equals(img.MimeType, "application/pdf",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                blocks.Add(new JsonObject
+                {
+                    ["type"] = "document",
+                    ["source"] = new JsonObject
+                    {
+                        ["type"] = "base64",
+                        ["media_type"] = "application/pdf",
+                        ["data"] = img.Base64Data,
+                    },
+                    ["citations"] = new JsonObject { ["enabled"] = true },
+                });
+                continue;
+            }
             blocks.Add(new JsonObject
             {
                 ["type"] = "image",
