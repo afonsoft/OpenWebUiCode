@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261103-agent-turn-guard` |
 | Ticket | `#640` |
-| Status | `In implementation` |
+| Status | `Done` |
 
 ## 1. User Story
 
@@ -82,12 +82,12 @@ tests/OpenWebUI.Api.Tests/
 
 ## 6. Acceptance Criteria
 
-- [ ] **Given** texto "I will now fix X" sem tool-call **when** o turno fecha **then** reminder + re-prompt.
-- [ ] **Given** mesmo texto com tool-call **when** fecha **then** fim normal.
-- [ ] **Given** 2º turno consecutivo casando **when** fecha **then** não re-nudgea (anti-loop).
-- [ ] **Given** task destacada viva **when** fecha sem tool-call **then** `turn_end_wait`, sem nudge.
-- [ ] **Given** run destacada **when** prompt monta **then** bloco autônomo presente; chat interativo ausente.
-- [ ] **Given** `agent:turn_guard=false` **when** qualquer caso **then** comportamento atual.
+- [x] **Given** texto "I will now fix X" sem tool-call **when** o turno fecha **then** reminder + re-prompt.
+- [x] **Given** mesmo texto com tool-call **when** fecha **then** fim normal.
+- [x] **Given** 2º turno consecutivo casando **when** fecha **then** não re-nudgea (anti-loop).
+- [x] **Given** task destacada viva **when** fecha sem tool-call **then** `turn_end_wait`, sem nudge.
+- [x] **Given** run destacada **when** prompt monta **then** bloco autônomo presente; chat interativo ausente.
+- [x] **Given** `agent:turn_guard=false` **when** qualquer caso **then** comportamento atual.
 
 **Edge cases:**
 
@@ -99,11 +99,11 @@ tests/OpenWebUI.Api.Tests/
 
 ## 7. Task Plan
 
-- [ ] **T1 — Discovery:** fronteira de rodada do `ChatPipeline`; lookup de tasks vivas no executor.
-- [ ] **T2 — Heurística + nudge:** detecção + reminder + re-prompt único.
-- [ ] **T3 — Wait-note + bloco autônomo.**
-- [ ] **T4 — Tests:** critérios da seção 6.
-- [ ] **T5 — DoD + PR.**
+- [x] **T1 — Discovery:** fronteira de rodada do `ChatPipeline`; lookup de tasks vivas no executor.
+- [x] **T2 — Heurística + nudge:** detecção + reminder + re-prompt único.
+- [x] **T3 — Wait-note + bloco autônomo.**
+- [x] **T4 — Tests:** critérios da seção 6.
+- [x] **T5 — DoD + PR.**
 
 ## 8. Organization Guardrails
 
@@ -114,14 +114,19 @@ tests/OpenWebUI.Api.Tests/
 
 ## 9. Definition of Done
 
-- [ ] Todos os RFs implementados.
-- [ ] Critérios da seção 6 cobertos por testes.
-- [ ] Edge cases tratados.
-- [ ] Build + suíte passando; cobertura ≥ baseline.
-- [ ] Guardrails respeitados.
+- [x] Todos os RFs implementados.
+- [x] Critérios da seção 6 cobertos por testes.
+- [x] Edge cases tratados.
+- [x] Build + suíte passando; cobertura ≥ baseline.
+- [x] Guardrails respeitados.
 
 **Next action after DoD:** `Status = Done` e PR na branch da feature.
 
 ## Open Questions / Pending Ambiguity
 
 - Aplicar RF-003 também aos prompts de `delegate_task`/sidekick? → **recomendo sim** (sub-agentes são autônomos por natureza).
+
+## Delivered
+
+PR #644 (merged `8e05da7`): turn-end guard — anti plan/promise nudge +
+background wait antes de encerrar o turno do agente. Closes #640.
