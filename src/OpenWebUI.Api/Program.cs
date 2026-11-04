@@ -237,6 +237,8 @@ builder.Services.AddScoped<IBuiltinChatTool, FileGlobBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, FileWriteBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, FileEditBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ApplyPatchBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, NotebookReadBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, NotebookEditBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TodoWriteBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RewindBuiltinTool>();

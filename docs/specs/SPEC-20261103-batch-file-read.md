@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/batch-file-read-20261103` |
 | Ticket | `GH#673` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | builtin-tools improvement sweep 2026-11-03 (agent tool primitives) |
 
 ## 1. User Story
@@ -84,3 +84,10 @@ tests/OpenWebUI.Api.Tests/** (testes da tool file_read)
 ## 8. Effort Estimate
 
 `~3-4h`.
+
+## Delivered
+
+PR #675 (merged `d10f6d9`): `paths[]` de {path,offset?,limit?} ≤20 itens
+numa chamada (RF-001); erro isolado por item com cap agregado
+`MaxBatchChars=256KB` → `budget_exceeded` honesto (RF-002/003); single-path
+back-compat byte-idêntico + history/managed/ref por item (RF-004).
