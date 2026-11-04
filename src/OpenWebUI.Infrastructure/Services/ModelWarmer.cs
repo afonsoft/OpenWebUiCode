@@ -173,14 +173,11 @@ public class ModelWarmerScheduler(IServiceScopeFactory scopeFactory, ILogger<Mod
 {
     // Cadências como estáticos mutáveis — seam de teste (mesmo padrão de
     // ModelWarmer.Now): a suíte encurta para exercitar o loop real.
-    private static TimeSpan _tick = TimeSpan.FromSeconds(60);
-    private static TimeSpan _initialDelay = TimeSpan.FromMinutes(2);
-
     /// <summary>Cadência do loop — seam de teste.</summary>
-    internal static TimeSpan Tick { get => _tick; set => _tick = value; }
+    internal static TimeSpan Tick { get; set; } = TimeSpan.FromSeconds(60);
 
     /// <summary>Atraso inicial — seam de teste.</summary>
-    internal static TimeSpan InitialDelay { get => _initialDelay; set => _initialDelay = value; }
+    internal static TimeSpan InitialDelay { get; set; } = TimeSpan.FromMinutes(2);
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

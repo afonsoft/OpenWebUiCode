@@ -15,7 +15,8 @@ namespace OpenWebUI.Infrastructure.ChatTools;
 public sealed class CommandHookRunner(ILogger<CommandHookRunner>? log = null)
 {
     /// <summary>Shell usado para o comando (testável).</summary>
-    private static Func<string, string, string, ProcessStartInfo> _shellOf =
+    /// <summary>Seam de teste para o shell do comando.</summary>
+    internal static Func<string, string, string, ProcessStartInfo> ShellOf { get; set; } =
         (cmd, cwd, args) =>
         {
             var psi = new ProcessStartInfo("/bin/sh")
@@ -30,13 +31,6 @@ public sealed class CommandHookRunner(ILogger<CommandHookRunner>? log = null)
             psi.ArgumentList.Add(cmd);
             return psi;
         };
-
-    /// <summary>Seam de teste para o shell do comando.</summary>
-    internal static Func<string, string, string, ProcessStartInfo> ShellOf
-    {
-        get => _shellOf;
-        set => _shellOf = value;
-    }
 
     /// <summary>Resultado bruto de um processo de hook.</summary>
     public sealed record RawResult(
@@ -117,7 +111,7 @@ public sealed class CommandHookRunner(ILogger<CommandHookRunner>? log = null)
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 try { proc.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) { }
+                catch (InvalidOperationException) { /* processo já encerrou */ }
                 return new RawResult(-1, "", "timeout", TimedOut: true);
             }
             return new RawResult(

@@ -7,6 +7,7 @@
 @inject LocalizationService L
 @inject DialogService Dialogs
 @using System.Text.Json.Nodes
+@using System.Globalization
 
 <PageTitle>@L["page.admin"] — Open WebUI</PageTitle>
 
@@ -2027,8 +2028,8 @@
         get
         {
             if (_usage is null
-                || !DateOnly.TryParse(_usage.From, out var from)
-                || !DateOnly.TryParse(_usage.To, out var to))
+                || !DateOnly.TryParse(_usage.From, CultureInfo.InvariantCulture, DateTimeStyles.None, out var from)
+                || !DateOnly.TryParse(_usage.To, CultureInfo.InvariantCulture, DateTimeStyles.None, out var to))
             {
                 return [];
             }
@@ -2077,8 +2078,12 @@
     private static string FmtUsd(double value) => $"US$ {value:0.0000}";
 
     /// <summary>Cor da barra cap-vs-uso: azul → âmbar (≥80%) → vermelho (≥100%).</summary>
-    private static string CapBarClass(double pct) =>
-        pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : "bg-blue-500";
+    private static string CapBarClass(double pct) => pct switch
+    {
+        >= 100 => "bg-red-500",
+        >= 80 => "bg-amber-500",
+        _ => "bg-blue-500",
+    };
 
     private bool IsAdmin => Auth.CurrentUser?.Role == "admin";
     private bool _loadFailed;

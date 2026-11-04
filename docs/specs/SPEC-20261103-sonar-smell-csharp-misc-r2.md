@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-csharp-misc-r2-20261103` |
 | Ticket | `GH#657` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -93,3 +93,35 @@ N/A — sem mudança de wire (`S3218`/`S107` preservam contrato externo).
 ## 8. Effort Estimate
 
 `~3-4h` (28 fixes pequenos; os de razor exigem re-verificação visual leve).
+
+## Delivered
+
+14 issues corrigidas em código; 14 won't-fix/FP documentados:
+
+**Fixes aplicados**
+
+| Regra | Fix |
+| --- | --- |
+| `S2292` ×3 | `ModelWarmer.Tick`/`InitialDelay` e `CommandHookRunner.ShellOf` → auto-props (backing fields removidos) |
+| `S1118` + `S1172` | `PlanFileService` era 100% estática → `static class`; `AddSingleton` e o param `plans` morto de `PlanEndpoints` removidos |
+| `S1481` | `var root` não usada em `PlanFileService.List` removida |
+| `S108` | catch `InvalidOperationException` vazio ganhou comentário (S108 aceita bloco comentado) |
+| `S1192` | literal `"fresh"` ×5 → `private const string SubagentFresh` |
+| `S6580` ×2 | `DateOnly.TryParse` com `CultureInfo.InvariantCulture` + `@using System.Globalization` |
+| `S3358` | `CapBarClass` → switch expression |
+| `S2589` | `RepoBindingPanel` — `_branches is null` era dead-code (Branches não-nulo no contrato) |
+| `S4136` | overload de `ToolExecutor.ExecuteAsync` movido para adjacente |
+| `S107` | `AdminUsageAsync` — 5 query params agrupados em `AdminUsageQuery` `[AsParameters]` (wire preservada: nomes dos params inalterados) |
+
+**Won't-fix / FP / stale**
+
+| Regra | Justificativa |
+| --- | --- |
+| `S8969` ×3 | `item!` e `from!`/`to!` são exigidos pelo compilador (CS8602/CS8604) — Sonar FP; o terceiro ponto (ProviderService L2618) não tem `!` no código atual (stale) |
+| `S2589` ×2 | `LspEndpoints`: `from` é atribuído condicionalmente via `ref` — pode ser null, `??` necessário; `ChatPipeline` L1162: nenhuma condição sempre-verdadeira localizável (stale) |
+| `S2325` ×2 | `SafeInParallel` implementa `IBuiltinChatTool` — membro de interface não pode ser `static` |
+| `S5034` ×2 | `ChatRunEndpoints` já materializa com `.AsTask()` — consumo único garantido |
+| `S6672` | `WorkspaceFileEndpoints` é `static class` — `ILogger<WorkspaceFileEndpoints>` é CS0718; `ILogger<Program>` é o padrão minimal-API |
+| `S3218`, `S3267`, `S1125`, `S1854` | sem alvo localizável no código atual (drift de linha) ou idiomático (`_ =` fire-and-forget suprime CS4014) |
+
+Ação manual: resolver won't-fix como *Accepted/FP* no SonarCloud (`SONAR_TOKEN`).

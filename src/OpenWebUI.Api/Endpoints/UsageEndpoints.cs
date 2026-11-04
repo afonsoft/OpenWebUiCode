@@ -111,14 +111,13 @@ public static class UsageEndpoints
     /// <summary>
     /// Dashboard de uso admin (SPEC-20261102): totais, série diária de
     /// tokens, agregado por modelo, ranking por usuário com cap efetivo
-    /// e top chats por custo. <c>?days=</c> (default 30, 1..365) é
+    /// e q.Top chats por custo. <c>?q.Days=</c> (default 30, 1..365) é
     /// atalho de janela — <c>from</c>/<c>to</c> ISO têm precedência;
-    /// <c>?userId=</c> filtra todas as seções.
+    /// <c>?q.UserId=</c> filtra todas as seções.
     /// </summary>
     private static async Task<IResult> AdminUsageAsync(
         HttpContext http, [AsParameters] AdminUsageDeps deps,
-        string? userId, string? from, string? to, int? days, int? top,
-        CancellationToken ct)
+        [AsParameters] AdminUsageQuery q, CancellationToken ct)
     {
         var db = deps.Db;
         var ledger = deps.Ledger;
@@ -127,18 +126,18 @@ public static class UsageEndpoints
         {
             return Forbid();
         }
-        if (days is < 1 or > 365)
+        if (q.Days is < 1 or > 365)
         {
             return Results.BadRequest(
                 new { detail = "days deve estar entre 1 e 365." });
         }
-        var (fromEpoch, toEpoch) = ParseWindow(from, to, days ?? 30);
+        var (fromEpoch, toEpoch) = ParseWindow(q.From, q.To, q.Days ?? 30);
         if (toEpoch <= fromEpoch)
         {
             return Results.BadRequest(new { detail = "Janela inválida." });
         }
 
-        var uid = string.IsNullOrWhiteSpace(userId) ? null : userId.Trim();
+        var uid = string.IsNullOrWhiteSpace(q.UserId) ? null : q.UserId.Trim();
         var window = db.RunUsageRecords.AsNoTracking()
             .Where(r => r.CreatedAt >= fromEpoch && r.CreatedAt < toEpoch
                 && (uid == null || r.UserId == uid));
@@ -147,10 +146,10 @@ public static class UsageEndpoints
             .Distinct().CountAsync(ct);
         var series = await ledger.ByDayAsync(fromEpoch, toEpoch, uid, ct);
         var models = await ledger.ByModelAsync(
-            fromEpoch, toEpoch, Math.Clamp(top ?? 20, 1, 100), uid, ct);
+            fromEpoch, toEpoch, Math.Clamp(q.Top ?? 20, 1, 100), uid, ct);
         var users = await ledger.ByUserAsync(fromEpoch, toEpoch, uid, ct);
         var topChats = await ledger.TopChatsAsync(
-            fromEpoch, toEpoch, Math.Clamp(top ?? 10, 1, 100), uid, ct);
+            fromEpoch, toEpoch, Math.Clamp(q.Top ?? 10, 1, 100), uid, ct);
 
         var emails = await db.Users.AsNoTracking()
             .Where(u => users.Select(x => x.UserId).Contains(u.Id)
@@ -404,3 +403,7 @@ public sealed record BudgetPolicyRequest(
 internal sealed record AdminUsageDeps(
     AppDbContext Db, RunUsageLedgerService Ledger,
     BudgetPolicyService Budgets);
+
+/// <summary>Query params da janela/filtro do uso admin (S107).</summary>
+internal sealed record AdminUsageQuery(
+    string? UserId, string? From, string? To, int? Days, int? Top);

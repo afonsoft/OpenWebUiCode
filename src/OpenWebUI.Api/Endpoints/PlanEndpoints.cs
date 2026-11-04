@@ -27,7 +27,7 @@ public static class PlanEndpoints
     /// </summary>
     private static async Task<IResult> ListAsync(
         string? chatId, HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, PlanFileService plans,
+        WorkspaceRepoService repos,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
