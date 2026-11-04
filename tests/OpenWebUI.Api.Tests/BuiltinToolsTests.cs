@@ -1620,6 +1620,220 @@ public class BuiltinToolsTests
         Assert.That(cmds[0], Does.StartWith("sudo -S -p '' -v;"));
     }
 
+    // ---------------- code_search (SPEC-20261103-semantic-code-search) ----------------
+
+    /// <summary>Embeddings fake: cada dim é um grupo de sinônimos —
+    /// "login" e "autenticacao" caem na mesma dim, permitindo provar
+    /// busca conceitual sem nome exato.</summary>
+    private sealed class FakeEmbeddings : EmbeddingService
+    {
+        private static readonly string[][] Groups =
+        [
+            ["login", "autenticacao", "auth", "credencial"],
+            ["payment", "pagamento", "cobranca", "fatura"],
+        ];
+
+        public FakeEmbeddings() : base(null!, null!) { }
+
+        /// <inheritdoc />
+        public override Task<float[]?> EmbedAsync(
+            string text, CancellationToken ct = default)
+            => Task.FromResult<float[]?>(Vec(text));
+
+        /// <inheritdoc />
+        public override Task<float[][]?> EmbedBatchAsync(
+            IReadOnlyList<string> texts, CancellationToken ct = default)
+            => Task.FromResult<float[][]?>(texts.Select(Vec).ToArray());
+
+        private static float[] Vec(string text)
+        {
+            var v = new float[Groups.Length];
+            var lower = text.ToLowerInvariant();
+            for (var i = 0; i < Groups.Length; i++)
+            {
+                foreach (var w in Groups[i])
+                {
+                    if (lower.Contains(w))
+                    {
+                        v[i] += 1;
+                    }
+                }
+            }
+            return v;
+        }
+    }
+
+    private sealed class ThrowingEmbeddings : EmbeddingService
+    {
+        public ThrowingEmbeddings() : base(null!, null!) { }
+        /// <inheritdoc />
+        public override Task<float[]?> EmbedAsync(
+            string text, CancellationToken ct = default)
+            => throw new InvalidOperationException("provider down");
+    }
+
+    /// <summary>Covers RF-002/003: query conceitual acha código sem o
+    /// identificador exato — modo hybrid via embeddings.</summary>
+    [Test]
+    public async Task CodeSearch_Semantico_AchaSemNomeExato()
+    {
+        File.WriteAllText(Path.Join(_workspace, "svc.cs"),
+            "public string Autenticacao(string credencial)\n" +
+            "{\n    return credencial + \"ok\";\n}\n");
+        File.WriteAllText(Path.Join(_workspace, "bill.cs"),
+            "public void Cobranca() { var fatura = 1; }\n");
+
+        var tool = new CodeSearchBuiltinTool(
+            new WorkspaceIndexService(), new FakeEmbeddings());
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"login\"}"), Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("svc.cs"));
+            Assert.That(r.Text, Does.Contain("hybrid"));
+            // "login" não existe como texto em svc.cs — só a dim de
+            // sinônimos do embedding o encontrou.
+            Assert.That(File.ReadAllText(
+                Path.Join(_workspace, "svc.cs")),
+                Does.Not.Contain("login"));
+        });
+    }
+
+    /// <summary>Covers RF-004: sem provider → lexical puro com
+    /// degraded:true honesto.</summary>
+    [Test]
+    public async Task CodeSearch_SemEmbeddings_LexicalDegradado()
+    {
+        File.WriteAllText(Path.Join(_workspace, "a.cs"),
+            "int SomaRapida(int a, int b) => a + b;\n");
+
+        var tool = new CodeSearchBuiltinTool(
+            new WorkspaceIndexService(), embeddings: null);
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"SomaRapida\"}"), Ctx(), default);
+        var payload = JsonSerializer.Serialize(r.Result);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("a.cs"));
+            Assert.That(r.Text, Does.Contain("degraded"));
+            Assert.That(payload, Does.Contain("\"degraded\":true"));
+            Assert.That(payload, Does.Contain("\"mode\":\"lexical\""));
+        });
+    }
+
+    /// <summary>Covers RF-004: erro de embeddings → fallback lexical
+    /// no mesmo call — nunca falha a busca.</summary>
+    [Test]
+    public async Task CodeSearch_EmbedFalha_FallbackLexical()
+    {
+        File.WriteAllText(Path.Join(_workspace, "b.cs"),
+            "void Renderiza() { Desenha(); }\n");
+
+        var tool = new CodeSearchBuiltinTool(
+            new WorkspaceIndexService(), new ThrowingEmbeddings());
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"Renderiza\"}"), Ctx(), default);
+        var payload = JsonSerializer.Serialize(r.Result);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("b.cs"));
+            Assert.That(payload, Does.Contain("\"degraded\":true"));
+            Assert.That(payload, Does.Contain("provider down"));
+        });
+    }
+
+    /// <summary>Covers RF-001: reindex incremental — segunda passada sem
+    /// mudanças reindexa 0; tocar um arquivo reindexa só ele.</summary>
+    [Test]
+    public void CodeSearch_Incremental_ReindexSoAlterado()
+    {
+        File.WriteAllText(Path.Join(_workspace, "x.cs"), "a\n");
+        File.WriteAllText(Path.Join(_workspace, "y.cs"), "b\n");
+        var idx = new WorkspaceIndexService();
+
+        Assert.That(idx.EnsureIndexed(_workspace), Is.EqualTo(2));
+        Assert.That(idx.EnsureIndexed(_workspace), Is.EqualTo(0));
+
+        File.SetLastWriteTimeUtc(Path.Join(_workspace, "x.cs"),
+            DateTime.UtcNow.AddMinutes(1));
+        Assert.That(idx.EnsureIndexed(_workspace), Is.EqualTo(1));
+    }
+
+    /// <summary>Covers RF-001: binários e arquivos acima do cap ficam
+    /// fora do índice (mesma exclusão do file_grep).</summary>
+    [Test]
+    public async Task CodeSearch_BinarioEGrande_Excluidos()
+    {
+        File.WriteAllBytes(Path.Join(_workspace, "img.png"),
+            [0x89, 0x50, 0x4E, 0x47, 1, 2, 3]);
+        File.WriteAllText(Path.Join(_workspace, "huge.cs"),
+            new string('x',
+                (int)WorkspaceIndexService.MaxIndexFileBytes + 1));
+        File.WriteAllText(Path.Join(_workspace, "ok.cs"), "termo_unico\n");
+
+        var tool = new CodeSearchBuiltinTool(
+            new WorkspaceIndexService(), embeddings: null);
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"x\"}"), Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Not.Contain("img.png"));
+            Assert.That(r.Text, Does.Not.Contain("huge.cs"));
+        });
+    }
+
+    /// <summary>Covers RF-003: path_filter restringe o escopo da busca.</summary>
+    [Test]
+    public async Task CodeSearch_PathFilter_Escopo()
+    {
+        Directory.CreateDirectory(Path.Join(_workspace, "src"));
+        File.WriteAllText(Path.Join(_workspace, "src", "in.cs"),
+            "alvo_compartilhado\n");
+        File.WriteAllText(Path.Join(_workspace, "out.cs"),
+            "alvo_compartilhado\n");
+
+        var tool = new CodeSearchBuiltinTool(
+            new WorkspaceIndexService(), embeddings: null);
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"alvo_compartilhado\",\"path_filter\":\"src\"}"),
+            Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("in.cs"));
+            Assert.That(r.Text, Does.Not.Contain("out.cs"));
+        });
+    }
+
+    /// <summary>Covers RF-003: hits trazem path/start_line/end_line —
+    /// consumível por file_read.</summary>
+    [Test]
+    public async Task CodeSearch_ResultadoNavegavel()
+    {
+        var linhas = string.Join("\n",
+            Enumerable.Range(1, 60).Select(i => $"// linha {i}"));
+        File.WriteAllText(Path.Join(_workspace, "nav.cs"),
+            linhas + "\nalvo_aqui\n");
+
+        var tool = new CodeSearchBuiltinTool(
+            new WorkspaceIndexService(), embeddings: null);
+        var r = await tool.ExecuteAsync(
+            Args("{\"query\":\"alvo_aqui\"}"), Ctx(), default);
+        var payload = JsonSerializer.Serialize(r.Result);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload, Does.Contain("\"path\":\"nav.cs\""));
+            Assert.That(payload, Does.Contain("\"start_line\":"));
+            Assert.That(payload, Does.Contain("\"end_line\":"));
+            Assert.That(payload, Does.Contain("\"excerpt\":"));
+        });
+    }
+
     [Test]
     public async Task FileGrep_FileGlob_FileList_Funcionam()
     {
