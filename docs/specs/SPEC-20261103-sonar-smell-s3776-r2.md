@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s3776-r2-20261103` |
 | Ticket | `GH#653` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -80,3 +80,13 @@ N/A — refactor interno.
 ## 8. Effort Estimate
 
 `~2-3h` (3 métodos, todos perto do limite — extrações pequenas).
+
+## Delivered
+
+PR (este branch): 3 extract-methods sem mudança de comportamento:
+
+- `ChatPipeline.EnrichRequestAsync` (16) → `MergeSystemParts` extraído
+- `DelegateTaskBuiltinTool.RouteDispatchAsync` (20) → `ParseDispatchFlags`
+  + `CheckForkGuardAsync` extraídos
+- `ProviderService.ApplyAnthropicParams` (17) → `ApplyThinkingBudget` +
+  `EnsureMaxTokensAboveBudget` extraídos

@@ -242,73 +242,96 @@ public sealed class DelegateTaskBuiltinTool(
                 "delegate_task só pode ser chamada dentro de uma run de chat.");
         }
 
-        var waitExplicit = r.Args.TryGetProperty("wait", out var waitEl)
-            ? waitEl.ValueKind == JsonValueKind.True
-            : (bool?)null;
-        var autoMerge = r.Args.TryGetProperty("merge", out var mergeEl)
-            && mergeEl.ValueKind == JsonValueKind.True;
-        // SPEC-20261021-harness-seams RF-E1: `team` junta o filho ao team
-        // do chamador (roster durável); `resume_chat_id` reutiliza um chat
-        // filho existente — subagente continuável em vez de one-shot.
-        var joinTeam = r.Args.TryGetProperty("team", out var teamEl)
-            && teamEl.ValueKind == JsonValueKind.True;
-        var resumeChatId = r.Args.TryGetProperty("resume_chat_id", out var resumeEl)
-            && resumeEl.ValueKind == JsonValueKind.String
-                ? resumeEl.GetString() : null;
-        // SPEC-20261031-sidekick-orchestration RF-002: `persistent:true`
-        // reutiliza o chat filho do sidekick entre dispatches do mesmo pai
-        // (kv r:{parentRun}:sidekick:{id} → chatId; semáforo serializa
-        // dispatches concorrentes no mesmo sidekick).
-        var persistent = r.Args.TryGetProperty("persistent", out var persEl)
-            && persEl.ValueKind == JsonValueKind.True;
+        var flags = ParseDispatchFlags(r.Args);
 
-        // SPEC-20261103-subagent-fork RF-003/RF-005: flag global desligada
-        // → denial claro; run nascida de fork (kv r:{run}:agent.fork) não
-        // cria outro fork — "If you ARE the fork, execute directly".
-        if (r.SubagentType != "fresh")
+        var forkGuard = await CheckForkGuardAsync(r, flags, ct);
+        if (forkGuard is not null)
         {
-            if (!await r.Config.GetAsync("agent:subagent_fork", true, ct))
-            {
-                return new BuiltinToolResult(
-                    "subagent_type 'fork' está desabilitado "
-                        + "(agent:subagent_fork=false).");
-            }
-            if (await r.Config.GetAsync<bool?>(
-                    $"r:{r.Context.RunId}:agent.fork", null, ct) == true)
-            {
-                return new BuiltinToolResult(
-                    "forks cannot create forks — execute directly; "
-                        + "do not re-delegate.");
-            }
-            if (persistent || resumeChatId is not null)
-            {
-                return new BuiltinToolResult(
-                    "subagent_type 'fork' não combina com 'persistent' "
-                        + "nem 'resume_chat_id'.");
-            }
+            return forkGuard;
         }
 
-        if (persistent)
+        if (flags.Persistent)
         {
             return await PersistentSidekickDispatchAsync(
                 new SidekickDispatch(r.Args, r.Config, agent, r.PersonaSkill,
-                    r.Prompt, r.FullPrompt, waitExplicit, autoMerge, joinTeam,
-                    r.Scope, r.Db, r.Context, parentRun), ct);
+                    r.Prompt, r.FullPrompt, flags.WaitExplicit, flags.AutoMerge,
+                    flags.JoinTeam, r.Scope, r.Db, r.Context, parentRun), ct);
         }
-        if (resumeChatId is not null)
+        if (flags.ResumeChatId is not null)
         {
             return await ResumeInExistingChatAsync(
                 new ResumeRequest(r.Scope, r.Db, r.Context, parentRun,
-                    resumeChatId, r.FullPrompt, waitExplicit ?? true,
-                    joinTeam), ct);
+                    flags.ResumeChatId, r.FullPrompt, flags.WaitExplicit ?? true,
+                    flags.JoinTeam), ct);
         }
 
         var dispatch = await CreateDispatchAsync(
             new DispatchRequest(r.Args, r.Config, agent, r.FullPrompt,
-                waitExplicit, autoMerge, joinTeam,
+                flags.WaitExplicit, flags.AutoMerge, flags.JoinTeam,
                 r.PersonaSkill?.Content, r.Prompt, r.SubagentType),
             r.Scope, r.Db, r.Context, parentRun, ct);
         return dispatch.Result;
+    }
+
+    /// <summary>Flags booleanos de dispatch lidos dos args (S3776).</summary>
+    private sealed record DispatchFlags(
+        bool? WaitExplicit, bool AutoMerge, bool JoinTeam,
+        string? ResumeChatId, bool Persistent);
+
+    /// <summary>Extrai wait/merge/team/resume_chat_id/persistent dos args.</summary>
+    private static DispatchFlags ParseDispatchFlags(JsonElement args)
+    {
+        var waitExplicit = args.TryGetProperty("wait", out var waitEl)
+            ? waitEl.ValueKind == JsonValueKind.True
+            : (bool?)null;
+        var autoMerge = args.TryGetProperty("merge", out var mergeEl)
+            && mergeEl.ValueKind == JsonValueKind.True;
+        // SPEC-20261021-harness-seams RF-E1: `team` junta o filho ao team
+        // do chamador (roster durável); `resume_chat_id` reutiliza um chat
+        // filho existente — subagente continuável em vez de one-shot.
+        var joinTeam = args.TryGetProperty("team", out var teamEl)
+            && teamEl.ValueKind == JsonValueKind.True;
+        var resumeChatId = args.TryGetProperty("resume_chat_id", out var resumeEl)
+            && resumeEl.ValueKind == JsonValueKind.String
+                ? resumeEl.GetString() : null;
+        // SPEC-20261031-sidekick-orchestration RF-002: `persistent:true`
+        // reutiliza o chat filho do sidekick entre dispatches do mesmo pai.
+        var persistent = args.TryGetProperty("persistent", out var persEl)
+            && persEl.ValueKind == JsonValueKind.True;
+        return new DispatchFlags(
+            waitExplicit, autoMerge, joinTeam, resumeChatId, persistent);
+    }
+
+    /// <summary>SPEC-20261103-subagent-fork RF-003/RF-005: flag global
+    /// desligada → denial claro; run nascida de fork não cria outro fork;
+    /// fork não combina com persistent/resume (S3776).</summary>
+    private static async Task<BuiltinToolResult?> CheckForkGuardAsync(
+        DispatchRoute r, DispatchFlags flags, CancellationToken ct)
+    {
+        if (r.SubagentType == "fresh")
+        {
+            return null;
+        }
+        if (!await r.Config.GetAsync("agent:subagent_fork", true, ct))
+        {
+            return new BuiltinToolResult(
+                "subagent_type 'fork' está desabilitado "
+                    + "(agent:subagent_fork=false).");
+        }
+        if (await r.Config.GetAsync<bool?>(
+                $"r:{r.Context.RunId}:agent.fork", null, ct) == true)
+        {
+            return new BuiltinToolResult(
+                "forks cannot create forks — execute directly; "
+                    + "do not re-delegate.");
+        }
+        if (flags.Persistent || flags.ResumeChatId is not null)
+        {
+            return new BuiltinToolResult(
+                "subagent_type 'fork' não combina com 'persistent' "
+                    + "nem 'resume_chat_id'.");
+        }
+        return null;
     }
 
     /// <summary>Parâmetros do roteamento de dispatch (S3776/S107).</summary>
