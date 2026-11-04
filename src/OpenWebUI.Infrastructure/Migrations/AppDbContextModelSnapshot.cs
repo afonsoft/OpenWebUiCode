@@ -1923,6 +1923,39 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("KnowledgeFiles");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.KnowledgeNote", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Pinned")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Trigger")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("KnowledgeNotes");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.McpServer", b =>
                 {
                     b.Property<string>("Id")
@@ -2491,7 +2524,6 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("UserId")
-                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");

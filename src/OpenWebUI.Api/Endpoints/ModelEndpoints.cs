@@ -68,7 +68,8 @@ public static class ModelEndpoints
                     new[] { m.Id, m.Name ?? "", $"{m.Provider}/{m.Id}" }) is null)
             .Select(m => new CatalogModel(
                 m.Id, m.Name, m.Provider, m.OwnedBy,
-                !disabled.Contains($"{m.Provider}:{m.Id}"), m.Capabilities)).ToList();
+                !disabled.Contains($"{m.Provider}:{m.Id}"), m.Capabilities,
+                m.Source)).ToList();
         return Results.Ok(new CatalogModelListResponse(data));
     }
 

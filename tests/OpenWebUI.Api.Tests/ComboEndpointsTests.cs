@@ -109,7 +109,10 @@ public class ComboEndpointsTests
             if (path == "/api/tags")
             {
                 json = "{\"models\":[{\"model\":\"fake:1\",\"name\":\"fake:1\"}," +
-                       "{\"model\":\"fail:1\",\"name\":\"fail:1\"}]}";
+                       "{\"model\":\"fail:1\",\"name\":\"fail:1\"}," +
+                       "{\"model\":\"m1\",\"name\":\"m1\"},{\"model\":\"m2\",\"name\":\"m2\"}," +
+                       "{\"model\":\"m3\",\"name\":\"m3\"},{\"model\":\"g0-a\",\"name\":\"g0-a\"}," +
+                       "{\"model\":\"g0-b\",\"name\":\"g0-b\"},{\"model\":\"g1-a\",\"name\":\"g1-a\"}]}";
             }
             else if (path == "/api/chat")
             {

@@ -138,6 +138,8 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AutoinvokeSkillsContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.KnowledgeNotesContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AgentMemoryContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.InstinctContributor>();
@@ -157,6 +159,7 @@ builder.Services.AddScoped<ContextBoundaryService>();
 builder.Services.AddScoped<ContextSnapshotService>();
 // Camadas de configuração por usuário (SPEC-20261014-config-layers).
 builder.Services.AddScoped<UserConfigOverlayService>();
+builder.Services.AddScoped<SkillImportService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
 builder.Services.AddScoped<HistoryResourceService>();
 // Referências nomeadas ref:// (SPEC-20261018-references): dir local ou
@@ -675,6 +678,7 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapChatJobEndpoints();
     app.MapMcpEndpoints();
     app.MapUserMcpEndpoints();
+    app.MapCustomizeEndpoints();
     app.MapMcpOAuthEndpoints();
     app.MapReferenceEndpoints();
     app.MapThemeEndpoints();

@@ -59,7 +59,6 @@ public class WritePlanTests
     [Test]
     public async Task WritePlan_CriaArquivoNaPlansDir_ERetornaPath()
     {
-        var svc = new PlanFileService();
         var tool = new WritePlanBuiltinTool();
         var result = await tool.ExecuteAsync(
             Args("""{"content":"# T\n\n## Summary\nx"}"""),
@@ -79,7 +78,6 @@ public class WritePlanTests
     [Test]
     public async Task WritePlan_SegundaChamadaNaSessao_AtualizaMesmoArquivo()
     {
-        var svc = new PlanFileService();
         var tool = new WritePlanBuiltinTool();
         var ctx = Ctx(_dir, "r2");
         await tool.ExecuteAsync(Args("""{"content":"# A\nx"}"""), ctx, default);
@@ -100,7 +98,6 @@ public class WritePlanTests
     [Test]
     public async Task WritePlan_SessoesConcorrentes_SufixoDistinto()
     {
-        var svc = new PlanFileService();
         var tool = new WritePlanBuiltinTool();
         await tool.ExecuteAsync(Args("""{"content":"# Same Title\n1"}"""),
             Ctx(_dir, "ra"), default);
@@ -116,7 +113,6 @@ public class WritePlanTests
     [Test]
     public async Task WritePlan_SecoesFaltando_GravamComAviso()
     {
-        var svc = new PlanFileService();
         var tool = new WritePlanBuiltinTool();
         var result = await tool.ExecuteAsync(
             Args("""{"content":"# Partial\nsó summary"}"""),
@@ -137,7 +133,6 @@ public class WritePlanTests
         PlanFileService.HomeResolver = () => fake;
         try
         {
-            var svc = new PlanFileService();
             var tool = new WritePlanBuiltinTool();
             var result = await tool.ExecuteAsync(
                 Args("""{"content":"# H\nx"}"""), Ctx("", "r5"), default);
@@ -154,7 +149,6 @@ public class WritePlanTests
     [Test]
     public void List_RetornaOrdenadoPorModificacao()
     {
-        var svc = new PlanFileService();
         var dir = Path.Combine(_dir, "plans");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "2026-01-01-old.md"), "# Old");
@@ -177,7 +171,6 @@ public class WritePlanTests
     [Test]
     public async Task PlanExit_ReferenciaArquivoDoWritePlan()
     {
-        var svc = new PlanFileService();
         var ctx = Ctx(_dir, "r6");
         PlanFileService.Write(_dir, "chat-r6", FullPlan, null, "r6");
 

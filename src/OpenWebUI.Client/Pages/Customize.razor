@@ -1,0 +1,523 @@
+@page "/customize"
+@page "/customize/{Tab}"
+@inject ApiService Api
+@inject NavigationManager Nav
+@inject LocalizationService L
+@inject DialogService Dialogs
+@inject AuthService Auth
+
+<PageTitle>Customize — Open WebUI</PageTitle>
+
+<div class="page">
+    <h1 class="page-title" tabindex="-1">@L["customize.title"]</h1>
+    <div class="page-tabs" role="tablist">
+        <a href="/customize/knowledge" class="modal-tab @(Tab == "knowledge" ? "active" : "")" role="tab" aria-selected="@(Tab == "knowledge")">@L["customize.knowledge"]</a>
+        <a href="/customize/skills" class="modal-tab @(Tab == "skills" ? "active" : "")" role="tab" aria-selected="@(Tab == "skills")">@L["customize.skills"]</a>
+        <a href="/customize/mcps" class="modal-tab @(Tab == "mcps" ? "active" : "")" role="tab" aria-selected="@(Tab == "mcps")">MCPs</a>
+    </div>
+
+    @if (_loadFailed)
+    {
+        <OfflineRetry OnRetry="LoadAsync" />
+    }
+    else if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="card-row"><div class="card-main"><div class="card-sub">@_error</div></div></div>
+    }
+
+    @* ============================ KNOWLEDGE ============================ *@
+    @if (Tab == "knowledge")
+    {
+        <div class="card-list">
+            <div class="card-row">
+                <div class="card-main">
+                    <div class="card-title">@L["customize.knowledge_new"]</div>
+                    <div class="flex flex-col gap-2 mt-2">
+                        <input class="input" placeholder="@L["customize.field_title"]" aria-label="@L["customize.field_title"]" @bind="_knTitle" />
+                        <input class="input" placeholder="@L["customize.field_trigger"]" aria-label="@L["customize.field_trigger"]" @bind="_knTrigger" />
+                        <textarea class="input" rows="3" placeholder="@L["customize.field_content"]" aria-label="@L["customize.field_content"]" @bind="_knContent"></textarea>
+                        <div class="flex items-center gap-4">
+                            <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                                <input type="checkbox" @bind="_knPinned" /> @L["customize.field_pinned"]
+                            </label>
+                            @if (IsAdmin)
+                            {
+                                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                                    <input type="checkbox" @bind="_knGlobal" /> @L["customize.scope_org"]
+                                </label>
+                            }
+                            <button class="msg-action" @onclick="SaveKnowledgeAsync">@L["common.save"]</button>
+                            @if (_knEditId is not null)
+                            {
+                                <button class="msg-action" @onclick="ResetKnowledgeForm">@L["common.cancel"]</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @foreach (var note in _notes)
+            {
+                <div class="card-row">
+                    <div class="card-main">
+                        <div class="card-title">
+                            @note.Title
+                            <span class="card-sub">· @(note.Scope == "org" ? L["customize.scope_org"] : L["customize.scope_personal"])</span>
+                            @if (note.Pinned) { <span class="card-sub">· 📌</span> }
+                        </div>
+                        @if (!string.IsNullOrEmpty(note.Trigger))
+                        {
+                            <div class="card-sub">@L["customize.field_trigger"]: @note.Trigger</div>
+                        }
+                        <div class="card-sub line-clamp-2">@note.Content</div>
+                    </div>
+                    <div class="card-actions">
+                        <button class="msg-action" @onclick="() => ToggleKnowledgeAsync(note)">
+                            @(note.EnabledForMe ? L["workspace.hide"] : L["workspace.activate"])
+                        </button>
+                        @if (note.Editable)
+                        {
+                            <button class="msg-action" @onclick="() => EditKnowledge(note)">@L["common.edit"]</button>
+                            <button class="msg-action danger" aria-label="@L["common.delete"]" @onclick="() => DeleteKnowledgeAsync(note)">🗑</button>
+                        }
+                    </div>
+                </div>
+            }
+            @if (_notes.Count == 0 && !_loadFailed)
+            {
+                <div class="sidebar-empty">@L["customize.knowledge_empty"]</div>
+            }
+        </div>
+    }
+
+    @* ============================ SKILLS ============================ *@
+    else if (Tab == "skills")
+    {
+        @if (IsAdmin)
+        {
+            <div class="card-row">
+                <div class="card-main">
+                    <div class="card-title">@L["customize.import_title"]</div>
+                    <div class="flex items-center gap-2 mt-2">
+                        <input class="input grow" placeholder="https://github.com/afonsoft/skills" aria-label="@L["customize.import_url"]" @bind="_importUrl" />
+                        <button class="msg-action" disabled="@_importing" @onclick="ImportSkillsAsync">
+                            @(_importing ? "…" : L["customize.import_button"])
+                        </button>
+                    </div>
+                    @if (_importResult is not null)
+                    {
+                        <div class="card-sub mt-1">
+                            @L["customize.import_done"]: @_importResult.Imported.Count
+                            @if (_importResult.Skipped.Count > 0)
+                            {
+                                <span>(@_importResult.Skipped.Count @L["customize.import_skipped"])</span>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        <div class="card-list">
+            <div class="card-row">
+                <div class="card-main">
+                    <div class="card-title">@L["customize.skill_new"]</div>
+                    <div class="flex flex-col gap-2 mt-2">
+                        <input class="input" placeholder="@L["customize.field_name"]" aria-label="@L["customize.field_name"]" @bind="_skName" />
+                        <input class="input" placeholder="@L["customize.field_desc"]" aria-label="@L["customize.field_desc"]" @bind="_skDesc" />
+                        <textarea class="input" rows="3" placeholder="@L["customize.field_content"]" aria-label="@L["customize.field_content"]" @bind="_skContent"></textarea>
+                        <div class="flex items-center gap-4">
+                            @if (IsAdmin)
+                            {
+                                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                                    <input type="checkbox" @bind="_skGlobal" /> @L["customize.scope_org"]
+                                </label>
+                            }
+                            <button class="msg-action" @onclick="SaveSkillAsync">@L["common.save"]</button>
+                            @if (_skEditId is not null)
+                            {
+                                <button class="msg-action" @onclick="ResetSkillForm">@L["common.cancel"]</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @foreach (var skill in _skills)
+            {
+                <div class="card-row">
+                    <div class="card-main">
+                        <div class="card-title">
+                            @skill.Name
+                            <span class="card-sub">· @SkillSourceLabel(skill.Source)</span>
+                            @if (skill.DisabledByAdmin) { <span class="card-sub">· @L["customize.disabled_by_admin"]</span> }
+                        </div>
+                        @if (!string.IsNullOrEmpty(skill.Description))
+                        {
+                            <div class="card-sub">@skill.Description</div>
+                        }
+                    </div>
+                    <div class="card-actions">
+                        <button class="msg-action" disabled="@skill.DisabledByAdmin"
+                                @onclick="() => ToggleSkillAsync(skill)">
+                            @(skill.EnabledForMe ? L["workspace.hide"] : L["workspace.activate"])
+                        </button>
+                        @if (IsAdmin && skill.Source != "personal")
+                        {
+                            <button class="msg-action" @onclick="() => DenySkillAsync(skill)">
+                                @(skill.DisabledByAdmin ? L["customize.allow_org"] : L["customize.deny_org"])
+                            </button>
+                        }
+                        @if (skill.Editable)
+                        {
+                            <button class="msg-action" @onclick="() => EditSkill(skill)">@L["common.edit"]</button>
+                            <button class="msg-action danger" aria-label="@L["common.delete"]" @onclick="() => DeleteSkillAsync(skill)">🗑</button>
+                        }
+                    </div>
+                </div>
+            }
+            @if (_skills.Count == 0 && !_loadFailed)
+            {
+                <div class="sidebar-empty">@L["customize.skills_empty"]</div>
+            }
+        </div>
+    }
+
+    @* ============================ MCPs ============================ *@
+    else if (Tab == "mcps")
+    {
+        <div class="card-list">
+            <div class="card-row">
+                <div class="card-main">
+                    <div class="card-title">@L["customize.mcp_new"]</div>
+                    <div class="flex flex-col gap-2 mt-2">
+                        <input class="input" placeholder="@L["customize.field_name"]" aria-label="@L["customize.field_name"]" @bind="_mcpName" />
+                        <input class="input" placeholder="https://mcp.example.com/mcp" aria-label="URL" @bind="_mcpUrl" />
+                        <div class="flex items-center gap-4">
+                            @if (IsAdmin)
+                            {
+                                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                                    <input type="checkbox" @bind="_mcpGlobal" /> @L["customize.scope_org"]
+                                </label>
+                            }
+                            <button class="msg-action" @onclick="SaveMcpAsync">@L["common.save"]</button>
+                        </div>
+                        <div class="card-sub">@L["customize.mcp_hint"]</div>
+                    </div>
+                </div>
+            </div>
+            @foreach (var entry in _mcps)
+            {
+                <div class="card-row">
+                    <div class="card-main">
+                        <div class="card-title">
+                            @entry.Server.Name
+                            <span class="card-sub">· @(entry.Source == "global" ? L["customize.scope_org"] : L["customize.scope_personal"])</span>
+                        </div>
+                        <div class="card-sub">@entry.Server.Transport @(entry.Server.Url ?? entry.Server.Command)</div>
+                        @if (!string.IsNullOrEmpty(entry.Server.LastError))
+                        {
+                            <div class="card-sub">@entry.Server.LastError</div>
+                        }
+                    </div>
+                    <div class="card-actions">
+                        <button class="msg-action" @onclick="() => ToggleMcpAsync(entry)">
+                            @(entry.EnabledForMe ? L["workspace.hide"] : L["workspace.activate"])
+                        </button>
+                        <button class="msg-action" @onclick="() => RefreshMcpAsync(entry)">↻</button>
+                        @if (entry.Source == "personal" || IsAdmin)
+                        {
+                            <button class="msg-action danger" aria-label="@L["common.delete"]" @onclick="() => DeleteMcpAsync(entry)">🗑</button>
+                        }
+                    </div>
+                </div>
+            }
+            @if (_mcps.Count == 0 && !_loadFailed)
+            {
+                <div class="sidebar-empty">@L["customize.mcps_empty"]</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Aba ativa derivada da rota.</summary>
+    [Parameter] public string? Tab { get; set; }
+
+    private bool IsAdmin => Auth.CurrentUser?.Role == "admin";
+    private bool _loadFailed;
+    private string? _error;
+
+    // Knowledge
+    private List<KnowledgeNoteResponse> _notes = [];
+    private string? _knEditId;
+    private string _knTitle = "";
+    private string? _knTrigger;
+    private string _knContent = "";
+    private bool _knPinned;
+    private bool _knGlobal;
+
+    // Skills
+    private List<SkillCatalogItem> _skills = [];
+    private List<string> _adminDisabled = [];
+    private string? _skEditId;
+    private string _skName = "";
+    private string? _skDesc;
+    private string _skContent = "";
+    private bool _skGlobal;
+    private string _importUrl = "https://github.com/afonsoft/skills";
+    private bool _importing;
+    private SkillImportResult? _importResult;
+
+    // MCPs
+    private List<UserMcpServerEntry> _mcps = [];
+    private string _mcpName = "";
+    private string _mcpUrl = "";
+    private bool _mcpGlobal;
+
+    /// <summary>Recarrega os dados da aba ativa a cada navegação.</summary>
+    protected override async Task OnParametersSetAsync()
+    {
+        Tab ??= "knowledge";
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loadFailed = false;
+        _error = null;
+        try
+        {
+            switch (Tab)
+            {
+                case "skills":
+                    _skills = await Api.GetCustomizeSkillsAsync();
+                    _adminDisabled = IsAdmin ? await Api.GetAdminDisabledSkillsAsync() : [];
+                    break;
+                case "mcps":
+                    _mcps = await Api.GetUserMcpServersAsync();
+                    break;
+                default:
+                    _notes = await Api.GetKnowledgeNotesAsync();
+                    break;
+            }
+        }
+        catch
+        {
+            _loadFailed = true;
+        }
+    }
+
+    private string SkillSourceLabel(string source) => source switch
+    {
+        "global" => L["customize.scope_org"],
+        "personal" => L["customize.scope_personal"],
+        _ => L["customize.source_repo"],
+    };
+
+    // ---------------- Knowledge ----------------
+
+    private void ResetKnowledgeForm()
+    {
+        _knEditId = null;
+        _knTitle = "";
+        _knTrigger = null;
+        _knContent = "";
+        _knPinned = false;
+        _knGlobal = false;
+    }
+
+    private void EditKnowledge(KnowledgeNoteResponse note)
+    {
+        _knEditId = note.Id;
+        _knTitle = note.Title;
+        _knTrigger = note.Trigger;
+        _knContent = note.Content;
+        _knPinned = note.Pinned;
+        _knGlobal = note.Scope == "org";
+    }
+
+    private async Task SaveKnowledgeAsync()
+    {
+        _error = null;
+        var request = new KnowledgeNoteRequest(
+            _knTitle.Trim(), _knTrigger?.Trim(), _knContent, _knPinned, _knGlobal && IsAdmin);
+        var result = _knEditId is null
+            ? await Api.CreateKnowledgeNoteAsync(request)
+            : await Api.UpdateKnowledgeNoteAsync(_knEditId, request);
+        if (result is null)
+        {
+            _error = L["customize.save_failed"];
+            return;
+        }
+        ResetKnowledgeForm();
+        await LoadAsync();
+    }
+
+    private async Task ToggleKnowledgeAsync(KnowledgeNoteResponse note)
+    {
+        if (await Api.SetKnowledgeNoteEnabledAsync(note.Id, !note.EnabledForMe))
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task DeleteKnowledgeAsync(KnowledgeNoteResponse note)
+    {
+        if (!await Dialogs.ConfirmAsync(note.Title, danger: true))
+        {
+            return;
+        }
+        if (await Api.DeleteKnowledgeNoteAsync(note.Id))
+        {
+            await LoadAsync();
+        }
+    }
+
+    // ---------------- Skills ----------------
+
+    private void ResetSkillForm()
+    {
+        _skEditId = null;
+        _skName = "";
+        _skDesc = null;
+        _skContent = "";
+        _skGlobal = false;
+    }
+
+    private void EditSkill(SkillCatalogItem skill)
+    {
+        _skEditId = skill.Id;
+        _skName = skill.Name;
+        _skDesc = skill.Description;
+        _skContent = skill.Content ?? "";
+        _skGlobal = skill.Source == "global";
+    }
+
+    private async Task SaveSkillAsync()
+    {
+        _error = null;
+        var request = new SkillUpsertRequest(
+            _skName.Trim(), _skDesc?.Trim(), _skContent, _skGlobal && IsAdmin);
+        var result = _skEditId is null
+            ? await Api.CreateCustomizeSkillAsync(request)
+            : await Api.UpdateCustomizeSkillAsync(_skEditId, request);
+        if (result is null)
+        {
+            _error = L["customize.save_failed"];
+            return;
+        }
+        ResetSkillForm();
+        await LoadAsync();
+    }
+
+    private async Task ToggleSkillAsync(SkillCatalogItem skill)
+    {
+        var ok = skill.Source == "repo"
+            ? await Api.SetRepoSkillEnabledAsync(skill.Name, !skill.EnabledForMe)
+            : skill.Id is not null && await Api.SetCustomizeSkillEnabledAsync(skill.Id, !skill.EnabledForMe);
+        if (ok)
+        {
+            await LoadAsync();
+        }
+    }
+
+    /// <summary>Denylist global do admin: adiciona/remove o nome da skill.</summary>
+    private async Task DenySkillAsync(SkillCatalogItem skill)
+    {
+        var names = _adminDisabled.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (skill.DisabledByAdmin)
+        {
+            names.Remove(skill.Name);
+        }
+        else
+        {
+            names.Add(skill.Name);
+        }
+        if (await Api.SetAdminDisabledSkillsAsync(names.ToList()))
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task DeleteSkillAsync(SkillCatalogItem skill)
+    {
+        if (skill.Id is null || !await Dialogs.ConfirmAsync(skill.Name, danger: true))
+        {
+            return;
+        }
+        if (await Api.DeleteCustomizeSkillAsync(skill.Id))
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task ImportSkillsAsync()
+    {
+        _importing = true;
+        _importResult = null;
+        try
+        {
+            _importResult = await Api.ImportSkillsAsync(new SkillImportRequest(_importUrl.Trim()));
+        }
+        finally
+        {
+            _importing = false;
+        }
+        await LoadAsync();
+    }
+
+    // ---------------- MCPs ----------------
+
+    private async Task SaveMcpAsync()
+    {
+        _error = null;
+        var request = new McpServerUpsertRequest(
+            _mcpName.Trim(), "http", Url: _mcpUrl.Trim());
+        var result = _mcpGlobal && IsAdmin
+            ? await Api.CreateMcpServerAsync(request)
+            : await Api.CreateUserMcpServerAsync(request);
+        if (result is null)
+        {
+            _error = L["customize.save_failed"];
+            return;
+        }
+        _mcpName = "";
+        _mcpUrl = "";
+        _mcpGlobal = false;
+        await LoadAsync();
+    }
+
+    private async Task ToggleMcpAsync(UserMcpServerEntry entry)
+    {
+        if (await Api.SetUserMcpServerEnabledAsync(entry.Server.Id, !entry.EnabledForMe))
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task RefreshMcpAsync(UserMcpServerEntry entry)
+    {
+        if (entry.Source == "personal")
+        {
+            await Api.RefreshUserMcpServerAsync(entry.Server.Id);
+        }
+        else
+        {
+            await Api.RefreshMcpServerAsync(entry.Server.Id);
+        }
+        await LoadAsync();
+    }
+
+    private async Task DeleteMcpAsync(UserMcpServerEntry entry)
+    {
+        if (!await Dialogs.ConfirmAsync(entry.Server.Name, danger: true))
+        {
+            return;
+        }
+        var ok = entry.Source == "personal"
+            ? await Api.DeleteUserMcpServerAsync(entry.Server.Id)
+            : IsAdmin && await Api.DeleteMcpServerAsync(entry.Server.Id);
+        if (ok)
+        {
+            await LoadAsync();
+        }
+    }
+}

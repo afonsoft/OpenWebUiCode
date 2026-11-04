@@ -7,9 +7,12 @@ namespace OpenWebUI.Application.Contracts;
 /// <param name="OwnedBy">Dono reportado pelo provedor, quando disponível.</param>
 /// <param name="Capabilities">Capacidades resolvidas (SPEC-20261013-model-roles):
 /// <c>"vision"</c>, <c>"tools"</c>, <c>"thinking"</c>; null quando desconhecidas.</param>
+/// <param name="Source">Proveniência no catálogo efetivo do chamador
+/// (SPEC-20261104-model-visibility-gate): <c>global</c>/<c>user</c>/<c>byok</c>/
+/// <c>workspace</c>/<c>pipeline</c>; null em listagens sem merge de fontes.</param>
 public sealed record ModelInfo(
     string Id, string Name, string Provider, string? OwnedBy,
-    IReadOnlyList<string>? Capabilities = null);
+    IReadOnlyList<string>? Capabilities = null, string? Source = null);
 
 /// <summary>Lista agregada de modelos, no formato OpenAI (<c>{ data: [...] }</c>).</summary>
 /// <param name="Data">Modelos de todos os provedores configurados.</param>
@@ -17,10 +20,17 @@ public sealed record ModelListResponse(IReadOnlyList<ModelInfo> Data);
 
 /// <summary>Modelo do catálogo completo com a flag de visibilidade do
 /// usuário chamador (GET /api/v1/models/all — aba Models das settings).</summary>
-/// <param name="Enabled">False quando o usuário desabilitou <c>{provider}:{id}</c>.</param>
+/// <param name="Enabled">False quando o usuário desabilitou <c>{provider}:{id}</c>
+/// — ou, no catálogo admin (<c>GET /api/v1/configs/models/catalog</c>), quando
+/// o modelo está no gate global (<c>ui.models.DisabledModels</c>).</param>
+/// <param name="Source">Origem do modelo no catálogo efetivo do chamador
+/// (SPEC-20261104-model-visibility-gate RF-005): <c>"global"</c> (conexão do
+/// admin, sujeita ao gate), <c>"user"</c> (conexão própria do usuário),
+/// <c>"byok"</c> (modelos da chave BYOK do usuário) ou <c>"workspace"</c>
+/// (modelo custom do workspace — ACL própria, fora do gate).</param>
 public sealed record CatalogModel(
     string Id, string Name, string Provider, string? OwnedBy, bool Enabled,
-    IReadOnlyList<string>? Capabilities = null);
+    IReadOnlyList<string>? Capabilities = null, string? Source = null);
 
 /// <summary>Resposta de GET /api/v1/models/all.</summary>
 /// <param name="Data">Todos os modelos conhecidos, com flag por usuário.</param>

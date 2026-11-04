@@ -36,12 +36,21 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
     private static string UserKey(string userId, string key) => $"u:{userId}:{key}";
     private static string McpDisabledKey(string userId) => $"u:{userId}:mcp-disabled";
     private static string SkillsDisabledKey(string userId) => $"u:{userId}:skills-disabled";
+    private static string KnowledgeDisabledKey(string userId) => $"u:{userId}:knowledge-disabled";
 
     /// <summary>Chave kv das chaves de provider do usuário (BYOK, RF-005).</summary>
     public static string ProviderKeysKey(string userId) => $"user:{userId}:provider-keys";
 
+    /// <summary>Chave kv das conexões próprias do usuário
+    /// (SPEC-20261104-model-visibility-gate RF-006).</summary>
+    public static string UserConnectionsKey(string userId) => $"user:{userId}:connections";
+
     /// <summary>Chave kv do flag BYOK global (admin, default off).</summary>
     public const string UserProviderKeysFlag = "features.userProviderKeys";
+
+    /// <summary>Chave kv do flag "conexões por usuário" (admin, default off —
+    /// SPEC-20261104-model-visibility-gate RF-006).</summary>
+    public const string UserConnectionsFlag = "features.userConnections";
 
     /// <summary>Chave kv global das repo-skills desligadas pelo admin (deny absoluto).</summary>
     public const string GlobalSkillsDisabledKey = "skills-disabled";
@@ -198,6 +207,45 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
             ProviderKeysKey(userId), null, ct) ?? [];
     }
 
+    // ---------------- Conexões por usuário (RF-006) ----------------
+
+    /// <summary><see cref="UserConnectionsFlag"/> ligado?</summary>
+    public Task<bool> UserConnectionsEnabledAsync(CancellationToken ct) =>
+        config.GetAsync(UserConnectionsFlag, false, ct);
+
+    /// <summary>
+    /// Conexões de provider do próprio usuário quando o admin habilitou
+    /// <see cref="UserConnectionsFlag"/>; <c>null</c> quando a feature está
+    /// desligada OU quando o usuário nunca salvou — distinga os dois casos
+    /// com <see cref="UserConnectionsEnabledAsync"/> (a aba Conexões do
+    /// usuário nunca lê/escreve a config global).
+    /// </summary>
+    public async Task<ConnectionsConfig?> UserConnectionsAsync(
+        string userId, CancellationToken ct)
+    {
+        if (!await UserConnectionsEnabledAsync(ct))
+        {
+            return null;
+        }
+        return await config.GetAsync<ConnectionsConfig?>(
+            UserConnectionsKey(userId), null, ct);
+    }
+
+    /// <summary>Persiste as conexões do usuário (kv próprio; global intocado).</summary>
+    public Task SetUserConnectionsAsync(
+        string userId, ConnectionsConfig? connections, CancellationToken ct) =>
+        config.SetAsync(UserConnectionsKey(userId), connections, ct);
+
+    /// <summary>Flag ligada e usuário possui ao menos uma conexão configurada?</summary>
+    public async Task<bool> HasUserConnectionsAsync(string userId, CancellationToken ct)
+    {
+        var conn = await UserConnectionsAsync(userId, ct);
+        return conn is not null
+            && (conn.OllamaBaseUrls.Count > 0
+                || conn.OpenAiBaseUrls.Count > 0
+                || conn.ProvidersOrEmpty.Count > 0);
+    }
+
     // ---------------- Repo-skills (tombstone por nome) ----------------
 
     /// <summary>
@@ -237,5 +285,40 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
             names.Remove(skillName);
         }
         await config.SetAsync(SkillsDisabledKey(userId), names.ToList(), ct);
+    }
+
+    /// <summary>Sobrescreve a denylist global de skills (admin — nomes normalizados).</summary>
+    public async Task SetGlobalSkillsDisabledAsync(
+        IEnumerable<string> names, CancellationToken ct)
+    {
+        var clean = names.Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        await config.SetAsync(GlobalSkillsDisabledKey, clean, ct);
+    }
+
+    // ---------------- Knowledge notes (SPEC-20261104-customize-hub) ----------------
+
+    /// <summary>Ids de notas globais de conhecimento que o usuário desligou para si.</summary>
+    public async Task<HashSet<string>> GetKnowledgeDisabledAsync(
+        string userId, CancellationToken ct) =>
+        new(await config.GetAsync<List<string>>(KnowledgeDisabledKey(userId), [], ct),
+            StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Liga/desliga uma nota global só para este usuário (tombstone).</summary>
+    public async Task SetKnowledgeDisabledAsync(
+        string userId, string noteId, bool disabled, CancellationToken ct)
+    {
+        var set = await GetKnowledgeDisabledAsync(userId, ct);
+        if (disabled)
+        {
+            set.Add(noteId);
+        }
+        else
+        {
+            set.Remove(noteId);
+        }
+        await config.SetAsync(KnowledgeDisabledKey(userId), set.ToList(), ct);
     }
 }

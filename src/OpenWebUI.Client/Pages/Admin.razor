@@ -829,6 +829,35 @@
                         </div>
                         <div class="card-row">
                             <div class="card-main">
+                                <div class="card-title">@L["admin.models_enabled"]</div>
+                                <div class="card-sub">@L["admin.models_enabled_hint"]</div>
+                            </div>
+                            <div class="card-actions">
+                                <button type="button" class="msg-action"
+                                        @onclick="() => _showModelManager = true">
+                                    @L["admin.models_manage"]
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-row">
+                            <div class="card-main w-full">
+                                <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                    @string.Format(L["admin.models_enabled_count"],
+                                        _gateCatalog.Count(m => m.Enabled), _gateCatalog.Count)
+                                </div>
+                                <div class="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                                    @foreach (var model in _gateCatalog.Where(m => m.Enabled))
+                                    {
+                                        <span class="px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                              title="@($"{model.Provider}:{model.Id}")">
+                                            @model.Id
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-row">
+                            <div class="card-main">
                                 <div class="card-title">@L["admin.suggestions"]</div>
                                 <div class="card-sub">@L["admin.suggestions_hint"]</div>
                             </div>
@@ -854,6 +883,10 @@
                             <button class="auth-submit" @onclick="SaveModelsConfigAsync">@L["common.save"]</button>
                         </div>
                     </div>
+
+                    <ModelManagerDialog Active="_showModelManager"
+                                        ActiveChanged="v => _showModelManager = v"
+                                        Changed="OnGateChangedAsync" />
 
                     <div class="card-list mt-4">
                         <div class="card-row">
@@ -1527,6 +1560,7 @@
                                     <label class="check"><input type="checkbox" @bind="_toggleChannels" /> channels</label>
                                     <label class="check"><input type="checkbox" @bind="_toggleDirect" /> direct_connections</label>
                                     <label class="check"><input type="checkbox" @bind="_featUserKeys" /> user_provider_keys (BYOK)</label>
+                                    <label class="check"><input type="checkbox" @bind="_featUserConns" /> user_connections</label>
                                     <label class="check"><input type="checkbox" @bind="_enginePyodide" /> code exec: pyodide</label>
                                     <label class="check"><input type="checkbox" @bind="_engineJupyter" /> code exec: jupyter</label>
                                 </div>
@@ -1847,6 +1881,8 @@
     private string _jwtExpiresIn = "7d";
     private List<string> _defaultModels = [];
     private List<ModelInfo> _availableModels = [];
+    private List<CatalogModel> _gateCatalog = [];
+    private bool _showModelManager;
     private bool _showDefaultModelsMenu;
     private string _defaultModelsQuery = "";
     private ConnectionsConfigResponse? _connections;
@@ -1933,6 +1969,7 @@
     private bool _toggleChannels = true;
     private bool _toggleDirect;
     private bool _featUserKeys;
+    private bool _featUserConns;
     private bool _enginePyodide = true;
     private bool _engineJupyter;
     private List<TerminalServerResponse> _terminals = [];
@@ -2155,6 +2192,8 @@
         _banners = await Api.GetBannersAsync();
         _toggleChannels = await Api.GetFeatureToggleAsync("channels", true);
         _featUserKeys = (await Api.GetUserProviderKeysFlagAsync())?.Enabled ?? false;
+        _featUserConns = await Api.GetFeatureToggleAsync("user_connections");
+        _gateCatalog = (await Api.GetModelsGateCatalogAsync())?.Data.ToList() ?? [];
         var codeExec = await Api.GetCodeExecutionConfigAsync();
         _toggleDirect = codeExec?.DirectConnections ?? false;
         _enginePyodide = codeExec?.Engines.Contains("pyodide") ?? true;
@@ -2909,6 +2948,14 @@
         }
     }
 
+    /// <summary>Após mudança no gate: recarrega o catálogo admin e a lista de
+    /// modelos habilitados usada pelo seletor de "Modelos padrão".</summary>
+    private async Task OnGateChangedAsync()
+    {
+        _gateCatalog = (await Api.GetModelsGateCatalogAsync())?.Data.ToList() ?? [];
+        _availableModels = await Api.GetModelsAsync();
+    }
+
     private async Task SaveModelsConfigAsync()
     {
         var updated = await Api.UpdateModelsConfigAsync(new ModelsConfig(_defaultModels.ToList(), _suggestions));
@@ -3050,6 +3097,7 @@
         if (_engineJupyter) engines.Add("jupyter");
         var ok = await Api.SetFeatureToggleAsync("channels", _toggleChannels)
             && await Api.SetUserProviderKeysFlagAsync(_featUserKeys)
+            && await Api.SetFeatureToggleAsync("user_connections", _featUserConns)
             && await Api.UpdateCodeExecutionConfigAsync(
                 new CodeExecutionConfig(engines, _toggleDirect)) is not null;
         _configMessage = ok ? L["admin.config_saved"] : L["settings.save_failed"];

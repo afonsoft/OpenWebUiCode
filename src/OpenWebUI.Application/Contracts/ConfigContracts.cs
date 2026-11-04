@@ -209,9 +209,17 @@ public sealed class PromptSuggestion
 /// <summary>Configuração de modelos padrão e sugestões de prompt.</summary>
 /// <param name="DefaultModels">Ids de modelos selecionados por padrão (ordenados).</param>
 /// <param name="PromptSuggestions">Sugestões exibidas no chat vazio.</param>
+/// <param name="DisabledModels">
+/// Gate global do admin (SPEC-20261104-model-visibility-gate RF-001): denylist
+/// de <c>"{provider}:{id}"</c> — ausência = habilitado, então modelos de
+/// conexões novas entram habilitados por padrão. Só vale para modelos vindos
+/// das conexões globais (fontes <c>user</c>/<c>byok</c> do próprio usuário
+/// nunca são cobertas).
+/// </param>
 public sealed record ModelsConfig(
     List<string> DefaultModels,
-    List<PromptSuggestion> PromptSuggestions)
+    List<PromptSuggestion> PromptSuggestions,
+    List<string>? DisabledModels = null)
 {
     /// <summary>Configuração vazia (sem defaults).</summary>
     public static readonly ModelsConfig Empty = new([], []);

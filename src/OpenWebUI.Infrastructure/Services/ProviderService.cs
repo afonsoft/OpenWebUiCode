@@ -385,6 +385,340 @@ public class ProviderService(
         return connections with { OpenAiApiKeys = openAiKeys, Providers = providers };
     }
 
+    // ---------- Catálogo efetivo por usuário ----------
+    // (SPEC-20261104-model-visibility-gate RF-005/006/007): conexões do
+    // usuário + sintéticas BYOK + globais, com proveniência por modelo.
+
+    /// <summary>Origem "conexão global do admin" — única sujeita ao gate.</summary>
+    public const string ModelSourceGlobal = "global";
+    /// <summary>Origem "conexão própria do usuário".</summary>
+    public const string ModelSourceUser = "user";
+    /// <summary>Origem "chave BYOK do usuário" (sobre URL default ou do admin).</summary>
+    public const string ModelSourceByok = "byok";
+    /// <summary>Origem "modelo custom do workspace" (ACL própria).</summary>
+    public const string ModelSourceWorkspace = "workspace";
+
+    /// <summary>Conexões do usuário (kv próprio) quando a feature está ligada.</summary>
+    private async Task<ConnectionsConfig?> UserConnectionsAsync(
+        string userId, CancellationToken ct) =>
+        await config.GetAsync(
+            UserConfigOverlayService.UserConnectionsFlag, false, ct)
+            ? await config.GetAsync<ConnectionsConfig?>(
+                UserConfigOverlayService.UserConnectionsKey(userId), null, ct)
+            : null;
+
+    /// <summary>Mapa de chaves BYOK do usuário (vazio quando a feature está off).</summary>
+    private async Task<Dictionary<string, string>> UserByokKeysAsync(
+        string userId, CancellationToken ct) =>
+        await config.GetAsync(
+            UserConfigOverlayService.UserProviderKeysFlag, false, ct)
+            ? await config.GetAsync<Dictionary<string, string>?>(
+                UserConfigOverlayService.ProviderKeysKey(userId), null, ct) ?? []
+            : [];
+
+    /// <summary>A config tem ao menos uma conexão do tipo informado?</summary>
+    internal static bool HasConnOfType(ConnectionsConfig? c, string type) => type switch
+    {
+        ProviderTypes.Ollama => c is { OllamaBaseUrls.Count: > 0 },
+        ProviderTypes.OpenAi => c is { OpenAiBaseUrls.Count: > 0 },
+        _ => c?.ProvidersOrEmpty.Any(p =>
+            string.Equals(p.Type, type, StringComparison.OrdinalIgnoreCase)) == true,
+    };
+
+    /// <summary>
+    /// Conexões sintéticas BYOK (RF-005): um tipo com chave do usuário e sem
+    /// conexão (nem do usuário nem do admin) ganha uma conexão na URL oficial
+    /// do provider usando a chave dele.
+    /// </summary>
+    private static List<ConnectionsConfig> ByokSyntheticConnections(
+        ConnectionsConfig global, ConnectionsConfig? userConns,
+        Dictionary<string, string> byok)
+    {
+        var synth = new List<ConnectionsConfig>();
+        foreach (var (type, key) in byok)
+        {
+            if (string.IsNullOrWhiteSpace(key)
+                || HasConnOfType(userConns, type)
+                || HasConnOfType(global, type))
+            {
+                continue;
+            }
+            var baseUrl = ProviderTypes.DefaultBaseUrl(type);
+            if (string.IsNullOrEmpty(baseUrl))
+            {
+                continue;
+            }
+            synth.Add(type == ProviderTypes.OpenAi
+                ? new ConnectionsConfig([], [baseUrl], [key])
+                : new ConnectionsConfig(
+                    [], [], [],
+                    Providers: [new ProviderConnection(type, baseUrl, key)]));
+        }
+        return synth;
+    }
+
+    /// <summary>
+    /// Conexões efetivas do usuário para execução (RF-006): conexões próprias
+    /// primeiro (vencem o dedup/roteamento), globais com overlay BYOK em
+    /// seguida e sintéticas BYOK ao final.
+    /// </summary>
+    internal async Task<ConnectionsConfig> EffectiveConnectionsAsync(
+        string? userId, CancellationToken ct)
+    {
+        var global = await ApplyUserKeysAsync(
+            await config.GetConnectionsAsync(ct), userId, ct);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return global;
+        }
+        var userConns = await UserConnectionsAsync(userId, ct);
+        var byok = await UserByokKeysAsync(userId, ct);
+        if (userConns is null && byok.Count == 0)
+        {
+            return global;
+        }
+        var synth = ByokSyntheticConnections(global, userConns, byok);
+        var synthOpenAi = synth.SelectMany(s => s.OpenAiBaseUrls
+            .Select((u, i) => (Url: u, Key: s.OpenAiApiKeys.ElementAtOrDefault(i) ?? "")))
+            .ToList();
+        var synthTyped = synth.SelectMany(s => s.ProvidersOrEmpty).ToList();
+        return new ConnectionsConfig(
+            OllamaBaseUrls: (userConns?.OllamaBaseUrls ?? [])
+                .Concat(global.OllamaBaseUrls).ToList(),
+            OpenAiBaseUrls: (userConns?.OpenAiBaseUrls ?? [])
+                .Concat(global.OpenAiBaseUrls)
+                .Concat(synthOpenAi.Select(s => s.Url)).ToList(),
+            OpenAiApiKeys: (userConns?.OpenAiApiKeys ?? [])
+                .Concat(global.OpenAiApiKeys)
+                .Concat(synthOpenAi.Select(s => s.Key)).ToList(),
+            OllamaNames: MergeNames(userConns?.OllamaNames, global.OllamaNames),
+            OpenAiNames: MergeNames(userConns?.OpenAiNames, global.OpenAiNames),
+            Providers: (userConns?.ProvidersOrEmpty ?? [])
+                .Concat(global.ProvidersOrEmpty).Concat(synthTyped).ToList());
+    }
+
+    private static IReadOnlyList<string>? MergeNames(
+        IReadOnlyList<string>? first, IReadOnlyList<string>? second) =>
+        (first is { Count: > 0 } || second is { Count: > 0 })
+            ? (first ?? []).Concat(second ?? []).ToList()
+            : null;
+
+    /// <summary>
+    /// Catálogo efetivo do usuário com proveniência (RF-005): modelos das
+    /// conexões do usuário (<c>user</c>), das conexões sintéticas BYOK e dos
+    /// tipos cobertos por chave BYOK (<c>byok</c>) e das conexões globais
+    /// (<c>global</c>) — dedup por <c>{provider}:{id}</c>, o usuário vence.
+    /// </summary>
+    /// <param name="userId">Usuário chamador; null = só catálogo global.</param>
+    /// <param name="ct">Token de cancelamento.</param>
+    public async Task<List<SourcedModel>> ListEffectiveModelsAsync(
+        string? userId, CancellationToken ct)
+    {
+        var global = await config.GetConnectionsAsync(ct);
+        ConnectionsConfig? userConns = null;
+        Dictionary<string, string> byok = [];
+        if (!string.IsNullOrEmpty(userId))
+        {
+            userConns = await UserConnectionsAsync(userId, ct);
+            byok = await UserByokKeysAsync(userId, ct);
+        }
+        var byokTypes = byok
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+            .Select(kv => kv.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var result = new List<SourcedModel>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(IEnumerable<ModelInfo> models, string source)
+        {
+            foreach (var m in models)
+            {
+                if (seen.Add($"{m.Provider}:{m.Id}"))
+                {
+                    result.Add(new SourcedModel(m, source));
+                }
+            }
+        }
+
+        if (userConns is not null)
+        {
+            Add(await FetchAllModelsAsync(userConns, ct), ModelSourceUser);
+        }
+        foreach (var synth in ByokSyntheticConnections(global, userConns, byok))
+        {
+            Add(await FetchAllModelsAsync(synth, ct), ModelSourceByok);
+        }
+        foreach (var m in await FetchAllModelsAsync(global, ct))
+        {
+            if (!seen.Add($"{m.Provider}:{m.Id}"))
+            {
+                continue;
+            }
+            // Chave BYOK sobre conexão do admin: o modelo roda com a chave do
+            // usuário → "byok" (fora do gate — SPEC RF-005/Q4).
+            var source = byokTypes.Contains(m.Provider)
+                && !HasConnOfType(userConns, m.Provider)
+                ? ModelSourceByok
+                : ModelSourceGlobal;
+            result.Add(new SourcedModel(m, source));
+        }
+        return result;
+    }
+
+    /// <summary>Denylist do gate global (<c>ui.models.DisabledModels</c>).</summary>
+    public async Task<HashSet<string>> DisabledModelsGateAsync(CancellationToken ct) =>
+        new((await config.GetAsync("ui.models", ModelsConfig.Empty, ct))
+            .DisabledModels ?? [], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>O usuário tem fonte própria do provider (conexão própria ou
+    /// chave BYOK) — exime o modelo do gate global (RF-005/Q4).</summary>
+    private async Task<bool> HasUserSourceAsync(
+        string? userId, string provider, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(userId))
+        {
+            return false;
+        }
+        if (HasConnOfType(await UserConnectionsAsync(userId, ct), provider))
+        {
+            return true;
+        }
+        var byok = await UserByokKeysAsync(userId, ct);
+        return byok.TryGetValue(provider, out var key)
+            && !string.IsNullOrWhiteSpace(key);
+    }
+
+    /// <summary>
+    /// Gate de execução (RF-008): true quando o modelo é global e está na
+    /// denylist do admin e o usuário não tem fonte própria do provider.
+    /// Prefixos <c>arena:</c>/<c>pipeline:</c>/modelos fora do catálogo de
+    /// providers não são cobertos — os fluxos próprios decidem.
+    /// </summary>
+    public async Task<bool> IsModelGateBlockedAsync(
+        string model, string? userId, CancellationToken ct)
+    {
+        var raw = model.StartsWith("arena:", StringComparison.Ordinal)
+            ? model["arena:".Length..]
+            : model;
+        var gate = await DisabledModelsGateAsync(ct);
+        if (gate.Count == 0)
+        {
+            return false;
+        }
+        var hit = (await ListModelsAsync(ct))
+            .FirstOrDefault(m => string.Equals(
+                m.Id, raw, StringComparison.OrdinalIgnoreCase));
+        return hit is not null
+            && gate.Contains($"{hit.Provider}:{hit.Id}")
+            && !await HasUserSourceAsync(userId, hit.Provider, ct);
+    }
+
+    /// <summary>Lança quando o gate global bloqueia o modelo resolvido.</summary>
+    private async Task ThrowIfModelGateBlockedAsync(
+        string provider, string model, string? userId, CancellationToken ct)
+    {
+        var gate = await DisabledModelsGateAsync(ct);
+        if (gate.Contains($"{provider}:{model}")
+            && !await HasUserSourceAsync(userId, provider, ct))
+        {
+            throw new ModelDisabledException(provider, model);
+        }
+    }
+
+    /// <summary>Ids de modelos de UMA conexão, cacheados por fingerprint.</summary>
+    private async Task<HashSet<string>> ConnModelIdsAsync(
+        string kind, string fingerprint,
+        Func<CancellationToken, Task<List<ModelInfo>>> fetch, CancellationToken ct)
+    {
+        var fp = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{kind}|{fingerprint}")));
+        var models = await cache.GetOrCreateAsync(
+            $"provider-conn-models:{fp}",
+            async cancel => await fetch(cancel),
+            new HybridCacheEntryOptions
+            {
+                Expiration = ModelsCacheTtl,
+                LocalCacheExpiration = ModelsCacheTtl,
+            },
+            tags: ["providers"],
+            cancellationToken: ct);
+        return models.Select(m => m.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<T> MoveIndexToFront<T>(IReadOnlyList<T> list, int i)
+    {
+        var copy = list.ToList();
+        var item = copy[i];
+        copy.RemoveAt(i);
+        copy.Insert(0, item);
+        return copy;
+    }
+
+    private static IReadOnlyList<T>? MoveIndexToFrontOrNull<T>(
+        IReadOnlyList<T>? list, int i) =>
+        list is { Count: > 0 } && i < list.Count ? MoveIndexToFront(list, i) : list;
+
+    /// <summary>
+    /// Resolve o provider do modelo e reordena a conexão que o serve para a
+    /// frente da lista do tipo — a execução usa exatamente a conexão que
+    /// declarou o modelo (conexões do usuário são consultadas primeiro).
+    /// </summary>
+    private async Task<(string Provider, ConnectionsConfig Connections)>
+        ResolveEffectiveProviderAsync(
+            ChatCompletionRequest request, ConnectionsConfig merged, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(request.Connection))
+        {
+            return (request.Connection, merged);
+        }
+        for (var i = 0; i < merged.OllamaBaseUrls.Count; i++)
+        {
+            var url = merged.OllamaBaseUrls[i];
+            var ids = await ConnModelIdsAsync("ollama", url,
+                c => FetchOllamaModelsAsync(url, c), ct);
+            if (ids.Contains(request.Model))
+            {
+                return (ProviderTypes.Ollama, merged with
+                {
+                    OllamaBaseUrls = MoveIndexToFront(merged.OllamaBaseUrls, i),
+                    OllamaNames = MoveIndexToFrontOrNull(merged.OllamaNames, i),
+                });
+            }
+        }
+        for (var i = 0; i < merged.OpenAiBaseUrls.Count; i++)
+        {
+            var url = merged.OpenAiBaseUrls[i];
+            var key = merged.OpenAiApiKeys.ElementAtOrDefault(i);
+            var ids = await ConnModelIdsAsync("openai", $"{url}|{key}",
+                c => FetchOpenAiModelsAsync(url, key, c), ct);
+            if (ids.Contains(request.Model))
+            {
+                return (ProviderTypes.OpenAi, merged with
+                {
+                    OpenAiBaseUrls = MoveIndexToFront(merged.OpenAiBaseUrls, i),
+                    OpenAiApiKeys = MoveIndexToFront(merged.OpenAiApiKeys, i),
+                    OpenAiNames = MoveIndexToFrontOrNull(merged.OpenAiNames, i),
+                });
+            }
+        }
+        var typed = merged.ProvidersOrEmpty;
+        for (var i = 0; i < typed.Count; i++)
+        {
+            var p = typed[i];
+            var ids = await ConnModelIdsAsync(p.Type, $"{p.BaseUrl}|{p.ApiKey}",
+                c => FetchTypedModelsAsync(p, c), ct);
+            if (ids.Contains(request.Model))
+            {
+                return (p.Type, merged with
+                {
+                    Providers = MoveIndexToFront(typed, i),
+                });
+            }
+        }
+        return (merged.OpenAiBaseUrls.Count > 0
+            ? ProviderTypes.OpenAi : ProviderTypes.Ollama, merged);
+    }
+
     /// <summary>Executa uma completion sem streaming e retorna o texto do assistant.</summary>
     /// <param name="request">Requisição de completion (Stream é ignorado).</param>
     /// <param name="userId">Usuário da requisição — resolve chaves BYOK quando habilitadas.</param>
@@ -392,9 +726,9 @@ public class ProviderService(
     public async Task<string> CompleteAsync(
         ChatCompletionRequest request, string? userId = null, CancellationToken ct = default)
     {
-        var connections = await ApplyUserKeysAsync(
-            await config.GetConnectionsAsync(ct), userId, ct);
-        var provider = await ResolveProviderAsync(request, connections, ct);
+        var (provider, connections) = await ResolveEffectiveProviderAsync(
+            request, await EffectiveConnectionsAsync(userId, ct), ct);
+        await ThrowIfModelGateBlockedAsync(provider, request.Model, userId, ct);
         request = ApplyProviderOverlay(request, provider, connections);
         // SPEC-20261103-anthropic-messages-v2 RF-003: userId da run vira
         // metadata.user_id na Messages API (só o builder Anthropic lê).
@@ -423,9 +757,9 @@ public class ProviderService(
         string? userId = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var connections = await ApplyUserKeysAsync(
-            await config.GetConnectionsAsync(ct), userId, ct);
-        var provider = await ResolveProviderAsync(request, connections, ct);
+        var (provider, connections) = await ResolveEffectiveProviderAsync(
+            request, await EffectiveConnectionsAsync(userId, ct), ct);
+        await ThrowIfModelGateBlockedAsync(provider, request.Model, userId, ct);
 
         // Policies admin (SPEC-20261018-policies-admin RF-003): hard-deny
         // por provider (provider.use) e por modelo (model.use) — avaliado
@@ -473,9 +807,9 @@ public class ProviderService(
     public async Task<ProviderCompletion> CompleteWithToolsAsync(
         ChatCompletionRequest request, string? userId = null, CancellationToken ct = default)
     {
-        var connections = await ApplyUserKeysAsync(
-            await config.GetConnectionsAsync(ct), userId, ct);
-        var provider = await ResolveProviderAsync(request, connections, ct);
+        var (provider, connections) = await ResolveEffectiveProviderAsync(
+            request, await EffectiveConnectionsAsync(userId, ct), ct);
+        await ThrowIfModelGateBlockedAsync(provider, request.Model, userId, ct);
         request = ApplyProviderOverlay(request, provider, connections);
         // SPEC-20261103-anthropic-messages-v2 RF-003: userId da run vira
         // metadata.user_id na Messages API (só o builder Anthropic lê).
@@ -769,9 +1103,9 @@ public class ProviderService(
         string? userId = null,
         CancellationToken ct = default)
     {
-        var connections = await ApplyUserKeysAsync(
-            await config.GetConnectionsAsync(ct), userId, ct);
-        var provider = await ResolveProviderAsync(request, connections, ct);
+        var (provider, connections) = await ResolveEffectiveProviderAsync(
+            request, await EffectiveConnectionsAsync(userId, ct), ct);
+        await ThrowIfModelGateBlockedAsync(provider, request.Model, userId, ct);
         request = ApplyProviderOverlay(request, provider, connections);
         // SPEC-20261103-anthropic-messages-v2 RF-003: userId da run vira
         // metadata.user_id na Messages API (só o builder Anthropic lê).
@@ -1629,37 +1963,6 @@ public class ProviderService(
                 name, argsJson));
         }
         return parsed;
-    }
-
-    private async Task<string> ResolveProviderAsync(
-        ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
-    {
-        if (!string.IsNullOrEmpty(request.Connection))
-        {
-            return request.Connection;
-        }
-
-        var models = await ListModelsAsync(ct);
-        var byProvider = models
-            .GroupBy(m => m.Provider)
-            .ToDictionary(g => g.Key,
-                g => g.Select(m => m.Id).ToHashSet(StringComparer.OrdinalIgnoreCase),
-                StringComparer.OrdinalIgnoreCase);
-
-        // Ordem de precedência: quem declarou o modelo primeiro leva.
-        foreach (var provider in new[]
-        {
-            ProviderTypes.Ollama, ProviderTypes.OpenAi,
-            ProviderTypes.Anthropic, ProviderTypes.Google,
-        })
-        {
-            if (byProvider.TryGetValue(provider, out var ids) && ids.Contains(request.Model))
-            {
-                return provider;
-            }
-        }
-
-        return connections.OpenAiBaseUrls.Count > 0 ? ProviderTypes.OpenAi : ProviderTypes.Ollama;
     }
 
     // ---------------- Anthropic (Messages API) ----------------
@@ -4152,3 +4455,30 @@ public sealed record ProviderUsage(
 /// <param name="Name">Nome da função.</param>
 /// <param name="ArgumentsJson">Argumentos em JSON.</param>
 public sealed record ProviderToolCall(string Id, string Name, string ArgumentsJson);
+
+/// <summary>Modelo com proveniência no catálogo efetivo do usuário
+/// (SPEC-20261104-model-visibility-gate RF-005).</summary>
+/// <param name="Model">Modelo reportado pela conexão.</param>
+/// <param name="Source"><c>global</c> (conexão do admin — sujeita ao gate),
+/// <c>user</c> (conexão própria), <c>byok</c> (chave BYOK do usuário) ou
+/// <c>workspace</c> (modelo custom).</param>
+public sealed record SourcedModel(ModelInfo Model, string Source);
+
+/// <summary>Modelo bloqueado pelo gate global do admin
+/// (SPEC-20261104-model-visibility-gate RF-008): o usuário não tem fonte
+/// própria do provider para contornar a denylist.</summary>
+public sealed class ModelDisabledException : InvalidOperationException
+{
+    /// <summary>Monta a exceção com provider e id do modelo.</summary>
+    public ModelDisabledException(string provider, string model)
+        : base($"O modelo '{model}' ({provider}) está desabilitado pelo administrador.")
+    {
+        Provider = provider;
+        Model = model;
+    }
+
+    /// <summary>Provider do modelo bloqueado.</summary>
+    public string Provider { get; }
+    /// <summary>Id do modelo bloqueado.</summary>
+    public string Model { get; }
+}

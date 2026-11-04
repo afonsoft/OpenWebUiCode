@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Hybrid;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
@@ -60,24 +61,55 @@ public static class ComboEndpoints
             return Results.Unauthorized();
         }
 
+        var isAdmin = user.Role == "admin";
         var combos = await db.ModelCombos.AsNoTracking()
             .Include(c => c.Items)
-            .Where(c => c.UserId == user.Id || c.UserId == null)
+            // SPEC-20261104-model-visibility-gate RF-004: não-admin vê só os
+            // próprios combos + globais habilitados; admin vê todos os globais.
+            .Where(c => c.UserId == user.Id
+                || (c.UserId == null && (isAdmin || c.Enabled)))
             .OrderByDescending(c => c.UpdatedAt)
             .ToListAsync(ct);
         return Results.Ok(combos.Select(ToResponse));
     }
 
+    /// <summary>Ids do catálogo efetivo do usuário — a validação de itens do
+    /// combo usa a mesma fonte do picker da UI (RF-004).</summary>
+    private static async Task<HashSet<string>> EffectiveModelIdsAsync(
+        User user, AppDbContext db, ProviderService providers,
+        PipelineClientService pipelines, HybridCache cache,
+        ModelCapabilityResolver capabilities, CancellationToken ct) =>
+        (await ApiEndpoints.GetCachedModelListAsync(
+            user, providers, db, pipelines, cache, capabilities, ct))
+            .Data.Select(m => m.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Itens fora do catálogo efetivo → detalhe do erro (null = ok).</summary>
+    private static string? ValidateItemsCatalog(
+        ComboUpsertRequest request, HashSet<string> catalogIds)
+    {
+        var invalid = request.Items
+            .Select(i => i.ModelId.Trim())
+            .FirstOrDefault(id => !catalogIds.Contains(id));
+        return invalid is null
+            ? null
+            : $"Modelo '{invalid}' não está no catálogo disponível.";
+    }
+
     private static async Task<IResult> CreateAsync(
         ComboUpsertRequest request,
-        HttpContext http, AppDbContext db, CancellationToken ct)
+        HttpContext http, AppDbContext db, ProviderService providers,
+        PipelineClientService pipelines, HybridCache cache,
+        ModelCapabilityResolver capabilities, CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
         {
             return Results.Unauthorized();
         }
-        var error = Validate(request);
+        var error = Validate(request)
+            ?? ValidateItemsCatalog(request, await EffectiveModelIdsAsync(
+                user, db, providers, pipelines, cache, capabilities, ct));
         if (error is not null)
         {
             return Results.BadRequest(new { detail = error });
@@ -133,7 +165,9 @@ public static class ComboEndpoints
 
     private static async Task<IResult> UpdateAsync(
         string id, ComboUpsertRequest request,
-        HttpContext http, AppDbContext db, CancellationToken ct)
+        HttpContext http, AppDbContext db, ProviderService providers,
+        PipelineClientService pipelines, HybridCache cache,
+        ModelCapabilityResolver capabilities, CancellationToken ct)
     {
         var (user, combo) = await FindAsync(id, http, db, ct, write: true);
         if (user is null)
@@ -144,7 +178,9 @@ public static class ComboEndpoints
         {
             return Results.NotFound();
         }
-        var error = Validate(request);
+        var error = Validate(request)
+            ?? ValidateItemsCatalog(request, await EffectiveModelIdsAsync(
+                user, db, providers, pipelines, cache, capabilities, ct));
         if (error is not null)
         {
             return Results.BadRequest(new { detail = error });
@@ -231,7 +267,9 @@ public static class ComboEndpoints
             return (user, null);
         }
 
-        var canRead = combo.UserId is null || combo.UserId == user.Id;
+        // Global desabilitado não é legível por não-admin (mesmo escopo da lista).
+        var canRead = combo.UserId == user.Id
+            || (combo.UserId is null && (combo.Enabled || user.Role == "admin"));
         var canWrite = combo.UserId == user.Id
             || (combo.UserId is null && user.Role == "admin");
         var allowed = write ? canWrite : canRead;

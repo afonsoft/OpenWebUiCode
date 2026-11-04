@@ -67,3 +67,16 @@ D5–D7 ficam documentados como candidatos (sem SPEC) até priorização; D10/D1
 
 Ordem já aprovada: S1 ✅ → S2 ✅ → **S3+S4 ✅ (PR #248)** → S5 (em execução) → S6 → S7 → S8/S9.
 Recomendação: as D-specs entram **depois de S7** (checkpoints e @mentions mudam a superfície do chat/IDE que elas consomem). D1 e D4 são as de maior valor para a proposta "IDE web"; D2/D3 melhoram o loop diário de uso.
+
+## 6. Adendo 2026-11-04 — leitura profunda do docs.devin.ai (Customize / Skills / Memory / Insights / DeepWiki)
+
+Segunda passada guiada pelos product guides (skills, memory, session-insights, knowledge-onboarding, deepwiki-mcp). Novos achados:
+
+| # | Item (Devin) | Status | Comentário |
+|---|---|---|---|
+| D13 | **Página Customize** (escopos Pessoal/Org: Skills, Knowledge, Memory) | ✅ confirmado → SPECs | Nossos equivalentes existem espalhados (skills DB+repo, MCP admin+usuário, sem notas de conhecimento). `SPEC-20261104-customize-hub` unifica em `/customize`. |
+| D14 | **Trigger `!` de skills no composer** | ✅ confirmado → SPEC | `@` arquivos+refs já entregue; `!` dedicado a skills é greenfield. `SPEC-20261104-chat-bang-trigger`. |
+| D15 | **Session Insights** (tamanho XS–XL, categoria, timeline de issues, improved-prompt/action-items por LLM, knowledge usage) | ✅ confirmado → SPEC | Camada de dados completa (`RunUsageLedger`, `/usage/*`, `/analytics`); a lacuna é a UI. `SPEC-20261104-session-insights-v2`. |
+| D16 | **Knowledge do Devin = deprecated** | ⚠️ notável | Upstream migra Knowledge → Skills-in-Plugins. Ainda entregamos notas estilo Devin (injeção de contexto), mas mantemos o conceito enxuto — o peso fica nas Skills. |
+| D17 | **DeepWiki MCP** (`https://mcp.deepwiki.com/mcp`; tools `read_wiki_structure`/`read_wiki_contents`/`ask_question`) | ✅ adotado | `.mcp.json` adicionado na raiz; gratuito/remoto/sem auth. `afonsoft/OpenWebUiCode` precisa ser indexado no deepwiki.com (só repos públicos). |
+| D18 | Devin Memory (drive git MEMORY.md + Dreaming) | 🔶 candidato | Já temos `AgentMemory` (memory_save/search, escopo global/repo) — suficientemente próximo; consolidação estilo Dreaming é possível SPEC futura. |
