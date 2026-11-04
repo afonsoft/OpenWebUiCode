@@ -35,6 +35,7 @@ builder.Services.AddSingleton<GeminiContextCacheService>();
 builder.Services.AddScoped<ProviderService>();
 builder.Services.AddScoped<ProviderCapabilityService>();
 builder.Services.AddHostedService<ProviderCapabilityBootstrapper>();
+builder.Services.AddHostedService<DeepWikiMcpSeeder>();
 builder.Services.AddScoped<AutomationService>();
 builder.Services.AddScoped<ComboService>();
 builder.Services.AddScoped<ExternalAgentService>();
