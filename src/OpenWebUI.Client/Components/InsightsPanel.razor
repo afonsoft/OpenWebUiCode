@@ -1,0 +1,202 @@
+@inject ApiService Api
+@inject NavigationManager Nav
+@inject LocalizationService L
+
+@* SPEC-20261104-session-insights-v2 RF-004: chip de tamanho + categoria,
+   issues agrupadas, timeline cor-codificada e análise LLM sob demanda. *@
+<div class="mt-2 border-t border-gray-100 dark:border-gray-800 px-1 pt-2">
+    <div class="mb-1 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">@L["insights.title"]</div>
+
+    @if (_loading)
+    {
+        <div class="py-4 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["insights.loading"]</div>
+    }
+    else if (_insight is null)
+    {
+        <div class="py-4 text-center text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["insights.empty"]</div>
+    }
+    else
+    {
+        <div class="mb-2 flex items-center gap-2 text-xs">
+            <span class="rounded px-1.5 py-0.5 text-[0.625rem] font-semibold @SizeBadgeClass">
+                @_insight.SizeClass
+            </span>
+            <span class="truncate text-gray-500 dark:text-gray-400">@_insight.Category</span>
+            @if (Unhealthy)
+            {
+                <span class="rounded bg-red-100 px-1.5 py-0.5 text-[0.625rem] font-medium text-red-700 dark:bg-red-900/40 dark:text-red-300">@L["insights.unhealthy"]</span>
+            }
+        </div>
+
+        @if (_insight.Issues.Count > 0)
+        {
+            <div class="mb-2 flex flex-col gap-1">
+                @foreach (var issue in _insight.Issues)
+                {
+                    <div class="flex items-start gap-1.5 text-[0.6875rem]">
+                        <span class="mt-0.5 size-1.5 shrink-0 rounded-full @ImpactDotClass(issue.Impact)"></span>
+                        <span class="text-gray-600 dark:text-gray-400">
+                            @issue.Description
+                            <span class="text-gray-400 dark:text-gray-500">(@issue.Label)</span>
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_insight.Timeline.Count > 0)
+        {
+            <div class="mb-2">
+                <div class="mb-0.5 text-[0.625rem] text-gray-400 dark:text-gray-500">@L["insights.timeline"]</div>
+                <ul class="flex max-h-40 flex-col gap-0.5 overflow-y-auto" role="list" aria-label="@L["insights.timeline"]">
+                    @foreach (var ev in _insight.Timeline.Take(30))
+                    {
+                        <li class="flex items-start gap-1.5 text-[0.6875rem]">
+                            <span class="mt-0.5 size-1.5 shrink-0 rounded-full @KindDotClass(ev.Kind)"></span>
+                            <span class="truncate text-gray-600 dark:text-gray-400" title="@ev.Title">@ev.Title</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <div class="border-t border-gray-100 pt-2 dark:border-gray-800">
+            @if (_insight.Analysis is { } analysis)
+            {
+                <div class="flex flex-col gap-1.5 text-[0.6875rem]">
+                    <div class="text-gray-600 dark:text-gray-400">@analysis.Summary</div>
+                    @if (!string.IsNullOrEmpty(analysis.ImprovedPrompt))
+                    {
+                        <div class="rounded-lg bg-gray-50 p-1.5 text-gray-600 dark:bg-gray-850 dark:text-gray-400">
+                            <div class="mb-0.5 text-[0.625rem] font-medium text-gray-400 dark:text-gray-500">@L["insights.improved_prompt"]</div>
+                            <div class="whitespace-pre-wrap">@analysis.ImprovedPrompt</div>
+                        </div>
+                        <button class="msg-action self-start" @onclick="NewChatWithPromptAsync">
+                            @L["insights.use_prompt"]
+                        </button>
+                    }
+                    @if (analysis.ActionItems.Count > 0)
+                    {
+                        <div class="text-[0.625rem] font-medium text-gray-400 dark:text-gray-500">@L["insights.action_items"]</div>
+                        @foreach (var item in analysis.ActionItems)
+                        {
+                            <div class="flex items-start gap-1.5">
+                                <span class="rounded bg-gray-100 px-1 text-[0.625rem] uppercase text-gray-500 dark:bg-gray-800 dark:text-gray-400">@item.Kind</span>
+                                <span class="text-gray-600 dark:text-gray-400">@item.Text</span>
+                            </div>
+                        }
+                    }
+                    <div class="text-[0.625rem] text-gray-400 dark:text-gray-500">
+                        @analysis.ModelId · @FormatTime(analysis.GeneratedAt)
+                    </div>
+                </div>
+            }
+            <button class="msg-action mt-1.5" disabled="@_generating" @onclick="GenerateAsync">
+                @(_generating
+                    ? L["insights.generating"]
+                    : _insight.Analysis is null ? L["insights.generate"] : L["insights.regenerate"])
+            </button>
+            @if (_error is not null)
+            {
+                <div class="mt-1 text-[0.6875rem] text-red-600 dark:text-red-400">@_error</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Chat alvo do painel — recarrega ao trocar.</summary>
+    [Parameter] public string? ChatId { get; set; }
+
+    private ChatInsightResponse? _insight;
+    private bool _loading;
+    private bool _generating;
+    private string? _error;
+    private string? _loadedFor;
+
+    private bool Unhealthy => _insight?.SizeClass is "L" or "XL";
+
+    private string SizeBadgeClass => _insight?.SizeClass switch
+    {
+        "L" or "XL" => "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+        "M" => "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+        _ => "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
+    };
+
+    private static string ImpactDotClass(string impact) => impact switch
+    {
+        "high" => "bg-red-500",
+        "medium" => "bg-amber-400",
+        _ => "bg-gray-400",
+    };
+
+    private static string KindDotClass(string kind) => kind switch
+    {
+        "error" => "bg-red-500",
+        "warn" => "bg-amber-400",
+        "value" => "bg-green-500",
+        _ => "bg-gray-400",
+    };
+
+    /// <summary>Lazy-load: só busca quando o ChatId chega/muda.</summary>
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ChatId is null || ChatId == _loadedFor)
+        {
+            return;
+        }
+        _loadedFor = ChatId;
+        _loading = true;
+        _error = null;
+        try
+        {
+            _insight = await Api.GetChatInsightAsync(ChatId);
+        }
+        catch
+        {
+            _insight = null;
+        }
+        _loading = false;
+    }
+
+    /// <summary>RF-003: gera/regenera a análise LLM — 422/502 viram mensagem.</summary>
+    private async Task GenerateAsync()
+    {
+        if (ChatId is null)
+        {
+            return;
+        }
+        _generating = true;
+        _error = null;
+        try
+        {
+            var updated = await Api.GenerateChatInsightAsync(ChatId);
+            if (updated is null)
+            {
+                _error = L["insights.generate_failed"];
+            }
+            else
+            {
+                _insight = updated;
+            }
+        }
+        catch
+        {
+            _error = L["insights.generate_failed"];
+        }
+        _generating = false;
+    }
+
+    /// <summary>"Usar prompt melhorado" — abre um chat novo com o texto.</summary>
+    private void NewChatWithPromptAsync()
+    {
+        var prompt = _insight?.Analysis?.ImprovedPrompt;
+        if (!string.IsNullOrEmpty(prompt))
+        {
+            Nav.NavigateTo($"/?prompt={Uri.EscapeDataString(prompt)}");
+        }
+    }
+
+    private static string FormatTime(long epoch) =>
+        DateTimeOffset.FromUnixTimeSeconds(epoch).LocalDateTime.ToString("g");
+}

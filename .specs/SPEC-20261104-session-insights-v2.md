@@ -125,12 +125,12 @@ tests/OpenWebUI.Client.Tests/InsightsPanelTests.cs        # NOVO
 
 ## 6. Acceptance Criteria
 
-- [ ] **Dado** chat com 3 runs e retries **quando** abro painel info→Insights **então** vejo chip de tamanho correto, categoria, e issues de retry na timeline.
-- [ ] **Dado** chat XL **quando** listo no admin **então** conta em unhealthy e aparece na distribuição.
-- [ ] **Dado** usuário com modelo configurado **quando** clico "Gerar análise" **então** em ~1min vejo summary+improvedPrompt+actionItems; "Novo chat com este prompt" abre composer preenchido.
-- [ ] **Dado** usuário sem modelo **quando** clico Gerar **então** erro 422 amigável.
-- [ ] **Dado** usuário comum tentando insights de chat alheio **então** 403/404.
-- [ ] Edge: chat vazio, análise não-JSON do LLM, regeneração sobrescreve sem duplicar histórico (v1 guarda só a última).
+- [x] **Dado** chat com 3 runs e retries **quando** abro painel info→Insights **então** vejo chip de tamanho correto, categoria, e issues de retry na timeline.
+- [x] **Dado** chat XL **quando** listo no admin **então** conta em unhealthy e aparece na distribuição.
+- [x] **Dado** usuário com modelo configurado **quando** clico "Gerar análise" **então** em ~1min vejo summary+improvedPrompt+actionItems; "Novo chat com este prompt" abre composer preenchido.
+- [x] **Dado** usuário sem modelo **quando** clico Gerar **então** erro 422 amigável.
+- [x] **Dado** usuário comum tentando insights de chat alheio **então** 403/404.
+- [x] Edge: chat vazio, análise não-JSON do LLM, regeneração sobrescreve sem duplicar histórico (v1 guarda só a última).
 
 ## 7. Task Plan
 
@@ -149,7 +149,7 @@ tests/OpenWebUI.Client.Tests/InsightsPanelTests.cs        # NOVO
 
 ## 9. Definition of Done
 
-- [ ] Size chip + categoria + issue timeline funcionais com dados reais.
-- [ ] "Gerar análise" produz improved prompt + action items persistidos.
-- [ ] Admin summary agrega distribuição/categorias/issues.
-- [ ] Migration + i18n ×8 + guards + testes verdes; SPEC `Done` + Issue linkada.
+- [x] Size chip + categoria + issue timeline funcionais com dados reais.
+- [x] "Gerar análise" produz improved prompt + action items persistidos.
+- [x] Admin summary agrega distribuição/categorias/issues.
+- [x] Migration + i18n ×8 + guards + testes verdes; SPEC `Done` + Issue linkada.

@@ -1360,5 +1360,21 @@
   "chat.suggest_knowledge_prompt": "What should be remembered from this chat?",
   "chat.knowledge_saved": "Knowledge note saved. Open Customize?",
   "chat.bang_skills": "Skills",
-  "chat.bang_load_failed": "Could not load the skill content."
+  "chat.bang_load_failed": "Could not load the skill content.",
+  "insights.title": "Session insights",
+  "insights.loading": "Analyzing…",
+  "insights.empty": "No insights yet.",
+  "insights.unhealthy": "unhealthy",
+  "insights.timeline": "Issue timeline",
+  "insights.improved_prompt": "Improved prompt",
+  "insights.use_prompt": "New chat with this prompt",
+  "insights.action_items": "Action items",
+  "insights.generate": "Generate analysis",
+  "insights.regenerate": "Regenerate",
+  "insights.generating": "Generating…",
+  "insights.generate_failed": "Could not generate the analysis.",
+  "insights.admin_unhealthy": "Unhealthy chats (L/XL)",
+  "insights.admin_sizes": "Size distribution",
+  "insights.admin_categories": "By category",
+  "insights.admin_top_issues": "Top issues"
 }

@@ -1360,5 +1360,21 @@
   "chat.suggest_knowledge_prompt": "Cosa dovrebbe essere ricordato di questa chat?",
   "chat.knowledge_saved": "Nota di conoscenza salvata. Aprire Personalizza?",
   "chat.bang_skills": "Skill",
-  "chat.bang_load_failed": "Impossibile caricare il contenuto della skill."
+  "chat.bang_load_failed": "Impossibile caricare il contenuto della skill.",
+  "insights.title": "Insight della sessione",
+  "insights.loading": "Analisi…",
+  "insights.empty": "Nessun insight.",
+  "insights.unhealthy": "non salutare",
+  "insights.timeline": "Timeline dei problemi",
+  "insights.improved_prompt": "Prompt migliorato",
+  "insights.use_prompt": "Nuova chat con questo prompt",
+  "insights.action_items": "Azioni",
+  "insights.generate": "Genera analisi",
+  "insights.regenerate": "Rigenera",
+  "insights.generating": "Generazione…",
+  "insights.generate_failed": "Impossibile generare l'analisi.",
+  "insights.admin_unhealthy": "Chat non salutari (L/XL)",
+  "insights.admin_sizes": "Distribuzione dimensioni",
+  "insights.admin_categories": "Per categoria",
+  "insights.admin_top_issues": "Problemi principali"
 }

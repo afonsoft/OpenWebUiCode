@@ -581,6 +581,22 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<SkillImportResult?> ImportSkillsAsync(SkillImportRequest request) =>
         SendAsync<SkillImportResult>(HttpMethod.Post, "/api/v1/admin/skills/import", request);
 
+    // ---------------- Session insights (SPEC-20261104-session-insights-v2) ----------------
+
+    /// <summary>Insight do chat: tamanho/categoria/issues/timeline + última análise.</summary>
+    public Task<ChatInsightResponse?> GetChatInsightAsync(string chatId) =>
+        SendAsync<ChatInsightResponse>(HttpMethod.Get, $"/api/v1/chats/{chatId}/insights");
+
+    /// <summary>Gera (ou regenera) a análise LLM do chat — 422 sem modelo, 502 em falha.</summary>
+    public Task<ChatInsightResponse?> GenerateChatInsightAsync(string chatId) =>
+        SendAsync<ChatInsightResponse>(HttpMethod.Post,
+            $"/api/v1/chats/{chatId}/insights/generate", null);
+
+    /// <summary>Agregados admin de insights no período (dias).</summary>
+    public Task<AdminInsightsSummary?> GetAdminInsightsSummaryAsync(int days = 30) =>
+        SendAsync<AdminInsightsSummary>(HttpMethod.Get,
+            $"/api/v1/admin/insights/summary?days={days}");
+
     // ---------------- Prompts ----------------
 
     /// <summary>Lista prompts do usuário.</summary>

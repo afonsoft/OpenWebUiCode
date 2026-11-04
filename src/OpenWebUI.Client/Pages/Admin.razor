@@ -267,6 +267,54 @@
                     </div>
                 </div>
 
+                @* Session insights agregados (SPEC-20261104-session-insights-v2
+                   RF-005): distribuição de tamanho, categorias, top issues e
+                   contagem de chats unhealthy (L/XL) no período. *@
+                @if (_insights is not null)
+                {
+                    <div class="grid md:grid-cols-4 gap-3 mb-3">
+                        <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                            <div class="text-2xl font-medium">@_insights.UnhealthyChats</div>
+                            <div class="text-xs text-gray-500 dark:text-gray-400">@L["insights.admin_unhealthy"]</div>
+                        </div>
+                        <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                            <div class="text-sm font-medium mb-1.5">@L["insights.admin_sizes"]</div>
+                            <div class="flex gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                @foreach (var size in new[] { "XS", "S", "M", "L", "XL" })
+                                {
+                                    <span class="@(size is "L" or "XL" ? "text-red-500 dark:text-red-400" : "")">@size:@_insights.SizeDistribution.GetValueOrDefault(size)</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                            <div class="text-sm font-medium mb-1.5">@L["insights.admin_categories"]</div>
+                            <div class="flex flex-col gap-0.5 text-xs text-gray-500 dark:text-gray-400">
+                                @foreach (var cat in _insights.ByCategory.Take(4))
+                                {
+                                    <div class="flex justify-between gap-2"><span class="truncate">@cat.Category</span><span>@cat.Count</span></div>
+                                }
+                                @if (_insights.ByCategory.Count == 0)
+                                {
+                                    <div class="sidebar-empty">@L["admin.no_data"]</div>
+                                }
+                            </div>
+                        </div>
+                        <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
+                            <div class="text-sm font-medium mb-1.5">@L["insights.admin_top_issues"]</div>
+                            <div class="flex flex-col gap-0.5 text-xs text-gray-500 dark:text-gray-400">
+                                @foreach (var issue in _insights.TopIssues)
+                                {
+                                    <div class="flex justify-between gap-2"><span class="truncate">@issue.Label</span><span>@issue.Count</span></div>
+                                }
+                                @if (_insights.TopIssues.Count == 0)
+                                {
+                                    <div class="sidebar-empty">@L["admin.no_data"]</div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+
                 <div class="grid md:grid-cols-2 gap-3 mb-3">
                     <div class="rounded-2xl bg-gray-50 dark:bg-gray-850 border border-gray-100 dark:border-gray-800/50 p-4">
                         <div class="text-sm font-medium mb-2">@L["admin.tokens_per_day"]</div>
@@ -1845,6 +1893,7 @@
     private int AdminChatsTotalPages => Math.Max(1,
         (int)Math.Ceiling((_adminChats?.Total ?? 0) / 20.0));
     private AnalyticsResponse? _analytics;
+    private AdminInsightsSummary? _insights;
     private List<AdminFeedbackResponse>? _feedbacks;
     private List<LeaderboardEntryResponse>? _leaderboard;
     private AdminConfig? _adminConfig;
@@ -2100,6 +2149,7 @@
         var usage = Api.GetAdminUsageAsync(days);
         _analytics = await analytics;
         _usage = await usage;
+        _insights = await Api.GetAdminInsightsSummaryAsync(days);
     }
 
     /// <summary>Tokens compactos (340k, 1,2M, 2,1B).</summary>
@@ -2158,6 +2208,7 @@
         var usage = Api.GetAdminUsageAsync(_usageDays);
         _analytics = await analytics;
         _usage = await usage;
+        _insights = await Api.GetAdminInsightsSummaryAsync(_usageDays);
         _feedbacks = await Api.GetAllFeedbacksAsync();
         _leaderboard = await Api.GetLeaderboardAsync();
         await ReloadAdminChatsAsync();

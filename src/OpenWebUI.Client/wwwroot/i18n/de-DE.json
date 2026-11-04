@@ -1360,5 +1360,21 @@
   "chat.suggest_knowledge_prompt": "Was soll aus diesem Chat gespeichert werden?",
   "chat.knowledge_saved": "Wissensnotiz gespeichert. Anpassen öffnen?",
   "chat.bang_skills": "Skills",
-  "chat.bang_load_failed": "Der Skill-Inhalt konnte nicht geladen werden."
+  "chat.bang_load_failed": "Der Skill-Inhalt konnte nicht geladen werden.",
+  "insights.title": "Session-Insights",
+  "insights.loading": "Analysiere…",
+  "insights.empty": "Noch keine Insights.",
+  "insights.unhealthy": "ungesund",
+  "insights.timeline": "Problem-Zeitachse",
+  "insights.improved_prompt": "Verbesserter Prompt",
+  "insights.use_prompt": "Neuer Chat mit diesem Prompt",
+  "insights.action_items": "Aktionspunkte",
+  "insights.generate": "Analyse erzeugen",
+  "insights.regenerate": "Neu erzeugen",
+  "insights.generating": "Erzeuge…",
+  "insights.generate_failed": "Analyse konnte nicht erzeugt werden.",
+  "insights.admin_unhealthy": "Ungesunde Chats (L/XL)",
+  "insights.admin_sizes": "Größenverteilung",
+  "insights.admin_categories": "Nach Kategorie",
+  "insights.admin_top_issues": "Top-Probleme"
 }
