@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-css-20261103` |
 | Ticket | `GH#655` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -83,3 +83,11 @@ N/A.
 ## 8. Effort Estimate
 
 `~1h`.
+
+## Delivered
+
+PR (este branch): `word-break: break-word` → `overflow-wrap: break-word`
+(S1874 fixado); os 5 `!important` do reset `prefers-reduced-motion`
+documentados como **won't-fix deliberado** — necessários para vencer
+estilos inline/libs e garantir a preferência WCAG (S9423 → Accepted no
+SonarCloud, justificativa inline no CSS). `tailwind.css` regerado via CLI.

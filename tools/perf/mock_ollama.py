@@ -92,6 +92,10 @@ def _plan(messages: list):
     return ("text", " ".join(f"w{i}" for i in range(n_words)), delay_ms)
 
 
+# python:S7503 won't-fix ×4 — handlers aiohttp DEVEM ser coroutines:
+# versões recentes do aiohttp depreciam handlers sync (DeprecationWarning
+# em ResourceRoute). Manter `async def` mesmo sem await é o contrato do
+# framework, não dead code.
 async def tags(request: web.Request) -> web.Response:
     return web.json_response(
         {

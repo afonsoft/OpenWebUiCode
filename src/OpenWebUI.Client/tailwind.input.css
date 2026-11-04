@@ -207,6 +207,10 @@
 	/* prefers-reduced-motion: neutraliza animações/transições/blink no app
 	   inteiro. O estado funcional continua visível (spinner estático, dot
 	   parado) — só o movimento some. */
+	/* css:S9423 won't-fix — os 5 !important do reset reduced-motion são
+	   deliberados: precisam vencer estilos inline e de libs para garantir
+	   a preferência de acessibilidade (padrão canônico do WCAG). Sem
+	   alternativa que não perca a garantia. */
 	@media (prefers-reduced-motion: reduce) {
 		*,
 		::before,
@@ -326,7 +330,9 @@
 
 	.codeblock-wrapped {
 		white-space: pre-wrap;
-		word-break: break-word;
+		/* css:S1874 — word-break:break-word é keyword deprecated;
+		   overflow-wrap:break-word é o equivalente padronizado. */
+		overflow-wrap: break-word;
 	}
 
 	.codeblock-inline {

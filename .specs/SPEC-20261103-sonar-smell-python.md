@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-python-20261103` |
 | Ticket | `GH#656` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -82,3 +82,12 @@ CLI/stdout preservados: `loadtest.py` reporta as mesmas métricas; `check-spec-s
 ## 8. Effort Estimate
 
 `~1-2h`.
+
+## Delivered
+
+PR (este branch): regex `STATUS_RE` simplificado para `[^|]+` greedy
+bounded — linear (S8786); `_drain_sse_events` extraiu `_flush_sse_event`
+— complexidade ≤15 (S3776); os 4 `async def` sem await em `mock_ollama`
+documentados como **won't-fix** — aiohttp deprecia handlers sync
+(DeprecationWarning), `async` é o contrato do framework (S7503 →
+Accepted no SonarCloud).

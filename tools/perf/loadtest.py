@@ -241,6 +241,24 @@ class Api:
         return data if status == 200 and isinstance(data, list) else []
 
 
+async def _flush_sse_event(
+    api: Api,
+    session: aiohttp.ClientSession,
+    token: str,
+    chat_id: str,
+    run_id: str,
+    event: str | None,
+    data_lines: list[str],
+    metrics: Metrics,
+) -> None:
+    """Despacha o evento SSE acumulado (boundary vazio ou fim do stream)."""
+    if event and data_lines:
+        await handle_sse_event(
+            api, session, token, chat_id, run_id,
+            event, "\n".join(data_lines), metrics,
+        )
+
+
 async def _drain_sse_events(
     api: Api,
     session: aiohttp.ClientSession,
@@ -258,11 +276,10 @@ async def _drain_sse_events(
     async for raw in resp.content:
         line = raw.decode("utf-8", "replace").rstrip("\n")
         if line == "":
-            if event and data_lines:
-                await handle_sse_event(
-                    api, session, token, chat_id, run_id,
-                    event, "\n".join(data_lines), metrics,
-                )
+            await _flush_sse_event(
+                api, session, token, chat_id, run_id,
+                event, data_lines, metrics,
+            )
             event = None
             data_lines = []
             continue
@@ -274,12 +291,10 @@ async def _drain_sse_events(
             data_lines.append(line[5:].strip())
         if time.perf_counter() - t0 > timeout_s:
             return "timeout"
-    # flush pending event
-    if event and data_lines:
-        await handle_sse_event(
-            api, session, token, chat_id, run_id,
-            event, "\n".join(data_lines), metrics,
-        )
+    await _flush_sse_event(
+        api, session, token, chat_id, run_id,
+        event, data_lines, metrics,
+    )
     return None
 
 
