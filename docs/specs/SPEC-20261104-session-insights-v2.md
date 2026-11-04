@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-session-insights-v2` |
 | Ticket | `GH#691` — https://github.com/afonsoft/OpenWebUiCode/issues/691 |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 
@@ -153,3 +153,12 @@ tests/OpenWebUI.Client.Tests/InsightsPanelTests.cs        # NOVO
 - [x] "Gerar análise" produz improved prompt + action items persistidos.
 - [x] Admin summary agrega distribuição/categorias/issues.
 - [x] Migration + i18n ×8 + guards + testes verdes; SPEC `Done` + Issue linkada.
+
+## Delivered
+
+PR #693: entidade `ChatInsight` + migration; `ChatInsightsService`
+(L1 heurístico — chip XS–XL, categoria, issues, timeline / L2 LLM —
+improved prompt, action items, sem fallback enlatado); endpoints
+`GET /chats/{id}/insights`, `POST /insights/generate` (422/502),
+`GET /admin/insights/summary`; `InsightsPanel` na aba info do chat +
+4 cards agregados no admin analytics; i18n ×8; 7 NUnit + 3 bUnit.
