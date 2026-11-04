@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-vuln-i18n-fp-20261103` |
 | Ticket | `GH#651` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -72,3 +72,20 @@ N/A.
 ## 8. Effort Estimate
 
 `~30min` (triage + documentação; renome adiciona ~30min se necessário).
+
+## Delivered
+
+Triage 2026-11-03 — as 3 linhas são **falsos positivos** do `json:S2068`
+(a regra flagra por nome de chave contendo "password"/"api_key"; os
+valores são labels de UI em pt-BR, nenhuma credencial real):
+
+| Linha | Chave | Valor | Veredito |
+| --- | --- | --- | --- |
+| L132 | `settings.current_password` | "Senha atual" | **FP** — label de campo de formulário |
+| L161 | `settings.allow_password_login` | "Permitir login com senha" | **FP** — label de toggle de settings |
+| L176 | `settings.password_failed` | "Falha ao alterar a senha (verifique a senha atual)." | **FP** — mensagem de erro de UI |
+
+- Nenhuma credencial real existe no JSON — nada a remover/rotacionar.
+- Renome desnecessário (chaves descrevem a função, não contêm segredo).
+- **Ação manual pendente:** resolver as 3 como *False positive* no
+  SonarCloud — requer `SONAR_TOKEN` (fora do escopo da tool).
