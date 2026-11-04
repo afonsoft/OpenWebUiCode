@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-js-r2-20261103` |
 | Ticket | `GH#654` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -87,3 +87,19 @@ N/A — comportamento observable preservado (regex aceita o mesmo input; APIs tr
 ## 8. Effort Estimate
 
 `~2-3h`.
+
+## Delivered
+
+PR (este branch): 3 fixes reais + 15 won't-fix/deliberados documentados:
+
+| Regra | Veredito |
+| --- | --- |
+| `S5843` boot.js L147 | **Fixado** — `transientRe` (complexidade 26) dividida em `transientNetRe`/`transientUiRe` + helper `isTransient` |
+| `S3776` ide-editor.js L85 | **Fixado** — corpo do loop extraído para `renderDiag` (≤15) |
+| `S6582` codeexec.js L47 | **Fixado** — `pre.parentNode?.insertBefore` |
+| `S2486` ×9 catches | **Won't-fix** — todos já têm comentário explicativo + fallback deliberado (sentinel return, retry agendado, feedback de botão); regra pede exatamente isso → Accepted no SonarCloud |
+| `S1874` ×5 deprecated | **Won't-fix** — `addListener` (fallback Safari<14 já feature-detected), `execCommand('copy')` (fallback quando Clipboard API falha — caminho secundário deliberado), `caretRangeFromPoint` (com fallback `caretPositionFromPoint` já presente) |
+| `S7785` index.html L60 | **Stale** — nenhum `await` top-level existe no index.html atual (finding de versão anterior) |
+
+Ação manual pendente: resolver won't-fix como *Accepted/FP* no
+SonarCloud (`SONAR_TOKEN`).

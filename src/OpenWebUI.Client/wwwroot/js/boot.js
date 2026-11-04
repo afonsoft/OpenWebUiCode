@@ -144,12 +144,15 @@
     }
 
     // Falhas transitórias (rede/offline/storage) nunca devem derrubar a UI.
-    var transientRe = /failed to fetch|network ?error|err_(internet|connection|network|name|timed|address|empty_response|aborted)|abort|timed? ?out|service ?worker|jsdisconnected|quotaexceeded|securityerror|notallowederror|offline/i;
+    // S5843: regex única tinha complexidade 26 — dividida em duas temáticas.
+    var transientNetRe = /failed to fetch|network ?error|err_(internet|connection|network|name|timed|address|empty_response|aborted)/i;
+    var transientUiRe = /abort|timed? ?out|service ?worker|jsdisconnected|quotaexceeded|securityerror|notallowederror|offline/i;
+    function isTransient(text) { return transientNetRe.test(text) || transientUiRe.test(text); }
     var lastTransientAt = 0;
 
     function recordError(value) {
         var text = errorText(value);
-        if (transientRe.test(text)) {
+        if (isTransient(text)) {
             lastTransientAt = Date.now();
         }
         var last = errorLog.at(-1);
@@ -377,7 +380,7 @@
                         } catch {
                             text = "";
                         }
-                        if (transientRe.test(text)) {
+                        if (isTransient(text)) {
                             console.warn("[boot] falha transitória suprimida do banner: " + text.substring(0, 500));
                             return;
                         }

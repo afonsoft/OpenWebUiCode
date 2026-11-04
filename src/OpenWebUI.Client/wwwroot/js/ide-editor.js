@@ -93,19 +93,23 @@
         const map = lineMap(el);
         const ovRect = ov.getBoundingClientRect();
         for (const d of s.diags) {
-            const lineEl = map.get(d.line);
-            if (!lineEl) continue; // linha fora do viewport renderizado
-            const from = offsetInLine(lineEl, d.col);
-            const to = d.endLine === d.line ? offsetInLine(lineEl, d.endCol) : null;
-            if (!from) continue;
-            const range = document.createRange();
-            try {
-                range.setStart(from.node, from.offset);
-                range.setEnd(to ? to.node : from.node, to ? to.offset : from.node.data.length);
-            } catch { continue; }
-            const color = SQUIGGLE_COLORS[d.severity] || SQUIGGLE_COLORS[3];
-            appendSquiggles(ov, ovRect, range, color, d.message);
+            renderDiag(ov, ovRect, map, d); // S3776: corpo extraído
         }
+    }
+    // Renderiza uma diag (squiggles por range) — helper de renderDiags.
+    function renderDiag(ov, ovRect, map, d) {
+        const lineEl = map.get(d.line);
+        if (!lineEl) return; // linha fora do viewport renderizado
+        const from = offsetInLine(lineEl, d.col);
+        const to = d.endLine === d.line ? offsetInLine(lineEl, d.endCol) : null;
+        if (!from) return;
+        const range = document.createRange();
+        try {
+            range.setStart(from.node, from.offset);
+            range.setEnd(to ? to.node : from.node, to ? to.offset : from.node.data.length);
+        } catch { return; }
+        const color = SQUIGGLE_COLORS[d.severity] || SQUIGGLE_COLORS[3];
+        appendSquiggles(ov, ovRect, range, color, d.message);
     }
     function appendSquiggles(ov, ovRect, range, color, msg) {
         for (const r of range.getClientRects()) {

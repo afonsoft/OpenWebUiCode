@@ -49,7 +49,7 @@ window.openwebui.codeExec = (function () {
 			panel.className =
 				'codeexec-out mt-1 rounded-lg border border-gray-200 dark:border-gray-800 ' +
 				'bg-gray-50 dark:bg-gray-900 px-3 py-2 text-[0.8rem] font-mono whitespace-pre-wrap';
-			pre.parentNode.insertBefore(panel, pre.nextSibling);
+			pre.parentNode?.insertBefore(panel, pre.nextSibling);
 		}
 		return panel;
 	}
