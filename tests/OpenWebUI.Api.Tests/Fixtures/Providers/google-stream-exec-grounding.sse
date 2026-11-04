@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"executableCode":{"language":"PYTHON","code":"print(1+1)"}}]},"index":0}]}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":"2"}}]},"index":0}]}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"resultado: 2"}]},"index":0,"finishReason":"STOP","groundingMetadata":{"webSearchQueries":["soma 1+1"],"groundingChunks":[{"web":{"uri":"https://ex.com/a","title":"Site A"}},{"web":{"uri":"https://ex.com/a","title":"Site A"}},{"web":{"uri":"https://ex.com/b"}}]}}]}
+

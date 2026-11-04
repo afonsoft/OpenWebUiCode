@@ -2641,6 +2641,47 @@ public class ProviderService(
             }
         }
 
+        // SPEC-20261103-gemini-native-tools RF-001: native_tools (csv em
+        // params/model/variant/connection) → entries no tools[] junto das
+        // functionDeclarations: google_search, code_execution, url_context.
+        if (request.Params is not null
+            && request.Params.TryGetValue("native_tools", out var nativeTools)
+            && Str(ToJsonNode(nativeTools)) is { Length: > 0 } nativeCsv)
+        {
+            var toolsArray = payload[ToolsKey] as JsonArray ?? new JsonArray();
+            foreach (var tool in nativeCsv.Split(
+                         [',', ';'],
+                         StringSplitOptions.RemoveEmptyEntries
+                         | StringSplitOptions.TrimEntries))
+            {
+                switch (tool.ToLowerInvariant())
+                {
+                    case "google_search":
+                        toolsArray.Add(new JsonObject
+                        {
+                            ["google_search"] = new JsonObject(),
+                        });
+                        break;
+                    case "code_execution":
+                        toolsArray.Add(new JsonObject
+                        {
+                            ["code_execution"] = new JsonObject(),
+                        });
+                        break;
+                    case "url_context":
+                        toolsArray.Add(new JsonObject
+                        {
+                            ["url_context"] = new JsonObject(),
+                        });
+                        break;
+                }
+            }
+            if (toolsArray.Count > 0)
+            {
+                payload[ToolsKey] = toolsArray;
+            }
+        }
+
         if (request.Params is { Count: > 0 })
         {
             var config = BuildGoogleGenerationConfig(request.Params);
@@ -2842,6 +2883,17 @@ public class ProviderService(
                         ? new JsonArray(s)
                         : ToJsonNode(value);
                     break;
+                // SPEC-20261103-gemini-native-tools RF-004: thinking_budget
+                // → thinkingConfig (0=off, -1=dynamic — pass-through da API).
+                case "thinking_budget":
+                    if (IntNum(ToJsonNode(value)) is { } tb)
+                    {
+                        config["thinkingConfig"] = new JsonObject
+                        {
+                            ["thinkingBudget"] = tb,
+                        };
+                    }
+                    break;
             }
         }
         return config;
@@ -2863,6 +2915,13 @@ public class ProviderService(
             : null;
         foreach (var part in parts ?? [])
         {
+            // RF-003: executableCode/codeExecutionResult viram blocos
+            // demarcados no content (code_execution nativo do Gemini).
+            if (GoogleExecBlock(part) is { } execBlock)
+            {
+                content.Append(execBlock);
+                continue;
+            }
             if (Str(Prop(part, TextKey)) is { } text)
             {
                 // part.thought=true é raciocínio — não vai para o Content.
@@ -2902,7 +2961,8 @@ public class ProviderService(
             reasoning.ToString(), keepInnerText: true);
         reasoning.Clear().Append(cleanThinking).Append(lifted);
         return new ProviderCompletion(
-            cleanText, calls, callsJson.ToJsonString(),
+            cleanText + GoogleSourcesMarkdown(GoogleGroundingChunks(json)),
+            calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
             Usage: ParseGoogleUsage(json),
             FinishReason: Prop(json, CandidatesKey) is JsonArray { Count: > 0 } fc
@@ -3081,6 +3141,9 @@ public class ProviderService(
         // usageMetadata chega no(s) último(s) chunk(s) — o último lido
         // vence (SPEC-20261103-providers-usage-tokens RF-002).
         ProviderUsage? googleUsage = null;
+        // groundingMetadata dos chunks alimenta a lista de fontes ao fim
+        // (SPEC-20261103-gemini-native-tools RF-002).
+        var grounding = new List<(string Uri, string Title)>();
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
@@ -3092,6 +3155,7 @@ public class ProviderService(
             {
                 googleUsage = chunkUsage;
             }
+            grounding.AddRange(GoogleGroundingChunks(data));
             if (Prop(data, CandidatesKey) is JsonArray { Count: > 0 } cand
                 && Str(Prop(cand[0], "finishReason")) is { Length: > 0 } fr)
             {
@@ -3126,10 +3190,76 @@ public class ProviderService(
             await onReasoning(googleTailReasoning, ct);
         }
 
+        // RF-002: fontes do grounding como lista markdown ao fim do
+        // content (canal de sources formal é design separado).
+        var sourcesText = GoogleSourcesMarkdown(grounding);
+        if (sourcesText.Length > 0)
+        {
+            content.Append(sourcesText);
+            if (onDelta is not null)
+            {
+                await onDelta(sourcesText, ct);
+            }
+        }
+
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
             Usage: googleUsage,
             FinishReason: finishReason);
+    }
+
+    /// <summary>Parts <c>executableCode</c>/<c>codeExecutionResult</c> do
+    /// code_execution nativo viram bloco demarcado no content (RF-003).</summary>
+    private static string? GoogleExecBlock(JsonNode? part)
+    {
+        if (Prop(part, "executableCode") is JsonObject ec
+            && Str(Prop(ec, "code")) is { Length: > 0 } code)
+        {
+            var lang = Str(Prop(ec, "language"))?.ToLowerInvariant() ?? "python";
+            return $"\n\n```{lang}\n{code}\n```\n";
+        }
+        if (Prop(part, "codeExecutionResult") is JsonObject cer)
+        {
+            var outcome = Str(Prop(cer, "outcome")) ?? "OUTCOME_OK";
+            var output = Str(Prop(cer, "output"));
+            return $"\n\n> execução: {outcome}\n```\n{output}\n```\n";
+        }
+        return null;
+    }
+
+    /// <summary>Extrai (uri, title) dos groundingChunks web de um chunk/
+    /// response Gemini (RF-002).</summary>
+    private static IEnumerable<(string Uri, string Title)> GoogleGroundingChunks(
+        JsonNode? node)
+    {
+        var cand = Prop(node, CandidatesKey) as JsonArray;
+        var gm = cand is { Count: > 0 }
+            ? Prop(cand[0], "groundingMetadata") : null;
+        foreach (var chunk in Prop(gm, "groundingChunks") as JsonArray ?? [])
+        {
+            var web = Prop(chunk, "web");
+            if (Str(Prop(web, "uri")) is { Length: > 0 } uri)
+            {
+                yield return (uri, Str(Prop(web, "title")) ?? uri);
+            }
+        }
+    }
+
+    /// <summary>Renderiza as fontes únicas do grounding como lista
+    /// markdown (<c>**Fontes:**</c>); vazio quando não há chunks web.</summary>
+    private static string GoogleSourcesMarkdown(
+        IEnumerable<(string Uri, string Title)> chunks)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var list = new StringBuilder();
+        foreach (var (uri, title) in chunks)
+        {
+            if (seen.Add(uri))
+            {
+                list.Append($"\n- [{title}]({uri})");
+            }
+        }
+        return list.Length > 0 ? "\n\n**Fontes:**" + list : string.Empty;
     }
 
     /// <summary>
@@ -3145,6 +3275,16 @@ public class ProviderService(
         CancellationToken ct)
     {
         var (content, markupContent, markupReasoning, onDelta, onReasoning) = sink;
+        // RF-003: partes de execução viram bloco demarcado no content.
+        if (GoogleExecBlock(part) is { } execBlock)
+        {
+            content.Append(execBlock);
+            if (onDelta is not null)
+            {
+                await onDelta(execBlock, ct);
+            }
+            return;
+        }
         if (Str(Prop(part, TextKey)) is { } text)
         {
             await EmitGoogleTextPartAsync(

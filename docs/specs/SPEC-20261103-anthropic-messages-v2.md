@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/anthropic-messages-v2-20261103` |
 | Ticket | `GH#661` |
-| Status | `In implementation` |
+| Status | `Done` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story
@@ -92,3 +92,11 @@ Payloads aditivos; `sources` seguem o shape já consumido pela UI de citations.
 ## 8. Effort Estimate
 
 `~5-7h`.
+
+## Delivered
+
+PR #667 (merged `e1c84cd`): PDF→document block +citations.enabled (RF-001);
+metadata.user_id da run (RF-003, ChatCompletionRequest.UserId aditivo);
+classificação 429/529/mid-stream provada por contrato (RF-004); beta
+headers entregues em #659 (RF-005). RF-002 descoped: pipeline não tem
+canal de sources — render de citations pede design novo (SPEC futura).
