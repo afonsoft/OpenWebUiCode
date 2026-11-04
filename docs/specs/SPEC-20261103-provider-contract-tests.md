@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/provider-contract-tests-20261103` |
 | Ticket | `GH#660` |
-| Status | `In implementation` |
+| Status | `Done` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story
@@ -88,3 +88,11 @@ N/A (testes). Extração de builders mantém wire idêntico.
 ## 8. Effort Estimate
 
 `~4-6h`.
+
+## Delivered
+
+PR #664 (merged `b1fa035`): 9 contract tests do error-path + 4 golden
+fixtures SSE file-based. Escopo refinado na análise — cobertura feliz já
+existia em `ProviderServiceTests`. 2 bugs reais corrigidos: buffered
+`{"error":…}` 200 do Claude (resposta vazia silenciosa →
+`ProviderHttpException`) e `RESOURCE_EXHAUSTED` do Gemini (502 → 429).
