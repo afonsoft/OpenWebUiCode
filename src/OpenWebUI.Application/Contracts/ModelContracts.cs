@@ -97,4 +97,8 @@ public sealed record ChatCompletionRequest(
     string? CacheFormat = null,
     /// <summary>Aliases de referências anexadas via chips <c>ref:alias</c>
     /// (interno — resolvido pela pipeline; SPEC-20261018-references RF-003).</summary>
-    IReadOnlyList<string>? AttachedRefs = null);
+    IReadOnlyList<string>? AttachedRefs = null,
+    /// <summary>Id do usuário da run (interno — nunca vem do client). Usado
+    /// pelo Anthropic em <c>metadata.user_id</c> (abuse tracking exigido
+    /// por alguns recursos; SPEC-20261103-anthropic-messages-v2 RF-003).</summary>
+    string? UserId = null);

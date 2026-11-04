@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/anthropic-thinking-config-20261103` |
 | Ticket | `GH#659` |
-| Status | `In implementation` |
+| Status | `Done` |
 | Parent | provider improvement sweep 2026-11-03 (Gemini/Anthropic) |
 
 ## 1. User Story
@@ -86,3 +86,12 @@ Payload `thinking` só presente quando habilitado — sem mudança para modelos 
 ## 8. Effort Estimate
 
 `~4-6h` (RF-004 é o ponto de risco — depende do formato persistido).
+
+## Delivered
+
+PR #666 (merged `5682a89`): `thinking_budget` via Params (model/variant/
+connection) → `thinking:{enabled,budget}` na Messages API; clamps
+(≥1024, max_tokens elevado p/ budget+1024, cap 64k); beta headers via
+`connection.Headers` provados no wire (RF-003 zero-código). RF-004
+documentado: thinking não persiste no histórico — replay omite blocos
+(persistência = mudança de schema separada).
