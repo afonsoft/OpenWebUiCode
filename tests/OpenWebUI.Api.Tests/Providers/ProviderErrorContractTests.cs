@@ -1,7 +1,5 @@
 using System.Collections.Generic;
 using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -48,8 +46,8 @@ public class ProviderErrorContractTests
 
     // ---------- helpers ----------
 
-    private ProviderService NewService(StubHandler handler) =>
-        new(new StubFactory(handler), _config,
+    private ProviderService NewService(StubHttpHandler handler) =>
+        new(new StubHttpFactory(handler), _config,
             NullLogger<ProviderService>.Instance,
             TestCache.Create(), new ConfigurationBuilder().Build());
 
@@ -85,7 +83,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Anthropic_Http429_PropagaProviderHttpExceptionComRetryAfter()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.TooManyRequests,
             "{\"error\":{\"type\":\"rate_limit_error\",\"message\":\"rate limit\"}}",
             retryAfter: TimeSpan.FromSeconds(30));
@@ -110,7 +108,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Google_Http503_PropagaProviderHttpException()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.ServiceUnavailable,
             "{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\"}}");
         await SetProvidersAsync(
@@ -136,7 +134,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Anthropic_Stream_OverloadedError_ViraMidStream()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.OK,
             Fixture("anthropic-error-overloaded.sse.txt"));
         await SetProvidersAsync(
@@ -159,7 +157,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Anthropic_Stream_RateLimitError_MidStream429()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.OK,
             "data: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"," +
             "\"message\":\"rate limit exceeded\"}}\n\n");
@@ -183,7 +181,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Google_Stream_ResourceExhausted_MidStream429()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.OK,
             Fixture("google-error-exhausted.sse.txt"));
         await SetProvidersAsync(
@@ -205,7 +203,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Google_Buffered200_ComError_ViraMidStream()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.OK,
             "{\"error\":{\"code\":400,\"message\":\"API key invalid\"}}");
         await SetProvidersAsync(
@@ -223,7 +221,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Anthropic_Buffered200_ComError_ViraMidStream()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.OK,
             "{\"type\":\"error\",\"error\":{\"type\":\"api_error\"," +
             "\"message\":\"Internal error\"}}");
@@ -245,7 +243,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Anthropic_Stream_GoldenFixture_ChunksOrdenados()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.OK,
             Fixture("anthropic-stream-happy.sse.txt"));
         await SetProvidersAsync(
@@ -270,7 +268,7 @@ public class ProviderErrorContractTests
     [Test]
     public async Task Google_Stream_GoldenFixture_ChunksOrdenados()
     {
-        var http = new StubHandler();
+        var http = new StubHttpHandler();
         http.Enqueue(HttpStatusCode.OK,
             Fixture("google-stream-happy.sse.txt"));
         await SetProvidersAsync(
@@ -288,54 +286,5 @@ public class ProviderErrorContractTests
             Assert.That(all, Does.Contain("\"content\":\" la\""));
             Assert.That(lines[^1], Is.EqualTo("data: [DONE]"));
         });
-    }
-
-    // ---------- infra: stub HTTP sem listener ----------
-
-    /// <summary>Respostas enfileiradas por ordem de chamada; registra o
-    /// wire (método, url, body) de cada request para asserts de payload.</summary>
-    private sealed class StubHandler : HttpMessageHandler
-    {
-        private readonly Queue<(HttpStatusCode Status, string Body,
-            TimeSpan? RetryAfter)> _responses = new();
-
-        public List<(string Method, string Url, string Body)> Requests { get; } =
-            new();
-
-        public void Enqueue(
-            HttpStatusCode status, string body, TimeSpan? retryAfter = null) =>
-            _responses.Enqueue((status, body, retryAfter));
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken ct)
-        {
-            Requests.Add((request.Method.Method,
-                request.RequestUri?.ToString() ?? string.Empty,
-                request.Content is null
-                    ? string.Empty
-                    : await request.Content.ReadAsStringAsync(ct)));
-
-            var (status, body, retryAfter) = _responses.Count > 0
-                ? _responses.Dequeue()
-                : (HttpStatusCode.NotFound, "{}", (TimeSpan?)null);
-            var response = new HttpResponseMessage(status)
-            {
-                Content = new StringContent(body, Encoding.UTF8,
-                    body.StartsWith("data:", StringComparison.Ordinal)
-                        ? "text/event-stream" : "application/json"),
-            };
-            if (retryAfter is not null)
-            {
-                response.Headers.RetryAfter =
-                    new RetryConditionHeaderValue(retryAfter.Value);
-            }
-            return response;
-        }
-    }
-
-    private sealed class StubFactory(HttpMessageHandler handler)
-        : IHttpClientFactory
-    {
-        public HttpClient CreateClient(string name) => new(handler);
     }
 }

@@ -2100,6 +2100,7 @@ public class ProviderService(
         return new ProviderCompletion(
             cleanText, calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
+            Usage: ParseAnthropicUsage(json),
             FinishReason: Str(Prop(json, "stop_reason")));
     }
 
@@ -2294,6 +2295,7 @@ public class ProviderService(
 
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
+            Usage: state.ToUsage(),
             FinishReason: state.StopReason);
     }
 
@@ -2301,6 +2303,54 @@ public class ProviderService(
     private sealed class AnthropicStreamState
     {
         public string? StopReason { get; set; }
+
+        // SPEC-20261103-providers-usage-tokens RF-001: message_start.usage
+        // alimenta input/cache; message_delta.usage traz output acumulado
+        // — o último valor vence.
+        public int? InputTokens { get; set; }
+        public int? OutputTokens { get; set; }
+        public int? CacheReadTokens { get; set; }
+        public int? CacheWriteTokens { get; set; }
+
+        public ProviderUsage? ToUsage() =>
+            InputTokens is null && OutputTokens is null
+            && CacheReadTokens is null && CacheWriteTokens is null
+                ? null
+                : new ProviderUsage(InputTokens ?? 0, OutputTokens ?? 0,
+                    CachedTokens: CacheReadTokens,
+                    CacheWriteTokens: CacheWriteTokens);
+    }
+
+    /// <summary>usage da Messages API: input/output + campos de cache
+    /// (SPEC-20261103-providers-usage-tokens RF-001).</summary>
+    private static ProviderUsage? ParseAnthropicUsage(JsonNode? root)
+    {
+        var u = Prop(root, "usage");
+        var input = IntNum(Prop(u, "input_tokens"));
+        var output = IntNum(Prop(u, "output_tokens"));
+        if (input is null && output is null)
+        {
+            return null;
+        }
+        return new ProviderUsage(input ?? 0, output ?? 0,
+            CachedTokens: IntNum(Prop(u, "cache_read_input_tokens")),
+            CacheWriteTokens: IntNum(Prop(u, "cache_creation_input_tokens")));
+    }
+
+    /// <summary>usageMetadata do Gemini: prompt/candidates/thoughts/cached
+    /// (SPEC-20261103-providers-usage-tokens RF-002).</summary>
+    private static ProviderUsage? ParseGoogleUsage(JsonNode? root)
+    {
+        var u = Prop(root, "usageMetadata");
+        var prompt = IntNum(Prop(u, "promptTokenCount"));
+        var candidates = IntNum(Prop(u, "candidatesTokenCount"));
+        if (prompt is null && candidates is null)
+        {
+            return null;
+        }
+        return new ProviderUsage(prompt ?? 0, candidates ?? 0,
+            ReasoningTokens: IntNum(Prop(u, "thoughtsTokenCount")),
+            CachedTokens: IntNum(Prop(u, "cachedContentTokenCount")));
     }
 
     /// <summary>Despacha um evento SSE do stream Anthropic por nome/tipo.</summary>
@@ -2347,12 +2397,49 @@ public class ProviderService(
                 },
             });
         }
-        else if (eventName == "message_delta"
-            && Str(Prop(Prop(data, DeltaKey), "stop_reason")) is { Length: > 0 } sr)
+        else if (eventName == "message_start")
+        {
+            // usage inicial: input_tokens + campos de cache (RF-001).
+            CaptureAnthropicUsage(Prop(data, MessageKey), state);
+        }
+        else if (eventName == "message_delta")
         {
             // message_delta carrega stop_reason ("end_turn"/MaxTokensKey) —
             // MaxTokensKey sinaliza truncamento para a continuação RF-003.
-            state.StopReason = sr;
+            if (Str(Prop(Prop(data, DeltaKey), "stop_reason")) is { Length: > 0 } sr)
+            {
+                state.StopReason = sr;
+            }
+            // usage.output_tokens acumulado — o último delta vence (RF-001).
+            CaptureAnthropicUsage(data, state);
+        }
+    }
+
+    /// <summary>Captura campos de usage Anthropic no estado do stream
+    /// (input/cache em <c>message_start</c>; output acumulado em
+    /// <c>message_delta</c>).</summary>
+    private static void CaptureAnthropicUsage(JsonNode? node, AnthropicStreamState state)
+    {
+        var u = Prop(node, "usage");
+        if (u is null)
+        {
+            return;
+        }
+        if (IntNum(Prop(u, "input_tokens")) is { } i)
+        {
+            state.InputTokens = i;
+        }
+        if (IntNum(Prop(u, "output_tokens")) is { } o)
+        {
+            state.OutputTokens = o;
+        }
+        if (IntNum(Prop(u, "cache_read_input_tokens")) is { } cr)
+        {
+            state.CacheReadTokens = cr;
+        }
+        if (IntNum(Prop(u, "cache_creation_input_tokens")) is { } cw)
+        {
+            state.CacheWriteTokens = cw;
         }
     }
 
@@ -2757,6 +2844,7 @@ public class ProviderService(
         return new ProviderCompletion(
             cleanText, calls, callsJson.ToJsonString(),
             reasoning.Length > 0 ? reasoning.ToString() : null,
+            Usage: ParseGoogleUsage(json),
             FinishReason: Prop(json, CandidatesKey) is JsonArray { Count: > 0 } fc
                 ? Str(Prop(fc[0], "finishReason")) : null);
     }
@@ -2930,12 +3018,19 @@ public class ProviderService(
         var markupContent = new ReasoningMarkupFilter();
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         string? finishReason = null;
+        // usageMetadata chega no(s) último(s) chunk(s) — o último lido
+        // vence (SPEC-20261103-providers-usage-tokens RF-002).
+        ProviderUsage? googleUsage = null;
 
         await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
                 throw MidStreamProviderError(errorNode);
+            }
+            if (ParseGoogleUsage(data) is { } chunkUsage)
+            {
+                googleUsage = chunkUsage;
             }
             if (Prop(data, CandidatesKey) is JsonArray { Count: > 0 } cand
                 && Str(Prop(cand[0], "finishReason")) is { Length: > 0 } fr)
@@ -2973,6 +3068,7 @@ public class ProviderService(
 
         return new ProviderCompletion(
             content.ToString(), calls, callsJson.ToJsonString(),
+            Usage: googleUsage,
             FinishReason: finishReason);
     }
 
@@ -3766,8 +3862,14 @@ public sealed record ProviderCompletion(
 /// <param name="PromptTokens">Tokens do prompt (prompt_eval_count no Ollama).</param>
 /// <param name="CompletionTokens">Tokens gerados (eval_count no Ollama).</param>
 /// <param name="ReasoningTokens">Tokens de reasoning quando discriminados.</param>
+/// <param name="CachedTokens">Tokens lidos de cache do provider
+/// (<c>cache_read_input_tokens</c> Anthropic, <c>cachedContentTokenCount</c>
+/// Gemini) — cobrados com desconto.</param>
+/// <param name="CacheWriteTokens">Tokens gravados em cache
+/// (<c>cache_creation_input_tokens</c> Anthropic).</param>
 public sealed record ProviderUsage(
-    int PromptTokens, int CompletionTokens, int? ReasoningTokens = null);
+    int PromptTokens, int CompletionTokens, int? ReasoningTokens = null,
+    int? CachedTokens = null, int? CacheWriteTokens = null);
 
 /// <summary>Chamada de função normalizada (Ollama/OpenAI).</summary>
 /// <param name="Id">Id da chamada (echo em tool_call_id).</param>
