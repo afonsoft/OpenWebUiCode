@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-model-visibility-gate` |
 | Ticket | `GH#688` — https://github.com/afonsoft/OpenWebUiCode/issues/688 |
-| Status | `In implementation` |
+| Status | `Done` |
 
 ## 1. User Story
 
@@ -197,16 +197,16 @@ tests/OpenWebUI.Client.Tests/AdminModelGateTests.cs           # NOVO (popup admi
 
 ## 6. Acceptance Criteria
 
-- [ ] **Dado** admin com conexão OpenAI cadastrada **quando** abre `/admin/config` → Modelos → Gerenciar **então** vê todos os modelos OpenAI habilitados (default) com switch ligado.
-- [ ] **Dado** admin desabilita `openai:gpt-4o` no popup **quando** usuário comum lista `/api/models` ou o seletor do chat **então** `gpt-4o` não aparece; admin também não o vê no chat (só no popup).
-- [ ] **Dado** `openai:gpt-4o` desabilitado **quando** usuário sem BYOK chama `POST /api/chat/completions {model:"gpt-4o"}` **então** `403` genérico.
-- [ ] **Dado** usuário com chave BYOK openai **quando** lista `/api/v1/models/all` **então** vê modelos da sua chave com `source:"byok"` mesmo sem conexão admin openai — inclusive `gpt-4o` desabilitado globalmente.
-- [ ] **Dado** `features.userConnections` on **quando** usuário salva `PUT /user/connections` com um Ollama próprio **então** os modelos dele aparecem com `source:"user"` e requests roteam para a URL/chave dele.
-- [ ] **Dado** a aba Conexões **quando** aberta por usuário comum **então** não exibe nem carrega conexões do admin (sem chamada a `/configs/connections`); quando off, exibe empty-state.
-- [ ] **Dado** combo global `Enabled=false` **quando** usuário comum lista `/api/v1/combos/` **então** não aparece; admin continua vendo.
-- [ ] **Dado** usuário tenta criar combo com modelo fora do seu catálogo efetivo **então** `400` genérico.
-- [ ] **Dado** usuário com `disabledModels` pessoal contendo `global:model-x` **quando** lista catálogo **então** `model-x` aparece `enabled:false` (toggle pessoal) e some de `/api/models`.
-- [ ] **Dado** admin cadastra nova chave Anthropic **quando** reabre o popup **então** todos os modelos novos vêm habilitados (denylist inalterada).
+- [x] **Dado** admin com conexão OpenAI cadastrada **quando** abre `/admin/config` → Modelos → Gerenciar **então** vê todos os modelos OpenAI habilitados (default) com switch ligado.
+- [x] **Dado** admin desabilita `openai:gpt-4o` no popup **quando** usuário comum lista `/api/models` ou o seletor do chat **então** `gpt-4o` não aparece; admin também não o vê no chat (só no popup).
+- [x] **Dado** `openai:gpt-4o` desabilitado **quando** usuário sem BYOK chama `POST /api/chat/completions {model:"gpt-4o"}` **então** `403` genérico.
+- [x] **Dado** usuário com chave BYOK openai **quando** lista `/api/v1/models/all` **então** vê modelos da sua chave com `source:"byok"` mesmo sem conexão admin openai — inclusive `gpt-4o` desabilitado globalmente.
+- [x] **Dado** `features.userConnections` on **quando** usuário salva `PUT /user/connections` com um Ollama próprio **então** os modelos dele aparecem com `source:"user"` e requests roteam para a URL/chave dele.
+- [x] **Dado** a aba Conexões **quando** aberta por usuário comum **então** não exibe nem carrega conexões do admin (sem chamada a `/configs/connections`); quando off, exibe empty-state.
+- [x] **Dado** combo global `Enabled=false` **quando** usuário comum lista `/api/v1/combos/` **então** não aparece; admin continua vendo.
+- [x] **Dado** usuário tenta criar combo com modelo fora do seu catálogo efetivo **então** `400` genérico.
+- [x] **Dado** usuário com `disabledModels` pessoal contendo `global:model-x` **quando** lista catálogo **então** `model-x` aparece `enabled:false` (toggle pessoal) e some de `/api/models`.
+- [x] **Dado** admin cadastra nova chave Anthropic **quando** reabre o popup **então** todos os modelos novos vêm habilitados (denylist inalterada).
 
 **Edge cases:**
 
@@ -222,15 +222,15 @@ tests/OpenWebUI.Client.Tests/AdminModelGateTests.cs           # NOVO (popup admi
 
 ## 7. Task Plan (agent execution)
 
-- [ ] **T1 — Discovery:** ler os arquivos da seção 3 e confirmar os pontos de merge/cache/enforcement.
-- [ ] **T2 — Contracts + config:** `ModelsConfig.DisabledModels`, `CatalogModel.Source`, endpoints `models/disabled`, `models/catalog`, `user_connections` (ConfigEndpoints), `GET/PUT user/connections` (ApiEndpoints), flag kv em `UserConfigOverlayService`.
-- [ ] **T3 — ProviderService:** merge de conexões efetivas (user + global + byok sintético), particionamento de cache por usuário, gate check pós-`ResolveProviderAsync` nos 3 caminhos de completion.
-- [ ] **T4 — Listagens:** `BuildModelListAsync`/`ListCatalogAsync` com merge 3 fontes + gate + `Source`; `ComboEndpoints.ListAsync` + validação de itens.
-- [ ] **T5 — Client admin:** seção "Modelos habilitados" + dialog gerenciador (switches, filtros, enable/disable-all), `DefaultModelOptions` filtrado.
-- [ ] **T6 — Client settings:** aba Conexões → user connections (reuso das rows); catálogo efetivo + badges `source`; combos picker/validação; empty-states.
-- [ ] **T7 — i18n ×8 + tailwind rebuild** se classes novas.
-- [ ] **T8 — Testes:** NUnit (gate, merge, enforcement 403, combos scope, user connections mask/merge, flag off → 403) + bUnit (popup admin, catálogo filtrado, aba conexões non-admin) + regressão dos existentes (`ModelVisibilityTests`, `ConfigLayersTests`, `ComboEndpointsTests`, `ModelEndpointsTests`).
-- [ ] **T9 — Validation:** `dotnet build`, `dotnet test`, drift guards, DoD (seção 9) → `Status = Done` + PR `feature/Devin-20261104-model-visibility-gate`.
+- [x] **T1 — Discovery:** ler os arquivos da seção 3 e confirmar os pontos de merge/cache/enforcement.
+- [x] **T2 — Contracts + config:** `ModelsConfig.DisabledModels`, `CatalogModel.Source`, endpoints `models/disabled`, `models/catalog`, `user_connections` (ConfigEndpoints), `GET/PUT user/connections` (ApiEndpoints), flag kv em `UserConfigOverlayService`.
+- [x] **T3 — ProviderService:** merge de conexões efetivas (user + global + byok sintético), particionamento de cache por usuário, gate check pós-`ResolveProviderAsync` nos 3 caminhos de completion.
+- [x] **T4 — Listagens:** `BuildModelListAsync`/`ListCatalogAsync` com merge 3 fontes + gate + `Source`; `ComboEndpoints.ListAsync` + validação de itens.
+- [x] **T5 — Client admin:** seção "Modelos habilitados" + dialog gerenciador (switches, filtros, enable/disable-all), `DefaultModelOptions` filtrado.
+- [x] **T6 — Client settings:** aba Conexões → user connections (reuso das rows); catálogo efetivo + badges `source`; combos picker/validação; empty-states.
+- [x] **T7 — i18n ×8 + tailwind rebuild** se classes novas.
+- [x] **T8 — Testes:** NUnit (gate, merge, enforcement 403, combos scope, user connections mask/merge, flag off → 403) + bUnit (popup admin, catálogo filtrado, aba conexões non-admin) + regressão dos existentes (`ModelVisibilityTests`, `ConfigLayersTests`, `ComboEndpointsTests`, `ModelEndpointsTests`).
+- [x] **T9 — Validation:** `dotnet build`, `dotnet test`, drift guards, DoD (seção 9) → `Status = Done` + PR `feature/Devin-20261104-model-visibility-gate`.
 
 **7.1 Validation strategy by type/stack**
 
@@ -250,16 +250,29 @@ tests/OpenWebUI.Client.Tests/AdminModelGateTests.cs           # NOVO (popup admi
 
 ## 9. Definition of Done
 
-- [ ] Todos os RF-001..RF-010 implementados.
-- [ ] Critérios de aceite (seção 6) cobertos por testes passando.
-- [ ] Edge cases tratados (provider offline, denylist obsoleto, colisão de fontes, flag off).
-- [ ] `dotnet build OpenWebUI.slnx --configuration Release` e `dotnet test` verdes; cobertura ≥80% nas regras novas.
-- [ ] Drift guards (`check-i18n-parity.py`, `check-css-classes.py`, `check-form-a11y.py`, `check-spec-status.py`) verdes.
-- [ ] Guardrails da seção 8 respeitados; sem secrets/PII em logs; erros no formato genérico.
-- [ ] i18n ×8 completo; `tailwind.css` regerado se classes novas.
+- [x] Todos os RF-001..RF-010 implementados.
+- [x] Critérios de aceite (seção 6) cobertos por testes passando.
+- [x] Edge cases tratados (provider offline, denylist obsoleto, colisão de fontes, flag off).
+- [x] `dotnet build OpenWebUI.slnx --configuration Release` e `dotnet test` verdes; cobertura ≥80% nas regras novas.
+- [x] Drift guards (`check-i18n-parity.py`, `check-css-classes.py`, `check-form-a11y.py`, `check-spec-status.py`) verdes.
+- [x] Guardrails da seção 8 respeitados; sem secrets/PII em logs; erros no formato genérico.
+- [x] i18n ×8 completo; `tailwind.css` regerado se classes novas.
 
 **Next action after DoD is complete:** `Status = Done` + PR na branch `feature/Devin-20261104-model-visibility-gate` referenciando a issue.
 
 ## Open Questions / Pending Ambiguity
 
 - Nenhuma bloqueante. Decisões registradas na seção 3 (todas confirmadas pelo usuário).
+
+## Delivered
+
+PR #692 (merged `f2f04ac`): `ModelsConfig.DisabledModels` (denylist
+global); `CatalogModel.Source` (`global|user|byok`); endpoints
+`/configs/models/{disabled,catalog}` (admin) e `GET/PUT user/connections`
+(gated por `features.userConnections`, chaves mascaradas); merge de
+conexões efetivas + cache por usuário + gate 403 pós-resolve nos 3
+caminhos de completion em `ProviderService`; `ListCatalogAsync`/`/api/models`
+com catálogo efetivo; `ComboEndpoints` escopo user+globais habilitados;
+seção "Modelos habilitados" + `ModelManagerDialog` no admin; aba Conexões
+do usuário (bug loading infinito corrigido); badges de origem; i18n ×8;
+9 NUnit (`ModelVisibilityGateTests`) + 8 bUnit (`UserConnectionsTests`).
