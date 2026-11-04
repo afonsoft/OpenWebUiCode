@@ -241,6 +241,11 @@
     /// <summary>Aba ativa derivada da rota.</summary>
     [Parameter] public string? Tab { get; set; }
 
+    /// <summary>Draft de skill vindo de query (?draft=) — dreaming-lite RF-003:
+    /// pré-preenche o editor quando um action item kind=skill é aberto.</summary>
+    [Parameter, SupplyParameterFromQuery(Name = "draft")]
+    public string? Draft { get; set; }
+
     private bool IsAdmin => Auth.CurrentUser?.Role == "admin";
     private bool _loadFailed;
     private string? _error;
@@ -276,6 +281,15 @@
     protected override async Task OnParametersSetAsync()
     {
         Tab ??= "knowledge";
+        if (Tab == "skills" && !string.IsNullOrWhiteSpace(Draft) && _skEditId is null
+            && _skContent != Draft)
+        {
+            // Draft de action item (dreaming-lite): nome derivado da 1ª linha.
+            _skContent = Draft;
+            var first = Draft.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault()?.Trim() ?? "";
+            _skName = first.Length <= 60 ? first : first[..60];
+        }
         await LoadAsync();
     }
 

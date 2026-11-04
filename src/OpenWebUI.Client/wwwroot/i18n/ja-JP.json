@@ -1377,5 +1377,14 @@
   "insights.admin_sizes": "サイズ分布",
   "insights.admin_categories": "カテゴリ別",
   "insights.admin_top_issues": "主なイシュー",
-  "chat.hash_knowledge": "ナレッジ"
+  "chat.hash_knowledge": "ナレッジ",
+  "insights.apply": "保存",
+  "insights.applied": "保存済み",
+  "insights.apply_all": "すべて適用",
+  "insights.edit_skill": "スキルとして編集",
+  "insights.skip_duplicate": "重複",
+  "insights.skip_failed": "失敗",
+  "insights.skip_unsupported": "非対応",
+  "insights.skip_requires_draft": "下書きが必要",
+  "insights.skip_empty": "空"
 }

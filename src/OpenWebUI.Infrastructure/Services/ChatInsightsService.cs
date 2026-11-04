@@ -11,7 +11,7 @@ namespace OpenWebUI.Infrastructure.Services;
 /// determinística de tamanho/categoria/issues por chat, timeline de eventos
 /// das runs e análise LLM sob demanda persistida em <see cref="ChatInsight"/>.
 /// </summary>
-public sealed class ChatInsightsService(AppDbContext db)
+public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService repos)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -269,4 +269,96 @@ public sealed class ChatInsightsService(AppDbContext db)
 
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max];
+
+    /// <summary>
+    /// Dreaming-lite (SPEC-20261104-dreaming-lite RF-001): materializa action
+    /// items da análise como registros PESSOAIS do chamador —
+    /// <c>knowledge</c>→<see cref="KnowledgeNote"/> (trigger=resumo),
+    /// <c>memory</c>→<see cref="AgentMemory"/> (escopo repo quando o chat tem
+    /// binding, senão global — upsert por título). <c>skill</c> e demais
+    /// kinds são skip explícito; falha num item não aborta os demais.
+    /// </summary>
+    public async Task<InsightApplyResponse> ApplyActionItemsAsync(
+        User user, Chat chat, IReadOnlyList<InsightApplyItem> items, CancellationToken ct)
+    {
+        var applied = new List<InsightApplyResult>();
+        var skipped = new List<InsightApplySkip>();
+        string? repoSlug = null;
+        var repoResolved = false;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        foreach (var item in items)
+        {
+            var text = item.Text.Trim();
+            if (text.Length == 0)
+            {
+                skipped.Add(new InsightApplySkip(item.Kind, "empty"));
+                continue;
+            }
+            var title = Truncate(text, 120);
+
+            if (item.Kind == "knowledge")
+            {
+                var exists = await db.KnowledgeNotes.AsNoTracking()
+                    .AnyAsync(n => n.UserId == user.Id && n.Title == title, ct);
+                if (exists)
+                {
+                    skipped.Add(new InsightApplySkip(item.Kind, "duplicate"));
+                    continue;
+                }
+                var note = new KnowledgeNote
+                {
+                    UserId = user.Id,
+                    Title = title,
+                    Trigger = Truncate(text, 500),
+                    Content = text,
+                    Pinned = false,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                };
+                db.KnowledgeNotes.Add(note);
+                await db.SaveChangesAsync(ct);
+                applied.Add(new InsightApplyResult(item.Kind, note.Id, title));
+            }
+            else if (item.Kind == "memory")
+            {
+                if (!repoResolved)
+                {
+                    var (binding, _) = await repos.ResolveBindingAsync(user.Id, chat.Id, ct);
+                    repoSlug = binding?.Repo;
+                    repoResolved = true;
+                }
+                var scope = repoSlug is not null ? "repo" : "global";
+                var existing = await db.AgentMemories
+                    .FirstOrDefaultAsync(m => m.UserId == user.Id
+                        && m.Scope == scope && m.RepoSlug == repoSlug
+                        && m.Title == title, ct);
+                if (existing is not null)
+                {
+                    skipped.Add(new InsightApplySkip(item.Kind, "duplicate"));
+                    continue;
+                }
+                var memory = new AgentMemory
+                {
+                    UserId = user.Id,
+                    Scope = scope,
+                    RepoSlug = repoSlug,
+                    Title = title,
+                    Content = text,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                };
+                db.AgentMemories.Add(memory);
+                await db.SaveChangesAsync(ct);
+                applied.Add(new InsightApplyResult(item.Kind, memory.Id, title));
+            }
+            else
+            {
+                skipped.Add(new InsightApplySkip(
+                    item.Kind, item.Kind == "skill" ? "requires_draft" : "unsupported"));
+            }
+        }
+
+        return new InsightApplyResponse(applied, skipped);
+    }
 }

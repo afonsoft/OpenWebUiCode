@@ -1377,5 +1377,14 @@
   "insights.admin_sizes": "Distribution des tailles",
   "insights.admin_categories": "Par catégorie",
   "insights.admin_top_issues": "Principaux problèmes",
-  "chat.hash_knowledge": "Connaissances"
+  "chat.hash_knowledge": "Connaissances",
+  "insights.apply": "Enregistrer",
+  "insights.applied": "enregistré",
+  "insights.apply_all": "Tout appliquer",
+  "insights.edit_skill": "Modifier comme skill",
+  "insights.skip_duplicate": "doublon",
+  "insights.skip_failed": "échec",
+  "insights.skip_unsupported": "non pris en charge",
+  "insights.skip_requires_draft": "brouillon requis",
+  "insights.skip_empty": "vide"
 }

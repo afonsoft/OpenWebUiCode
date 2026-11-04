@@ -1377,5 +1377,14 @@
   "insights.admin_sizes": "Size distribution",
   "insights.admin_categories": "By category",
   "insights.admin_top_issues": "Top issues",
-  "chat.hash_knowledge": "Knowledge"
+  "chat.hash_knowledge": "Knowledge",
+  "insights.apply": "Save",
+  "insights.applied": "saved",
+  "insights.apply_all": "Apply all",
+  "insights.edit_skill": "Edit as skill",
+  "insights.skip_duplicate": "duplicate",
+  "insights.skip_failed": "failed",
+  "insights.skip_unsupported": "unsupported",
+  "insights.skip_requires_draft": "needs draft",
+  "insights.skip_empty": "empty"
 }

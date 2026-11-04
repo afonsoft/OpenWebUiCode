@@ -25,6 +25,7 @@ public static class InsightsEndpoints
         var group = app.MapGroup("/api/v1/chats").RequireAuthorization();
         group.MapGet("/{chatId}/insights", GetInsightAsync);
         group.MapPost("/{chatId}/insights/generate", GenerateInsightAsync);
+        group.MapPost("/{chatId}/insights/apply", ApplyInsightAsync);
 
         var admin = app.MapGroup("/api/v1/admin/insights").RequireAuthorization();
         admin.MapGet("/summary", GetSummaryAsync);
@@ -88,6 +89,30 @@ public static class InsightsEndpoints
         insight.GeneratedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         await db.SaveChangesAsync(ct);
         return Results.Ok(ToResponse(insight));
+    }
+
+    /// <summary>POST — materializa action items como registros pessoais do
+    /// chamador (SPEC-20261104-dreaming-lite RF-001): knowledge→KnowledgeNote,
+    /// memory→AgentMemory (repo|global), skill→skipped requires_draft.</summary>
+    private static async Task<IResult> ApplyInsightAsync(
+        string chatId, InsightApplyRequest? request, HttpContext http,
+        AppDbContext db, ChatInsightsService insights, CancellationToken ct)
+    {
+        var (user, chat) = await FindOwnerAsync(http, db, chatId, ct);
+        if (user is null || chat is null)
+        {
+            return Results.NotFound();
+        }
+        if (request is null || request.Items.Count == 0)
+        {
+            return Results.BadRequest(new { error = "items_required" });
+        }
+        if (request.Items.Count > 50)
+        {
+            return Results.BadRequest(new { error = "too_many_items" });
+        }
+        return Results.Ok(await insights.ApplyActionItemsAsync(
+            user, chat, request.Items, ct));
     }
 
     /// <summary>GET admin — agregados de insights no período (RF-005).</summary>

@@ -1377,5 +1377,14 @@
   "insights.admin_sizes": "Distribución de tamaño",
   "insights.admin_categories": "Por categoría",
   "insights.admin_top_issues": "Top issues",
-  "chat.hash_knowledge": "Conocimiento"
+  "chat.hash_knowledge": "Conocimiento",
+  "insights.apply": "Guardar",
+  "insights.applied": "guardado",
+  "insights.apply_all": "Aplicar todas",
+  "insights.edit_skill": "Editar como skill",
+  "insights.skip_duplicate": "duplicado",
+  "insights.skip_failed": "falló",
+  "insights.skip_unsupported": "no soportado",
+  "insights.skip_requires_draft": "requiere borrador",
+  "insights.skip_empty": "vacío"
 }

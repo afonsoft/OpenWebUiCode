@@ -325,4 +325,96 @@ public class InsightsEndpointsTests
             "/api/v1/admin/insights/summary")).StatusCode,
             Is.EqualTo(HttpStatusCode.Forbidden));
     }
+
+    // ---------------- dreaming-lite: apply ----------------
+
+    [Test]
+    public async Task Apply_Knowledge_CriaNotaPessoal()
+    {
+        UseToken(_userToken);
+        var chat = await CriarChatAsync("apply note");
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/insights/apply",
+            new InsightApplyRequest([new InsightApplyItem("knowledge", "use pino v2 no plugin")]));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var result = await response.Content.ReadFromJsonAsync<InsightApplyResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Applied, Has.Count.EqualTo(1));
+            Assert.That(result.Applied[0].Kind, Is.EqualTo("knowledge"));
+        });
+
+        // Reaplicar → duplicate.
+        var again = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/insights/apply",
+            new InsightApplyRequest([new InsightApplyItem("knowledge", "use pino v2 no plugin")]));
+        var againResult = await again.Content.ReadFromJsonAsync<InsightApplyResponse>();
+        Assert.That(againResult!.Skipped[0].Reason, Is.EqualTo("duplicate"));
+
+        // A nota é pessoal do chamador (UserId = user, nunca global).
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var note = await db.KnowledgeNotes.AsNoTracking()
+            .SingleAsync(n => n.Title == "use pino v2 no plugin");
+        Assert.That(note.UserId, Is.EqualTo(_userId));
+    }
+
+    [Test]
+    public async Task Apply_MemorySemRepo_EscopoGlobal()
+    {
+        UseToken(_userToken);
+        var chat = await CriarChatAsync("apply mem");
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/insights/apply",
+            new InsightApplyRequest([new InsightApplyItem("memory", "prefere respostas curtas")]));
+        var result = await response.Content.ReadFromJsonAsync<InsightApplyResponse>();
+        Assert.That(result!.Applied, Has.Count.EqualTo(1));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var mem = await db.AgentMemories.AsNoTracking()
+            .SingleAsync(m => m.Title == "prefere respostas curtas");
+        Assert.Multiple(() =>
+        {
+            Assert.That(mem.Scope, Is.EqualTo("global"));
+            Assert.That(mem.RepoSlug, Is.Null);
+            Assert.That(mem.UserId, Is.EqualTo(_userId));
+        });
+    }
+
+    [Test]
+    public async Task Apply_SkillEUoutro_Skipped()
+    {
+        UseToken(_userToken);
+        var chat = await CriarChatAsync("apply skip");
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/insights/apply",
+            new InsightApplyRequest(
+            [
+                new InsightApplyItem("skill", "crie uma skill"),
+                new InsightApplyItem("machine", "instale docker"),
+                new InsightApplyItem("knowledge", "nota válida"),
+            ]));
+        var result = await response.Content.ReadFromJsonAsync<InsightApplyResponse>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Applied, Has.Count.EqualTo(1));
+            Assert.That(result.Skipped, Has.Count.EqualTo(2));
+            Assert.That(result.Skipped[0].Reason, Is.EqualTo("requires_draft"));
+            Assert.That(result.Skipped[1].Reason, Is.EqualTo("unsupported"));
+        });
+    }
+
+    [Test]
+    public async Task Apply_ChatAlheio_404()
+    {
+        UseToken(_userToken);
+        var chat = await CriarChatAsync("privado apply");
+        var other = await SignUpAsync("ApplyOther", "applyother@insights.local");
+        UseToken(other.Token);
+        Assert.That((await _client.PostAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}/insights/apply",
+            new InsightApplyRequest([new InsightApplyItem("knowledge", "x")]))).StatusCode,
+            Is.EqualTo(HttpStatusCode.NotFound));
+    }
 }

@@ -597,6 +597,13 @@ public class ApiService(HttpClient http, AuthService auth)
         SendAsync<AdminInsightsSummary>(HttpMethod.Get,
             $"/api/v1/admin/insights/summary?days={days}");
 
+    /// <summary>Materializa action items do insight (dreaming-lite) —
+    /// knowledge→nota, memory→memória; skill/unsupported voltam skipped.</summary>
+    public Task<InsightApplyResponse?> ApplyInsightSuggestionsAsync(
+        string chatId, IReadOnlyList<InsightApplyItem> items) =>
+        SendAsync<InsightApplyResponse>(HttpMethod.Post,
+            $"/api/v1/chats/{chatId}/insights/apply", new InsightApplyRequest([.. items]));
+
     // ---------------- Prompts ----------------
 
     /// <summary>Lista prompts do usuário.</summary>

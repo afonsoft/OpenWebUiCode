@@ -77,12 +77,29 @@
                     }
                     @if (analysis.ActionItems.Count > 0)
                     {
-                        <div class="text-[0.625rem] font-medium text-gray-400 dark:text-gray-500">@L["insights.action_items"]</div>
-                        @foreach (var item in analysis.ActionItems)
+                        <div class="flex items-center justify-between">
+                            <span class="text-[0.625rem] font-medium text-gray-400 dark:text-gray-500">@L["insights.action_items"]</span>
+                            <button class="msg-action" disabled="@_applying" @onclick="ApplyAllAsync">@L["insights.apply_all"]</button>
+                        </div>
+                        @for (var i = 0; i < analysis.ActionItems.Count; i++)
                         {
+                            var item = analysis.ActionItems[i];
+                            var state = _applyState.GetValueOrDefault(i);
                             <div class="flex items-start gap-1.5">
                                 <span class="rounded bg-gray-100 px-1 text-[0.625rem] uppercase text-gray-500 dark:bg-gray-800 dark:text-gray-400">@item.Kind</span>
-                                <span class="text-gray-600 dark:text-gray-400">@item.Text</span>
+                                <span class="grow text-gray-600 dark:text-gray-400">@item.Text</span>
+                                @if (state is not null)
+                                {
+                                    <span class="shrink-0 text-[0.625rem] @(state == "applied" ? "text-green-600 dark:text-green-400" : "text-gray-400")">@(state == "applied" ? L["insights.applied"] : L[$"insights.skip_{state}"])</span>
+                                }
+                                else if (item.Kind == "skill")
+                                {
+                                    <button class="msg-action shrink-0" @onclick="() => OpenSkillDraft(item)">@L["insights.edit_skill"]</button>
+                                }
+                                else if (item.Kind is "knowledge" or "memory")
+                                {
+                                    <button class="msg-action shrink-0" disabled="@_applying" @onclick="() => ApplyOneAsync(i, item)">@L["insights.apply"]</button>
+                                }
                             </div>
                         }
                     }
@@ -111,8 +128,11 @@
     private ChatInsightResponse? _insight;
     private bool _loading;
     private bool _generating;
+    private bool _applying;
     private string? _error;
     private string? _loadedFor;
+    /// <summary>Estado por action item (índice → applied|reason) — dreaming-lite.</summary>
+    private readonly Dictionary<int, string> _applyState = [];
 
     private bool Unhealthy => _insight?.SizeClass is "L" or "XL";
 
@@ -185,6 +205,82 @@
             _error = L["insights.generate_failed"];
         }
         _generating = false;
+    }
+
+    /// <summary>RF-002: aplica um action item (knowledge|memory).</summary>
+    private async Task ApplyOneAsync(int index, InsightActionItem item)
+    {
+        if (ChatId is null || _applying)
+        {
+            return;
+        }
+        _applying = true;
+        try
+        {
+            var result = await Api.ApplyInsightSuggestionsAsync(
+                ChatId, [new InsightApplyItem(item.Kind, item.Text)]);
+            if (result is not null && result.Applied.Count > 0)
+            {
+                _applyState[index] = "applied";
+            }
+            else
+            {
+                _applyState[index] = result?.Skipped.FirstOrDefault()?.Reason ?? "failed";
+            }
+        }
+        catch
+        {
+            _applyState[index] = "failed";
+        }
+        _applying = false;
+    }
+
+    /// <summary>RF-002: aplica todos os itens suportados de uma vez.</summary>
+    private async Task ApplyAllAsync()
+    {
+        var items = _insight?.Analysis?.ActionItems;
+        if (ChatId is null || items is null || _applying)
+        {
+            return;
+        }
+        _applying = true;
+        var supported = items
+            .Select((item, i) => (item, i))
+            .Where(x => x.item.Kind is "knowledge" or "memory" && !_applyState.ContainsKey(x.i))
+            .Select(x => new InsightApplyItem(x.item.Kind, x.item.Text))
+            .ToList();
+        try
+        {
+            var result = await Api.ApplyInsightSuggestionsAsync(ChatId, supported);
+            if (result is not null)
+            {
+                var appliedTitles = result.Applied.Select(a => a.Title).ToHashSet();
+                var skippedReasons = result.Skipped.Select(s => s.Reason).ToList();
+                for (var i = 0; i < items.Count; i++)
+                {
+                    if (_applyState.ContainsKey(i) || items[i].Kind is not ("knowledge" or "memory"))
+                    {
+                        continue;
+                    }
+                    var title = items[i].Text.Trim();
+                    title = title.Length <= 120 ? title : title[..120];
+                    _applyState[i] = appliedTitles.Contains(title)
+                        ? "applied"
+                        : skippedReasons.FirstOrDefault() ?? "failed";
+                }
+            }
+        }
+        catch
+        {
+            // estado individual fica pendente — usuário pode retentar por item.
+        }
+        _applying = false;
+    }
+
+    /// <summary>RF-003: kind=skill → editor do /customize com draft.</summary>
+    private void OpenSkillDraft(InsightActionItem item)
+    {
+        Nav.NavigateTo($"/customize/skills?draft={Uri.EscapeDataString(item.Text)}");
     }
 
     /// <summary>"Usar prompt melhorado" — abre um chat novo com o texto.</summary>
