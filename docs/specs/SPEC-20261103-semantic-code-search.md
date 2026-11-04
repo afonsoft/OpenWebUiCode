@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/semantic-code-search-20261103` |
 | Ticket | `GH#674` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | builtin-tools improvement sweep 2026-11-03 (agent tool primitives) |
 
 ## 1. User Story
@@ -89,3 +89,10 @@ tests/OpenWebUI.Api.Tests/** (novo)
 ## 8. Effort Estimate
 
 `~6-9h`.
+
+## Delivered
+
+PR #678 (merged `083b216`): `builtin:code_search` + `WorkspaceIndexService`
+— índice incremental (mtime+size), chunker 40/10, fusão RRF lex+semântico,
+vetores cacheados por chunk (budget 512/call), degrade honesto
+(degraded:true + motivo) sem provider ou em falha, resultado navegável.
