@@ -1036,6 +1036,127 @@ public class BuiltinToolsTests
         Assert.That(r.Text, Does.Contain("não encontrado").And.Contain("file_read"));
     }
 
+    // ---------------- file_read batch (SPEC-20261103-batch-file-read) ----------------
+
+    private FileReadBuiltinTool NewFileRead() =>
+        new(new HistoryResourceService(NewDb()),
+            new ToolOutputService(new ConfigService(NewDb(), TestCache.Create()),
+                new StubEnvLocal(_root),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<ToolOutputService>.Instance));
+
+    /// <summary>Covers RF-001: paths[] lê N arquivos ordenados numa só chamada.</summary>
+    [Test]
+    public async Task FileRead_Batch_LeVariosNaOrdem()
+    {
+        File.WriteAllText(Path.Join(_workspace, "a.txt"), "a1\na2\n");
+        File.WriteAllText(Path.Join(_workspace, "b.txt"), "b1\n");
+        File.WriteAllText(Path.Join(_workspace, "c.txt"), "c1\nc2\nc3\n");
+
+        var r = await NewFileRead().ExecuteAsync(
+            Args("{\"paths\":[{\"path\":\"a.txt\"},{\"path\":\"b.txt\"}," +
+                 "{\"path\":\"c.txt\",\"limit\":2}]}"),
+            Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("a.txt").And.Contain("a1")
+                .And.Contain("a2"));
+            Assert.That(r.Text, Does.Contain("b.txt").And.Contain("b1"));
+            Assert.That(r.Text, Does.Contain("c.txt").And.Contain("c1")
+                .And.Contain("c2"));
+            Assert.That(r.Text, Does.Not.Contain("c3"));
+            // ordem preservada: a antes de b antes de c.
+            Assert.That(r.Text.IndexOf("a.txt", StringComparison.Ordinal),
+                Is.LessThan(r.Text.IndexOf("b.txt", StringComparison.Ordinal)));
+            Assert.That(r.Text.IndexOf("b.txt", StringComparison.Ordinal),
+                Is.LessThan(r.Text.IndexOf("c.txt", StringComparison.Ordinal)));
+        });
+    }
+
+    /// <summary>Covers RF-002: item inválido isola erro sem derrubar o lote.</summary>
+    [Test]
+    public async Task FileRead_Batch_ItemInvalido_Isolado()
+    {
+        File.WriteAllText(Path.Join(_workspace, "ok1.txt"), "v1\n");
+        File.WriteAllText(Path.Join(_workspace, "ok2.txt"), "v2\n");
+
+        var r = await NewFileRead().ExecuteAsync(
+            Args("{\"paths\":[{\"path\":\"ok1.txt\"}," +
+                 "{\"path\":\"nao-existe.txt\"},{\"path\":\"../fora.txt\"}," +
+                 "{\"path\":\"ok2.txt\"}]}"),
+            Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("v1").And.Contain("v2"));
+            Assert.That(r.Text, Does.Contain("nao-existe.txt"));
+            Assert.That(r.Text, Does.Contain("não existe")
+                .Or.Contain("not exist").Or.Contain("erro"));
+        });
+    }
+
+    /// <summary>Covers RF-001: path e paths são mutuamente exclusivos.</summary>
+    [Test]
+    public async Task FileRead_Batch_PathEPaths_Erro()
+    {
+        File.WriteAllText(Path.Join(_workspace, "x.txt"), "x\n");
+        var r = await NewFileRead().ExecuteAsync(
+            Args("{\"path\":\"x.txt\",\"paths\":[{\"path\":\"x.txt\"}]}"),
+            Ctx(), default);
+        Assert.That(r.Text, Does.Contain("path").And.Contain("paths"));
+    }
+
+    /// <summary>Covers RF-001: mais de 20 itens → erro de validação.</summary>
+    [Test]
+    public async Task FileRead_Batch_AcimaDe20_Erro()
+    {
+        var items = string.Join(",",
+            Enumerable.Range(1, 21).Select(i => $"{{\"path\":\"f{i}.txt\"}}"));
+        var r = await NewFileRead().ExecuteAsync(
+            Args($"{{\"paths\":[{items}]}}"), Ctx(), default);
+        Assert.That(r.Text, Does.Contain("20").Or.Contain("máxim")
+            .Or.Contain("max"));
+    }
+
+    /// <summary>Covers RF-003: cap agregado → itens excedentes com
+    /// budget_exceeded honesto.</summary>
+    [Test]
+    public async Task FileRead_Batch_CapAgregado_BudgetExceeded()
+    {
+        // ~70KB cada — 5 arquivos estouram qualquer cap agregado razoável
+        // (4× cap single) se o cap existir.
+        var big = new string('x', 70 * 1024) + "\n";
+        for (var i = 1; i <= 5; i++)
+        {
+            File.WriteAllText(Path.Join(_workspace, $"big{i}.txt"), big);
+        }
+
+        var r = await NewFileRead().ExecuteAsync(
+            Args("{\"paths\":[{\"path\":\"big1.txt\"},{\"path\":\"big2.txt\"}," +
+                 "{\"path\":\"big3.txt\"},{\"path\":\"big4.txt\"}," +
+                 "{\"path\":\"big5.txt\"}]}"),
+            Ctx(), default);
+
+        Assert.That(r.Text, Does.Contain("budget_exceeded"));
+    }
+
+    /// <summary>Covers RF-004: single-path segue wire/output idênticos.</summary>
+    [Test]
+    public async Task FileRead_SinglePath_BackCompat()
+    {
+        File.WriteAllLines(Path.Join(_workspace, "s.txt"),
+            Enumerable.Range(1, 10).Select(i => $"l{i}"));
+        var r = await NewFileRead().ExecuteAsync(
+            Args("{\"path\":\"s.txt\",\"offset\":2,\"limit\":3}"),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("s.txt (10 linhas)"));
+            Assert.That(r.Text, Does.Contain("2: l2").And.Contain("4: l4"));
+            Assert.That(r.Text, Does.Not.Contain("==="));
+        });
+    }
+
     [Test]
     public async Task FileGrep_FileGlob_FileList_Funcionam()
     {

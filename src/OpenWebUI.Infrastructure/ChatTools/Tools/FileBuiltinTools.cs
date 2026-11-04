@@ -168,10 +168,23 @@ public sealed class FileReadBuiltinTool(
           "type": "object",
           "properties": {
             "path": { "type": "string", "description": "Path relative to the workspace, or a history:// URI." },
+            "paths": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": { "type": "string" },
+                  "offset": { "type": "integer", "default": 1 },
+                  "limit": { "type": "integer", "default": 400 }
+                },
+                "required": ["path"]
+              },
+              "description": "Batch: read up to 20 files in one call (mutually exclusive with 'path')."
+            },
             "offset": { "type": "integer", "description": "First line (1-based, default 1).", "default": 1 },
             "limit": { "type": "integer", "description": "Lines to read (default 400, max 2000).", "default": 400 }
-          },
-          "required": ["path"]
+          }
         }
         """;
 
@@ -180,12 +193,91 @@ public sealed class FileReadBuiltinTool(
     /// <inheritdoc />
     public bool SafeInParallel => true;
 
+    /// <summary>Máximo de itens por chamada batch (SPEC-20261103-batch-file-read RF-001).</summary>
+    private const int MaxBatchItems = 20;
+
+    /// <summary>Cap agregado de saída do batch (~4× uma leitura single típica
+    /// de 2000 linhas) — itens excedentes viram <c>budget_exceeded</c>
+    /// honesto em vez de truncamento silencioso (RF-003).</summary>
+    private const int MaxBatchChars = 256 * 1024;
+
 
     /// <inheritdoc />
     public async Task<BuiltinToolResult> ExecuteAsync(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
+        // SPEC-20261103-batch-file-read: paths[] lê N arquivos numa chamada.
+        if (args.TryGetProperty("paths", out var pathsElem))
+        {
+            return await ReadBatchAsync(pathsElem, args, context, ct);
+        }
+
         var path = args.TryGetProperty("path", out var p) ? p.GetString() : null;
+        var (single, _) = await ReadOneAsync(path, args, context, ct);
+        return single;
+    }
+
+    /// <summary>Lê N itens com isolamento de erro por item e cap agregado.</summary>
+    private async Task<BuiltinToolResult> ReadBatchAsync(
+        JsonElement pathsElem, JsonElement args, BuiltinToolContext context,
+        CancellationToken ct)
+    {
+        if (args.TryGetProperty("path", out _))
+        {
+            return new BuiltinToolResult(
+                "Use 'path' (leitura única) OU 'paths' (lote) — nunca os dois.");
+        }
+        if (pathsElem.ValueKind is not JsonValueKind.Array)
+        {
+            return new BuiltinToolResult("'paths' deve ser um array de {path, offset?, limit?}.");
+        }
+        if (pathsElem.GetArrayLength() == 0)
+        {
+            return new BuiltinToolResult("'paths' vazio — informe ao menos 1 item.");
+        }
+        if (pathsElem.GetArrayLength() > MaxBatchItems)
+        {
+            return new BuiltinToolResult(
+                $"'paths' aceita no máximo {MaxBatchItems} itens por chamada.");
+        }
+
+        var sb = new StringBuilder();
+        var results = new List<object>();
+        var usedChars = 0;
+        foreach (var item in pathsElem.EnumerateArray())
+        {
+            var itemPath = item.ValueKind is JsonValueKind.Object
+                && item.TryGetProperty("path", out var ip)
+                ? ip.GetString() : null;
+            var display = string.IsNullOrEmpty(itemPath) ? "?" : itemPath!;
+
+            sb.AppendLine($"=== {display} ===");
+            if (usedChars >= MaxBatchChars)
+            {
+                sb.AppendLine("ERRO: budget_exceeded — cap agregado do lote atingido; "
+                    + "continue numa nova chamada.");
+                results.Add(new { path = display, error = "budget_exceeded" });
+                continue;
+            }
+
+            var (one, ok) = await ReadOneAsync(itemPath, item, context, ct);
+            sb.AppendLine(one.Text);
+            sb.AppendLine();
+            usedChars += one.Text.Length;
+            results.Add(ok
+                ? (object)new { path = display }
+                : new { path = display, error = "read_failed" });
+        }
+        return new BuiltinToolResult(sb.ToString().TrimEnd(), new { results });
+    }
+
+    /// <summary>Lê um path único (workspace/managed/ref/history) — o mesmo
+    /// pipeline de resolução serve ao item de lote; <paramref name="ok"/>
+    /// marca sucesso/erro para o índice do lote.</summary>
+    private async Task<(BuiltinToolResult Result, bool Ok)> ReadOneAsync(
+        string? path, JsonElement args, BuiltinToolContext context,
+        CancellationToken ct)
+    {
         if (HistoryResourceService.IsHistoryUri(path))
         {
             return await ReadHistoryAsync(path!, args, context, ct);
@@ -207,7 +299,7 @@ public sealed class FileReadBuiltinTool(
                 context.UserId, path, context.AttachedRefs, ct);
             if (target is null)
             {
-                return new BuiltinToolResult(refError!);
+                return (new BuiltinToolResult(refError!), false);
             }
             return await ReadFileAsync(target.Full, target.Display, args, ct);
         }
@@ -216,7 +308,7 @@ public sealed class FileReadBuiltinTool(
             context.WorkspacePath, path, external, context.RunId, out var error);
         if (full is null)
         {
-            return new BuiltinToolResult(error);
+            return (new BuiltinToolResult(error), false);
         }
 
         var rel = WorkspaceFiles.RelativeOf(context.WorkspacePath, full);
@@ -224,7 +316,7 @@ public sealed class FileReadBuiltinTool(
     }
 
     /// <summary>Ramo history:// — transcript paginado igual ao de arquivo.</summary>
-    private async Task<BuiltinToolResult> ReadHistoryAsync(
+    private async Task<(BuiltinToolResult Result, bool Ok)> ReadHistoryAsync(
         string path, JsonElement args, BuiltinToolContext context,
         CancellationToken ct)
     {
@@ -232,7 +324,7 @@ public sealed class FileReadBuiltinTool(
             path, context.UserId, context.ChatId, ct);
         if (transcript is null)
         {
-            return new BuiltinToolResult(histError ?? "histórico vazio.");
+            return (new BuiltinToolResult(histError ?? "histórico vazio."), false);
         }
 
         var histLines = transcript.Split('\n');
@@ -252,33 +344,36 @@ public sealed class FileReadBuiltinTool(
             hsb.Append($"[truncado — restam {histLines.Length - (hOffset - 1 + hLimit)} linhas; "
                 + "use offset para continuar]");
         }
-        return new BuiltinToolResult(hsb.ToString().TrimEnd());
+        return (new BuiltinToolResult(hsb.ToString().TrimEnd()), true);
     }
 
     /// <summary>Leitura paginada comum (workspace ou arquivo gerenciado allowlisted).</summary>
-    private static async Task<BuiltinToolResult> ReadFileAsync(
+    private static async Task<(BuiltinToolResult Result, bool Ok)> ReadFileAsync(
         string full, string displayPath, JsonElement args, CancellationToken ct)
     {
         if (Directory.Exists(full))
         {
-            return new BuiltinToolResult($"'{displayPath}' é um diretório — use file_list.");
+            return (new BuiltinToolResult(
+                $"'{displayPath}' é um diretório — use file_list."), false);
         }
 
         if (!File.Exists(full))
         {
-            return new BuiltinToolResult($"Arquivo '{displayPath}' não existe.");
+            return (new BuiltinToolResult(
+                $"Arquivo '{displayPath}' não existe."), false);
         }
 
         if (new FileInfo(full).Length > WorkspaceFiles.MaxFileBytes)
         {
-            return new BuiltinToolResult(
+            return (new BuiltinToolResult(
                 $"Arquivo '{displayPath}' excede {WorkspaceFiles.MaxFileBytes / 1024}KB — leia por partes "
-                + "com offset/limit após um file_grep para achar a região.");
+                + "com offset/limit após um file_grep para achar a região."), false);
         }
 
         if (WorkspaceFiles.LooksBinary(full))
         {
-            return new BuiltinToolResult($"Arquivo '{displayPath}' parece binário — leitura negada.");
+            return (new BuiltinToolResult(
+                $"Arquivo '{displayPath}' parece binário — leitura negada."), false);
         }
 
         var offset = args.TryGetProperty("offset", out var o) && o.TryGetInt32(out var off)
@@ -299,13 +394,13 @@ public sealed class FileReadBuiltinTool(
                 + $"continue com offset={offset + limit}]");
         }
 
-        return new BuiltinToolResult(sb.ToString().TrimEnd(), new
+        return (new BuiltinToolResult(sb.ToString().TrimEnd(), new
         {
             path = displayPath,
             totalLines = lines.Length,
             offset,
             limit,
-        });
+        }), true);
     }
 }
 
