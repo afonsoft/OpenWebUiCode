@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-skills-allowed-tools-plugins` |
 | Ticket | `GH#698` — https://github.com/afonsoft/OpenWebUiCode/issues/698 |
-| Status | `Approved` |
+| Status | `Done` |
 
 ## 1. User Story
 
@@ -107,21 +107,21 @@ i18n ×8 · tests Api (filter + import) + Client (editor/badge)
 
 ## 6. Acceptance Criteria
 
-- [ ] **Dado** SKILL.md com `allowed-tools: read, search` **quando** descoberta **então** `RepoEntry.AllowedTools == ["read","search"]`.
-- [ ] **Dado** skill restritiva ativa com `[file_read]` **quando** turno monta tools **então** tools fora do conjunto são removidas antes do anúncio/deferral.
-- [ ] **Dado** 2 skills restritivas `[file_read,file_write]` e `[file_read]` ativas **quando** monta tools **então** permitidas = interseção `{file_read}`; interseção vazia → só essenciais.
-- [ ] **Dado** nenhuma skill restritiva ativa **quando** monta tools **então** comportamento atual inalterado.
-- [ ] **Dado** `plugin.json` com 2 skills+1 mcp **quando** admin importa **então** 2 skills globais + 1 MCP org desabilitado criados; reimport idempotente.
-- [ ] **Dado** non-admin **quando** POST import-plugin **então** 403; manifest malformado → 400.
+- [x] **Dado** SKILL.md com `allowed-tools: read, search` **quando** descoberta **então** `RepoEntry.AllowedTools == ["read","search"]`.
+- [x] **Dado** skill restritiva ativa com `[file_read]` **quando** turno monta tools **então** tools fora do conjunto são removidas antes do anúncio/deferral.
+- [x] **Dado** 2 skills restritivas `[file_read,file_write]` e `[file_read]` ativas **quando** monta tools **então** permitidas = interseção `{file_read}`; interseção vazia → só essenciais.
+- [x] **Dado** nenhuma skill restritiva ativa **quando** monta tools **então** comportamento atual inalterado.
+- [x] **Dado** `plugin.json` com 2 skills+1 mcp **quando** admin importa **então** 2 skills globais + 1 MCP org desabilitado criados; reimport idempotente.
+- [x] **Dado** non-admin **quando** POST import-plugin **então** 403; manifest malformado → 400.
 
 ## 7. Task Plan
 
-- [ ] **T1:** `Skill.AllowedTools` + migration + contracts + catálogo.
-- [ ] **T2:** `RepoEntry.AllowedTools` parse (CSV e `[a, b]` inline) + preservação no import.
-- [ ] **T3:** Tool filter no turno (interseção + essenciais) — TDD nos cenários BDD.
-- [ ] **T4:** `plugin.json` + `POST /admin/skills/import-plugin` + `PluginImportService`.
-- [ ] **T5:** Client: editor campo + badges + `!` indicador + botão import-plugin (admin).
-- [ ] **T6:** i18n ×8 + tailwind + testes + DoD → PR.
+- [x] **T1:** `Skill.AllowedTools` + migration + contracts + catálogo.
+- [x] **T2:** `RepoEntry.AllowedTools` parse (CSV e `[a, b]` inline) + preservação no import.
+- [x] **T3:** Tool filter no turno (interseção + essenciais) — TDD nos cenários BDD.
+- [x] **T4:** `plugin.json` + `POST /admin/skills/import-plugin` + `PluginImportService`.
+- [x] **T5:** Client: editor campo + badges + `!` indicador + botão import-plugin (admin).
+- [x] **T6:** i18n ×8 + tailwind + testes + DoD → PR.
 
 ## 8. Organization Guardrails
 
@@ -132,13 +132,24 @@ i18n ×8 · tests Api (filter + import) + Client (editor/badge)
 
 ## 9. Definition of Done
 
-- [ ] RF-001..RF-005 + BDD cobertos; migration aplicada.
-- [ ] Tool filter testado (interseção, essenciais, nenhuma restritiva → no-op).
-- [ ] Build Release + suites verdes; guards; i18n paridade.
-- [ ] SPEC → `Done` + arquivada.
+- [x] RF-001..RF-005 + BDD cobertos; migration aplicada.
+- [x] Tool filter testado (interseção, essenciais, nenhuma restritiva → no-op).
+- [x] Build Release + suites verdes; guards; i18n paridade.
+- [x] SPEC → `Done` + arquivada.
 
 **Next action after DoD is complete:** PR `feature/Devin-20261104-skills-allowed-tools-plugins`.
 
 ## Open Questions / Pending Ambiguity
 
 - Nenhuma bloqueante. Ponto de atenção na implementação: localizar exatamente onde a tool list do turno é montada (run pipeline) — se o filtro for inviável sem refator grande, fallback documentado: injetar restrição como instrução no system prompt (menos estrito) e marcar RF-002 como "soft enforcement".
+
+## Delivered
+
+- **PR:** https://github.com/afonsoft/OpenWebUiCode/pull/701
+- **Commit:** branch `feature/Devin-20261104-skills-allowed-tools-plugins`
+- `Skill.AllowedTools` (CSV ≤500c) + migration `AddSkillAllowedTools`; frontmatter `allowed-tools:`/`allowed_tools:` → `RepoEntry.AllowedTools` (CSV e `[a, b]`); preservado no `SkillImportService`.
+- `SkillToolRestrictionService`: interseção de allowed sets das skills ativas server-side (model `skill_ids` + autoinvoke c/ toggles); vazia → essenciais read-only; filtro em `LoadRunToolsAsync` antes do deferred split + evento `skills.allowed_tools`.
+- `PluginImportService` + `POST /api/v1/admin/plugins/import`: skills/commands → `Skill` global; mcps → `McpServer` global desabilitado sem headers; SSRF só github.com.
+- UI: campo no editor, badge catálogo + dropdown `!`; i18n ×8 (1392 chaves).
+- **Limitação documentada (RF-002):** `!`-inserted skills injetam como texto — restrição só em skills server-side (model-bound + autoinvoke).
+- Testes: 8 NUnit novos (parse/Permits/ResolveAsync) + 2 endpoint; 46/46 fixtures afetadas; client 153/153.
