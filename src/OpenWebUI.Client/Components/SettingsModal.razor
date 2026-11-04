@@ -28,9 +28,11 @@
                     <button class="modal-tab @(_tab == "tools" ? "active" : "")" role="tab" aria-selected="@(_tab == "tools")" @onclick='() => SelectTab("tools")'>@L["settings.tools"]</button>
                     <button class="modal-tab @(_tab == "permissions" ? "active" : "")" role="tab" aria-selected="@(_tab == "permissions")" @onclick='() => SelectTab("permissions")'>@L["settings.permissions"]</button>
                     <button class="modal-tab @(_tab == "agents" ? "active" : "")" role="tab" aria-selected="@(_tab == "agents")" @onclick='() => SelectTab("agents")'>@L["settings.agents"]</button>
+                    @* RF-006: a aba Conexões é do usuário (kv user:{id}:connections)
+                       — visível para todos; flag off → estado vazio explicativo. *@
+                    <button class="modal-tab @(_tab == "connections" ? "active" : "")" role="tab" aria-selected="@(_tab == "connections")" @onclick='() => _tab = "connections"'>@L["settings.connections"]</button>
                     @if (Auth.CurrentUser?.Role == "admin")
                     {
-                        <button class="modal-tab @(_tab == "connections" ? "active" : "")" role="tab" aria-selected="@(_tab == "connections")" @onclick='() => _tab = "connections"'>@L["settings.connections"]</button>
                         <button class="modal-tab @(_tab == "admin" ? "active" : "")" role="tab" aria-selected="@(_tab == "admin")" @onclick='() => SelectTab("admin")'>@L["settings.admin"]</button>
                         <button class="modal-tab @(_tab == "maintenance" ? "active" : "")" role="tab" aria-selected="@(_tab == "maintenance")" @onclick='() => SelectTab("maintenance")'>@L["settings.maintenance"]</button>
                     }
@@ -589,7 +591,17 @@
                 }
                 else if (_tab == "connections")
                 {
-                    @if (_connections is null)
+                    @* SPEC-20261104-model-visibility-gate RF-006: a aba edita
+                       APENAS as conexões do usuário (kv user:{id}:connections)
+                       — a config global do admin nunca é lida nem exibida.
+                       Flag desligada → estado vazio explicativo. *@
+                    @if (!_userConnsEnabled)
+                    {
+                        <div class="text-sm text-gray-500 dark:text-gray-400 py-2">
+                            @L["settings.connections_disabled"]
+                        </div>
+                    }
+                    else if (_userConnections is null)
                     {
                         <div>@L["common.loading"]</div>
                     }
@@ -780,7 +792,12 @@
                                                                         var on = ModelEnabled(model);
                                     <div class="flex items-center justify-between gap-2 min-h-11">
                                         <div class="min-w-0">
-                                            <div class="text-sm truncate">@model.Name</div>
+                                            <div class="text-sm truncate">@model.Name
+                                                @if (model.Source is "user" or "byok")
+                                                {
+                                                    <span class="role-badge">@L[$"settings.model_source_{model.Source}"]</span>
+                                                }
+                                            </div>
                                             @if (!string.Equals(model.Name, model.Id, StringComparison.Ordinal))
                                             {
                                                 <div class="text-xs text-gray-400 truncate">@model.Id</div>
@@ -2331,6 +2348,9 @@
     }
 
     private ConnectionsConfigResponse? _connections;
+    // Conexões do próprio usuário (RF-006) — o admin global fica em _connections.
+    private ConnectionsConfigResponse? _userConnections;
+    private bool _userConnsEnabled;
     private List<OllamaModelInfo>? _ollamaModels;
     private string _ollamaPullName = string.Empty;
     private bool _ollamaPulling;
@@ -2518,8 +2538,13 @@
             var memoriesTask = Api.GetMemoriesAsync();
             var webhookTask = Api.GetWebhookAsync();
             var memSyncTask = Api.GetMemorySyncAsync();
+            // Conexões do usuário: para TODOS os papéis (RF-006) — antes a
+            // aba chamava o endpoint admin e não-admin ficava em "Carregando…".
+            var userConnsTask = Api.GetUserConnectionsAsync();
+            var userConnsFlagTask = Api.GetFeatureToggleAsync("user_connections");
             await Task.WhenAll(
-                versionTask, apiKeyTask, memoriesTask, webhookTask, memSyncTask);
+                versionTask, apiKeyTask, memoriesTask, webhookTask, memSyncTask,
+                userConnsTask, userConnsFlagTask);
 
             _version = (await versionTask)?.Version;
             _name = Auth.CurrentUser?.Name ?? string.Empty;
@@ -2542,6 +2567,10 @@
                 _webhookEvents = _webhook.Events.ToHashSet();
                 _webhookEnabled = _webhook.Enabled;
             }
+            _userConnections = await userConnsTask;
+            _userConnsEnabled = await userConnsFlagTask;
+            RebuildConnectionRows();
+            _connSnapshot = ConnectionsSnapshot();
             await LoadAudioSettingsAsync();
             _pasteToFile = !string.Equals(
                 await JS.InvokeAsync<string?>(
@@ -2983,12 +3012,13 @@
             .ToList();
 
         // Chaves deixadas em branco são preservadas pelo servidor.
+        // RF-006: grava em user:{id}:connections — nunca na config global.
         _connSaving = true;
-        var result = await Api.UpdateConnectionsAsync(
+        var result = await Api.UpdateUserConnectionsAsync(
             new ConnectionsConfig(ollama, openAi, keys, ollamaNames, openAiNames, providerRows));
         _connSaving = false;
         _saveMessage = result is null ? L["settings.save_failed"] : L["settings.saved"];
-        _connections = result;
+        _userConnections = result;
         if (result is not null)
         {
             for (var i = 0; i < _openAiRows.Count && i < result.OpenAiKeyConfigured.Count; i++)
@@ -3177,7 +3207,7 @@
         p = _providerRows.Select(r => new { r.Type, r.Name, r.Url, r.Key, r.KeyConfigured }),
     });
 
-    private bool ConnectionsDirty => _connections is not null && _connSnapshot != ConnectionsSnapshot();
+    private bool ConnectionsDirty => _userConnections is not null && _connSnapshot != ConnectionsSnapshot();
 
     private string AdminSnapshot() => System.Text.Json.JsonSerializer.Serialize(new
     {
@@ -3341,26 +3371,26 @@
 
     private void RebuildConnectionRows()
     {
-        if (_connections is null)
+        if (_userConnections is null)
         {
             return;
         }
-        _ollamaRows = _connections.OllamaBaseUrls
+        _ollamaRows = _userConnections.OllamaBaseUrls
             .Select((url, i) => new ConnectionRow
             {
                 Url = url,
-                Name = _connections.OllamaNames?.ElementAtOrDefault(i) ?? string.Empty,
+                Name = _userConnections.OllamaNames?.ElementAtOrDefault(i) ?? string.Empty,
             })
             .ToList();
-        _openAiRows = _connections.OpenAiBaseUrls
+        _openAiRows = _userConnections.OpenAiBaseUrls
             .Select((url, i) => new ConnectionRow
             {
                 Url = url,
-                Name = _connections.OpenAiNames?.ElementAtOrDefault(i) ?? string.Empty,
-                KeyConfigured = _connections.OpenAiKeyConfigured.ElementAtOrDefault(i),
+                Name = _userConnections.OpenAiNames?.ElementAtOrDefault(i) ?? string.Empty,
+                KeyConfigured = _userConnections.OpenAiKeyConfigured.ElementAtOrDefault(i),
             })
             .ToList();
-        _providerRows = (_connections.Providers ?? [])
+        _providerRows = (_userConnections.Providers ?? [])
             .Select(p => new ProviderRow
             {
                 Type = p.Type,

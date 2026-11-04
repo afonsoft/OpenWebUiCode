@@ -1045,6 +1045,21 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<ConnectionsConfigResponse?> UpdateConnectionsAsync(ConnectionsConfig config) =>
         SendAsync<ConnectionsConfigResponse>(HttpMethod.Post, "/api/v1/configs/connections", config);
 
+    /// <summary>Conexões de provider do próprio usuário
+    /// (SPEC-20261104-model-visibility-gate RF-006) — null quando a feature
+    /// está desligada (403) ou o usuário não está autenticado. Chaves vêm
+    /// mascaradas (<c>OpenAiKeyConfigured</c>/<c>KeyConfigured</c>).</summary>
+    public Task<ConnectionsConfigResponse?> GetUserConnectionsAsync() =>
+        SendAsync<ConnectionsConfigResponse>(HttpMethod.Get,
+            "/api/v1/configs/user/connections");
+
+    /// <summary>Persiste as conexões do próprio usuário — nunca toca a
+    /// config global do admin.</summary>
+    public Task<ConnectionsConfigResponse?> UpdateUserConnectionsAsync(
+        ConnectionsConfig config) =>
+        SendAsync<ConnectionsConfigResponse>(HttpMethod.Post,
+            "/api/v1/configs/user/connections", config);
+
     /// <summary>Lista os modelos de uma conexão cadastrada (somente admin).</summary>
     public Task<ModelListResponse?> GetConnectionModelsAsync(string type, int index) =>
         SendAsync<ModelListResponse>(HttpMethod.Get,
@@ -2147,6 +2162,19 @@ public class ApiService(HttpClient http, AuthService auth)
     /// <summary>Atualiza default models + sugestões (somente admin).</summary>
     public Task<ModelsConfig?> UpdateModelsConfigAsync(ModelsConfig config) =>
         SendAsync<ModelsConfig>(HttpMethod.Post, "/api/v1/configs/models", config);
+
+    /// <summary>Catálogo completo de modelos com o estado do gate global
+    /// (admin — SPEC-20261104-model-visibility-gate RF-003): o ÚNICO
+    /// endpoint que expõe todos os modelos; <c>Enabled=false</c> = bloqueado.</summary>
+    public Task<CatalogModelListResponse?> GetModelsGateCatalogAsync() =>
+        SendAsync<CatalogModelListResponse>(HttpMethod.Get,
+            "/api/v1/configs/models/catalog");
+
+    /// <summary>Persiste a denylist do gate global (admin — RF-001): lista
+    /// completa de <c>"{provider}:{id}"</c> bloqueados; vazia = todos on.</summary>
+    public async Task<bool> SetModelsDisabledAsync(List<string> disabled) =>
+        await SendStatusAsync(HttpMethod.Put,
+            "/api/v1/configs/models/disabled", disabled);
 
     /// <summary>Lê um toggle/config de feature ("channels", "direct_connections").</summary>
     public async Task<bool> GetFeatureToggleAsync(string name, bool fallback = false) =>

@@ -1,0 +1,232 @@
+@inject ApiService Api
+@inject LocalizationService L
+
+@* Gerenciador do gate global de modelos (SPEC-20261104-model-visibility-gate
+   RF-002): popup com filtro por provider + busca e switches por modelo —
+   a ÚNICA tela que enxerga o catálogo completo (desabilitados inclusos). *@
+@if (Active)
+{
+    <div class="modal-backdrop" @onclick="CloseAsync">
+        <div class="modal flex flex-col" style="max-width: 40rem;" role="dialog" aria-modal="true"
+             aria-label="@L["admin.models_manage"]" tabindex="-1" @onclick:stopPropagation
+             @onkeydown="OnKeyDown" @ref="_dialog">
+            <div class="modal-header">
+                <span>@L["admin.models_manage"]</span>
+                <button type="button" class="icon-btn" aria-label="@L["common.close"]"
+                        @onclick="CloseAsync">×</button>
+            </div>
+            <div class="modal-body">
+                @if (_loading)
+                {
+                    <div class="text-sm text-gray-400 py-2">@L["common.loading"]</div>
+                }
+                else
+                {
+                    <input aria-label="@L["models.select"]" class="input mb-2"
+                           placeholder="@L["models.select"]"
+                           @bind="_query" @bind:event="oninput" />
+                    <div class="flex flex-wrap gap-1 mb-2">
+                        <button type="button"
+                                class="px-2 py-0.5 text-xs rounded-full @(_provider is null ? "bg-gray-200 dark:bg-gray-700" : "bg-gray-100 dark:bg-gray-800")"
+                                @onclick="() => _provider = null">
+                            @L["models.all_providers"]
+                        </button>
+                        @foreach (var p in Providers)
+                        {
+                            <button type="button"
+                                    class="px-2 py-0.5 text-xs rounded-full @(_provider == p ? "bg-gray-200 dark:bg-gray-700" : "bg-gray-100 dark:bg-gray-800")"
+                                    @onclick="() => _provider = p">
+                                @p (@CountOf(p).Enabled/@CountOf(p).Total)
+                            </button>
+                        }
+                    </div>
+                    <div class="max-h-96 overflow-y-auto flex flex-col gap-3">
+                        @foreach (var group in Groups())
+                        {
+                            <div>
+                                <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                                    <span>@group.Key (@group.Enabled/@group.Total)</span>
+                                    <span class="flex gap-2">
+                                        <button type="button" class="underline"
+                                                @onclick="() => SetGroupAsync(group.Key, true)">
+                                            @L["models.enable_all"]
+                                        </button>
+                                        <button type="button" class="underline"
+                                                @onclick="() => SetGroupAsync(group.Key, false)">
+                                            @L["models.disable_all"]
+                                        </button>
+                                    </span>
+                                </div>
+                                @foreach (var item in group.Items)
+                                {
+                                    <div class="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-850">
+                                        <div class="min-w-0">
+                                            <div class="text-sm truncate text-gray-800 dark:text-gray-200">@item.Name</div>
+                                            <div class="text-[11px] truncate text-gray-400">@item.Id</div>
+                                        </div>
+                                        <button type="button" role="switch"
+                                                aria-checked="@(item.Enabled ? "true" : "false")"
+                                                aria-label="@item.Id"
+                                                disabled="@_saving"
+                                                class="flex h-11 w-14 flex-none items-center justify-center cursor-pointer disabled:opacity-50"
+                                                @onclick="() => ToggleAsync(item)">
+                                            <span class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors @(item.Enabled ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-700")">
+                                                <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform @(item.Enabled ? "translate-x-6" : "translate-x-1")"></span>
+                                            </span>
+                                        </button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        @if (!Groups().Any())
+                        {
+                            <div class="px-2 py-1.5 text-xs text-gray-400">@L["models.none"]</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Controla a visibilidade do modal.</summary>
+    [Parameter] public bool Active { get; set; }
+
+    /// <summary>Notifica mudança de <see cref="Active"/>.</summary>
+    [Parameter] public EventCallback<bool> ActiveChanged { get; set; }
+
+    /// <summary>Disparado após cada mudança persistida no gate — o pai
+    /// recarrega o catálogo filtrado e o contador.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private List<CatalogModel> _items = [];
+    private HashSet<string> _disabled = new(StringComparer.OrdinalIgnoreCase);
+    private bool _wasActive;
+    private bool _focusPending;
+    private bool _loading;
+    private bool _saving;
+    private string _query = "";
+    private string? _provider;
+    private ElementReference _dialog;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Active && !_wasActive)
+        {
+            _wasActive = true;
+            _focusPending = true;
+            await ReloadAsync();
+        }
+        else if (!Active)
+        {
+            _wasActive = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusPending && Active)
+        {
+            _focusPending = false;
+            await _dialog.FocusAsync();
+        }
+    }
+
+    /// <summary>Recarrega o catálogo admin (todos os modelos + gate).</summary>
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var catalog = await Api.GetModelsGateCatalogAsync();
+            _items = catalog?.Data.ToList() ?? [];
+            _disabled = _items.Where(m => !m.Enabled)
+                .Select(Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string Key(CatalogModel m) => $"{m.Provider}:{m.Id}";
+
+    private IReadOnlyList<string> Providers =>
+        _items.Select(m => m.Provider).Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => p).ToList();
+
+    private (int Enabled, int Total) CountOf(string provider)
+    {
+        var ofProvider = _items.Where(m => m.Provider == provider).ToList();
+        return (ofProvider.Count(m => m.Enabled), ofProvider.Count);
+    }
+
+    private sealed record Group(string Key, int Enabled, int Total, List<CatalogModel> Items);
+
+    private IEnumerable<Group> Groups() => _items
+        .Where(m => (_provider is null || m.Provider == _provider)
+            && (string.IsNullOrWhiteSpace(_query)
+                || m.Id.Contains(_query, StringComparison.OrdinalIgnoreCase)
+                || m.Name.Contains(_query, StringComparison.OrdinalIgnoreCase)))
+        .GroupBy(m => m.Provider)
+        .OrderBy(g => g.Key)
+        .Select(g => new Group(g.Key,
+            g.Count(m => m.Enabled), g.Count(), g.ToList()));
+
+    /// <summary>Persiste a denylist atual e notifica o pai.</summary>
+    private async Task PersistAsync()
+    {
+        _saving = true;
+        try
+        {
+            await Api.SetModelsDisabledAsync(_disabled.ToList());
+            _items = _items
+                .Select(m => m with { Enabled = !_disabled.Contains(Key(m)) })
+                .ToList();
+            await Changed.InvokeAsync();
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private Task ToggleAsync(CatalogModel item)
+    {
+        var key = Key(item);
+        if (!_disabled.Remove(key))
+        {
+            _disabled.Add(key);
+        }
+        return PersistAsync();
+    }
+
+    private Task SetGroupAsync(string provider, bool enabled)
+    {
+        var keys = _items.Where(m => m.Provider == provider).Select(Key);
+        if (enabled)
+        {
+            _disabled.ExceptWith(keys);
+        }
+        else
+        {
+            _disabled.UnionWith(keys);
+        }
+        return PersistAsync();
+    }
+
+    private async Task CloseAsync()
+    {
+        Active = false;
+        await ActiveChanged.InvokeAsync(false);
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await CloseAsync();
+        }
+    }
+}

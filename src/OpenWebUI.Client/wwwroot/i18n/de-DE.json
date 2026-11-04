@@ -1294,8 +1294,7 @@
   "settings.perm_approvals_hint": "„Immer“-Entscheidungen bleiben hier pro Workdir erhalten und werden einzeln widerrufen.",
   "settings.perm_approvals_empty": "Keine gespeicherten Genehmigungen.",
   "settings.perm_load_error": "Berechtigungen konnten nicht geladen werden.",
-  "settings.perm_save_error": "Berechtigung konnte nicht gespeichert werden."
-,
+  "settings.perm_save_error": "Berechtigung konnte nicht gespeichert werden.",
   "sidebar.generate": "Generieren",
   "generate.title": "Artefakt generieren",
   "generate.steps": "Assistentenschritte",
@@ -1319,5 +1318,13 @@
   "generate.submit": "Generieren",
   "generate.error": "Generierung fehlgeschlagen — prüfen Sie den Kontext.",
   "common.next": "Weiter →",
-  "common.remove": "Entfernen"
+  "common.remove": "Entfernen",
+  "admin.models_enabled": "Aktivierte Modelle",
+  "admin.models_enabled_hint": "Nur aktivierte Modelle erscheinen im Chat und anderen Ansichten.",
+  "admin.models_manage": "Modelle verwalten",
+  "admin.models_enabled_count": "{0} von {1} aktiviert",
+  "models.all_providers": "Alle Anbieter",
+  "settings.connections_disabled": "Benutzerbezogene Verbindungen sind vom Administrator deaktiviert.",
+  "settings.model_source_user": "meine Verbindung",
+  "settings.model_source_byok": "mein Schlüssel"
 }

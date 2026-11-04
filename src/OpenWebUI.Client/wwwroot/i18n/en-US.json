@@ -1294,8 +1294,7 @@
   "settings.perm_approvals_hint": "Decisions marked \"Always\" persist here per workdir and are revoked individually.",
   "settings.perm_approvals_empty": "No saved approvals.",
   "settings.perm_load_error": "Failed to load permissions.",
-  "settings.perm_save_error": "Failed to save permission."
-,
+  "settings.perm_save_error": "Failed to save permission.",
   "sidebar.generate": "Generate",
   "generate.title": "Generate artifact",
   "generate.steps": "Wizard steps",
@@ -1319,5 +1318,13 @@
   "generate.submit": "Generate",
   "generate.error": "Generation failed — check the context and try again.",
   "common.next": "Next →",
-  "common.remove": "Remove"
+  "common.remove": "Remove",
+  "admin.models_enabled": "Enabled models",
+  "admin.models_enabled_hint": "Only enabled models appear in chat and other screens.",
+  "admin.models_manage": "Manage models",
+  "admin.models_enabled_count": "{0} of {1} enabled",
+  "models.all_providers": "All providers",
+  "settings.connections_disabled": "Per-user connections are disabled by the administrator.",
+  "settings.model_source_user": "my connection",
+  "settings.model_source_byok": "my key"
 }

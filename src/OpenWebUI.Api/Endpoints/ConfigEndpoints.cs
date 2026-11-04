@@ -27,7 +27,19 @@ public static class ConfigEndpoints
         group.MapDelete("/banners/{id}", DeleteBannerAsync);
 
         group.MapGet("/models", GetModelsConfigAsync);
-        group.MapPost("/models", UpdateModelsConfigAsync);
+        group.MapPost("/models", UpdateModelsConfigAsync)
+            .AddEndpointFilter(ApiEndpoints.InvalidateModelListCacheAsync);
+        // Gate global de modelos (SPEC-20261104-model-visibility-gate RF-001/003):
+        // /models/catalog é o ÚNICO endpoint que lista TODOS os modelos (admin);
+        // /models/disabled persiste a denylist "provider:id".
+        group.MapGet("/models/catalog", ListModelsCatalogAsync);
+        group.MapPut("/models/disabled", UpdateModelsDisabledAsync)
+            .AddEndpointFilter(ApiEndpoints.InvalidateModelListCacheAsync);
+        // Conexões por usuário (RF-006): flag global, lida por qualquer
+        // usuário (a aba Conexões das settings decide o estado vazio).
+        group.MapGet("/user_connections", GetUserConnectionsToggleAsync);
+        group.MapPost("/user_connections", UpdateUserConnectionsToggleAsync)
+            .AddEndpointFilter(ApiEndpoints.InvalidateModelListCacheAsync);
 
         group.MapGet("/signup", GetSignupAsync);
         group.MapPost("/signup", UpdateSignupAsync);
@@ -187,13 +199,80 @@ public static class ConfigEndpoints
         {
             return Results.Forbid();
         }
+        var current = await GetModelsConfigInternalAsync(config, ct);
         var sanitized = new ModelsConfig(
             request.DefaultModels?.Where(m => !string.IsNullOrWhiteSpace(m)).ToList() ?? [],
             request.PromptSuggestions?
                 .Where(s => !string.IsNullOrWhiteSpace(s.Title) || !string.IsNullOrWhiteSpace(s.Content))
-                .ToList() ?? []);
+                .ToList() ?? [],
+            // A denylist é mantida pelo PUT /models/disabled; um POST sem o
+            // campo não a apaga (clientes antigos não a conhecem).
+            request.DisabledModels ?? current.DisabledModels);
         await config.SetAsync("ui.models", sanitized, ct);
         return Results.Ok(sanitized);
+    }
+
+    /// <summary>
+    /// Catálogo completo de modelos com o estado do gate (admin — RF-003):
+    /// o ÚNICO endpoint que expõe todos os modelos; Enabled=false marca os
+    /// bloqueados pela denylist.
+    /// </summary>
+    private static async Task<IResult> ListModelsCatalogAsync(
+        HttpContext http, ProviderService providers, CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        var gate = await providers.DisabledModelsGateAsync(ct);
+        var data = (await providers.ListModelsAsync(ct))
+            .Select(m => new CatalogModel(
+                m.Id, m.Name, m.Provider, m.OwnedBy,
+                !gate.Contains($"{m.Provider}:{m.Id}"), m.Capabilities,
+                ProviderService.ModelSourceGlobal))
+            .ToList();
+        return Results.Ok(new CatalogModelListResponse(data));
+    }
+
+    /// <summary>Denylist do gate global (admin — RF-001): lista completa de
+    /// <c>"{provider}:{id}"</c> bloqueados; lista vazia = todos habilitados.</summary>
+    private static async Task<IResult> UpdateModelsDisabledAsync(
+        List<string> request, HttpContext http, ConfigService config,
+        CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        var current = await GetModelsConfigInternalAsync(config, ct);
+        var disabled = request
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var updated = current with
+        {
+            DisabledModels = disabled.Count == 0 ? null : disabled,
+        };
+        await config.SetAsync("ui.models", updated, ct);
+        return Results.Ok(updated);
+    }
+
+    private static async Task<IResult> GetUserConnectionsToggleAsync(
+        ConfigService config, CancellationToken ct) =>
+        Results.Ok(new FeatureToggle(await config.GetAsync(
+            UserConfigOverlayService.UserConnectionsFlag, false, ct)));
+
+    private static async Task<IResult> UpdateUserConnectionsToggleAsync(
+        FeatureToggle request, HttpContext http, ConfigService config,
+        CancellationToken ct)
+    {
+        if (!IsAdmin(http))
+        {
+            return Results.Forbid();
+        }
+        await config.SetAsync(
+            UserConfigOverlayService.UserConnectionsFlag, request.Enabled, ct);
+        return Results.Ok(request);
     }
 
     // ---------------- Toggles ----------------

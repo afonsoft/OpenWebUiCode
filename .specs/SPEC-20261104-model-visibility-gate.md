@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-model-visibility-gate` |
 | Ticket | `GH#688` — https://github.com/afonsoft/OpenWebUiCode/issues/688 |
-| Status | `Approved` |
+| Status | `In implementation` |
 
 ## 1. User Story
 

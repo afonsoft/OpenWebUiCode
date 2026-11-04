@@ -1294,8 +1294,7 @@
   "settings.perm_approvals_hint": "Decisões com \"Sempre\" persistem aqui por workdir e são revogadas individualmente.",
   "settings.perm_approvals_empty": "Nenhuma aprovação salva.",
   "settings.perm_load_error": "Falha ao carregar permissões.",
-  "settings.perm_save_error": "Falha ao salvar a permissão."
-,
+  "settings.perm_save_error": "Falha ao salvar a permissão.",
   "sidebar.generate": "Gerar",
   "generate.title": "Gerar artefato",
   "generate.steps": "Etapas do assistente",
@@ -1319,5 +1318,13 @@
   "generate.submit": "Gerar",
   "generate.error": "Falha na geração — revise o contexto e tente de novo.",
   "common.next": "Avançar →",
-  "common.remove": "Remover"
+  "common.remove": "Remover",
+  "admin.models_enabled": "Modelos habilitados",
+  "admin.models_enabled_hint": "Somente os habilitados aparecem no chat e nas demais telas.",
+  "admin.models_manage": "Gerenciar modelos",
+  "admin.models_enabled_count": "{0} de {1} habilitados",
+  "models.all_providers": "Todos os providers",
+  "settings.connections_disabled": "Conexões por usuário desabilitadas pelo administrador.",
+  "settings.model_source_user": "minha conexão",
+  "settings.model_source_byok": "minha chave"
 }

@@ -1294,8 +1294,7 @@
   "settings.perm_approvals_hint": "Le decisioni con \"Sempre\" persistono qui per workdir e si revocano singolarmente.",
   "settings.perm_approvals_empty": "Nessuna approvazione salvata.",
   "settings.perm_load_error": "Caricamento permessi non riuscito.",
-  "settings.perm_save_error": "Salvataggio del permesso non riuscito."
-,
+  "settings.perm_save_error": "Salvataggio del permesso non riuscito.",
   "sidebar.generate": "Genera",
   "generate.title": "Genera artefatto",
   "generate.steps": "Passaggi guidati",
@@ -1319,5 +1318,13 @@
   "generate.submit": "Genera",
   "generate.error": "Generazione non riuscita — controlla il contesto e riprova.",
   "common.next": "Avanti →",
-  "common.remove": "Rimuovi"
+  "common.remove": "Rimuovi",
+  "admin.models_enabled": "Modelli abilitati",
+  "admin.models_enabled_hint": "Solo i modelli abilitati appaiono in chat e nelle altre schermate.",
+  "admin.models_manage": "Gestisci modelli",
+  "admin.models_enabled_count": "{0} di {1} abilitati",
+  "models.all_providers": "Tutti i provider",
+  "settings.connections_disabled": "Le connessioni per utente sono disabilitate dall'amministratore.",
+  "settings.model_source_user": "mia connessione",
+  "settings.model_source_byok": "mia chiave"
 }

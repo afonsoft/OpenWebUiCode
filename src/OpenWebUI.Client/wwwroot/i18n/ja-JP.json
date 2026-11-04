@@ -1294,8 +1294,7 @@
   "settings.perm_approvals_hint": "「に」でしたは workdir ごとにここへされ、にりせます。",
   "settings.perm_approvals_empty": "されたはありません。",
   "settings.perm_load_error": "のみみにしました。",
-  "settings.perm_save_error": "のにしました。"
-,
+  "settings.perm_save_error": "のにしました。",
   "sidebar.generate": "",
   "generate.title": "アーティファクトを",
   "generate.steps": "ウィザードの",
@@ -1319,5 +1318,13 @@
   "generate.submit": "",
   "generate.error": "にしました — コンテキストをしてしてください。",
   "common.next": "へ →",
-  "common.remove": ""
+  "common.remove": "",
+  "admin.models_enabled": "なモデル",
+  "admin.models_enabled_hint": "なモデルのみがチャットやのにされます。",
+  "admin.models_manage": "モデルを",
+  "admin.models_enabled_count": "{1}  {0} が",
+  "models.all_providers": "すべてのプロバイダー",
+  "settings.connections_disabled": "ユーザーごとのはによってされています。",
+  "settings.model_source_user": "の",
+  "settings.model_source_byok": "のキー"
 }

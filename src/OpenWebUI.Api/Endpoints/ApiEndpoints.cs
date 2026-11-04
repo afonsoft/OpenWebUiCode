@@ -40,6 +40,11 @@ public static class ApiEndpoints
         configs.MapGet("/connections", GetConnectionsAsync);
         configs.MapPost("/connections", UpdateConnectionsAsync)
             .AddEndpointFilter(InvalidateModelListCacheAsync);
+        // Conexões do próprio usuário (SPEC-20261104-model-visibility-gate
+        // RF-006): kv user:{id}:connections — nunca lê/escreve a config global.
+        configs.MapGet("/user/connections", GetUserConnectionsAsync);
+        configs.MapPost("/user/connections", UpdateUserConnectionsAsync)
+            .AddEndpointFilter(InvalidateModelListCacheAsync);
         configs.MapGet("/capabilities", GetCapabilitiesAsync);
         configs.MapGet("/connections/models", ListConnectionModelsAsync);
         configs.MapGet("/connections/capabilities", GetConnectionCapabilitiesAsync);
@@ -170,7 +175,8 @@ public static class ApiEndpoints
     }
 
     /// <summary>Lista agregada de modelos do usuário cacheada por 60s
-    /// (sem o filtro de visibilidade — aplicado por request).</summary>
+    /// (sem o filtro de visibilidade pessoal — aplicado por request;
+    /// o gate global do admin e as fontes user/byok já vêm aplicados).</summary>
     internal static async Task<ModelListResponse> GetCachedModelListAsync(
         User user, ProviderService providers, AppDbContext db,
         PipelineClientService pipelines, HybridCache cache,
@@ -225,7 +231,15 @@ public static class ApiEndpoints
         PipelineClientService pipelines, ModelCapabilityResolver capabilities,
         CancellationToken ct)
     {
-        var models = await providers.ListModelsAsync(ct);
+        // Catálogo efetivo (SPEC-20261104-model-visibility-gate RF-005):
+        // fontes user/byok do próprio usuário + globais filtrados pelo gate
+        // do admin — modelos "global" desabilitados não chegam à lista.
+        var gate = await providers.DisabledModelsGateAsync(ct);
+        var models = (await providers.ListEffectiveModelsAsync(user.Id, ct))
+            .Where(s => s.Source != ProviderService.ModelSourceGlobal
+                || !gate.Contains($"{s.Model.Provider}:{s.Model.Id}"))
+            .Select(s => s.Model with { Source = s.Source })
+            .ToList();
 
         // Inclui modelos personalizados ativos do workspace (do usuário + públicos).
         await AddCustomModelsAsync(models, user, db, ct);
@@ -252,19 +266,22 @@ public static class ApiEndpoints
             {
                 continue;
             }
-            models.Add(new ModelInfo(entry.Id, entry.Name, "custom", OpenWebUiScope));
+            models.Add(new ModelInfo(entry.Id, entry.Name, "custom", OpenWebUiScope,
+                Source: "workspace"));
             // SPEC-20261018-model-variants RF-001/002/004: variants
             // (declaradas ou sintéticas por reasoning.effort) e aliases
             // aparecem como entradas do seletor resolvendo ao entry real.
             foreach (var v in ModelVariantService.ListVariantIds(entry.MetaJson))
             {
                 models.Add(new ModelInfo(
-                    $"{entry.Id}#{v}", $"{entry.Name}#{v}", "custom", OpenWebUiScope));
+                    $"{entry.Id}#{v}", $"{entry.Name}#{v}", "custom", OpenWebUiScope,
+                    Source: "workspace"));
             }
             foreach (var alias in ModelVariantService.ListAliases(entry.MetaJson))
             {
                 models.Add(new ModelInfo(
-                    alias, $"{entry.Name} ({alias})", "custom", OpenWebUiScope));
+                    alias, $"{entry.Name} ({alias})", "custom", OpenWebUiScope,
+                    Source: "workspace"));
             }
         }
     }
@@ -281,7 +298,8 @@ public static class ApiEndpoints
             if (pipes is not null)
             {
                 models.AddRange(pipes.Select(
-                    p => new ModelInfo($"pipeline:{p.Id}", p.Name, "pipeline", OpenWebUiScope)));
+                    p => new ModelInfo($"pipeline:{p.Id}", p.Name, "pipeline",
+                        OpenWebUiScope, Source: "pipeline")));
             }
         }
     }
@@ -314,6 +332,16 @@ public static class ApiEndpoints
         if (user is null)
         {
             http.Response.StatusCode = 401;
+            return;
+        }
+
+        // Gate global do admin (SPEC-20261104-model-visibility-gate RF-008):
+        // modelo desabilitado sem fonte própria do provider → 403 antes de
+        // abrir o stream (fora do catálogo do usuário ele nem aparece, mas a
+        // chamada direta também é bloqueada).
+        if (await providers.IsModelGateBlockedAsync(request.Model, user.Id, ct))
+        {
+            http.Response.StatusCode = 403;
             return;
         }
 
@@ -708,6 +736,68 @@ public static class ApiEndpoints
                 .Select(p => new ProviderConnectionResponse(
                     p.Type, p.BaseUrl, !string.IsNullOrEmpty(p.ApiKey), p.Name))
                 .ToList()));
+    }
+
+    /// <summary>Resposta de conexões com chaves mascaradas (mesmo shape do
+    /// GET global — a UI do usuário nunca recebe segredos).</summary>
+    private static ConnectionsConfigResponse MaskConnections(ConnectionsConfig c) =>
+        new(c.OllamaBaseUrls, c.OpenAiBaseUrls,
+            c.OpenAiBaseUrls
+                .Select((_, i) => !string.IsNullOrEmpty(
+                    c.OpenAiApiKeys.ElementAtOrDefault(i))).ToList(),
+            c.OllamaNames, c.OpenAiNames,
+            c.ProvidersOrEmpty
+                .Select(p => new ProviderConnectionResponse(
+                    p.Type, p.BaseUrl, !string.IsNullOrEmpty(p.ApiKey), p.Name))
+                .ToList());
+
+    /// <summary>Conexões próprias do usuário (RF-006): 403 quando o admin não
+    /// habilitou <c>features.userConnections</c> — a config global nunca é lida.</summary>
+    private static async Task<IResult> GetUserConnectionsAsync(
+        HttpContext http, AppDbContext db,
+        UserConfigOverlayService overlay, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (!await overlay.UserConnectionsEnabledAsync(ct))
+        {
+            return Results.Forbid();
+        }
+        var connections = await overlay.UserConnectionsAsync(user.Id, ct)
+            ?? new ConnectionsConfig([], [], []);
+        return Results.Ok(MaskConnections(connections));
+    }
+
+    /// <summary>Persiste as conexões do usuário em <c>user:{id}:connections</c>;
+    /// chaves vazias preservam a chave salva (a UI não reenvia segredos).</summary>
+    private static async Task<IResult> UpdateUserConnectionsAsync(
+        ConnectionsConfig request, HttpContext http, AppDbContext db,
+        UserConfigOverlayService overlay, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+        if (!await overlay.UserConnectionsEnabledAsync(ct))
+        {
+            return Results.Forbid();
+        }
+        var current = await overlay.UserConnectionsAsync(user.Id, ct)
+            ?? new ConnectionsConfig([], [], []);
+
+        var keys = MergeOpenAiKeys(request, current);
+        var (typedProviders, providerError) = ValidateTypedProviders(request, current);
+        if (providerError is not null)
+        {
+            return providerError;
+        }
+        var updated = request with { OpenAiApiKeys = keys, Providers = typedProviders };
+        await overlay.SetUserConnectionsAsync(user.Id, updated, ct);
+        return Results.Ok(MaskConnections(updated));
     }
 
     /// <summary>Mescla apiKeys OpenAI: incoming não-vazia vence; vazia

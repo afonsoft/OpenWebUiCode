@@ -1294,8 +1294,7 @@
   "settings.perm_approvals_hint": "“” workdir ，。",
   "settings.perm_approvals_empty": "。",
   "settings.perm_load_error": "。",
-  "settings.perm_save_error": "。"
-,
+  "settings.perm_save_error": "。",
   "sidebar.generate": "",
   "generate.title": "",
   "generate.steps": "",
@@ -1319,5 +1318,13 @@
   "generate.submit": "",
   "generate.error": " — 。",
   "common.next": " →",
-  "common.remove": ""
+  "common.remove": "",
+  "admin.models_enabled": "",
+  "admin.models_enabled_hint": "。",
+  "admin.models_manage": "",
+  "admin.models_enabled_count": "{1}  {0} ",
+  "models.all_providers": "",
+  "settings.connections_disabled": "。",
+  "settings.model_source_user": "",
+  "settings.model_source_byok": ""
 }
