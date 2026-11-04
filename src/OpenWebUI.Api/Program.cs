@@ -280,7 +280,6 @@ builder.Services.AddSingleton<DeferredToolState>();
 builder.Services.AddSingleton<ToolIndexService>();
 builder.Services.AddScoped<IBuiltinChatTool, ToolSearchBuiltinTool>();
 // Plan mode v2 (SPEC-20261031): write_plan + diretório de planos.
-builder.Services.AddSingleton<PlanFileService>();
 // Lifecycle hooks (SPEC-20261031): command runner + evaluator + orquestrador.
 builder.Services.AddSingleton<CommandHookRunner>();
 builder.Services.AddScoped<LifecycleHookService>();

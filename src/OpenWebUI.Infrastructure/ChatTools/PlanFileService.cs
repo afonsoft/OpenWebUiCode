@@ -15,7 +15,7 @@ namespace OpenWebUI.Infrastructure.ChatTools;
 /// <see cref="Latest"/> expõe o último path por run para
 /// <c>plan_exit</c> referenciar.
 /// </summary>
-public sealed partial class PlanFileService
+public static partial class PlanFileService
 {
     /// <summary>Nome do diretório dentro do workdir.</summary>
     public const string DirName = "plans";
@@ -122,7 +122,6 @@ public sealed partial class PlanFileService
         {
             return [];
         }
-        var root = Path.GetFullPath(dir);
         return new DirectoryInfo(dir)
             .EnumerateFiles("*.md", SearchOption.TopDirectoryOnly)
             .Select(f => new PlanEntry(

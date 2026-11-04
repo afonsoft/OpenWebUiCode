@@ -146,6 +146,12 @@ public class ToolExecutor(
     /// <param name="argumentsJson">Argumentos em JSON.</param>
     /// <param name="builtinContext">Contexto das tools built-in (workspace/dono); null desabilita.</param>
     /// <param name="ct">Cancelamento.</param>
+    /// <summary>Atalho sem contexto built-in (tools do banco/HTTP/MCP apenas).</summary>
+    public Task<ToolExecutionOutcome> ExecuteAsync(
+        IReadOnlyList<Tool> tools, string functionName, string argumentsJson,
+        CancellationToken ct) =>
+        ExecuteAsync(tools, functionName, argumentsJson, null, ct);
+
     public async Task<ToolExecutionOutcome> ExecuteAsync(
         IReadOnlyList<Tool> tools, string functionName, string argumentsJson,
         BuiltinToolContext? builtinContext = null,
@@ -247,12 +253,6 @@ public class ToolExecutor(
             return new($"Erro ao executar tool '{functionName}': {ex.Message}");
         }
     }
-
-    /// <summary>Atalho sem contexto built-in (tools do banco/HTTP/MCP apenas).</summary>
-    public Task<ToolExecutionOutcome> ExecuteAsync(
-        IReadOnlyList<Tool> tools, string functionName, string argumentsJson,
-        CancellationToken ct) =>
-        ExecuteAsync(tools, functionName, argumentsJson, null, ct);
 
     /// <summary>
     /// Se a tool é mutável para o gate de aprovação

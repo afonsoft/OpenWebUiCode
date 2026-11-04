@@ -35,6 +35,7 @@ public sealed class DelegateTaskBuiltinTool(
     IChatRunDispatcher dispatcher,
     RunEventWriter? events = null) : IBuiltinChatTool
 {
+    private const string SubagentFresh = "fresh";
     /// <summary>Tempo máximo de espera pela run filha (SPEC: 5min).</summary>
     private const int TimeoutSeconds = 300;
 
@@ -159,8 +160,8 @@ public sealed class DelegateTaskBuiltinTool(
         // modo do filho — fresh (default, comportamento atual), fork
         // (herda o transcript do pai) ou fork-background (fork + wait=false).
         var subagentType = ReadString(args, "subagent_type", 30)
-            ?.Trim().ToLowerInvariant() ?? "fresh";
-        if (subagentType is not ("fresh" or "fork" or "fork-background"))
+            ?.Trim().ToLowerInvariant() ?? SubagentFresh;
+        if (subagentType is not (SubagentFresh or "fork" or "fork-background"))
         {
             return new BuiltinToolResult(
                 $"subagent_type '{subagentType}' inválido — use "
@@ -190,7 +191,7 @@ public sealed class DelegateTaskBuiltinTool(
         // coberto pelo gate da tool) — sem run filha.
         if (agentName?.StartsWith("ext:", StringComparison.OrdinalIgnoreCase) == true)
         {
-            if (subagentType != "fresh")
+            if (subagentType != SubagentFresh)
             {
                 return new BuiltinToolResult(
                     "subagent_type 'fork' não se aplica a agentes ext:* "
@@ -308,7 +309,7 @@ public sealed class DelegateTaskBuiltinTool(
     private static async Task<BuiltinToolResult?> CheckForkGuardAsync(
         DispatchRoute r, DispatchFlags flags, CancellationToken ct)
     {
-        if (r.SubagentType == "fresh")
+        if (r.SubagentType == SubagentFresh)
         {
             return null;
         }
@@ -388,7 +389,7 @@ public sealed class DelegateTaskBuiltinTool(
             var created = await CreateDispatchAsync(
                 new DispatchRequest(args, config, agent, fullPrompt,
                     waitExplicit, autoMerge, joinTeam,
-                    personaSkill?.Content, prompt, "fresh"),
+                    personaSkill?.Content, prompt, SubagentFresh),
                 scope, db, context, parentRun, ct);
             if (created.ChatId is { } createdChatId)
             {
