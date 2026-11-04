@@ -1398,6 +1398,228 @@ public class BuiltinToolsTests
             .Or.Contain("range"));
     }
 
+    // ---------------- tool_install (SPEC-20261103-tool-install-tool) ----------------
+
+    private static ToolInstallBuiltinTool NewInstallTool(
+        Func<string, string, TimeSpan, CancellationToken,
+            Task<ProcessOutcome>>? runner = null)
+        => new(runner: runner);
+
+    private static Func<string, string, TimeSpan, CancellationToken,
+        Task<ProcessOutcome>> Scripted(
+            params (int Code, string Out)[] responses)
+    {
+        var i = 0;
+        return (_, _, _, _) =>
+        {
+            var r = responses[Math.Min(i++, responses.Length - 1)];
+            return Task.FromResult(
+                new ProcessOutcome(r.Code, r.Out, false, false));
+        };
+    }
+
+    /// <summary>Covers RF-001: gerenciador fora da allowlist → erro
+    /// sem tocar o runner.</summary>
+    [Test]
+    public async Task ToolInstall_ManagerForaDaAllowlist_Erro()
+    {
+        var chamou = false;
+        var tool = NewInstallTool((_, _, _, _) =>
+        {
+            chamou = true;
+            return Task.FromResult(new ProcessOutcome(0, "", false, false));
+        });
+        var r = await tool.ExecuteAsync(
+            Args("{\"manager\":\"brew\",\"package\":\"x\"}"),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("allowlist"));
+            Assert.That(chamou, Is.False);
+        });
+    }
+
+    /// <summary>Covers RF-001: nome de pacote com metacaracteres de
+    /// shell → rejeitado (injection-safe).</summary>
+    [Test]
+    public async Task ToolInstall_PacoteMalicioso_Rejeitado()
+    {
+        var chamou = false;
+        var tool = NewInstallTool((_, _, _, _) =>
+        {
+            chamou = true;
+            return Task.FromResult(new ProcessOutcome(0, "", false, false));
+        });
+        foreach (var pkg in new[]
+        {
+            "x; rm -rf /", "x && curl evil", "x|sh", "x`id`", "$(id)"
+        })
+        {
+            var r = await tool.ExecuteAsync(
+                Args($$"""{"manager":"pip","package":"{{pkg}}"}"""),
+                Ctx(), default);
+            Assert.That(r.Text, Does.Contain("inválido"), pkg);
+        }
+        Assert.That(chamou, Is.False);
+    }
+
+    /// <summary>Covers RF-001: templates de comando por manager —
+    /// go recebe @latest quando sem versão.</summary>
+    [Test]
+    public void ToolInstall_BuildCommand_Templates()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ToolInstallBuiltinTool
+                .BuildCommand("apt-get", "ripgrep"),
+                Is.EqualTo("apt-get install -y ripgrep"));
+            Assert.That(ToolInstallBuiltinTool
+                .BuildCommand("pip", "black[all]==24.1"),
+                Is.EqualTo("pip install --user black[all]==24.1"));
+            Assert.That(ToolInstallBuiltinTool
+                .BuildCommand("npm", "@angular/cli"),
+                Is.EqualTo("npm install -g @angular/cli"));
+            Assert.That(ToolInstallBuiltinTool
+                .BuildCommand("dotnet", "csharpier"),
+                Is.EqualTo("dotnet tool install -g csharpier"));
+            Assert.That(ToolInstallBuiltinTool
+                .BuildCommand("cargo", "ripgrep"),
+                Is.EqualTo("cargo install ripgrep"));
+            Assert.That(ToolInstallBuiltinTool
+                .BuildCommand("go", "github.com/x/y"),
+                Is.EqualTo("go install github.com/x/y@latest"));
+            Assert.That(ToolInstallBuiltinTool
+                .BuildCommand("go", "github.com/x/y@v1"),
+                Is.EqualTo("go install github.com/x/y@v1"));
+        });
+    }
+
+    /// <summary>Covers RF-002: derivação do binário a partir do pacote.</summary>
+    [Test]
+    public void ToolInstall_DeriveBinary()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ToolInstallBuiltinTool
+                .DeriveBinary("@angular/cli"), Is.EqualTo("cli"));
+            Assert.That(ToolInstallBuiltinTool
+                .DeriveBinary("black[all]"), Is.EqualTo("black"));
+            Assert.That(ToolInstallBuiltinTool
+                .DeriveBinary("pkg==1.2"), Is.EqualTo("pkg"));
+            Assert.That(ToolInstallBuiltinTool
+                .DeriveBinary("ripgrep"), Is.EqualTo("ripgrep"));
+        });
+    }
+
+    /// <summary>Covers RF-004: check_only só verifica — nunca instala.</summary>
+    [Test]
+    public async Task ToolInstall_CheckOnly_NaoInstala()
+    {
+        var cmds = new List<string>();
+        var tool = NewInstallTool((cmd, _, _, _) =>
+        {
+            cmds.Add(cmd);
+            return Task.FromResult(
+                new ProcessOutcome(0, "/usr/bin/rg\n", false, false));
+        });
+        var r = await tool.ExecuteAsync(
+            Args("{\"manager\":\"apt-get\",\"package\":\"ripgrep\"," +
+                 "\"binary\":\"rg\",\"check_only\":true}"),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(cmds, Has.Count.EqualTo(2)); // which + --version
+            Assert.That(cmds.All(c => !c.Contains("install")), Is.True);
+            Assert.That(r.Text, Does.Contain("/usr/bin/rg"));
+        });
+    }
+
+    /// <summary>Covers RF-004: check_only ausente → installed:false.</summary>
+    [Test]
+    public async Task ToolInstall_CheckOnly_Ausente_Falso()
+    {
+        var tool = NewInstallTool(Scripted((1, "")));
+        var r = await tool.ExecuteAsync(
+            Args("{\"manager\":\"pip\",\"package\":\"x\"," +
+                 "\"check_only\":true}"),
+            Ctx(), default);
+        Assert.That(r.Text, Does.Contain("não resolvido"));
+    }
+
+    /// <summary>Covers RF-001/002: install ok → verify resolve path e
+    /// reporta estrutura de sucesso.</summary>
+    [Test]
+    public async Task ToolInstall_InstallOk_VerificaBinario()
+    {
+        var cmds = new List<string>();
+        var tool = NewInstallTool((cmd, _, _, _) =>
+        {
+            cmds.Add(cmd);
+            return Task.FromResult(new ProcessOutcome(0,
+                cmd.Contains("command -v") ? "/usr/bin/rg\n"
+                    : cmd.Contains("--version") ? "rg 14.0\n" : "",
+                false, false));
+        });
+        var r = await tool.ExecuteAsync(
+            Args("{\"manager\":\"apt-get\",\"package\":\"ripgrep\"," +
+                 "\"binary\":\"rg\"}"),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(cmds[0], Does.Contain("apt-get install -y ripgrep"));
+            Assert.That(r.Text, Does.Contain("/usr/bin/rg"));
+            Assert.That(r.Text, Does.Contain("rg 14.0"));
+        });
+    }
+
+    /// <summary>Covers RF-002: falha do install → erro honesto com
+    /// excerpt da saída.</summary>
+    [Test]
+    public async Task ToolInstall_InstallFalha_ErroHonesto()
+    {
+        var tool = NewInstallTool(Scripted(
+            (100, "E: Unable to locate package")));
+        var r = await tool.ExecuteAsync(
+            Args("{\"manager\":\"apt-get\",\"package\":\"nope\"}"),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("falhou"));
+            Assert.That(r.Text, Does.Contain("Unable to locate"));
+        });
+    }
+
+    /// <summary>Covers RF-002: install ok + verify falha →
+    /// installed:false (nunca sucesso falso).</summary>
+    [Test]
+    public async Task ToolInstall_VerifyFalha_NuncaSucessoFalso()
+    {
+        var tool = NewInstallTool(Scripted((0, "done"), (1, "")));
+        var r = await tool.ExecuteAsync(
+            Args("{\"manager\":\"pip\",\"package\":\"black\"}"),
+            Ctx(), default);
+        Assert.That(r.Text, Does.Contain("não resolvido"));
+    }
+
+    /// <summary>Covers RF-003: sudo_password primea `sudo -S -v`
+    /// igual ao shell_exec.</summary>
+    [Test]
+    public async Task ToolInstall_SudoPassword_PrimeaSudo()
+    {
+        var cmds = new List<string>();
+        var tool = NewInstallTool((cmd, _, _, _) =>
+        {
+            cmds.Add(cmd);
+            return Task.FromResult(
+                new ProcessOutcome(0, "/usr/bin/x\n", false, false));
+        });
+        await tool.ExecuteAsync(
+            Args("{\"manager\":\"apt-get\",\"package\":\"x\"," +
+                 "\"sudo_password\":\"s3cr3t\"}"),
+            Ctx(), default);
+        Assert.That(cmds[0], Does.StartWith("sudo -S -p '' -v;"));
+    }
+
     [Test]
     public async Task FileGrep_FileGlob_FileList_Funcionam()
     {
