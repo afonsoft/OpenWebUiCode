@@ -31,6 +31,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddScoped<ConfigService>();
 builder.Services.AddScoped<JwtTokenService>();
+builder.Services.AddSingleton<GeminiContextCacheService>();
 builder.Services.AddScoped<ProviderService>();
 builder.Services.AddScoped<ProviderCapabilityService>();
 builder.Services.AddHostedService<ProviderCapabilityBootstrapper>();
