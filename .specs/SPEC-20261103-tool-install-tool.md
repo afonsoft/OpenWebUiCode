@@ -9,8 +9,8 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feat/tool-install-tool-20261103` |
-| Ticket | — |
-| Status | `Draft` |
+| Ticket | `GH#672` |
+| Status | `Approved` |
 | Parent | builtin-tools improvement sweep 2026-11-03 (agent tool primitives) |
 
 ## 1. User Story
