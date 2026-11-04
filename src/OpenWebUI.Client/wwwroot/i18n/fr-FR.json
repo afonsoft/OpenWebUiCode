@@ -1376,5 +1376,6 @@
   "insights.admin_unhealthy": "Chats malsains (L/XL)",
   "insights.admin_sizes": "Distribution des tailles",
   "insights.admin_categories": "Par catégorie",
-  "insights.admin_top_issues": "Principaux problèmes"
+  "insights.admin_top_issues": "Principaux problèmes",
+  "chat.hash_knowledge": "Connaissances"
 }

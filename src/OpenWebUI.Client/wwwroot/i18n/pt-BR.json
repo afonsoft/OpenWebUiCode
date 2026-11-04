@@ -1376,5 +1376,6 @@
   "insights.admin_unhealthy": "Chats não saudáveis (L/XL)",
   "insights.admin_sizes": "Distribuição de tamanho",
   "insights.admin_categories": "Por categoria",
-  "insights.admin_top_issues": "Top issues"
+  "insights.admin_top_issues": "Top issues",
+  "chat.hash_knowledge": "Conhecimento"
 }

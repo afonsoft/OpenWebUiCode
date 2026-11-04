@@ -609,6 +609,29 @@
                             }
                         </div>
                     }
+                    @if (_hashItems.Count > 0)
+                    {
+                        @* Dropdown #knowledge (SPEC-20261104-chat-hash-collections):
+                           coleções RAG + arquivos do usuário; seleção insere #nome
+                           (server-side ResolveReferenceFileIdsAsync resolve). *@
+                        <div class="mention-list" role="listbox" aria-label="@L["chat.hash_knowledge"]">
+                            @for (var i = 0; i < _hashItems.Count; i++)
+                            {
+                                var item = _hashItems[i];
+                                var idx = i;
+                                <button class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer flex items-center gap-2 @(idx == _hashIndex ? "bg-gray-50 dark:bg-gray-850" : "")"
+                                        role="option" aria-selected="@(idx == _hashIndex)"
+                                        @onclick="() => SelectHash(item)">
+                                    <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@item.Kind</span>
+                                    <span class="truncate">#@item.Name</span>
+                                    @if (!string.IsNullOrEmpty(item.Description))
+                                    {
+                                        <span class="truncate text-gray-400 dark:text-gray-500">@item.Description</span>
+                                    }
+                                </button>
+                            }
+                        </div>
+                    }
                     <textarea
                         class="scrollbar-hidden bg-transparent dark:text-gray-100 outline-none w-full py-3 px-1 resize-none h-fit max-h-96 overflow-auto placeholder:text-gray-400 dark:placeholder:text-gray-600 text-[0.9375rem]"
                         aria-label="@L["chat.input_placeholder"]"
@@ -948,6 +971,17 @@
     private CancellationTokenSource? _bangCts;
     private static readonly System.Text.RegularExpressions.Regex BangTokenRegex =
         new(@"(?:^|\s)!(?<q>[\w-]*)$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
+
+    // #knowledge do usuário (SPEC-20261104-chat-hash-collections RF-001):
+    // coleções + arquivos; seleção insere #nome — o server resolve via
+    // ChatPipeline.ResolveReferenceFileIdsAsync (mesmo token #nome).
+    private sealed record HashItem(string Name, string Kind, string? Description);
+    private List<HashItem> _hashItems = [];
+    private List<HashItem>? _hashAll;
+    private int _hashIndex;
+    private CancellationTokenSource? _hashCts;
+    private static readonly System.Text.RegularExpressions.Regex HashTokenRegex =
+        new(@"(?:^|\s)#(?<q>[\w.\-]*)$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private List<RepoSkillItemResponse> _repoSkills = [];
     private List<RepoCommandItemResponse> _repoCommands = [];
     private List<McpPromptItemResponse> _mcpPrompts = [];
@@ -1776,6 +1810,7 @@
         _cts?.Dispose();
         _mentionCts?.Dispose();
         _bangCts?.Dispose();
+        _hashCts?.Dispose();
         _draftCts?.Dispose();
         _ttsRef?.Dispose();
         _selfRef?.Dispose();
@@ -1990,6 +2025,31 @@
             }
         }
 
+        // Dropdown #knowledge: mesma navegação do !skill (RF-004).
+        if (_hashItems.Count > 0)
+        {
+            if (e.Key == "Escape")
+            {
+                _hashItems = [];
+                return;
+            }
+            if (e.Key == "ArrowDown")
+            {
+                _hashIndex = (_hashIndex + 1) % _hashItems.Count;
+                return;
+            }
+            if (e.Key == "ArrowUp")
+            {
+                _hashIndex = (_hashIndex - 1 + _hashItems.Count) % _hashItems.Count;
+                return;
+            }
+            if (e.Key is "Enter" or "Tab")
+            {
+                SelectHash(_hashItems[_hashIndex]);
+                return;
+            }
+        }
+
         // Esc fecha o dropdown de menções (RF-001).
         if (e.Key == "Escape" && _mentionItems.Count > 0)
         {
@@ -2070,6 +2130,7 @@
         UpdatePromptSuggestions();
         QueueMentionLookup();
         QueueBangLookup();
+        QueueHashLookup();
         await SaveDraftAsync();
     }
 
@@ -2277,6 +2338,83 @@
             return;
         }
         _input = head + content;
+    }
+
+    /// Token #knowledge no fim do input (RF-001) — debounce como o !.
+    private void QueueHashLookup()
+    {
+        var match = HashTokenRegex.Match(_input);
+        _hashCts?.Cancel();
+        if (!match.Success)
+        {
+            _hashItems = [];
+            _hashIndex = 0;
+            return;
+        }
+
+        var query = match.Groups["q"].Value;
+        _hashCts = new CancellationTokenSource();
+        var ct = _hashCts.Token;
+        _ = RefreshHashSuggestionsAsync(query, ct);
+    }
+
+    /// <summary>Filtra coleções+arquivos (top-20, collections primeiro).</summary>
+    private async Task RefreshHashSuggestionsAsync(string query, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(250, ct);
+            var all = await EnsureHashItemsAsync();
+            _hashItems = all
+                .Where(h => query.Length == 0
+                    || h.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || h.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
+                .Take(20)
+                .ToList();
+            _hashIndex = 0;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException)
+        {
+            // keystroke mais recente venceu — esperado.
+        }
+    }
+
+    /// <summary>Carrega e cacheia coleções (kind=collection) + arquivos do
+    /// usuário (kind=file) — os dois shapes que o server resolve em #nome.</summary>
+    private async Task<List<HashItem>> EnsureHashItemsAsync()
+    {
+        if (_hashAll is not null)
+        {
+            return _hashAll;
+        }
+        try
+        {
+            var collections = Api.GetKnowledgeAsync();
+            var files = Api.GetFilesAsync();
+            _hashAll = (await collections)
+                .Select(c => new HashItem(c.Name, "collection", c.Description))
+                .Concat((await files).Select(f => new HashItem(f.Filename, "file", null)))
+                .OrderBy(h => h.Kind == "collection" ? 0 : 1)
+                .ThenBy(h => h.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] hash knowledge falhou: {ex.Message}");
+            return [];
+        }
+        return _hashAll;
+    }
+
+    /// <summary>RF-003: substitui o token <c>#query</c> por <c>#nome </c>.</summary>
+    private void SelectHash(HashItem item)
+    {
+        var match = HashTokenRegex.Match(_input);
+        var head = match.Success ? _input[..match.Index] : _input;
+        _input = $"{head}#{item.Name} ";
+        _hashItems = [];
+        _hashIndex = 0;
     }
 
     /// <summary>

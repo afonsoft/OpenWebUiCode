@@ -1376,5 +1376,6 @@
   "insights.admin_unhealthy": "不健全なチャット（L/XL）",
   "insights.admin_sizes": "サイズ分布",
   "insights.admin_categories": "カテゴリ別",
-  "insights.admin_top_issues": "主なイシュー"
+  "insights.admin_top_issues": "主なイシュー",
+  "chat.hash_knowledge": "ナレッジ"
 }
