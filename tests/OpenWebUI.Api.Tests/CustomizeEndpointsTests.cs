@@ -244,6 +244,49 @@ public class CustomizeEndpointsTests
         Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
+    // ---------------- allowed-tools + plugins (SPEC-20261104) ----------------
+
+    [Test]
+    public async Task Skill_AllowedTools_Persiste_EVoltaNoCatalogo()
+    {
+        UseToken(_adminToken);
+        var created = await (await _client.PostAsJsonAsync("/api/v1/customize/skills",
+            new SkillUpsertRequest("Restrita", null, "corpo", Global: true,
+                AllowedTools: "File_Read, shell_exec , file_read")))
+            .Content.ReadFromJsonAsync<SkillCatalogItem>();
+        Assert.That(created, Is.Not.Null);
+        // Normalizado: trim + lower + dedupe.
+        Assert.That(created!.AllowedTools, Is.EqualTo("file_read,shell_exec"));
+
+        var list = await _client.GetFromJsonAsync<JsonWrapper<SkillCatalogItem>>(
+            "/api/v1/customize/skills");
+        Assert.That(list!.Data.Single(s => s.Name == "Restrita").AllowedTools,
+            Is.EqualTo("file_read,shell_exec"));
+
+        // Update limpa a restrição.
+        Assert.That((await _client.PutAsJsonAsync(
+            $"/api/v1/customize/skills/{created.Id}",
+            new SkillUpsertRequest("Restrita", null, "corpo2", Global: true)))
+            .StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        list = await _client.GetFromJsonAsync<JsonWrapper<SkillCatalogItem>>(
+            "/api/v1/customize/skills");
+        Assert.That(list!.Data.Single(s => s.Name == "Restrita").AllowedTools, Is.Null);
+    }
+
+    [Test]
+    public async Task PluginImport_NaoAdmin_403_EUrlInvalida_400()
+    {
+        UseToken(_userToken);
+        Assert.That((await _client.PostAsJsonAsync("/api/v1/admin/plugins/import",
+            new PluginImportRequest("https://github.com/afonsoft/skills"))).StatusCode,
+            Is.EqualTo(HttpStatusCode.Forbidden));
+
+        UseToken(_adminToken);
+        var bad = await _client.PostAsJsonAsync("/api/v1/admin/plugins/import",
+            new PluginImportRequest("https://evil.example.com/repo"));
+        Assert.That(bad.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+    }
+
     /// <summary>Envelope <c>{ data: [...] }</c> das listagens customize.</summary>
     private sealed record JsonWrapper<T>(List<T> Data);
 }

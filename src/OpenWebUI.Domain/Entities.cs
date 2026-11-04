@@ -1543,6 +1543,11 @@ public class Skill
     /// <summary>Conteúdo markdown/instrução injetado no system prompt.</summary>
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>Tools permitidas quando a skill está ativa (CSV) —
+    /// paridade Devin <c>allowed-tools</c> (SPEC-20261104): null = sem
+    /// restrição; preenchido = só essas + as built-in essenciais.</summary>
+    public string? AllowedTools { get; set; }
+
     /// <summary>Se a skill está habilitada.</summary>
     public bool IsActive { get; set; } = true;
 

@@ -124,6 +124,8 @@
                         <input class="input" placeholder="@L["customize.field_name"]" aria-label="@L["customize.field_name"]" @bind="_skName" />
                         <input class="input" placeholder="@L["customize.field_desc"]" aria-label="@L["customize.field_desc"]" @bind="_skDesc" />
                         <textarea class="input" rows="3" placeholder="@L["customize.field_content"]" aria-label="@L["customize.field_content"]" @bind="_skContent"></textarea>
+                        <input class="input" placeholder="@L["customize.field_allowed_tools"]" aria-label="@L["customize.field_allowed_tools"]" @bind="_skTools" />
+                        <div class="card-sub">@L["customize.allowed_tools_hint"]</div>
                         <div class="flex items-center gap-4">
                             @if (IsAdmin)
                             {
@@ -148,6 +150,7 @@
                             @skill.Name
                             <span class="card-sub">· @SkillSourceLabel(skill.Source)</span>
                             @if (skill.DisabledByAdmin) { <span class="card-sub">· @L["customize.disabled_by_admin"]</span> }
+                            @if (!string.IsNullOrWhiteSpace(skill.AllowedTools)) { <span class="card-sub">· @L["customize.restricted_tools"]</span> }
                         </div>
                         @if (!string.IsNullOrEmpty(skill.Description))
                         {
@@ -266,6 +269,7 @@
     private string _skName = "";
     private string? _skDesc;
     private string _skContent = "";
+    private string? _skTools;
     private bool _skGlobal;
     private string _importUrl = "https://github.com/afonsoft/skills";
     private bool _importing;
@@ -393,6 +397,7 @@
         _skName = "";
         _skDesc = null;
         _skContent = "";
+        _skTools = null;
         _skGlobal = false;
     }
 
@@ -402,6 +407,7 @@
         _skName = skill.Name;
         _skDesc = skill.Description;
         _skContent = skill.Content ?? "";
+        _skTools = skill.AllowedTools;
         _skGlobal = skill.Source == "global";
     }
 
@@ -409,7 +415,8 @@
     {
         _error = null;
         var request = new SkillUpsertRequest(
-            _skName.Trim(), _skDesc?.Trim(), _skContent, _skGlobal && IsAdmin);
+            _skName.Trim(), _skDesc?.Trim(), _skContent, _skGlobal && IsAdmin,
+            _skTools);
         var result = _skEditId is null
             ? await Api.CreateCustomizeSkillAsync(request)
             : await Api.UpdateCustomizeSkillAsync(_skEditId, request);

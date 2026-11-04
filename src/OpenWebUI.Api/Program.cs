@@ -160,6 +160,8 @@ builder.Services.AddScoped<ContextSnapshotService>();
 // Camadas de configuração por usuário (SPEC-20261014-config-layers).
 builder.Services.AddScoped<UserConfigOverlayService>();
 builder.Services.AddScoped<SkillImportService>();
+builder.Services.AddScoped<SkillToolRestrictionService>();
+builder.Services.AddScoped<PluginImportService>();
 builder.Services.AddScoped<ChatInsightsService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
 builder.Services.AddScoped<HistoryResourceService>();

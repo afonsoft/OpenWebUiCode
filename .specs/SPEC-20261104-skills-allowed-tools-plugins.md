@@ -77,39 +77,39 @@ i18n ×8 · tests Api (filter + import) + Client (editor/badge)
 - **Input → Output:** `allowed-tools: read, search_files` → `["read","search_files"]`; ausente → null (sem restrição).
 
 ### RF-002: Enforcement por skills ativas
-- **Description:** ao montar a tool list do turno, coletar `AllowedTools` não-vazios das skills ativas (DB global+pessoal habilitadas e injetadas + repo skills ativadas via `!`/autoinvoke). Tool permitida se: `essencial` OU `nenhuma skill restritiva ativa` OU `presente na interseção de todas as listas restritivas`.
-- **Rules:** essenciais = `read, write, edit, exec, list_dir, search_files, todo_write` (constante); interseção vazia → só essenciais; log debug quando filtro aplicado (`n skills restritivas, m tools removidas`) — sem vazar nomes de skills de outros usuários (todas as ativas são do próprio usuário/global).
+- **Description:** ao montar a tool list do turno (`ChatRunExecutor.LoadRunToolsAsync`, antes do split deferred), coletar `AllowedTools` não-vazios das skills ativas server-side — DB skills via `MetaJson.skill_ids` do modelo custom + repo/global/remote `autoinvoke:true` que passam nos toggles. Tool permitida se presente na interseção; interseção vazia → só essenciais.
+- **Rules:** essenciais = `file_list, file_read, file_grep, file_glob, todo_write` (nomes reais das built-ins — só leitura + tracking; mutáveis excluídas propositalmente). Skill sem `AllowedTools` = não-restritiva. Evento `skills.allowed_tools` auditável quando filtrado. **Limitação conhecida:** skill inserida via `!` vira texto no prompt (o servidor não vê a referência) — restrição aplica-se só a skills ativadas server-side (model-bound + autoinvoke).
 
 ### RF-003: UI — editor, badge, dropdown
 - **Description:** editor de skill em `/customize` ganha campo "Allowed tools (CSV, opcional)"; catálogo mostra badge `restricted` quando preenchido; `!` dropdown mostra ícone/tooltip.
 
 ### RF-004: `plugin.json` + import-plugin (admin)
-- **Description:** `POST /api/v1/admin/skills/import-plugin {repoUrl}` — fetch `plugin.json` (validate: skills[] paths `.md`, commands[] paths `.md`, mcps[] `{name,url}` http-only); skills→`Skill` global (upsert por nome, preserva allowed-tools), commands→`Prompt` global, mcps→`McpServer` org (`UserId=null`) criado **desabilitado** sem headers (admin configura secrets depois). SSRF: só github.com + hosts já allowlistados no `SkillImportService`.
-- **Input → Output:** `{repoUrl}` → `{imported:{skills:n,commands:n,mcps:n}, errors:[...]}`; 400 manifest inválido; 403 non-admin.
+- **Description:** `POST /api/v1/admin/plugins/import {repoUrl}` — fetch `plugin.json` da raiz (validate: skills[] paths `.md`/`SKILL.md` dir, commands[] paths `.md`, mcps[] `{name,transport,url|command}`); skills→`Skill` global (upsert por nome, preserva allowed-tools), commands→`Skill` global (não existe entidade Command no DB — commands de repo vira skill injetável; documentado), mcps→`McpServer` org (`UserId=null`) criado **desabilitado** sem headers (admin configura secrets depois). SSRF: só github.com/raw.githubusercontent.com (mesmo do `SkillImportService`).
+- **Input → Output:** `{repoUrl}` → `{importedSkills:[...], importedMcps:[...], skipped:[{name,reason}], warnings:[...]}`; 400 manifest ausente/malformado/URL não-GitHub; 403 non-admin; 502 falha GitHub.
 
 ### RF-005: i18n + testes
 - **Description:** `customize.skill_allowed_tools`, `customize.skill_restricted`, `customize.import_plugin*`, `chat.bang_restricted` ×8. NUnit: parse frontmatter, interseção filter, essencial sempre permitido, import-plugin 403/400/happy (mock http). bUnit: badge restricted, campo no editor.
 
 ## 5. API Contract
 
-**Endpoint:** `POST /api/v1/admin/skills/import-plugin` — admin JWT.
+**Endpoint:** `POST /api/v1/admin/plugins/import` — admin JWT.
 
 **Request:** `{"repoUrl":"https://github.com/org/plugin-repo"}`
 **Response 200:**
 ```json
-{"imported":{"skills":3,"commands":2,"mcps":1},"errors":[]}
+{"importedSkills":["foo","deploy"],"importedMcps":["db"],"skipped":[],"warnings":[]}
 ```
 `plugin.json` (no repo, root):
 ```json
-{"name":"my-plugin","skills":["skills/foo/SKILL.md"],"commands":["commands/deploy.md"],"mcps":[{"name":"db","url":"https://mcp.example.com/sse","transport":"sse"}]}
+{"name":"my-plugin","skills":["skills/foo"],"commands":["commands/deploy.md"],"mcps":[{"name":"db","transport":"http","url":"https://mcp.example.com/mcp"}]}
 ```
-**Erros:** 400 manifest ausente/inválido/URL não-https; 403 non-admin; 422 repo inacessível.
+**Erros:** 400 manifest ausente/malformado/URL não-GitHub; 403 non-admin; 502 repo/árvore/download inacessível.
 
 ## 6. Acceptance Criteria
 
 - [ ] **Dado** SKILL.md com `allowed-tools: read, search` **quando** descoberta **então** `RepoEntry.AllowedTools == ["read","search"]`.
-- [ ] **Dado** skill restritiva ativa com `[read]` **quando** turno monta tools **então** tools sem essenciais+`read` são removidas; `exec` continua (essencial).
-- [ ] **Dado** 2 skills restritivas `[read,exec]` e `[read]` ativas **quando** monta tools **então** não-essenciais permitidas = interseção `{read}`.
+- [ ] **Dado** skill restritiva ativa com `[file_read]` **quando** turno monta tools **então** tools fora do conjunto são removidas antes do anúncio/deferral.
+- [ ] **Dado** 2 skills restritivas `[file_read,file_write]` e `[file_read]` ativas **quando** monta tools **então** permitidas = interseção `{file_read}`; interseção vazia → só essenciais.
 - [ ] **Dado** nenhuma skill restritiva ativa **quando** monta tools **então** comportamento atual inalterado.
 - [ ] **Dado** `plugin.json` com 2 skills+1 mcp **quando** admin importa **então** 2 skills globais + 1 MCP org desabilitado criados; reimport idempotente.
 - [ ] **Dado** non-admin **quando** POST import-plugin **então** 403; manifest malformado → 400.

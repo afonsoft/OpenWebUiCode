@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "falló",
   "insights.skip_unsupported": "no soportado",
   "insights.skip_requires_draft": "requiere borrador",
-  "insights.skip_empty": "vacío"
+  "insights.skip_empty": "vacío",
+  "customize.field_allowed_tools": "Herramientas permitidas (csv, opcional)",
+  "customize.allowed_tools_hint": "Restringe las herramientas mientras la skill esté activa. Vacío = sin restricción.",
+  "customize.restricted_tools": "herramientas restringidas",
+  "chat.bang_restricted": "restringida"
 }

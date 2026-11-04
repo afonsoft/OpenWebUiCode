@@ -48,14 +48,17 @@ public sealed record SkillCatalogItem(
     /// <summary>Pode ser editada via API (DB do próprio escopo permitido).</summary>
     bool Editable,
     /// <summary>Corpo injetável — preenchido em itens DB; repo via fetch dedicado.</summary>
-    string? Content);
+    string? Content,
+    /// <summary>Tools permitidas (CSV) — paridade Devin allowed-tools.</summary>
+    string? AllowedTools = null);
 
 /// <summary>Upsert de skill DB. <c>Global=true</c> só admin.</summary>
 public sealed record SkillUpsertRequest(
     string Name,
     string? Description,
     string Content,
-    bool Global = false);
+    bool Global = false,
+    string? AllowedTools = null);
 
 /// <summary>Denylist global de skills (admin) — por nome.</summary>
 public sealed record SkillsDisabledRequest(List<string> Names);
@@ -73,3 +76,16 @@ public sealed record SkillImportSkip(string Name, string Reason);
 public sealed record SkillImportResult(
     List<string> Imported,
     List<SkillImportSkip> Skipped);
+
+/// <summary>Importação de plugin (plugin.json) de repo git público — admin.</summary>
+public sealed record PluginImportRequest(string RepoUrl);
+
+/// <summary>Item pulado na importação de plugin com o motivo.</summary>
+public sealed record PluginImportSkip(string Name, string Reason);
+
+/// <summary>Resultado do import de plugin: skills/commands, MCPs e avisos.</summary>
+public sealed record PluginImportResult(
+    List<string> ImportedSkills,
+    List<string> ImportedMcps,
+    List<PluginImportSkip> Skipped,
+    List<string> Warnings);

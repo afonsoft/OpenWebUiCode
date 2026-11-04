@@ -601,6 +601,10 @@
                                         @onclick="() => SelectBangAsync(item)">
                                     <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@item.Source</span>
                                     <span class="truncate">!@item.Name</span>
+                                    @if (!string.IsNullOrWhiteSpace(item.AllowedTools))
+                                    {
+                                        <span class="text-[10px] px-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 shrink-0" title="@item.AllowedTools">@L["chat.bang_restricted"]</span>
+                                    }
                                     @if (!string.IsNullOrEmpty(item.Description))
                                     {
                                         <span class="truncate text-gray-400 dark:text-gray-500">@item.Description</span>

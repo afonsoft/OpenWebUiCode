@@ -1386,5 +1386,9 @@
   "insights.skip_failed": "失敗",
   "insights.skip_unsupported": "非対応",
   "insights.skip_requires_draft": "下書きが必要",
-  "insights.skip_empty": "空"
+  "insights.skip_empty": "空",
+  "customize.field_allowed_tools": "許可ツール (csv, 任意)",
+  "customize.allowed_tools_hint": "スキル有効中に使用できるツールを制限します。空 = 無制限。",
+  "customize.restricted_tools": "ツール制限あり",
+  "chat.bang_restricted": "制限あり"
 }
