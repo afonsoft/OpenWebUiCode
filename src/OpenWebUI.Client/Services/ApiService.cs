@@ -521,6 +521,66 @@ public class ApiService(HttpClient http, AuthService auth)
                 + (chatId is null ? "" : $"?chatId={chatId}"),
             new McpServerEnabledRequest(enabled));
 
+    // ---------------- Customize hub (SPEC-20261104-customize-hub) ----------------
+
+    /// <summary>Notas de conhecimento efetivas do usuário (globais + próprias).</summary>
+    public async Task<List<KnowledgeNoteResponse>> GetKnowledgeNotesAsync() =>
+        (await SendAsync<CustomizeListResponse<KnowledgeNoteResponse>>(
+            HttpMethod.Get, "/api/v1/customize/knowledge"))?.Data ?? [];
+
+    /// <summary>Cria nota de conhecimento (<c>Global=true</c> exige admin).</summary>
+    public Task<KnowledgeNoteResponse?> CreateKnowledgeNoteAsync(KnowledgeNoteRequest request) =>
+        SendAsync<KnowledgeNoteResponse>(HttpMethod.Post, "/api/v1/customize/knowledge", request);
+
+    /// <summary>Atualiza nota de conhecimento do escopo permitido.</summary>
+    public Task<KnowledgeNoteResponse?> UpdateKnowledgeNoteAsync(string id, KnowledgeNoteRequest request) =>
+        SendAsync<KnowledgeNoteResponse>(HttpMethod.Put, $"/api/v1/customize/knowledge/{id}", request);
+
+    /// <summary>Remove nota de conhecimento do escopo permitido.</summary>
+    public async Task<bool> DeleteKnowledgeNoteAsync(string id) =>
+        await SendStatusAsync(HttpMethod.Delete, $"/api/v1/customize/knowledge/{id}");
+
+    /// <summary>Toggle por usuário — nota global grava tombstone; própria grava flag.</summary>
+    public async Task<bool> SetKnowledgeNoteEnabledAsync(string id, bool enabled) =>
+        await SendStatusAsync(HttpMethod.Put,
+            $"/api/v1/customize/knowledge/{id}/enabled", new CustomizeEnabledRequest(enabled));
+
+    /// <summary>Catálogo unificado de skills (global + pessoal + repo).</summary>
+    public async Task<List<SkillCatalogItem>> GetCustomizeSkillsAsync() =>
+        (await SendAsync<CustomizeListResponse<SkillCatalogItem>>(
+            HttpMethod.Get, "/api/v1/customize/skills"))?.Data ?? [];
+
+    /// <summary>Cria skill DB (<c>Global=true</c> exige admin).</summary>
+    public Task<SkillCatalogItem?> CreateCustomizeSkillAsync(SkillUpsertRequest request) =>
+        SendAsync<SkillCatalogItem>(HttpMethod.Post, "/api/v1/customize/skills", request);
+
+    /// <summary>Atualiza skill DB do escopo permitido.</summary>
+    public Task<SkillCatalogItem?> UpdateCustomizeSkillAsync(string id, SkillUpsertRequest request) =>
+        SendAsync<SkillCatalogItem>(HttpMethod.Put, $"/api/v1/customize/skills/{id}", request);
+
+    /// <summary>Remove skill DB do escopo permitido.</summary>
+    public async Task<bool> DeleteCustomizeSkillAsync(string id) =>
+        await SendStatusAsync(HttpMethod.Delete, $"/api/v1/customize/skills/{id}");
+
+    /// <summary>Toggle por usuário — global grava tombstone; deny admin é absoluto.</summary>
+    public async Task<bool> SetCustomizeSkillEnabledAsync(string id, bool enabled) =>
+        await SendStatusAsync(HttpMethod.Put,
+            $"/api/v1/customize/skills/{id}/enabled", new CustomizeEnabledRequest(enabled));
+
+    /// <summary>Denylist global de skills por nome (admin).</summary>
+    public async Task<List<string>> GetAdminDisabledSkillsAsync() =>
+        (await SendAsync<CustomizeNamesResponse>(
+            HttpMethod.Get, "/api/v1/admin/skills/disabled"))?.Names ?? [];
+
+    /// <summary>Grava a denylist global de skills (admin).</summary>
+    public async Task<bool> SetAdminDisabledSkillsAsync(List<string> names) =>
+        await SendStatusAsync(HttpMethod.Put,
+            "/api/v1/admin/skills/disabled", new SkillsDisabledRequest(names));
+
+    /// <summary>Importa SKILL.md de repositório git público como skills globais (admin).</summary>
+    public Task<SkillImportResult?> ImportSkillsAsync(SkillImportRequest request) =>
+        SendAsync<SkillImportResult>(HttpMethod.Post, "/api/v1/admin/skills/import", request);
+
     // ---------------- Prompts ----------------
 
     /// <summary>Lista prompts do usuário.</summary>
@@ -2337,6 +2397,12 @@ public sealed record SharedChatUser(string? Name);
 
 /// <summary>Resposta {deleted: n} de operações em lote.</summary>
 public sealed record DeletedCountResponse(int Deleted);
+
+/// <summary>Envelope <c>{ data: [...] }</c> das listagens do hub Customize.</summary>
+public sealed record CustomizeListResponse<T>(List<T> Data);
+
+/// <summary>Envelope <c>{ names: [...] }</c> da denylist global de skills.</summary>
+public sealed record CustomizeNamesResponse(List<string> Names);
 
 /// <summary>Resposta do /ollama/api/tags (modelos instalados).</summary>
 /// <param name="Models">Modelos presentes na conexão.</param>

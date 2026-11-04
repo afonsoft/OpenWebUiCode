@@ -1531,8 +1531,8 @@ public class Skill
     /// <summary>Identificador único (GUID).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
-    /// <summary>Dono da skill.</summary>
-    public string UserId { get; set; } = string.Empty;
+    /// <summary>Dono da skill; <c>null</c> = global da organização (admin).</summary>
+    public string? UserId { get; set; } = string.Empty;
 
     /// <summary>Nome de exibição.</summary>
     public string Name { get; set; } = string.Empty;
@@ -1545,6 +1545,39 @@ public class Skill
 
     /// <summary>Se a skill está habilitada.</summary>
     public bool IsActive { get; set; } = true;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>Nota de conhecimento estilo Devin (SPEC-20261104-customize-hub):
+/// instruções/contexto injetadas no system prompt quando <see cref="Pinned"/>
+/// ou quando o <see cref="Trigger"/> casa a mensagem do usuário.
+/// <see cref="UserId"/> <c>null</c> = nota global da organização (admin);
+/// tombstones por usuário em <c>u:{id}:knowledge-disabled</c>.</summary>
+public class KnowledgeNote
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono da nota; <c>null</c> = global da organização (admin).</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>Título curto — único por owner.</summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Descrição/palavras-chave de quando aplicar a nota
+    /// (obrigatório quando <see cref="Pinned"/> é false).</summary>
+    public string? Trigger { get; set; }
+
+    /// <summary>Conteúdo markdown injetado no contexto (máx. 8000 chars).</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>Nota pinada é sempre injetada, ignorando o trigger.</summary>
+    public bool Pinned { get; set; }
 
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }

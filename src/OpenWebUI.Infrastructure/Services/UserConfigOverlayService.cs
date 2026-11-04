@@ -36,6 +36,7 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
     private static string UserKey(string userId, string key) => $"u:{userId}:{key}";
     private static string McpDisabledKey(string userId) => $"u:{userId}:mcp-disabled";
     private static string SkillsDisabledKey(string userId) => $"u:{userId}:skills-disabled";
+    private static string KnowledgeDisabledKey(string userId) => $"u:{userId}:knowledge-disabled";
 
     /// <summary>Chave kv das chaves de provider do usuário (BYOK, RF-005).</summary>
     public static string ProviderKeysKey(string userId) => $"user:{userId}:provider-keys";
@@ -284,5 +285,40 @@ public sealed class UserConfigOverlayService(AppDbContext db, ConfigService conf
             names.Remove(skillName);
         }
         await config.SetAsync(SkillsDisabledKey(userId), names.ToList(), ct);
+    }
+
+    /// <summary>Sobrescreve a denylist global de skills (admin — nomes normalizados).</summary>
+    public async Task SetGlobalSkillsDisabledAsync(
+        IEnumerable<string> names, CancellationToken ct)
+    {
+        var clean = names.Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        await config.SetAsync(GlobalSkillsDisabledKey, clean, ct);
+    }
+
+    // ---------------- Knowledge notes (SPEC-20261104-customize-hub) ----------------
+
+    /// <summary>Ids de notas globais de conhecimento que o usuário desligou para si.</summary>
+    public async Task<HashSet<string>> GetKnowledgeDisabledAsync(
+        string userId, CancellationToken ct) =>
+        new(await config.GetAsync<List<string>>(KnowledgeDisabledKey(userId), [], ct),
+            StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Liga/desliga uma nota global só para este usuário (tombstone).</summary>
+    public async Task SetKnowledgeDisabledAsync(
+        string userId, string noteId, bool disabled, CancellationToken ct)
+    {
+        var set = await GetKnowledgeDisabledAsync(userId, ct);
+        if (disabled)
+        {
+            set.Add(noteId);
+        }
+        else
+        {
+            set.Remove(noteId);
+        }
+        await config.SetAsync(KnowledgeDisabledKey(userId), set.ToList(), ct);
     }
 }

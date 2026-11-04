@@ -151,6 +151,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     /// <summary>Skills do workspace.</summary>
     public DbSet<Skill> Skills => Set<Skill>();
+
+    /// <summary>Notas de conhecimento org/pessoal (SPEC-20261104-customize-hub).</summary>
+    public DbSet<KnowledgeNote> KnowledgeNotes => Set<KnowledgeNote>();
     public DbSet<AgentMemory> AgentMemories => Set<AgentMemory>();
 
     /// <summary>Functions do ecossistema de plugins.</summary>

@@ -208,10 +208,11 @@ tests/OpenWebUI.Client.Tests/CustomizePageTests.cs       # NOVO
 
 ## 9. Definition of Done
 
-- [ ] `/customize` + 3 abas funcionais, item na sidebar.
-- [ ] Knowledge: CRUD escopado, pin/trigger, injeção no prompt, tombstone, "sugerir".
-- [ ] Skills: catálogo 3-fontes, CRUD escopado, deny global admin, import de repo (afonsoft/skills testado).
-- [ ] MCPs: seções org+pessoal unificadas sobre endpoints existentes.
-- [ ] Migration aplicada e testada; i18n 8 locales; drift guards verdes.
-- [ ] `.mcp.json` com DeepWiki commitado.
-- [ ] Testes NUnit+bUnit novos verdes; build limpo; SPEC marcada `Done`; Issue criada e linkada.
+- [x] `/customize` + 3 abas funcionais, item na sidebar.
+- [x] Knowledge: CRUD escopado, pin/trigger, injeção no prompt, tombstone, "sugerir".
+- [x] Skills: catálogo 3-fontes, CRUD escopado, deny global admin, import de repo (afonsoft/skills testado).
+- [x] MCPs: seções org+pessoal unificadas sobre endpoints existentes.
+- [x] Migration aplicada e testada; i18n 8 locales; drift guards verdes.
+- [x] `.mcp.json` com DeepWiki commitado.
+- [x] Testes NUnit+bUnit novos verdes (9 NUnit + 5 bUnit); build limpo; Issue criada e linkada (GH#689).
+- [ ] SPEC arquivada em `docs/specs/` com `Status: Done` + `Delivered` (PR).

@@ -102,7 +102,8 @@ Nenhum endpoint novo **nesta** SPEC — consome `GET /api/v1/customize/skills` (
 
 ## 9. Definition of Done
 
-- [ ] `!` lista skills efetivas, filtra, injeta no composer.
-- [ ] Navegação por teclado e a11y equivalentes ao `@`.
-- [ ] Zero regressão nos testes de `/` e `@` existentes.
-- [ ] i18n ×8 + drift guards; bUnit novos verdes; SPEC `Done` + Issue linkada.
+- [x] `!` lista skills efetivas, filtra, injeta no composer.
+- [x] Navegação por teclado (↑↓/Enter/Tab/Esc) e a11y equivalentes ao `@`.
+- [x] Zero regressão nos testes de `/` e `@` existentes (12/12 no filtro combinado).
+- [x] i18n ×8 + drift guards; bUnit novos verdes (7); Issue linkada (GH#690).
+- [ ] SPEC arquivada em `docs/specs/` com `Status: Done` + `Delivered` (PR).
