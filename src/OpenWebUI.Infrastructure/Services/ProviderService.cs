@@ -1972,12 +1972,35 @@ public class ProviderService(
                 case "max_completion_tokens":
                     payload[MaxTokensKey] = ToJsonNode(value);
                     break;
+                // SPEC-20261103-anthropic-thinking-config RF-001/RF-002:
+                // knob first-class de extended thinking (model params,
+                // variant settings ou connection settings → Params).
+                // budget mínimo da API é 1024; <=0 desliga explicitamente.
+                case "thinking_budget":
+                    if (IntNum(ToJsonNode(value)) is { } raw && raw > 0)
+                    {
+                        payload["thinking"] = new JsonObject
+                        {
+                            ["type"] = "enabled",
+                            ["budget_tokens"] = Math.Max(1024, raw),
+                        };
+                    }
+                    break;
                 case "stop":
                     payload["stop_sequences"] = value is string s
                         ? new JsonArray(s)
                         : ToJsonNode(value);
                     break;
             }
+        }
+        // RF-002: a API exige max_tokens > budget_tokens — quando o
+        // budget passa do max configurado (default 4096), eleva para
+        // budget+1024 com cap conservador de 64k de saída.
+        if (payload["thinking"] is JsonObject th
+            && IntNum(th["budget_tokens"]) is { } tb
+            && (IntNum(payload[MaxTokensKey]) ?? 0) <= tb)
+        {
+            payload[MaxTokensKey] = Math.Min(tb + 1024, 64_000);
         }
     }
 

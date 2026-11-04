@@ -12,8 +12,7 @@ internal sealed class StubHttpHandler : HttpMessageHandler
     private readonly Queue<(HttpStatusCode Status, string Body,
         TimeSpan? RetryAfter)> _responses = new();
 
-    public List<(string Method, string Url, string Body)> Requests { get; } =
-        new();
+    public List<RecordedHttpRequest> Requests { get; } = new();
 
     public void Enqueue(
         HttpStatusCode status, string body, TimeSpan? retryAfter = null) =>
@@ -22,11 +21,15 @@ internal sealed class StubHttpHandler : HttpMessageHandler
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken ct)
     {
-        Requests.Add((request.Method.Method,
+        Requests.Add(new RecordedHttpRequest(
+            request.Method.Method,
             request.RequestUri?.ToString() ?? string.Empty,
             request.Content is null
                 ? string.Empty
-                : await request.Content.ReadAsStringAsync(ct)));
+                : await request.Content.ReadAsStringAsync(ct),
+            request.Headers.ToDictionary(
+                h => h.Key, h => string.Join(",", h.Value),
+                StringComparer.OrdinalIgnoreCase)));
 
         var (status, body, retryAfter) = _responses.Count > 0
             ? _responses.Dequeue()
@@ -51,3 +54,7 @@ internal sealed class StubHttpFactory(HttpMessageHandler handler)
 {
     public HttpClient CreateClient(string name) => new(handler);
 }
+
+internal sealed record RecordedHttpRequest(
+    string Method, string Url, string Body,
+    IReadOnlyDictionary<string, string> Headers);
