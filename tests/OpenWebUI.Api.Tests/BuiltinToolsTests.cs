@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Caching.Hybrid;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -1155,6 +1156,246 @@ public class BuiltinToolsTests
             Assert.That(r.Text, Does.Contain("2: l2").And.Contain("4: l4"));
             Assert.That(r.Text, Does.Not.Contain("==="));
         });
+    }
+
+    // ---------------- notebook_edit/read (SPEC-20261103-notebook-edit-tool) ----------------
+
+    private static string Nb(params string[] cellsJson) => $$"""
+        {
+          "nbformat": 4, "nbformat_minor": 5,
+          "metadata": { "kernelspec": { "name": "python3" } },
+          "cells": [{{string.Join(",", cellsJson)}}]
+        }
+        """;
+
+    private static string NbCodeCell(string id, string src,
+        string outputs = "[]", string execCount = "null") => $$"""
+        {"id":"{{id}}","cell_type":"code","metadata":{"lang":"py"},
+         "execution_count":{{execCount}},"outputs":{{outputs}},"source":{{src}}}
+        """;
+
+    private static string NbMdCell(string id, string src) => $$"""
+        {"id":"{{id}}","cell_type":"markdown","metadata":{"tag":"h"},
+         "source":{{src}}}
+        """;
+
+    private string WriteNb(string name, string json)
+    {
+        var p = Path.Join(_workspace, name);
+        File.WriteAllText(p, json);
+        return p;
+    }
+
+    /// <summary>Covers RF-001: notebook_read lista células com índice,
+    /// tipo e preview — sem dump do JSON inteiro.</summary>
+    [Test]
+    public async Task NotebookRead_ListaCelulas()
+    {
+        WriteNb("nb.ipynb", Nb(
+            NbCodeCell("c1", "[\"print(1)\\n\"]"),
+            NbMdCell("m1", "[\"# titulo\\n\"]")));
+
+        var r = await new NotebookReadBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"nb.ipynb\"}"), Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("0").And.Contain("code"));
+            Assert.That(r.Text, Does.Contain("1").And.Contain("markdown"));
+            Assert.That(r.Text, Does.Contain("print(1)"));
+            Assert.That(r.Text, Does.Not.Contain("nbformat_minor"));
+        });
+    }
+
+    /// <summary>Covers RF-002/RF-003: replace em célula code zera
+    /// outputs/execution_count e preserva metadados e ids.</summary>
+    [Test]
+    public async Task NotebookEdit_ReplaceCode_ZeraOutputs()
+    {
+        var nb = WriteNb("e.ipynb", Nb(
+            NbCodeCell("c1", "[\"old()\\n\"]",
+                outputs: "[{\"output_type\":\"stream\",\"text\":[\"x\"]}]",
+                execCount: "7"),
+            NbMdCell("m1", "[\"# md\\n\"]")));
+
+        var r = await new NotebookEditBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"e.ipynb\",\"operation\":\"replace\"," +
+                 "\"index\":0,\"source\":\"new()\\n\"}"),
+            Ctx(), default);
+
+        var doc = JsonNode.Parse(File.ReadAllText(nb))!;
+        var cells = doc["cells"]!.AsArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("0").Or.Contain("ok"));
+            var cell = cells[0]!;
+            Assert.That(cell["source"]!.ToJsonString(),
+                Does.Contain("new()"));
+            Assert.That(cell["outputs"]!.AsArray(), Is.Empty);
+            Assert.That(cell.AsObject()
+                .ContainsKey("execution_count"), Is.True);
+            Assert.That(cell["execution_count"], Is.Null);
+            Assert.That(cell["id"]!.GetValue<string>(), Is.EqualTo("c1"));
+            Assert.That(cell["metadata"]!["lang"]!.GetValue<string>(),
+                Is.EqualTo("py"));
+            // demais células e metadados do doc intactos
+            Assert.That(cells[1]!["id"]!.GetValue<string>(), Is.EqualTo("m1"));
+            Assert.That(doc["nbformat"]!.GetValue<int>(), Is.EqualTo(4));
+            Assert.That(doc["metadata"]!["kernelspec"], Is.Not.Null);
+        });
+    }
+
+    /// <summary>Covers RF-003: replace em markdown só toca o source.</summary>
+    [Test]
+    public async Task NotebookEdit_ReplaceMarkdown_SoSource()
+    {
+        var nb = WriteNb("md.ipynb", Nb(NbMdCell("m1", "[\"# old\\n\"]")));
+
+        await new NotebookEditBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"md.ipynb\",\"operation\":\"replace\"," +
+                 "\"index\":0,\"source\":\"# novo\\n\"}"),
+            Ctx(), default);
+
+        var cell = JsonNode.Parse(File.ReadAllText(nb))!["cells"]![0]!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(cell["source"]!.ToJsonString(), Does.Contain("novo"));
+            Assert.That(cell["id"]!.GetValue<string>(), Is.EqualTo("m1"));
+            Assert.That(cell["metadata"]!["tag"]!.GetValue<string>(),
+                Is.EqualTo("h"));
+            Assert.That(cell["cell_type"]!.GetValue<string>(),
+                Is.EqualTo("markdown"));
+        });
+    }
+
+    /// <summary>Covers RF-002: insert cria célula no índice com id único,
+    /// outputs[] e execution_count null para code.</summary>
+    [Test]
+    public async Task NotebookEdit_InsertCode_NoIndice()
+    {
+        var nb = WriteNb("i.ipynb", Nb(
+            NbCodeCell("c1", "[\"a\\n\"]"), NbMdCell("m1", "[\"t\\n\"]")));
+
+        var r = await new NotebookEditBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"i.ipynb\",\"operation\":\"insert\"," +
+                 "\"index\":1,\"cell_type\":\"code\"," +
+                 "\"source\":\"novo()\\n\"}"),
+            Ctx(), default);
+
+        var cells = JsonNode.Parse(File.ReadAllText(nb))!["cells"]!.AsArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(cells, Has.Count.EqualTo(3));
+            var nova = cells[1]!;
+            Assert.That(nova["cell_type"]!.GetValue<string>(),
+                Is.EqualTo("code"));
+            Assert.That(nova["id"]!.GetValue<string>(),
+                Is.Not.EqualTo("c1").And.Not.EqualTo("m1"));
+            Assert.That(nova["outputs"]!.AsArray(), Is.Empty);
+            Assert.That(nova.AsObject()
+                .ContainsKey("execution_count"), Is.True);
+            Assert.That(nova["execution_count"], Is.Null);
+            Assert.That(cells[0]!["id"]!.GetValue<string>(), Is.EqualTo("c1"));
+            Assert.That(cells[2]!["id"]!.GetValue<string>(), Is.EqualTo("m1"));
+            Assert.That(r.Text, Does.Not.Contain("erro"));
+        });
+    }
+
+    /// <summary>Covers RF-002: delete remove a célula do índice.</summary>
+    [Test]
+    public async Task NotebookEdit_Delete_PorIndice()
+    {
+        var nb = WriteNb("d.ipynb", Nb(
+            NbCodeCell("c1", "[\"a\\n\"]"), NbMdCell("m1", "[\"t\\n\"]")));
+
+        await new NotebookEditBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"d.ipynb\",\"operation\":\"delete\",\"index\":0}"),
+            Ctx(), default);
+
+        var cells = JsonNode.Parse(File.ReadAllText(nb))!["cells"]!.AsArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(cells, Has.Count.EqualTo(1));
+            Assert.That(cells[0]!["id"]!.GetValue<string>(), Is.EqualTo("m1"));
+        });
+    }
+
+    /// <summary>Covers RF-002: endereçamento por cell_id alternativo.</summary>
+    [Test]
+    public async Task NotebookEdit_ReplacePorCellId()
+    {
+        var nb = WriteNb("id.ipynb", Nb(
+            NbCodeCell("alvo", "[\"a\\n\"]"), NbMdCell("m1", "[\"t\\n\"]")));
+
+        await new NotebookEditBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"id.ipynb\",\"operation\":\"replace\"," +
+                 "\"cell_id\":\"m1\",\"source\":\"# mudou\\n\"}"),
+            Ctx(), default);
+
+        var cells = JsonNode.Parse(File.ReadAllText(nb))!["cells"]!.AsArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(cells, Has.Count.EqualTo(2));
+            Assert.That(cells[1]!["source"]!.ToJsonString(),
+                Does.Contain("mudou"));
+            Assert.That(cells[0]!["source"]!.ToJsonString(),
+                Does.Contain("a\\n"));
+        });
+    }
+
+    /// <summary>Covers RF-004: fora do workspace / não-ipynb → erro,
+    /// arquivo não tocado.</summary>
+    [Test]
+    public async Task NotebookEdit_ForaOuNaoIpynb_Erro()
+    {
+        WriteNb("ok.ipynb", Nb(NbMdCell("m1", "[\"t\\n\"]")));
+        File.WriteAllText(Path.Join(_workspace, "x.txt"), "n\n");
+
+        var tool = new NotebookEditBuiltinTool();
+        var fora = await tool.ExecuteAsync(
+            Args("{\"path\":\"../f.ipynb\",\"operation\":\"delete\",\"index\":0}"),
+            Ctx(), default);
+        var ext = await tool.ExecuteAsync(
+            Args("{\"path\":\"x.txt\",\"operation\":\"delete\",\"index\":0}"),
+            Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fora.Text, Does.Contain("workspace")
+                .Or.Contain("escapa"));
+            Assert.That(ext.Text, Does.Contain(".ipynb"));
+        });
+    }
+
+    /// <summary>Covers RF-003: notebook corrompido → erro sem escrita.</summary>
+    [Test]
+    public async Task NotebookEdit_JsonCorrompido_NaoGrava()
+    {
+        var nb = WriteNb("bad.ipynb", "{ não é json válido [[[");
+
+        var r = await new NotebookEditBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"bad.ipynb\",\"operation\":\"delete\",\"index\":0}"),
+            Ctx(), default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("válido")
+                .Or.Contain("inválido").Or.Contain("JSON"));
+            Assert.That(File.ReadAllText(nb),
+                Is.EqualTo("{ não é json válido [[["));
+        });
+    }
+
+    /// <summary>Covers RF-004: índice fora de faixa → erro claro.</summary>
+    [Test]
+    public async Task NotebookEdit_IndiceFora_Erro()
+    {
+        WriteNb("o.ipynb", Nb(NbMdCell("m1", "[\"t\\n\"]")));
+        var r = await new NotebookEditBuiltinTool().ExecuteAsync(
+            Args("{\"path\":\"o.ipynb\",\"operation\":\"delete\",\"index\":9}"),
+            Ctx(), default);
+        Assert.That(r.Text, Does.Contain("fora").Or.Contain("índice")
+            .Or.Contain("range"));
     }
 
     [Test]
