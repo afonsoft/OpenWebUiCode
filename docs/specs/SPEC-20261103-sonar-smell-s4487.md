@@ -10,7 +10,7 @@
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/sonar-smell-s4487-20261103` |
 | Ticket | `GH#652` |
-| Status | `Approved` |
+| Status | `Done` |
 | Parent | sonarqube-autofix 2026-11-03 · board `.sonar_devin_auto_fix/SONAR_FIX_TODO_BOARD.md` |
 
 ## 1. User Story
@@ -79,3 +79,16 @@ N/A.
 ## 8. Effort Estimate
 
 `~1-2h`.
+
+## Delivered
+
+PR (este branch): 1 fix real + 10 FPs documentados — veredito por campo:
+
+| Campo | Veredito |
+| --- | --- |
+| `_explorer` (`Ide.razor` L181) | **Removido** — `@ref` nunca dereferenciado (write-only real) |
+| `_jobs`, `_checkpoints`, `_problems`, `_errCount`, `_warnCount`, `_qoFiles`, `_qoCommands`, `_qoSymbols`, `_gitStatus` (`Ide.razor`) | **FP** — lidos em bindings de markup (`Jobs="_jobs"`, `Checkpoints=`, `GitStatus=`, `Errors=`, `Warnings=`, `Files=`, `Commands=`, `Symbols=`); o analyzer S4487 não conta leitura via markup `.razor` |
+| `_settingsOpen` (`MainLayout.razor`) | **FP** — lido em `IsOpen="_settingsOpen"` (L35) |
+
+Ação manual pendente: marcar as 10 FPs como *False positive* no
+SonarCloud (`SONAR_TOKEN`).

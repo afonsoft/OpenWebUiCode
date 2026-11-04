@@ -87,7 +87,7 @@ else
                     }
                     else
                     {
-                        <IdeExplorer @ref="_explorer" Branch="@_git?.Branch" ChatId="@ChatId"
+                        <IdeExplorer Branch="@_git?.Branch" ChatId="@ChatId"
                                      DirtyCount="@(_git?.Files.Count ?? 0)"
                                      GitStatus="_gitStatus"
                                      OnOpenFile="OnOpenFileAsync" OnChanged="RefreshSideAsync" />
@@ -178,7 +178,6 @@ else
     /// <summary>Chat cujo binding resolve o workspace da IDE (?chatId= — SPEC-20261010-workspace-chatid-scope).</summary>
     [Parameter, SupplyParameterFromQuery] public string? ChatId { get; set; }
 
-    private IdeExplorer? _explorer;
     private IdeEditor? _editor;
     private IdeBottomPanel? _bottomPanel;
     private string? _activePath;
