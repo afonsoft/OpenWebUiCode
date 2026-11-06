@@ -1330,6 +1330,7 @@
   "admin.models_enabled_hint": "なモデルのみがチャットやのにされます。",
   "admin.models_manage": "モデルを",
   "admin.models_enabled_count": "{1}  {0} が",
+  "admin.models_enabled_only": "有効のみ表示",
   "models.all_providers": "すべてのプロバイダー",
   "settings.connections_disabled": "ユーザーごとのはによってされています。",
   "settings.model_source_user": "の",

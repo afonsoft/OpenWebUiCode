@@ -40,6 +40,10 @@
                             </button>
                         }
                     </div>
+                    <label class="flex items-center gap-2 mb-2 text-xs text-gray-600 dark:text-gray-300 cursor-pointer">
+                        <input type="checkbox" @bind="_enabledOnly" />
+                        @L["admin.models_enabled_only"]
+                    </label>
                     <div class="max-h-96 overflow-y-auto flex flex-col gap-3">
                         @foreach (var group in Groups())
                         {
@@ -106,6 +110,7 @@
     private bool _focusPending;
     private bool _loading;
     private bool _saving;
+    private bool _enabledOnly;
     private string _query = "";
     private string? _provider;
     private ElementReference _dialog;
@@ -166,6 +171,7 @@
 
     private IEnumerable<Group> Groups() => _items
         .Where(m => (_provider is null || m.Provider == _provider)
+            && (!_enabledOnly || m.Enabled)
             && (string.IsNullOrWhiteSpace(_query)
                 || m.Id.Contains(_query, StringComparison.OrdinalIgnoreCase)
                 || m.Name.Contains(_query, StringComparison.OrdinalIgnoreCase)))

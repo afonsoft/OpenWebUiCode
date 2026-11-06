@@ -1330,6 +1330,7 @@
   "admin.models_enabled_hint": "Seuls les modèles activés apparaissent dans le chat et les autres écrans.",
   "admin.models_manage": "Gérer les modèles",
   "admin.models_enabled_count": "{0} sur {1} activés",
+  "admin.models_enabled_only": "Afficher uniquement les activés",
   "models.all_providers": "Tous les fournisseurs",
   "settings.connections_disabled": "Les connexions par utilisateur sont désactivées par l'administrateur.",
   "settings.model_source_user": "ma connexion",

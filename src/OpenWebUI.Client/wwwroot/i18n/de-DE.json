@@ -1330,6 +1330,7 @@
   "admin.models_enabled_hint": "Nur aktivierte Modelle erscheinen im Chat und anderen Ansichten.",
   "admin.models_manage": "Modelle verwalten",
   "admin.models_enabled_count": "{0} von {1} aktiviert",
+  "admin.models_enabled_only": "Nur aktivierte anzeigen",
   "models.all_providers": "Alle Anbieter",
   "settings.connections_disabled": "Benutzerbezogene Verbindungen sind vom Administrator deaktiviert.",
   "settings.model_source_user": "meine Verbindung",
