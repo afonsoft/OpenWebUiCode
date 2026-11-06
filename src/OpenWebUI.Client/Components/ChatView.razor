@@ -2708,8 +2708,11 @@
         {
             return; // catálogo indisponível: sem aviso (fail-open).
         }
+        // Ref fusion resolve ao leader — é ele quem produz a resposta
+        // (SPEC-20261106) e define a capacidade de visão da run.
         var current = _chatModels?.FirstOrDefault(
-            m => string.Equals(m.Id, _model, StringComparison.OrdinalIgnoreCase));
+            m => string.Equals(m.Id, FusionModelRef.LeaderOrSelf(_model!),
+                StringComparison.OrdinalIgnoreCase));
         if (current is not null)
         {
             _visionWarning = current.Capabilities is not { } caps
@@ -3346,7 +3349,8 @@
         }
 
         var placeholder = new ChatMessageModel(
-            Guid.NewGuid().ToString(), "assistant", string.Empty, _model,
+            Guid.NewGuid().ToString(), "assistant", string.Empty,
+            FusionModelRef.LeaderOrSelf(_model!),
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _messages.Add(placeholder);
         _streamingEntry = placeholder;
@@ -3418,7 +3422,8 @@
         (string Name, string Args, string Prompt)? pendingCommand = null)
     {
         var placeholder = new ChatMessageModel(
-            Guid.NewGuid().ToString(), "assistant", string.Empty, _model,
+            Guid.NewGuid().ToString(), "assistant", string.Empty,
+            FusionModelRef.LeaderOrSelf(_model!),
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _messages.Add(placeholder);
         _streamingEntry = placeholder;
@@ -3937,6 +3942,13 @@
                 break;
             case "awaiting_approval":
                 _statusLabel = L["chat.status_approval"];
+                break;
+            case "fusion":
+                // SPEC-20261106: chip mostra o par ativo
+                // (label = "Leader x → Sidekick y" publicado pelo executor).
+                _statusLabel = phase.Status.Label is { Length: > 0 } fusionLbl
+                    ? $"{L["models.fusion"]} — {fusionLbl}"
+                    : L["models.fusion"];
                 break;
             default:
                 _paused = false;

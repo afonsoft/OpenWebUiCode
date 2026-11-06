@@ -849,7 +849,14 @@ public sealed class DelegateTaskBuiltinTool(
     {
         if (agent?.Model is not { Length: > 0 } agentModel)
         {
-            return (parentRun.Model, null);
+            // SPEC-20261106 adaptive-fusion: sub-agentes de uma run fusion
+            // rodam no Sidekick do par por default (kv gravada pelo
+            // executor); `model:`/`agent:` explícito continua vencendo.
+            var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+            var sidekick = await config.GetAsync<string?>(
+                $"r:{parentRun.Id}:fusion.sidekick", null, ct);
+            return (sidekick
+                ?? FusionModelRef.LeaderOrSelf(parentRun.Model), null);
         }
         if (!agentModel.StartsWith("role:", StringComparison.OrdinalIgnoreCase))
         {
@@ -859,7 +866,7 @@ public sealed class DelegateTaskBuiltinTool(
             .GetRequiredService<ModelRoleResolver>()
             .ResolveForTierAsync(
                 agentModel["role:".Length..], context.UserId,
-                parentRun.Model, parentMaxTier, ct);
+                FusionModelRef.LeaderOrSelf(parentRun.Model), parentMaxTier, ct);
         return resolved is null
             ? (null, new BuiltinToolResult(
                 $"no_model_in_tier: nenhum modelo do papel "

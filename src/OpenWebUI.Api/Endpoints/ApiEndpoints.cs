@@ -335,6 +335,13 @@ public static class ApiEndpoints
             return;
         }
 
+        // Adaptive/Fusion (SPEC-20261106): no stream direto (playground)
+        // não há run para orquestrar sub-agentes — resolve para o leader.
+        if (FusionModelRef.TryParse(request.Model, out var fusionLeader, out _))
+        {
+            request = request with { Model = fusionLeader };
+        }
+
         // Gate global do admin (SPEC-20261104-model-visibility-gate RF-008):
         // modelo desabilitado sem fonte própria do provider → 403 antes de
         // abrir o stream (fora do catálogo do usuário ele nem aparece, mas a

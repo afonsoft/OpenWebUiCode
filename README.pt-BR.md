@@ -102,6 +102,14 @@ remoto para `shell_exec`/terminal/`lsp_*`).
 
 ## Screenshots
 
+| Seletor Adaptive/Fusion | Par Leader + Sidekick |
+|---|---|
+| ![Fusion como primeiro item do seletor](docs/screenshots/fusion-selector.png) | ![selects de Leader e Sidekick](docs/screenshots/fusion-pair.png) |
+
+| Leader delegando ao sub-agente | Resposta fusion revisada |
+|---|---|
+| ![builtin_delegate_task em execução](docs/screenshots/fusion-delegation.png) | ![run fusion concluída](docs/screenshots/fusion-completed.png) |
+
 | Sub-agentes delegados em paralelo | Árvore de sessões + marcadores |
 |---|---|
 | ![delegate_task criando duas runs filhas](docs/screenshots/delegate-parallel.png) | ![marcadores no pai + árvore](docs/screenshots/parent-notify.png) |
@@ -128,6 +136,19 @@ remoto para `shell_exec`/terminal/`lsp_*`).
 
 ## Recursos de agente (novos — camada aditiva sobre a paridade upstream)
 
+- **Par de modelos Adaptive/Fusion** — primeiro item do seletor de modelos do
+  chat: uma ref virtual `fusion:{leader}>{sidekick}` cujo **Leader**
+  (raciocínio, plano, revisão) orquestra a run enquanto todo sub-agente criado
+  via `delegate_task` roda por padrão no **Sidekick** mais barato. As duas
+  escolhas são restritas ao catálogo efetivo de `/api/models` — revalidadas no
+  servidor contra refs forjadas; o par persiste por chat (`ModelsJson`) e por
+  navegador (`webui.model`, `webui.fusion.{leader,sidekick}`), passa pelo gate
+  de budget nos dois modelos, injeta automaticamente o toolset de orquestração
+  (`delegate_task`, `team_task`, `team_message`, `team_status`,
+  `agent_catalog`, `run_result`, `todo_write`) mais um prompt de coordenação,
+  e publica uma fase `fusion` + nota com o par ativo. Os sub-agentes se
+  comunicam pela lista de tarefas do time e pelas caixas de mensagem dos
+  membros; o Leader mantém as decisões difíceis e escreve a resposta final.
 - **`delegate_task`** — cria chat filho + run server-side: `wait:false` retorna
   `childRunId` na hora, `wait:true` (padrão) bloqueia até 300s; parâmetros `repo`
   e `persona` (uma Skill do workspace como system prompt); profundidade ≤ 3;
