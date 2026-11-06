@@ -1330,6 +1330,7 @@
   "admin.models_enabled_hint": "Only enabled models appear in chat and other screens.",
   "admin.models_manage": "Manage models",
   "admin.models_enabled_count": "{0} of {1} enabled",
+  "admin.models_enabled_only": "Show enabled only",
   "models.all_providers": "All providers",
   "settings.connections_disabled": "Per-user connections are disabled by the administrator.",
   "settings.model_source_user": "my connection",

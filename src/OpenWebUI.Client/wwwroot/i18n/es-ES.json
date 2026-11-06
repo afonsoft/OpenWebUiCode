@@ -1330,6 +1330,7 @@
   "admin.models_enabled_hint": "Solo los habilitados aparecen en el chat y demás pantallas.",
   "admin.models_manage": "Gestionar modelos",
   "admin.models_enabled_count": "{0} de {1} habilitados",
+  "admin.models_enabled_only": "Mostrar solo habilitados",
   "models.all_providers": "Todos los proveedores",
   "settings.connections_disabled": "Las conexiones por usuario están deshabilitadas por el administrador.",
   "settings.model_source_user": "mi conexión",

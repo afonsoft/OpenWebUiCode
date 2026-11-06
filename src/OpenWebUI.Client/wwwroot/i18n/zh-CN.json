@@ -1330,6 +1330,7 @@
   "admin.models_enabled_hint": "。",
   "admin.models_manage": "",
   "admin.models_enabled_count": "{1}  {0} ",
+  "admin.models_enabled_only": "仅显示已启用",
   "models.all_providers": "",
   "settings.connections_disabled": "。",
   "settings.model_source_user": "",
