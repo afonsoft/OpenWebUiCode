@@ -135,7 +135,10 @@ public static class TaskEndpoints
         {
             return (null, null);
         }
-        return (await roles.ResolveAsync("tasks", user.Id, request.Model, ct), user.Id);
+        // Fallback do papel = modelo do chat; ref fusion resolve ao leader
+        // (SPEC-20261106 — a ref composta não é id de provider).
+        return (await roles.ResolveAsync(
+            "tasks", user.Id, FusionModelRef.LeaderOrSelf(request.Model), ct), user.Id);
     }
 
     private static async Task<string?> RunTaskAsync(

@@ -259,6 +259,16 @@ public sealed class ChatRunExecutor(
             return;
         }
 
+        // fusion:{leader}>{sidekick} (SPEC-20261106): grava o par no kv,
+        // reescreve o modelo para o leader e injeta prompt/tools de
+        // orquestração. null = run já encerrada (par inválido/budget).
+        if (await ApplyFusionPairingAsync(run, request, user, ct)
+                is not { } fusedRequest)
+        {
+            return;
+        }
+        request = fusedRequest;
+
         var prepared = await PrepareRunContextAsync(
             run, request, user, commandMode, resumePlan, ct);
         request = prepared.Request;
@@ -607,6 +617,112 @@ public sealed class ChatRunExecutor(
         }
         return false;
     }
+
+    /// <summary>Tools de orquestração garantidas numa run fusion — sem elas
+    /// o leader não consegue criar nem coordenar sub-agentes.</summary>
+    private static readonly string[] FusionToolIds =
+    [
+        "builtin:delegate_task", "builtin:team_task", "builtin:team_message",
+        "builtin:team_status", "builtin:agent_catalog", "builtin:run_result",
+        "builtin:todo_write",
+    ];
+
+    /// <summary>
+    /// Resolve o par <c>fusion:{leader}&gt;{sidekick}</c> (SPEC-20261106):
+    /// grava o kv lido pelo <c>delegate_task</c> (sidekick = modelo default
+    /// dos filhos), reescreve o modelo da run para o leader, garante as
+    /// tools de orquestração e injeta o prompt de coordenação.
+    /// <see langword="null"/> = run já encerrada (budget negado).
+    /// </summary>
+    private async Task<ChatCompletionRequest?> ApplyFusionPairingAsync(
+        ChatRun run, ChatCompletionRequest request, User user, CancellationToken ct)
+    {
+        if (!FusionModelRef.TryParse(request.Model, out var leader, out var sidekick))
+        {
+            return request;
+        }
+
+        // Os DOIS modelos do par têm de pertencer ao catálogo efetivo do
+        // chat ("Ele só pode selecionar os modelos disponíveis no chat") —
+        // validação server-side contra spoofing de id (o picker do client
+        // já restringe a seleção, mas a ref pode vir forjada na request).
+        var catalogIds = (await providers.ListModelsAsync(ct))
+            .Select(m => m.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!catalogIds.Contains(leader) || !catalogIds.Contains(sidekick))
+        {
+            var bad = !catalogIds.Contains(leader) ? leader : sidekick;
+            await FailAsync(run,
+                $"model_not_in_catalog: '{bad}' não está no catálogo de "
+                + "modelos do chat — Adaptive/Fusion só aceita modelos disponíveis.");
+            return null;
+        }
+
+        // Gate de budget nos DOIS modelos do par — run.Model composto tem
+        // tier desconhecido e atravessaria o gate do prelúdio sem checagem.
+        foreach (var paired in new[] { leader, sidekick })
+        {
+            var gate = await budgets.CheckStartAsync(user.Id, paired, ct);
+            if (!gate.Allowed)
+            {
+                await FailAsync(run, $"{gate.Code}: {gate.Detail}");
+                return null;
+            }
+        }
+
+        await config.SetAsync($"r:{run.Id}:fusion.leader", leader, ct);
+        await config.SetAsync($"r:{run.Id}:fusion.sidekick", sidekick, ct);
+
+        await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+            new { status = "fusion", leader, sidekick }, ct);
+        await PublishPhaseAsync(
+            run, "fusion", $"Leader {leader} → Sidekick {sidekick}");
+
+        var toolIds = (request.ToolIds ?? []).ToList();
+        foreach (var required in FusionToolIds)
+        {
+            if (!toolIds.Contains(required, StringComparer.OrdinalIgnoreCase))
+            {
+                toolIds.Add(required);
+            }
+        }
+
+        return request with
+        {
+            Model = leader,
+            ToolIds = toolIds,
+            Messages = [new ChatCompletionMessage(RoleSystem, FusionPrompt(leader, sidekick)),
+                .. request.Messages],
+        };
+    }
+
+    /// <summary>Prompt de coordenação do modo fusion — o leader orquestra,
+    /// os sub-agentes (sidekick) executam e conversam via team tools.</summary>
+    private static string FusionPrompt(string leader, string sidekick) => $$"""
+        [fusion orchestration]
+        You are the Leader of a Fusion pair — the reasoning/orchestration
+        model ({{leader}}). Sub-agents you spawn run on the Sidekick model
+        ({{sidekick}}) by default — a cheaper executor; override per dispatch
+        only when a step truly needs a different model.
+
+        - Analyze the request, plan it, slice it and review — judgment stays
+          with you. Delegate execution via builtin_delegate_task with
+          team:true so every sub-agent joins the same team, and
+          persistent:true + a stable sidekick_id when a worker needs memory
+          between handoffs. Prefer agent:"general" for implementation and
+          agent:"explore" for read-only scouting.
+        - Sub-agents communicate with each other and with you: coordinate
+          through builtin_team_task (shared task list — create plan items,
+          members claim and complete them), builtin_team_message (inboxes)
+          and builtin_team_status (roster). Ask workers to report blockers
+          over team_message instead of silently stalling.
+        - Handoff protocol: every dispatch carries ## Goal /
+          ## Frozen inputs (paths/values you already derived) /
+          ## Exact commands / ## Done criteria — code, not prose.
+        - Report contract: expect ## Done / ## Evidence / ## Deviations /
+          ## Pending — standalone; ask for the missing section before acting.
+        - Never delegate judgment: ambiguity calls and the final diff
+          review are yours; the answer to the user is written by you.
+        """;
 
     /// <summary>Prepara o contexto da run — compactação, modo do agente,
     /// fases de busca/memória, enrich, notebook persistente e seed de
