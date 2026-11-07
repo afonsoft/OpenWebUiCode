@@ -1030,7 +1030,9 @@ public static class ChatPipeline
         if (http.Body is not { Length: > 0 } body)
             return detail;
         var snippet = ExtractUpstreamMessage(body) ?? body;
-        snippet = Regex.Replace(snippet.Trim(), @"\s+", " ");
+        snippet = Regex.Replace(
+            snippet.Trim(), @"\s+", " ",
+            RegexOptions.None, RegexDefaults.MatchTimeout);
         if (snippet.Length > 300)
             snippet = snippet[..300] + "…";
         return snippet.Length > 0 ? $"{detail} — {snippet}" : detail;
