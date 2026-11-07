@@ -146,10 +146,21 @@ public class RunCoverageTests
     /// <summary>Delay artificial nas completions stream (teste de attach ao vivo).</summary>
     private volatile int _chatDelayMs;
 
+    /// <summary>Status/corpo forçado de erro nas completions (teste de erro
+    /// upstream real exibido na run). 0 = desligado.</summary>
+    private volatile int _chatFailStatus;
+    private volatile string? _chatFailBody;
+
     /// <summary>Completion OpenAI-compatível: stream → SSE; não-stream → loop de tools.</summary>
     private async Task ServeChatCompletionsAsync(
         HttpListenerContext ctx, string body, CancellationToken ct)
     {
+        if (_chatFailStatus > 0)
+        {
+            await WriteJsonAsync(ctx, _chatFailStatus,
+                _chatFailBody ?? "{}", ct);
+            return;
+        }
         if (body.Contains("\"stream\":true", StringComparison.Ordinal))
         {
             if (_chatDelayMs > 0)
@@ -338,6 +349,42 @@ public class RunCoverageTests
             Assert.That(assistant, Has.Count.EqualTo(1));
             Assert.That(assistant[0].Content, Does.Contain("⚠️"));
             Assert.That(assistant[0].Content, Does.Contain(run.Error!));
+        });
+    }
+
+    [Test]
+    public async Task Executor_ProviderErroHttp_RunErrorCarregaDetalheUpstream()
+    {
+        // Incidente 2026-11-07: o chat mostrava só "falhou após N
+        // tentativa(s)" — o motivo real do gateway (pool esgotado, quota,
+        // modelo inválido) ficava invisível. O erro persistido agora leva
+        // o status e o error.message do corpo upstream.
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("ErrDetail", $"errdetail-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        _chatFailStatus = 400;
+        _chatFailBody = "{\"error\":{\"message\":\"combo exhausted: "
+            + "cheaperinference 400 quota, kilocode 402 payment_required\"}}";
+        ChatRun run;
+        try
+        {
+            run = await ExecutarDiretoAsync(chat.Id, auth.User.Id,
+                "{\"model\":\"gpt-mock\","
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"oi\"}]}");
+        }
+        finally
+        {
+            _chatFailStatus = 0;
+            _chatFailBody = null;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.Status, Is.EqualTo(ChatRunStatus.Failed));
+            Assert.That(run.Error, Does.Contain("400"));
+            Assert.That(run.Error, Does.Contain("cheaperinference 400 quota"));
         });
     }
 

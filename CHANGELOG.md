@@ -36,6 +36,19 @@ Todas as mudanças notáveis deste projeto são documentadas aqui, seguindo
 - `AutomationScheduler` não derruba mais o host no shutdown
   (`OperationCanceledException` tratada como parada graciosa) — PR #43.
 - Warning CS8602 em `AutomationEndpointsTests`.
+- Role interna `compaction` não vaza mais no payload OpenAI-compatible:
+  `BuildOpenAiMessage` colapsa roles fora do contrato
+  (system/developer/user/assistant/tool/function) para `user` —
+  providers upstream rejeitavam o request com HTTP 400
+  ("role must be...") e a run morria após 6 tentativas sem erro real.
+- Erro de run agora carrega o detalhe real do upstream: status HTTP +
+  `error.message` do provider no evento SSE e na mensagem `⚠️`
+  persistida no histórico (antes só "falhou após N tentativas").
+- Teste E2E `UserMcp_CrudIsoladoEToggleGlobal` tolera o seeder
+  `DeepWikiMcpSeeder` no catálogo global (contrato: server do usuário
+  não vaza para o admin).
+- `ToolEndpointsTests` não depende mais de contagem global de tools —
+  o banco do fixture é compartilhado entre os testes da classe.
 
 ## [0.1.0] - 2026-10-01
 

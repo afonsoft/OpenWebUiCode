@@ -1007,13 +1007,60 @@ public static class ChatPipeline
             {
                 throw new InvalidOperationException(
                     $"{code}: a chamada ao provedor falhou após "
-                    + $"{attempt + 1} tentativa(s).", ex);
+                    + $"{attempt + 1} tentativa(s)."
+                    + ProviderErrorDetail(ex), ex);
             }
             return null;
         }
         await NotifyRetryAsync(
             ctx.Log, ctx.Callbacks, ctx.Providers, ex, attempt, decision, ct);
         return nextTimeouts;
+    }
+
+    /// <summary>Detalhe real do último erro upstream anexado à mensagem de
+    /// falha definitiva — status HTTP e o recorte sanitizado do corpo que a
+    /// <see cref="ProviderHttpException"/> já captura. Prefere o campo
+    /// <c>error.message</c> do envelope JSON do gateway; fallback é o corpo
+    /// bruto truncado, sempre em linha única.</summary>
+    internal static string ProviderErrorDetail(Exception ex)
+    {
+        if (ex is not ProviderHttpException http)
+            return string.Empty;
+        var detail = $" Último erro: {(int)(http.StatusCode ?? 0)} {http.StatusCode}";
+        if (http.Body is not { Length: > 0 } body)
+            return detail;
+        var snippet = ExtractUpstreamMessage(body) ?? body;
+        snippet = Regex.Replace(snippet.Trim(), @"\s+", " ");
+        if (snippet.Length > 300)
+            snippet = snippet[..300] + "…";
+        return snippet.Length > 0 ? $"{detail} — {snippet}" : detail;
+    }
+
+    /// <summary>Extrai <c>error.message</c> (ou <c>message</c> top-level) do
+    /// corpo JSON de erro do gateway; <c>null</c> quando não é JSON ou não
+    /// há mensagem — o caller cai no recorte bruto.</summary>
+    private static string? ExtractUpstreamMessage(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+            if (root.TryGetProperty("error", out var err)
+                && err.ValueKind == JsonValueKind.Object
+                && err.TryGetProperty("message", out var msg)
+                && msg.ValueKind == JsonValueKind.String)
+                return msg.GetString();
+            if (root.TryGetProperty("message", out var top)
+                && top.ValueKind == JsonValueKind.String)
+                return top.GetString();
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Código tipado da falha definitiva do retry loop —

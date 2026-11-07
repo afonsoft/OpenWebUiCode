@@ -1619,6 +1619,13 @@ public sealed class ChatRunExecutor(
         var message = ex is HttpRequestException or TaskCanceledException
             ? $"Falha ao contactar o provedor: {ex.Message}"
             : ex.Message;
+        // ProviderHttpException direta (falha não-retryable — ex.: 400 do
+        // gateway) não passa pelo embrulho do retry loop: anexa o detalhe
+        // upstream aqui para o erro real chegar ao chat, não só o status.
+        if (ex is ProviderHttpException)
+        {
+            message += Completions.ChatPipeline.ProviderErrorDetail(ex);
+        }
         approvals.Cancel(run.Id);
         broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error = message })}");
         run.Error = message;
