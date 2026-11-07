@@ -1624,7 +1624,7 @@ public sealed class ChatRunExecutor(
         // upstream aqui para o erro real chegar ao chat, não só o status.
         if (ex is ProviderHttpException)
         {
-            message += Completions.ChatPipeline.ProviderErrorDetail(ex);
+            message += UpstreamErrorFormatter.For(ex);
         }
         approvals.Cancel(run.Id);
         broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error = message })}");
