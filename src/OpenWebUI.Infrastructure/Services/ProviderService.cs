@@ -3935,7 +3935,7 @@ public class ProviderService(
     /// sanitizado, imagens seguem o formato do provider (Ollama
     /// <c>images</c> vs OpenAI parts <c>image_url</c>).
     /// </summary>
-    private static JsonNode BuildOpenAiMessage(ChatCompletionMessage m, string provider)
+    internal static JsonNode BuildOpenAiMessage(ChatCompletionMessage m, string provider)
     {
         // Histórico pode conter markup DSML vazado de respostas
         // antigas (pré-filtro): devolvê-lo ao modelo induz a
@@ -3944,9 +3944,19 @@ public class ProviderService(
             && m.Content.Contains("<｜DSML｜", StringComparison.Ordinal)
             ? DsmlToolCallFilter.Extract(m.Content).Text
             : m.Content;
+        // Roles internas (ex.: marcador "compaction" do contexto) não
+        // existem no contrato OpenAI — upstream rejeita com 400
+        // ("role must be system, developer, user, assistant, tool, or
+        // function"). Colapsa para "user": o relatório de contexto
+        // segue chegando ao modelo (mesmo destino dos serializers
+        // Anthropic/Gemini).
+        var role = m.Role is "system" or "developer" or "user"
+            or "assistant" or "tool" or "function"
+            ? m.Role
+            : "user";
         var node = new JsonObject
         {
-            ["role"] = m.Role,
+            ["role"] = role,
             [ContentKey] = content,
         };
         if (m.Images is { Count: > 0 } images)

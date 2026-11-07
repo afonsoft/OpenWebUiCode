@@ -3725,4 +3725,34 @@ public class ProviderServiceTests
                 Is.EqualTo("stop"));
         });
     }
+
+    [Test]
+    public void BuildOpenAiMessage_RoleInternaCompaction_ViraUser()
+    {
+        // Marcador interno de compactação de contexto (Role="compaction")
+        // não existe no contrato OpenAI — upstream rejeita com 400
+        // ("role must be system, developer, user, assistant, tool, or
+        // function"). No wire ele sai como "user" carregando o relatório.
+        var node = ProviderService.BuildOpenAiMessage(
+            new ChatCompletionMessage("compaction", "relatorio de contexto"),
+            ProviderTypes.OpenAi);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(node["role"]!.GetValue<string>(), Is.EqualTo("user"));
+            Assert.That(node["content"]!.GetValue<string>(),
+                Is.EqualTo("relatorio de contexto"));
+        });
+    }
+
+    [Test]
+    public void BuildOpenAiMessage_RolesPadrao_PassamSemTraducao()
+    {
+        foreach (var role in new[] { "system", "developer", "user", "assistant", "tool" })
+        {
+            var node = ProviderService.BuildOpenAiMessage(
+                new ChatCompletionMessage(role, "x"), ProviderTypes.OpenAi);
+            Assert.That(node["role"]!.GetValue<string>(), Is.EqualTo(role), role);
+        }
+    }
 }

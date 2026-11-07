@@ -1007,7 +1007,8 @@ public static class ChatPipeline
             {
                 throw new InvalidOperationException(
                     $"{code}: a chamada ao provedor falhou após "
-                    + $"{attempt + 1} tentativa(s).", ex);
+                    + $"{attempt + 1} tentativa(s)."
+                    + UpstreamErrorFormatter.For(ex), ex);
             }
             return null;
         }

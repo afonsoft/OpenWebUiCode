@@ -11,6 +11,7 @@ Documentos que descrevem e decidem a arquitetura do Open WebUI .NET.
 | [AD-0003](AD-0003-server-held-secrets.md) | Segredos somente no servidor (chaves de provider, URLs de tools) |
 | [AD-0004](AD-0004-realtime-signalr.md) | Realtime via SignalR `/ws`; SSE para streaming de chat |
 | [AD-0005](AD-0005-client-side-media-exec.md) | Voz e execução de código no cliente (Web Speech, Web Worker, Pyodide WASM) |
+| [AD-0006](AD-0006-run-failure-visibility.md) | Falhas de run visíveis: SSE `{error}`, mensagem `⚠️` persistida e detalhe upstream real |
 
 ## Diagramas e design
 

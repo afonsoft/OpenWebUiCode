@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
+using OpenWebUI.Infrastructure.Services;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -146,10 +147,21 @@ public class RunCoverageTests
     /// <summary>Delay artificial nas completions stream (teste de attach ao vivo).</summary>
     private volatile int _chatDelayMs;
 
+    /// <summary>Status/corpo forçado de erro nas completions (teste de erro
+    /// upstream real exibido na run). 0 = desligado.</summary>
+    private volatile int _chatFailStatus;
+    private volatile string? _chatFailBody;
+
     /// <summary>Completion OpenAI-compatível: stream → SSE; não-stream → loop de tools.</summary>
     private async Task ServeChatCompletionsAsync(
         HttpListenerContext ctx, string body, CancellationToken ct)
     {
+        if (_chatFailStatus > 0)
+        {
+            await WriteJsonAsync(ctx, _chatFailStatus,
+                _chatFailBody ?? "{}", ct);
+            return;
+        }
         if (body.Contains("\"stream\":true", StringComparison.Ordinal))
         {
             if (_chatDelayMs > 0)
@@ -339,6 +351,137 @@ public class RunCoverageTests
             Assert.That(assistant[0].Content, Does.Contain("⚠️"));
             Assert.That(assistant[0].Content, Does.Contain(run.Error!));
         });
+    }
+
+    [Test]
+    public async Task Executor_ProviderErroHttp_RunErrorCarregaDetalheUpstream()
+    {
+        // Incidente 2026-11-07: o chat mostrava só "falhou após N
+        // tentativa(s)" — o motivo real do gateway (pool esgotado, quota,
+        // modelo inválido) ficava invisível. O erro persistido agora leva
+        // o status e o error.message do corpo upstream.
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("ErrDetail", $"errdetail-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        _chatFailStatus = 400;
+        _chatFailBody = "{\"error\":{\"message\":\"combo exhausted: "
+            + "cheaperinference 400 quota, kilocode 402 payment_required\"}}";
+        ChatRun run;
+        try
+        {
+            run = await ExecutarDiretoAsync(chat.Id, auth.User.Id,
+                "{\"model\":\"gpt-mock\","
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"oi\"}]}");
+        }
+        finally
+        {
+            _chatFailStatus = 0;
+            _chatFailBody = null;
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.Status, Is.EqualTo(ChatRunStatus.Failed));
+            Assert.That(run.Error, Does.Contain("400"));
+            Assert.That(run.Error, Does.Contain("cheaperinference 400 quota"));
+        });
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_ExcecaoNaoHttp_RetornaVazio()
+    {
+        Assert.That(
+            UpstreamErrorFormatter.For(
+                new InvalidOperationException("x")),
+            Is.EqualTo(string.Empty));
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_SemCorpo_SoStatus()
+    {
+        var detail = UpstreamErrorFormatter.For(
+            new ProviderHttpException(
+                HttpStatusCode.BadGateway, null, null));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(detail, Does.Contain("502"));
+            Assert.That(detail, Does.Not.Contain("—"));
+        });
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_EnvelopeErrorMessage_ExtraiMensagem()
+    {
+        var detail = UpstreamErrorFormatter.For(
+            new ProviderHttpException(
+                HttpStatusCode.BadRequest, null,
+                "{\"error\":{\"message\":\"combo exhausted: cheaperinference 400\"}}"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(detail, Does.Contain("400"));
+            Assert.That(detail, Does.Contain("combo exhausted: cheaperinference 400"));
+        });
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_MessageTopLevel_ExtraiMensagem()
+    {
+        var detail = UpstreamErrorFormatter.For(
+            new ProviderHttpException(
+                HttpStatusCode.PaymentRequired, null,
+                "{\"message\":\"payment required\"}"));
+
+        Assert.That(detail, Does.Contain("payment required"));
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_CorpoNaoJson_RecorteBrutoNormalizado()
+    {
+        var detail = UpstreamErrorFormatter.For(
+            new ProviderHttpException(
+                HttpStatusCode.InternalServerError, null,
+                "upstream\n\tfora   do ar"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(detail, Does.Contain("500"));
+            Assert.That(detail, Does.Contain("upstream fora do ar"));
+        });
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_SnippetLongo_TruncaEm300()
+    {
+        var detail = UpstreamErrorFormatter.For(
+            new ProviderHttpException(
+                HttpStatusCode.BadGateway, null, new string('a', 400)));
+
+        Assert.That(detail.Length, Is.LessThanOrEqualTo(360));
+        Assert.That(detail, Does.EndWith("…"));
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_CorpoSoEspacos_SoStatus()
+    {
+        var detail = UpstreamErrorFormatter.For(
+            new ProviderHttpException(
+                HttpStatusCode.BadGateway, null, "   \n  "));
+
+        Assert.That(detail, Does.Not.Contain("—"));
+    }
+
+    [Test]
+    public void UpstreamErrorDetail_JsonSemMessage_RecorteBruto()
+    {
+        var detail = UpstreamErrorFormatter.For(
+            new ProviderHttpException(
+                HttpStatusCode.BadGateway, null, "{\"code\":42}"));
+
+        Assert.That(detail, Does.Contain("{\"code\":42}"));
     }
 
     [Test]

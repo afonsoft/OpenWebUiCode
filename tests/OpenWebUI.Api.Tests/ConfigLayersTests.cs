@@ -423,8 +423,15 @@ public class ConfigLayersE2ETests
         // O servidor do usuário não aparece para o admin nem no catálogo global.
         UseToken(_adminToken);
         var adminList = await _client.GetFromJsonAsync<JsonElementDict[]>("/api/v1/mcp/servers");
-        Assert.That(adminList!.Select(e => e.GetProperty("name").GetString()),
-            Is.EquivalentTo(new[] { "corp-mcp" }));
+        // O catálogo global pode trazer defaults semeados no boot (ex.: o
+        // DeepWiki MCP do DeepWikiMcpSeeder) — o contrato testado é: o
+        // server do usuário NÃO vaza para o admin, e o global criado existe.
+        var adminNames = adminList!.Select(e => e.GetProperty("name").GetString()).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(adminNames, Does.Contain("corp-mcp"));
+            Assert.That(adminNames, Does.Not.Contain("meu-mcp"));
+        });
 
         // Desligar o global só para o usuário.
         UseToken(user.Token);
