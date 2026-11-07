@@ -3719,7 +3719,17 @@ public sealed class ChatRunExecutor(
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         run.Status = status ?? ChatRunStatus.Completed;
         run.CompletedAt = now;
-        run.PartialContent = content;
+        // Run falha: o motivo antes ficava só em run.Error — a run morria
+        // sem mensagem no chat e a UI recarregada não mostrava nada
+        // (incidente 2026-11-07, provider sem créditos → "chat travado").
+        // Persiste o erro como bloco visível do assistant.
+        var persistContent = status == ChatRunStatus.Failed
+            && run.Error is { Length: > 0 } failNote
+                ? content.Length > 0
+                    ? $"{content}\n\n> ⚠️ {failNote}"
+                    : $"> ⚠️ {failNote}"
+                : content;
+        run.PartialContent = persistContent;
 
         // RF-006 run-recovery: lastSeq final no meta — posição do stream
         // de eventos consultável pelo response da run.
@@ -3734,13 +3744,13 @@ public sealed class ChatRunExecutor(
             run.MetaJson = JsonSerializer.Serialize(meta, JsonOptions);
         }
 
-        if (content.Length > 0 || toolMessages is { Count: > 0 })
+        if (persistContent.Length > 0 || toolMessages is { Count: > 0 })
         {
             var chat = await db.Chats.Include(c => c.Messages)
                 .FirstOrDefaultAsync(c => c.Id == run.ChatId, CancellationToken.None);
             if (chat is not null)
             {
-                AppendRunMessages(run, chat, content, toolMessages, now);
+                AppendRunMessages(run, chat, persistContent, toolMessages, now);
             }
         }
 
@@ -3812,6 +3822,15 @@ public sealed class ChatRunExecutor(
         run.Status = ChatRunStatus.Failed;
         run.Error = error;
         run.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        // Mesmo guard do FinishAsync: falha pré-execução também era
+        // invisível no chat (request inválido, budget, combo indisponível).
+        var failChat = await db.Chats.Include(c => c.Messages)
+            .FirstOrDefaultAsync(c => c.Id == run.ChatId, CancellationToken.None);
+        if (failChat is not null)
+        {
+            AppendRunMessages(
+                run, failChat, $"> ⚠️ {error}", null, run.CompletedAt.Value);
+        }
         await db.SaveChangesAsync(CancellationToken.None);
         broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error })}");
         broadcaster.Publish(run.Id, SseDoneLine);

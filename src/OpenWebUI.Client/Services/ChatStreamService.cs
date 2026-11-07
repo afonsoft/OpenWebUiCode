@@ -80,6 +80,14 @@ public class ChatStreamService(HttpClient http, AuthService auth)
 
         /// <summary>Conselho do revisor de run (SPEC-20261013-run-advisor RF-003).</summary>
         public sealed record Advisor(RunAdvisorEvent Event) : ChatStreamEvent;
+
+        /// <summary>
+        /// Falha terminal da run — payload <c>data: {"error":…}</c> que o
+        /// executor publica antes de fechar o stream. No caminho de
+        /// completions (não-run) o serviço re-lança como
+        /// <see cref="InvalidOperationException"/>, preservando o contrato.
+        /// </summary>
+        public sealed record Error(string Message) : ChatStreamEvent;
     }
 
     /// <summary>Resultado de arena da última requisição (payload {"arena": ...}), quando houver.</summary>
@@ -327,6 +335,12 @@ public class ChatStreamService(HttpClient http, AuthService auth)
     {
         await foreach (var evt in ReadEventsAsync(stream, ct))
         {
+            // Completions (não-run) mantêm o contrato antigo: o payload
+            // {"error":…} do provider lança InvalidOperationException.
+            if (evt is ChatStreamEvent.Error err)
+            {
+                throw new InvalidOperationException(err.Message);
+            }
             if (evt is ChatStreamEvent.Delta delta)
             {
                 yield return delta.Text;
@@ -405,35 +419,28 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         }
     }
 
-    /// <summary>Eventos produzidos por uma linha `data:` (erro lança,
-    /// linha malformada não produz nada).</summary>
+    /// <summary>Eventos produzidos por uma linha `data:` —
+    /// linha malformada não produz nada.</summary>
     private IEnumerable<ChatStreamEvent> ProduceEvents(
         string payload, string? evt, int lastSeq)
     {
-        var (produced, error, parsed) = ParseDataPayload(payload, evt);
-        if (!parsed)
+        var (produced, parsed) = ParseDataPayload(payload, evt);
+        if (!parsed || produced is null)
         {
             yield break;
         }
-        if (error is not null)
+        foreach (var item in produced)
         {
-            throw new InvalidOperationException(error);
-        }
-        if (produced is not null)
-        {
-            foreach (var item in produced)
-            {
-                yield return item with { Seq = lastSeq };
-            }
+            yield return item with { Seq = lastSeq };
         }
     }
 
     /// <summary>
-    /// Parse de uma linha `data:` — retorna <c>(produced, error, parsed)</c>.
+    /// Parse de uma linha `data:` — retorna <c>(produced, parsed)</c>.
     /// Evento individual malformado/divergente não deve derrubar o stream —
     /// <c>parsed=false</c> e a próxima linha segue o consumo.
     /// </summary>
-    private (List<ChatStreamEvent>?, string?, bool) ParseDataPayload(
+    private (List<ChatStreamEvent>?, bool) ParseDataPayload(
         string payload, string? evt)
     {
         try
@@ -445,21 +452,19 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             // an element of type 'Object'") e derrubava o stream inteiro.
             if (node is null || node is JsonValue)
             {
-                return (null, null, false);
+                return (null, false);
             }
-            var produced = ParseEventPayload(node, evt, out var error);
-            return (produced, error, true);
+            return (ParseEventPayload(node, evt), true);
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException or ArgumentException)
         {
-            return (null, null, false);
+            return (null, false);
         }
     }
 
     /// <summary>Despacha o payload por <c>event:</c>; sem nome segue o formato OpenAI.</summary>
-    private List<ChatStreamEvent>? ParseEventPayload(JsonNode node, string? evt, out string? error)
+    private List<ChatStreamEvent>? ParseEventPayload(JsonNode node, string? evt)
     {
-        error = null;
         var single = evt switch
         {
             "tool_call" => ParseToolCall(node),
@@ -479,7 +484,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         {
             return [single];
         }
-        return evt is null ? ParseOpenAiChunk(node, out error) : null;
+        return evt is null ? ParseOpenAiChunk(node) : null;
     }
 
     private static ChatStreamEvent ParseToolCall(JsonNode node) =>
@@ -611,9 +616,22 @@ public class ChatStreamService(HttpClient http, AuthService auth)
 
     /// <summary>Chunk do formato OpenAI (sem <c>event:</c>): delta, reasoning,
     /// erro ou arena — um chunk pode carregar reasoning E content juntos.</summary>
-    private List<ChatStreamEvent>? ParseOpenAiChunk(JsonNode node, out string? error)
+    private List<ChatStreamEvent>? ParseOpenAiChunk(JsonNode node)
     {
-        error = node["error"]?.GetValue<string>();
+        // Erro terminal — {"error":"…"} do executor (run falhou) ou do
+        // provider (completion): vira evento tipado e o consumidor decide
+        // (a run exibe e encerra; a completion re-lança como exceção).
+        if (node["error"] is { } errNode)
+        {
+            var msg = errNode switch
+            {
+                JsonValue v when v.TryGetValue<string>(out var s) => s,
+                JsonObject o => o["message"]?.GetValue<string>()
+                    ?? o.ToJsonString(),
+                _ => errNode.ToJsonString(),
+            };
+            return [new ChatStreamEvent.Error(msg)];
+        }
         // Gateways podem emitir chunks sem choice (só role/usage/keepalive):
         // indexar um array vazio lança ArgumentOutOfRangeException.
         var choices = node["choices"] as JsonArray;

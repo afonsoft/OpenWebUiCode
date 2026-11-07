@@ -102,6 +102,47 @@ public class ChatStreamServiceTests
     }
 
     [Test]
+    public async Task RunEvents_ChunkDeErro_ViraEventoError()
+    {
+        // O executor publica {"error":…} quando a run morre (provider
+        // down). Antes isso lançava InvalidOperationException e o
+        // ChatView engolia como queda de transporte — a run encerrava
+        // muda e o chat parecia "travado" (incidente 2026-11-07).
+        var sse = "data: {\"error\":\"server-error: provedor falhou\"}\n\n"
+            + "data: [DONE]\n";
+        var service = CreateService(sse);
+
+        var eventos = new List<ChatStreamService.ChatStreamEvent>();
+        await foreach (var evt in service.StreamRunEventsAsync("c1", "r1"))
+        {
+            eventos.Add(evt);
+        }
+
+        var erro = eventos
+            .OfType<ChatStreamService.ChatStreamEvent.Error>().Single();
+        Assert.That(erro.Message,
+            Is.EqualTo("server-error: provedor falhou"));
+    }
+
+    [Test]
+    public async Task RunEvents_ChunkDeErroObjeto_ExtraiMessage()
+    {
+        // Shape OpenAI: {"error":{"message":…}} (gateways/providers).
+        var sse = "data: {\"error\":{\"message\":\"boom\"}}\n\ndata: [DONE]\n";
+        var service = CreateService(sse);
+
+        var eventos = new List<ChatStreamService.ChatStreamEvent>();
+        await foreach (var evt in service.StreamRunEventsAsync("c1", "r1"))
+        {
+            eventos.Add(evt);
+        }
+
+        var erro = eventos
+            .OfType<ChatStreamService.ChatStreamEvent.Error>().Single();
+        Assert.That(erro.Message, Is.EqualTo("boom"));
+    }
+
+    [Test]
     public async Task RunEvents_Changes_ParseSnapshot()
     {
         var sse = string.Join('\n',

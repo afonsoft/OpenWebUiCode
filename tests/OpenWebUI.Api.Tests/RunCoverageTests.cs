@@ -313,6 +313,35 @@ public class RunCoverageTests
     }
 
     [Test]
+    public async Task Executor_RunFalhada_PersisteErroComoMensagemDoChat()
+    {
+        // Falha invisível (incidente 2026-11-07 — provider sem créditos):
+        // a run morria e nenhuma mensagem ia para o chat — a UI
+        // recarregada parecia "travada". Agora a falha é persistida
+        // como bloco do assistant.
+        var auth = await SignUpAsync("FailVis", $"failvis-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+        var run = await ExecutarDiretoAsync(chat.Id, auth.User.Id,
+            "{\"model\":\"llama3\",\"connection\":\"bogus\","
+            + "\"messages\":[{\"role\":\"user\",\"content\":\"oi\"}]}");
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var assistant = await db.ChatMessages
+            .Where(m => m.ChatId == chat.Id && m.Role == "assistant")
+            .ToListAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(run.Status, Is.EqualTo(ChatRunStatus.Failed));
+            Assert.That(assistant, Has.Count.EqualTo(1));
+            Assert.That(assistant[0].Content, Does.Contain("⚠️"));
+            Assert.That(assistant[0].Content, Does.Contain(run.Error!));
+        });
+    }
+
+    [Test]
     public async Task Executor_ParamsAgentInexistente_SegueParaProvider()
     {
         // Regressão do refactor S3776 (ApplyCommandOverridesAsync): params.agent

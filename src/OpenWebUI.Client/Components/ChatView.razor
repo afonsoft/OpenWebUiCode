@@ -3721,6 +3721,13 @@
         var status = polled?.Status ?? (pollFailed ? "running" : null);
         if (status is null or "completed" or "failed" or "stopped" or "interrupted")
         {
+            // Run já morta quando o attach chega: exibe o motivo da
+            // falha em vez de encerrar em silêncio.
+            if (status == "failed" && polled?.Error is { } runError)
+            {
+                _error = runError;
+                await InvokeAsync(StateHasChanged);
+            }
             return true;
         }
         // Polling-fallback (SPEC-20261030): o GET da run devolve
@@ -3812,6 +3819,13 @@
             case ChatStreamService.ChatStreamEvent.Advisor advice:
                 AddAdvisorActivity(advice);
                 break;
+            case ChatStreamService.ChatStreamEvent.Error runError:
+                // Falha terminal da run (executor publica {"error":…} e
+                // fecha o stream): antes entrava como "queda de
+                // transporte", re-anexava e morria em silêncio — o
+                // sintoma "chat travado" (runs 1199dd6b/c0d240ea).
+                _error = runError.Message;
+                return true;
         }
         return false;
     }
