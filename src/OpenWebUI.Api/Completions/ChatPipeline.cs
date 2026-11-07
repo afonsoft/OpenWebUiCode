@@ -574,7 +574,8 @@ public static class ChatPipeline
         Microsoft.Extensions.Logging.ILogger? Log = null,
         int? MaxSteps = null,
         int MaxParallelTools = 4,
-        RunLoopCheckpoint? Resume = null);
+        RunLoopCheckpoint? Resume = null,
+        TimeSpan? ToolProgressInterval = null);
 
     public static async Task<ToolLoopOutcome?> RunToolLoopAsync(
         ChatCompletionRequest effective,
@@ -668,7 +669,8 @@ public static class ChatPipeline
             // e grupos de 1 seguem o caminho sequencial de sempre.
             await RunToolCallsAsync(
                 new ToolCallLoopCtx(state, tools, toolExecutor,
-                    builtinContext, maxParallelTools, callbacks, log),
+                    builtinContext, maxParallelTools, callbacks, log,
+                    options?.ToolProgressInterval),
                 step.ToolCalls, ct);
             state.Round++;
 
@@ -1337,7 +1339,7 @@ public static class ChatPipeline
         ProviderToolCall call, ToolGateDecision gate, SemaphoreSlim? cap,
         ToolCallLoopCtx ctx, CancellationToken ct)
     {
-        var (_, tools, toolExecutor, builtinContext, _, _, log) = ctx;
+        var (_, tools, toolExecutor, builtinContext, _, _, log, _) = ctx;
         if (!gate.Approved)
         {
             return new ToolExecutionOutcome(
@@ -1373,10 +1375,12 @@ public static class ChatPipeline
                 {
                     // RF-A2 harness-seams: gate aprovado pode ter
                     // reescrito os args (interceptor tool.call).
-                    return await toolExecutor.ExecuteAsync(
-                        tools, call.Name,
-                        gate.RewriteArgsJson ?? call.ArgumentsJson,
-                        builtinContext, ct);
+                    return await AwaitWithToolProgressAsync(
+                        toolExecutor.ExecuteAsync(
+                            tools, call.Name,
+                            gate.RewriteArgsJson ?? call.ArgumentsJson,
+                            builtinContext, ct),
+                        call.Name, ctx, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -1400,6 +1404,36 @@ public static class ChatPipeline
         }
     }
 
+    /// <summary>Sinal de vida em tools longas: enquanto a execução não
+    /// termina, publica a fase <c>tool_wait</c> com o tempo decorrido —
+    /// a UI distingue tool trabalhando (dotnet test de minutos) de run
+    /// travada. Sem intervalo configurado ou sem callback, passa direto.
+    /// </summary>
+    private static async Task<ToolExecutionOutcome> AwaitWithToolProgressAsync(
+        Task<ToolExecutionOutcome> execTask, string toolName,
+        ToolCallLoopCtx ctx, CancellationToken ct)
+    {
+        if (ctx.ToolProgressInterval is not { } interval
+            || interval <= TimeSpan.Zero
+            || ctx.Callbacks?.OnPhaseAsync is not { } onPhase)
+        {
+            return await execTask;
+        }
+        var started = DateTimeOffset.UtcNow;
+        while (!execTask.IsCompleted)
+        {
+            var tick = await Task.WhenAny(execTask, Task.Delay(interval, ct));
+            if (tick == execTask)
+            {
+                break;
+            }
+            await onPhase("tool_wait",
+                $"{toolName} — {(long)(DateTimeOffset.UtcNow - started).TotalSeconds}s em execução",
+                ct);
+        }
+        return await execTask;
+    }
+
     /// <summary>Publicação sequencial do resultado: contagem de tarefas
     /// pendentes (reabre o budget de nudges), evento OnResult e a
     /// mensagem role=tool na janela e no tail.</summary>
@@ -1408,7 +1442,7 @@ public static class ChatPipeline
         ToolGateDecision gate, ToolExecutionOutcome outcome,
         TimeSpan elapsed, CancellationToken ct)
     {
-        var (state, _, _, _, _, callbacks, log) = ctx;
+        var (state, _, _, _, _, callbacks, log, _) = ctx;
         var denied = !gate.Approved;
         var output = outcome.Text;
         log?.LogInformation(
@@ -1454,13 +1488,14 @@ public static class ChatPipeline
         ToolLoopMutable State, IReadOnlyList<Tool> Tools,
         ToolExecutor ToolExecutor, BuiltinToolContext? BuiltinContext,
         int MaxParallelTools, ToolLoopCallbacks? Callbacks,
-        Microsoft.Extensions.Logging.ILogger? Log);
+        Microsoft.Extensions.Logging.ILogger? Log,
+        TimeSpan? ToolProgressInterval);
 
     private static async Task RunToolCallsAsync(
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
         CancellationToken ct)
     {
-        var (_, tools, toolExecutor, _, _, callbacks, _) = ctx;
+        var (_, tools, toolExecutor, _, _, callbacks, _, _) = ctx;
         for (var k = 0; k < calls.Count;)
         {
             // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
@@ -1497,7 +1532,7 @@ public static class ChatPipeline
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
         int start, int count, CancellationToken ct)
     {
-        var (_, _, _, _, maxParallelTools, callbacks, log) = ctx;
+        var (_, _, _, _, maxParallelTools, callbacks, log, _) = ctx;
         var gates = new ToolGateDecision[count];
         for (var g = 0; g < count; g++)
         {

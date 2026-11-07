@@ -1056,6 +1056,12 @@ public sealed class ChatRunExecutor(
             await config.GetAsync<int?>(
                 $"u:{run.UserId}:agentLoop.maxRounds", null, ct)
             ?? await config.GetAsync("agentLoop.maxRounds", 99999, ct));
+        // Sinal de vida em tools longas (stall fix): a cada
+        // agentLoop.toolProgressSeconds (≤0 desativa) a run publica a
+        // fase tool_wait com o elapsed — a UI distingue trabalho de hang.
+        var toolProgressSec = await config.GetAsync<int?>(
+            $"u:{run.UserId}:agentLoop.toolProgressSeconds", null, ct)
+            ?? await config.GetAsync("agentLoop.toolProgressSeconds", 15, ct);
         var callbacks = BuildToolLoopCallbacks(
             new CallbackDeps(run, commandMode, effective, loopTools,
                 budgetLimits, outletRules, builtinContext, state));
@@ -1063,7 +1069,10 @@ public sealed class ChatRunExecutor(
             effective, loopTools, toolExecutor, providers, ct,
             new ChatPipeline.ToolLoopOptions(
                 callbacks, builtinContext, run.UserId, logger, maxSteps,
-                toolExecutor.MaxParallel, resumeSeed));
+                toolExecutor.MaxParallel, resumeSeed,
+                toolProgressSec > 0
+                    ? TimeSpan.FromSeconds(toolProgressSec)
+                    : null));
         if (outcome is not null)
         {
             await ApplyUsageMetaAsync(run, outcome, ct);

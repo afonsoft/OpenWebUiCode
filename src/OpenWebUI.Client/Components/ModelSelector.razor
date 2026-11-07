@@ -164,6 +164,21 @@
             return;
         }
 
+        // O Value do pai é autoridade: o ChatView restaura
+        // chat.Models[0] nele ao abrir o chat. O default do storage/
+        // catálogo só decide quando Value está vazio (chat novo) —
+        // sobrescrever aqui era o bug que voltava o seletor pro
+        // primeiro modelo ao trocar de chat e retornar.
+        if (!string.IsNullOrEmpty(Value))
+        {
+            if (FusionModelRef.TryParse(Value, out var curLeader, out var curSidekick))
+            {
+                _leader = curLeader;
+                _sidekick = curSidekick;
+            }
+            return;
+        }
+
         string? saved;
         try
         {

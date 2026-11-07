@@ -31,6 +31,70 @@ public class ProviderService(
     public RetryPolicyOptions RetryOptions { get; } =
         RetryPolicyOptions.FromConfig(cfg);
 
+    /// <summary>Ociosidade máxima entre linhas de um stream SSE/NDJSON
+    /// antes de estourar <see cref="TimeoutException"/> — entra na política
+    /// de retry como Timeout. <c>Providers:StreamIdleSeconds</c>
+    /// (≤0 desativa — só o ct do caller manda). Causa-raiz do stall de
+    /// produção: stream aberto sem bytes pendia o ReadLineAsync por tempo
+    /// indeterminado (só o timeout implícito do HttpClient limitava).</summary>
+    public TimeSpan StreamIdleTimeout { get; } =
+        cfg.GetValue("Providers:StreamIdleSeconds", 45) is > 0 and var idle
+            ? TimeSpan.FromSeconds(idle)
+            : Timeout.InfiniteTimeSpan;
+
+    /// <summary>Timeout explícito da fase request→headers de cada chamada
+    /// ao provider (<c>Providers:RequestTimeoutSeconds</c>, ≤0 desativa).
+    /// O corpo do stream NÃO é coberto — esse é o papel de
+    /// <see cref="StreamIdleTimeout"/>.</summary>
+    public TimeSpan RequestTimeout { get; } =
+        cfg.GetValue("Providers:RequestTimeoutSeconds", 100) is > 0 and var req
+            ? TimeSpan.FromSeconds(req)
+            : Timeout.InfiniteTimeSpan;
+
+    /// <summary>Lê uma linha do SSE com watchdog de ociosidade: silêncio
+    /// além de <see cref="StreamIdleTimeout"/> vira
+    /// <see cref="TimeoutException"/> (→ retry), não um ReadLineAsync
+    /// pendente para sempre.</summary>
+    private async Task<string?> ReadLineWithIdleAsync(
+        StreamReader reader, CancellationToken ct)
+    {
+        if (StreamIdleTimeout == Timeout.InfiniteTimeSpan)
+        {
+            return await reader.ReadLineAsync(ct);
+        }
+        return await reader.ReadLineAsync(ct).AsTask()
+            .WaitAsync(StreamIdleTimeout, ct);
+    }
+
+    /// <summary>Versão estática do watchdog para helpers sem instância.</summary>
+    private static async Task<string?> ReadLineWithIdleAsync(
+        StreamReader reader, TimeSpan idleTimeout, CancellationToken ct)
+    {
+        if (idleTimeout == Timeout.InfiniteTimeSpan)
+        {
+            return await reader.ReadLineAsync(ct);
+        }
+        return await reader.ReadLineAsync(ct).AsTask()
+            .WaitAsync(idleTimeout, ct);
+    }
+
+    /// <summary>SendAsync delimitado a request→headers por
+    /// <see cref="RequestTimeout"/>: o CTS linkado morre com o retorno —
+    /// o stream do corpo segue no ct do caller (e no watchdog de linha).</summary>
+    private async Task<HttpResponseMessage> SendProviderAsync(
+        HttpRequestMessage request, HttpCompletionOption option,
+        CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient();
+        if (RequestTimeout == Timeout.InfiniteTimeSpan)
+        {
+            return await client.SendAsync(request, option, ct);
+        }
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(RequestTimeout);
+        return await client.SendAsync(request, option, cts.Token);
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     // Cache curto da lista de modelos: sem ele, cada mensagem de chat
@@ -1165,8 +1229,8 @@ public class ProviderService(
     {
         using var httpRequest = BuildOpenAiRequest(request, connections, payload);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         if (!string.Equals(response.Content.Headers.ContentType?.MediaType,
@@ -1188,7 +1252,7 @@ public class ProviderService(
         var dsmlReasoning = new DeltaFilterChain(forReasoning: true);
         var diag = new OpenAiStreamDiag();
 
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (!line.StartsWith(SseDataPrefix, StringComparison.Ordinal))
             {
@@ -1569,19 +1633,53 @@ public class ProviderService(
     /// executa (a run "trava"). O filtro segura apenas o que pode ser o
     /// início do marcador, converte invokes completos em
     /// <see cref="ProviderToolCall"/> e some com o markup.
+    /// <para>
+    /// Variantes observadas em produção (chat a7ef2949, run a6ed008e —
+    /// DeepSeek via OmniRoute): o bloco real é
+    /// <c>function_calls</c> (não só <c>tool_calls</c>), os pipes vêm
+    /// full-width <c>｜</c> OU ASCII <c>|</c>, a tag de abertura chega
+    /// sem <c>&gt;</c> e o modelo repete marcadores espúrios antes do
+    /// invoke de verdade.
+    /// </para>
     /// </summary>
     private sealed class DsmlToolCallFilter
     {
-        private const string OpenMarker = "<｜DSML｜tool_calls>";
-        private const string CloseMarker = "</｜DSML｜tool_calls>";
+        /// <summary>Abertura de bloco: pipes full-width ou ASCII, nomes
+        /// <c>tool_calls</c>/<c>function_calls</c>, <c>&gt;</c> opcional.</summary>
+        private static readonly Regex OpenMarkerPattern = new(
+            "<[｜|]DSML[｜|](?:tool_calls|function_calls)>?",
+            RegexOptions.Compiled, RegexTimeout);
+        private static readonly Regex CloseMarkerPattern = new(
+            "</[｜|]DSML[｜|](?:tool_calls|function_calls)>",
+            RegexOptions.Compiled, RegexTimeout);
+        /// <summary>Qualquer tag/fragmento DSML — sanitiza o resíduo de
+        /// bloco sem fechamento (o markup nunca vaza).</summary>
+        private static readonly Regex DsmlTagPattern = new(
+            "</?[｜|]DSML[｜|][^>\n]*>?",
+            RegexOptions.Compiled, RegexTimeout);
+        /// <summary>Esqueletos de marcador para o sufixo segurado —
+        /// aberturas/fechamentos nas duas variantes de pipe mais os
+        /// elementos internos (invoke/parameter) que podem completar
+        /// no próximo chunk.</summary>
+        private static readonly string[] MarkerSkeletons =
+        [
+            "<｜DSML｜function_calls", "<｜DSML｜tool_calls",
+            "<|DSML|function_calls", "<|DSML|tool_calls",
+            "</｜DSML｜function_calls", "</｜DSML｜tool_calls",
+            "</|DSML|function_calls", "</|DSML|tool_calls",
+            "<｜DSML｜invoke", "<|DSML|invoke",
+            "<｜DSML｜parameter", "<|DSML|parameter",
+            "</｜DSML｜invoke", "</|DSML|invoke",
+            "</｜DSML｜parameter", "</|DSML|parameter",
+        ];
         /// <summary>Bloco aberto além desse tamanho é desistido (modelo quebrado).</summary>
         private const int MaxBlockLength = 256 * 1024;
 
         private static readonly Regex InvokePattern = new(
-            "<｜DSML｜invoke name=\"(?<name>[^\"]+)\"\\s*>(?<body>.*?)</｜DSML｜invoke>",
+            "<[｜|]DSML[｜|]invoke name=\"(?<name>[^\"]+)\"\\s*>(?<body>.*?)</[｜|]DSML[｜|]invoke>",
             RegexOptions.Singleline | RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex ParameterPattern = new(
-            "<｜DSML｜parameter name=\"(?<name>[^\"]+)\"(?<attrs>[^>]*)>(?<value>.*?)</｜DSML｜parameter>",
+            "<[｜|]DSML[｜|]parameter name=\"(?<name>[^\"]+)\"(?<attrs>[^>]*)>(?<value>.*?)</[｜|]DSML[｜|]parameter>",
             RegexOptions.Singleline | RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex StringAttrPattern = new(
             "string=\"(?<v>true|false)\"", RegexOptions.Compiled, RegexTimeout);
@@ -1621,27 +1719,31 @@ public class ProviderService(
             var pos = 0;
             while (pos < text.Length)
             {
-                var openIdx = text.IndexOf(OpenMarker, pos, StringComparison.Ordinal);
-                if (openIdx < 0)
+                var open = OpenMarkerPattern.Match(text, pos);
+                if (!open.Success)
                 {
                     break;
                 }
-                output.Append(text, pos, openIdx - pos);
-                var closeIdx = text.IndexOf(
-                    CloseMarker, openIdx + OpenMarker.Length, StringComparison.Ordinal);
-                if (closeIdx >= 0)
+                EmitSafe(output, text, pos, open.Index);
+                var close = CloseMarkerPattern.Match(text, open.Index + open.Length);
+                if (close.Success)
                 {
-                    ParseInvokes(text.AsSpan(openIdx, closeIdx + CloseMarker.Length - openIdx));
-                    pos = closeIdx + CloseMarker.Length;
+                    ParseInvokes(text.AsSpan(
+                        open.Index, close.Index + close.Length - open.Index));
+                    pos = close.Index + close.Length;
                     continue;
                 }
-                var tail = text.Length - openIdx;
+                var tail = text.Length - open.Index;
                 if (!flush && tail <= MaxBlockLength)
                 {
-                    _pending.Append(text, openIdx, tail);
+                    _pending.Append(text, open.Index, tail);
                     return output.ToString();
                 }
-                ParseInvokes(text.AsSpan(openIdx));
+                // Bloco sem fechamento (fim do stream ou gigante): invokes
+                // completos viram calls; o resíduo é sanitizado — markup e
+                // fragmentos de tag saem, a prosa do modelo fica.
+                ParseInvokes(text.AsSpan(open.Index));
+                output.Append(SanitizeBlockResidue(text[open.Index..]));
                 pos = text.Length;
             }
             // Sem bloco aberto restante: emite tudo menos o sufixo que pode
@@ -1650,7 +1752,7 @@ public class ProviderService(
             var safe = text.Length - pos - hold;
             if (safe > 0)
             {
-                output.Append(text, pos, safe);
+                EmitSafe(output, text, pos, pos + safe);
             }
             if (hold > 0)
             {
@@ -1659,21 +1761,55 @@ public class ProviderService(
             return output.ToString();
         }
 
+        /// <summary>Texto visível fora de bloco: elementos DSML órfãos
+        /// (invoke, parameter e fechamentos soltos) nunca são prosa
+        /// legítima — remove e emite o resto.</summary>
+        private static void EmitSafe(StringBuilder output, string text, int from, int to)
+        {
+            if (to <= from)
+            {
+                return;
+            }
+            output.Append(
+                ParameterPattern.Replace(
+                    InvokePattern.Replace(
+                        CloseMarkerPattern.Replace(text[from..to], string.Empty),
+                        string.Empty),
+                    string.Empty));
+        }
+
+        /// <summary>Resíduo de bloco sem fechamento: invokes já viraram
+        /// calls; saem os elementos completos, os marcadores e qualquer
+        /// fragmento de tag — a prosa do modelo é preservada.</summary>
+        private static string SanitizeBlockResidue(string block) =>
+            DsmlTagPattern.Replace(
+                ParameterPattern.Replace(
+                    InvokePattern.Replace(block, string.Empty),
+                    string.Empty),
+                string.Empty);
+
         /// <summary>Tamanho do sufixo de <paramref name="text"/> (depois de
-        /// <paramref name="pos"/>) que é prefixo do marcador de abertura —
-        /// não pode ser emitido ainda porque pode virar um bloco DSML.</summary>
+        /// <paramref name="pos"/>) que é prefixo de algum esqueleto de
+        /// marcador — não pode ser emitido ainda porque pode completar um
+        /// marcador DSML no próximo chunk.</summary>
         private static int HeldSuffixLength(string text, int pos)
         {
-            var max = Math.Min(OpenMarker.Length - 1, text.Length - pos);
-            for (var len = max; len > 0; len--)
+            var tail = text.AsSpan(text.Length - Math.Min(
+                MarkerSkeletons.Max(s => s.Length) - 1, text.Length - pos));
+            var best = 0;
+            foreach (var skel in MarkerSkeletons)
             {
-                if (text.AsSpan(text.Length - len, len)
-                    .SequenceEqual(OpenMarker.AsSpan(0, len)))
+                var max = Math.Min(skel.Length - 1, tail.Length);
+                for (var len = max; len > best; len--)
                 {
-                    return len;
+                    if (tail[^len..].SequenceEqual(skel.AsSpan(0, len)))
+                    {
+                        best = len;
+                        break;
+                    }
                 }
             }
-            return 0;
+            return best;
         }
 
         /// <summary>Converte os invokes de um bloco (completo ou truncado)
@@ -1758,8 +1894,8 @@ public class ProviderService(
         };
         ApplyExtraHeaders(httpRequest, request);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -1774,7 +1910,7 @@ public class ProviderService(
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         ProviderUsage? usage = null;
         string? doneReason = null;
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -2505,13 +2641,15 @@ public class ProviderService(
         return ParseAnthropicResponse(json);
     }
 
-    /// <summary>Lê eventos SSE (pares event:/data: separados por linha em branco).</summary>
+    /// <summary>Lê eventos SSE (pares event:/data: separados por linha em
+    /// branco) com o mesmo watchdog de ociosidade dos demais streams.</summary>
     private static async IAsyncEnumerable<(string Event, JsonNode? Data)> ReadSseEventsAsync(
-        StreamReader reader, [EnumeratorCancellation] CancellationToken ct)
+        StreamReader reader, TimeSpan idleTimeout,
+        [EnumeratorCancellation] CancellationToken ct)
     {
         string? eventName = null;
         JsonNode? data = null;
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, idleTimeout, ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -2558,13 +2696,13 @@ public class ProviderService(
         var payload = BuildAnthropicPayload(request, stream: true,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
-        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -2620,8 +2758,8 @@ public class ProviderService(
         var payload = BuildAnthropicPayload(request, stream: true,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -2636,7 +2774,7 @@ public class ProviderService(
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         var state = new AnthropicStreamState();
 
-        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -3380,8 +3518,8 @@ public class ProviderService(
         var payload = BuildGooglePayload(request);
         await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -3391,7 +3529,7 @@ public class ProviderService(
         var markupContent = new ReasoningMarkupFilter();
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
 
-        await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (_, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -3503,8 +3641,8 @@ public class ProviderService(
         var payload = BuildGooglePayload(request);
         await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -3524,7 +3662,7 @@ public class ProviderService(
         // (SPEC-20261103-gemini-native-tools RF-002).
         var grounding = new List<(string Uri, string Title)>();
 
-        await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (_, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -4036,8 +4174,8 @@ public class ProviderService(
         };
         ApplyExtraHeaders(httpRequest, request);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -4048,7 +4186,7 @@ public class ProviderService(
         var markupContent = new ReasoningMarkupFilter();
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
 
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (ParseOllamaLine(line) is not { } node)
             {
@@ -4207,8 +4345,8 @@ public class ProviderService(
         }
         ApplyExtraHeaders(httpRequest, request);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -4219,7 +4357,7 @@ public class ProviderService(
         // sem tools nada executa, mas o markup não pode poluir a UI.
         var dsmlContent = new DeltaFilterChain();
         var dsmlReasoning = new DeltaFilterChain(forReasoning: true);
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {

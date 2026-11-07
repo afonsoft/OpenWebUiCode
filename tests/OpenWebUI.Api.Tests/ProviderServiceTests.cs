@@ -90,12 +90,15 @@ public class ProviderServiceTests
     }
 
     private ProviderService NewService() =>
+        NewService(new ConfigurationBuilder().Build());
+
+    private ProviderService NewService(IConfiguration cfg) =>
         new(new FakeHttpClientFactory(_clientTimeout), _config,
             NullLogger<ProviderService>.Instance,
             // Cache novo por serviço: o cache de modelos (TTL 60s) é chaveado
             // pelo fingerprint das conexões — compartilhar entre testes faz um
             // teste ler a resposta em cache de outro.
-            TestCache.Create(), new ConfigurationBuilder().Build());
+            TestCache.Create(), cfg);
 
     private Task SetConnectionsAsync(
         IReadOnlyList<string> ollama, IReadOnlyList<string> openAi, IReadOnlyList<string> keys) =>
@@ -1595,6 +1598,92 @@ public class ProviderServiceTests
         });
     }
 
+    // ---- DSML: variantes observadas em produção (chat a7ef2949) ----
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlFunctionCalls_ViraToolCallSemVazar()
+    {
+        // Produção (run a6ed008e, auto/deepseek): o bloco real emitido é
+        // <｜DSML｜function_calls> — não "tool_calls", a única forma que o
+        // filtro conhecia. Resultado: markup vazava no content persistido.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"vou ler <｜DSML｜function_calls><｜DSML｜invoke name=\\\"file_read\\\"><｜DSML｜parameter name=\\\"path\\\" string=\\\"true\\\">a.md</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls> pronto\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; }, null);
+
+        Assert.Multiple(() =>
+        {
+            var call = result!.ToolCalls.Single();
+            Assert.That(call.Name, Is.EqualTo("file_read"));
+            Assert.That(JsonNode.Parse(call.ArgumentsJson)!["path"]!
+                .GetValue<string>(), Is.EqualTo("a.md"));
+            Assert.That(result.Content, Is.EqualTo("vou ler  pronto"));
+            Assert.That(string.Concat(deltas), Does.Not.Contain("DSML"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlPipesAscii_ViraToolCallSemVazar()
+    {
+        // Variante com pipes ASCII (produção, mesmo run): o bloco inteiro
+        // chega com "|" no lugar de "｜" — marcador, invoke e parameter.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok <|DSML|function_calls><|DSML|invoke name=\\\"search\\\"><|DSML|parameter name=\\\"q\\\" string=\\\"true\\\">x</|DSML|parameter></|DSML|invoke></|DSML|function_calls>\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; }, null);
+
+        Assert.Multiple(() =>
+        {
+            var call = result!.ToolCalls.Single();
+            Assert.That(call.Name, Is.EqualTo("search"));
+            Assert.That(JsonNode.Parse(call.ArgumentsJson)!["q"]!
+                .GetValue<string>(), Is.EqualTo("x"));
+            Assert.That(result.Content, Is.EqualTo("ok "));
+            Assert.That(string.Concat(deltas), Does.Not.Contain("DSML"));
+        });
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_DsmlMarcadoresEspurios_InvokesConvertemEProsaSobrevive()
+    {
+        // Payload real de produção (chat a7ef2949, run a6ed008e — DeepSeek
+        // via OmniRoute): o modelo repete o marcador de abertura SEM '>'
+        // antes do invoke de verdade, mistura pipe ASCII e fecha em
+        // function_calls. Ao final um marcador solto abre outro bloco
+        // sem fechamento — a prosa depois dele não pode ser perdida.
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Vou organizar:\\n\\n<｜DSML｜function_calls\\n\\n<｜DSML｜function_calls\\n\\n<|DSML|function_calls\\n<｜DSML｜invoke name=\\\"builtin_worktree_diff\\\"><｜DSML｜parameter name=\\\"run_id\\\" string=\\\"true\\\">r-1</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>\\n\\n<｜DSML｜function_calls\\n\\nTo address the tasks, I will proceed:\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; }, null);
+
+        Assert.Multiple(() =>
+        {
+            var call = result!.ToolCalls.Single();
+            Assert.That(call.Name, Is.EqualTo("builtin_worktree_diff"));
+            Assert.That(JsonNode.Parse(call.ArgumentsJson)!["run_id"]!
+                .GetValue<string>(), Is.EqualTo("r-1"));
+            Assert.That(result.Content, Does.Contain("Vou organizar:"));
+            Assert.That(result.Content,
+                Does.Contain("To address the tasks, I will proceed:"));
+            Assert.That(result.Content, Does.Not.Contain("DSML"));
+        });
+    }
+
     [Test]
     public async Task CompleteOpenAi_DsmlNoReasoningBuffered_ViraToolCall()
     {
@@ -1612,6 +1701,60 @@ public class ProviderServiceTests
             Assert.That(result.ToolCalls.Single().Name, Is.EqualTo("r"));
             Assert.That(result.Reasoning, Is.EqualTo("pe"));
             Assert.That(result.Content, Is.EqualTo("oi"));
+        });
+    }
+
+    // ---- SSE idle watchdog + timeout explícito de request ----
+
+    [Test]
+    public async Task StreamOpenAiTools_SseSilencioso_WatchdogOciosidadeTimeout()
+    {
+        // Cenário do incidente de produção (chat a7ef2949): o gateway abre
+        // o stream, entrega um delta e fica em silêncio absoluto. Sem o
+        // watchdog de ociosidade (Providers:StreamIdleSeconds) o
+        // ReadLineAsync pende até o caller desistir — a run parece travada.
+        _routes["/chat/completions"] = (-1,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"oi\"}}]}\n\n",
+            15000);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+        var svc = NewService(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Providers:StreamIdleSeconds"] = "1" }).Build());
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.CatchAsync<TimeoutException>(async () =>
+            await svc.CompleteWithToolsStreamingAsync(
+                Req("m1", connection: "openai"),
+                (d, _) => Task.CompletedTask, null));
+        Assert.That(sw.Elapsed, Is.LessThan(TimeSpan.FromSeconds(12)),
+            "o watchdog tem que disparar bem antes do mock abortar");
+    }
+
+    [Test]
+    public async Task StreamOpenAiTools_HeadersPendentes_RequestTimeoutDispara()
+    {
+        // Provider aceita a conexão e nunca devolve headers —
+        // Providers:RequestTimeoutSeconds delimita a fase de resposta
+        // (sem depender do timeout implícito do HttpClient). O cancelamento
+        // com ct íntegro é classificado como transporte morto: o método
+        // devolve null e a camada de retry/reposição decide o próximo passo.
+        _routes["/chat/completions"] = (200, "data: [DONE]\n\n", 15000);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+        var svc = NewService(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            { ["Providers:RequestTimeoutSeconds"] = "1" }).Build());
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await svc.CompleteWithToolsStreamingAsync(
+            Req("m1", connection: "openai"),
+            (d, _) => Task.CompletedTask, null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Null,
+                "timeout de request conta como transporte morto → null");
+            Assert.That(sw.Elapsed, Is.LessThan(TimeSpan.FromSeconds(12)),
+                "o timeout de request tem que disparar bem antes do mock responder");
         });
     }
 
@@ -1823,11 +1966,35 @@ public class ProviderServiceTests
     }
 
     private ToolExecutor NewExecutor() =>
-        new(_db, new StubHttpClientFactory(),
+        NewExecutor(new StubHttpClientFactory());
+
+    private ToolExecutor NewExecutor(IHttpClientFactory httpFactory) =>
+        new(_db, httpFactory,
             new PythonToolExecutor(new ConfigurationBuilder().Build()),
             new McpClientService(_db, TestCache.Create()),
             new BuiltinToolRegistry([], new ConfigurationBuilder().Build()),
             _config);
+
+    // Tool HTTP que demora de propósito — execução longa real para o
+    // sinal de vida "tool_wait" (SPEC stall fix).
+    private sealed class DelayedHttpFactory(int delayMs) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) =>
+            new(new DelayedHandler(delayMs));
+    }
+
+    private sealed class DelayedHandler(int delayMs) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken ct)
+        {
+            await Task.Delay(delayMs, ct);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("resultado da tool"),
+            };
+        }
+    }
 
     private static Tool NewTool(string name) => new()
     {
@@ -1837,6 +2004,46 @@ public class ProviderServiceTests
         Url = "http://localhost:1/tool",
         Enabled = true,
     };
+
+    [Test]
+    public async Task RunToolLoop_ToolLonga_EmiteSinalDeVidaToolWait()
+    {
+        // Execução real lenta (~2.4s — cenário dos dotnet test de 250s do
+        // incidente): o loop publica a fase "tool_wait" periodicamente —
+        // a UI distingue tool trabalhando de run travada.
+        _routeQueues["/chat/completions"] = new();
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"minha_tool\",\"arguments\":\"{}\"}}]}}]}\n\n" +
+            "data: [DONE]\n\n", 0));
+        _routeQueues["/chat/completions"].Enqueue((200,
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fim\"}}]}\n\n" +
+            "data: [DONE]\n\n", 0));
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var phases = new List<string>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnPhaseAsync: (phase, _, _) =>
+            {
+                phases.Add(phase);
+                return Task.CompletedTask;
+            },
+            OnResultAsync: (_, _, _, _, _) => Task.CompletedTask);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), [NewTool("minha_tool")],
+            NewExecutor(new DelayedHttpFactory(2400)), NewService(), default,
+            new ChatPipeline.ToolLoopOptions(callbacks,
+                UserId: "u1", Log: NullLogger.Instance,
+                ToolProgressInterval: TimeSpan.FromSeconds(1)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome, Is.Not.Null);
+            Assert.That(phases.Count(p => p == "tool_wait"),
+                Is.GreaterThanOrEqualTo(2),
+                "tool de ~2.4s com intervalo de 1s deve emitir ≥2 sinais");
+        });
+    }
 
     private static ChatCompletionRequest ToolReq() =>
         new("m1", [new ChatCompletionMessage("user", "oi")],
