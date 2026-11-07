@@ -2479,6 +2479,12 @@ public class ProviderServiceTests
         + content + "\"},\"finish_reason\":\"" + finishReason + "\"}]}\n\n"
         + "data: [DONE]\n\n";
 
+    /// <summary>Escapa texto para dentro do JSON do <see cref="Sse"/> —
+    /// aspas, barras e quebras de linha reais viram escapes JSON.</summary>
+    private static string J(string text) => text
+        .Replace("\\", "\\\\").Replace("\"", "\\\"")
+        .Replace("\n", "\\n");
+
     private const string OverflowBody =
         "{\"error\":{\"message\":\"context_length_exceeded: this model's "
         + "maximum context length is 8192 tokens — reduce the length.\"}}";
@@ -3240,6 +3246,84 @@ public class ProviderServiceTests
                 Is.EqualTo(3), "3 nudges e para — o teto respeita o modelo");
             Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
                 Is.EqualTo(5));
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_FalsoSucesso_NudgeExigeToolCallReal()
+    {
+        // Incidente a7ef2949/run a6ed008e: o modelo encerrou o turno com
+        // comandos shell num bloco markdown + alegação "implementadas e
+        // commitadas" — sem chamar nenhuma tool de execução. O guard
+        // detecta a assinatura (fence shell + claim + todos pendentes) e
+        // injeta o nudge exigindo a call real em vez de aceitar a prosa.
+        var injected = new List<ChatCompletionMessage>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnMessagesAddedAsync: (msgs, _, _) =>
+            {
+                injected.AddRange(msgs);
+                return Task.CompletedTask;
+            });
+        var (executor, tools) = NewExecutorWith([new TodoWriteBuiltinTool()]);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCallArgs("builtin_todo_write",
+                "{\"todos\":[{\"content\":\"A\",\"status\":\"in_progress\"}]}"), 0),
+             (200, Sse(J("Vou executar:\n\n```bash\ndotnet test\n"
+                 + "git commit -m \"x\"\n```\n\nAs alterações foram "
+                 + "implementadas e commitadas.")), 0),
+             (200, SseCallArgs("builtin_todo_write",
+                "{\"todos\":[{\"content\":\"A\",\"status\":\"completed\"}]}"), 0),
+             (200, Sse("agora sim, de verdade"), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopOptions(callbacks, TestCtx(),
+                UserId: "u1", Log: NullLogger.Instance, MaxSteps: 10));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome!.FinalContent, Is.EqualTo("agora sim, de verdade"));
+            Assert.That(injected.Any(m =>
+                m.Role == "user" && m.Content?.Contains("NÃO rodaram") == true),
+                Is.True, "nudge de falso sucesso injetado");
+            Assert.That(_requests.Count(r => r.Path == "/chat/completions"),
+                Is.EqualTo(4), "tool + falso sucesso + tool + final");
+        });
+    }
+
+    [Test]
+    public async Task RunToolLoop_BashSemClaimOuSemTodos_RespostaPassa()
+    {
+        // Bloco shell SEM alegação de conclusão não é falso sucesso —
+        // segue o fluxo normal (nudge de pendentes, não o específico);
+        // e claim com a lista fechada também passa direto.
+        var injected = new List<ChatCompletionMessage>();
+        var callbacks = new ChatPipeline.ToolLoopCallbacks(
+            OnMessagesAddedAsync: (msgs, _, _) =>
+            {
+                injected.AddRange(msgs);
+                return Task.CompletedTask;
+            });
+        var (executor, tools) = NewExecutorWith([new TodoWriteBuiltinTool()]);
+        _routeQueues["/chat/completions"] = new(
+            [(200, SseCallArgs("builtin_todo_write",
+                "{\"todos\":[{\"content\":\"A\",\"status\":\"completed\"}]}"), 0),
+             (200, Sse(J("Exemplo de comando:\n\n```bash\ndotnet test\n```\n\n"
+                 + "As alterações foram implementadas.")), 0)]);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var outcome = await ChatPipeline.RunToolLoopAsync(
+            ToolReq(), tools, executor, NewService(), default,
+            new ChatPipeline.ToolLoopOptions(callbacks, TestCtx(),
+                UserId: "u1", Log: NullLogger.Instance, MaxSteps: 5));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(injected.Any(m =>
+                m.Content?.Contains("NÃO rodaram") == true),
+                Is.False, "lista fechada: claim não dispara o guard");
+            Assert.That(outcome, Is.Not.Null);
         });
     }
 
