@@ -117,18 +117,19 @@ RUN git clone --depth 1 -b "v${NVM_VERSION}" https://github.com/nvm-sh/nvm.git "
  && printf 'export NVM_DIR=/opt/nvm\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' > /etc/profile.d/nvm.sh \
  && printf '. /etc/profile.d/nvm.sh\n' >> /etc/bash.bashrc
 
-# Runtime compartilhado .NET (só runtime, não SDK): roda ferramentas
-# framework-dependent do agente — csharp-ls instalado no stage build. O app
-# segue self-contained e não usa este runtime; bônus: `dotnet` fica no PATH
-# para o agente (--info, executar dlls, inspecionar runtimes).
+# SDK .NET compartilhado (não só runtime): o csharp-ls do LSP do agente
+# (SPEC-20261009-lsp-diagnostics) resolve o SDK via MSBuildLocator e falha
+# no initialize sem ele ("No .NET SDKs were found"). O app segue
+# self-contained; o SDK também põe `dotnet` no PATH p/ o agente
+# (restore/build/test nos workspaces).
 # ROLL_FORWARD=LatestMajor: tools compiladas p/ TFM anterior rodam sobre o
 # runtime mais novo sem reinstalação.
-ARG DOTNET_RUNTIME_CHANNEL=10.0
+ARG DOTNET_SDK_CHANNEL=10.0
 ENV DOTNET_ROOT=/opt/dotnet \
     DOTNET_ROLL_FORWARD=LatestMajor
 RUN curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
- && bash /tmp/dotnet-install.sh --channel "$DOTNET_RUNTIME_CHANNEL" \
-      --runtime dotnet --install-dir /opt/dotnet \
+ && bash /tmp/dotnet-install.sh --channel "$DOTNET_SDK_CHANNEL" \
+      --install-dir /opt/dotnet \
  && rm /tmp/dotnet-install.sh \
  && ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet
 COPY --from=build /tools /opt/tools
