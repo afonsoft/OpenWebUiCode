@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -28,6 +29,14 @@ var connectionString = builder.Configuration.GetConnectionString("Default")
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     ConfigureDatabase(options, connectionString));
+
+// Chaves do DataProtection persistidas no volume de dados — o default
+// /root/.aspnet/DataProtection-Keys morre com o container e todo payload
+// protegido fica ilegível após redeploy.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Join(
+        DataPaths.Root(builder.Environment.ContentRootPath),
+        "dataprotection-keys")));
 
 builder.Services.AddScoped<ConfigService>();
 builder.Services.AddScoped<JwtTokenService>();
