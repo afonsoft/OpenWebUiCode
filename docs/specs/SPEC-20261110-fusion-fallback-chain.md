@@ -8,7 +8,7 @@
 | Type | `Feature/Resilience` |
 | Stack | `.NET` |
 | Repository | `OpenWebUiCode` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Depende de | SPEC-20261106 (adaptive-fusion), SPEC-20261016 (model-combos) |
 
 ## 1. User Story
@@ -92,3 +92,7 @@ Cadeia efetiva da run = `[L1, L2, S1, S2]` — ordem absoluta: leaders primeiro,
 - Trocar de modelo no meio do tool loop após tool calls (precisaria de journal de side-effects — o gate `ToolMessages` vazio já cobre o caso principal: provedor morto desde o início).
 - Estratégia inteligente de ordenação (score/latência) — a ordem é a declarada pelo usuário.
 - `arena:`/`combo:`/`pipeline:` aninhados dentro de `fusion:` — seguem proibidos como hoje.
+
+## Delivered
+
+Mergeado em `main` — commit `70a71ee (merge 205736b)`. Issue de tracking: #719 (fusion chain).

@@ -9,7 +9,7 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `fix/run-stream-polling-fallback` |
-| Status | `Approved` |
+| Status | `Completed` |
 
 ## 1. User Story
 
@@ -47,3 +47,7 @@ WebSocket/SignalR passa pelos mesmos proxies hostis (o próprio SignalR faz fall
 
 - SignalR/WebSocket como transporte do stream (mesma vulnerabilidade a proxy; infra já existe para notificações).
 - Long-polling server-side (hold aberto) — ciclo curto de GET é mais compatível.
+
+## Delivered
+
+Mergeado em `main` — commit `b242be8 (merge 080a592)`. Issue de tracking: #719 (fusion chain).
