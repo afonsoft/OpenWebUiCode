@@ -64,6 +64,38 @@ public sealed record ChatRunResponse(
     RunQuestionAskedEvent? PendingQuestion = null);
 
 /// <summary>
+/// Evento do backlog numerado da run (SPEC-20261110-run-stream-polling-
+/// fallback): <paramref name="Payload"/> é o bloco SSE cru (linhas
+/// <c>event:</c>/<c>data:</c>) — o cliente reusa o mesmo parser do stream.
+/// </summary>
+public sealed record RunEventItem(int Seq, string Payload);
+
+/// <summary>
+/// Resposta do polling-fallback
+/// (<c>GET /api/v1/chats/{id}/runs/{runId}/events?lastSeq=N</c>): os
+/// eventos desde <c>lastSeq</c> + status/erro da run + conteúdo parcial
+/// persistido + aprovação/pergunta pendente — tudo que a UI precisa para
+/// reconstruir o progresso quando o attach SSE morre atrás de proxies.
+/// </summary>
+/// <param name="Status">Status atual da run (mesmos valores de <see cref="ChatRunResponse.Status"/>).</param>
+/// <param name="Closed">Stream do broadcaster fechado (run encerrou neste processo).</param>
+/// <param name="LastSeq">Seq mais alto devolvido — próximo poll usa como <c>lastSeq</c>.</param>
+/// <param name="PartialContent">Checkpoint de conteúdo persistido pela run (cobre eventos já descartados do backlog).</param>
+/// <param name="Error">Erro final quando failed.</param>
+/// <param name="Events">Eventos com seq &gt; <c>lastSeq</c>.</param>
+/// <param name="PendingApproval">Aprovação aguardando decisão do dono.</param>
+/// <param name="PendingQuestion">Pergunta ask_user aguardando resposta.</param>
+public sealed record RunEventsResponse(
+    string Status,
+    bool Closed,
+    int LastSeq,
+    string? PartialContent,
+    string? Error,
+    IReadOnlyList<RunEventItem> Events,
+    RunApprovalAskedEvent? PendingApproval = null,
+    RunQuestionAskedEvent? PendingQuestion = null);
+
+/// <summary>
 /// Item da lista consolidada de runs do usuário
 /// (<c>GET /api/v1/chats/runs</c>, SPEC-20261010-parallel-runs-console):
 /// a run + título do chat + vínculos de hierarquia pra árvore de sub-agents.

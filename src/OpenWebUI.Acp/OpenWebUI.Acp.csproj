@@ -10,4 +10,9 @@
     <Description>ACP (Agent Client Protocol) stdio host for Open WebUI runs — SPEC-20261021-harness-seams RF-C3.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Testes de contrato do dispatch JSON-RPC (AcpDispatch internals). -->
+    <InternalsVisibleTo Include="OpenWebUI.Api.Tests" />
+  </ItemGroup>
+
 </Project>

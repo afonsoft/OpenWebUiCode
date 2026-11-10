@@ -81,6 +81,26 @@ public sealed class ChatRunBroadcaster
     public void Drop(string runId) => _streams.TryRemove(runId, out _);
 
     /// <summary>
+    /// Snapshot do backlog para o polling-fallback (SPEC-20261110-
+    /// run-stream-polling-fallback): devolve os eventos com seq &gt;
+    /// <paramref name="since"/> e se o stream já fechou — sem assinar.
+    /// Run sem stream (sem evento publicado ou backlog descartado)
+    /// responde vazio/aberto: o status no banco é quem fecha o ciclo.
+    /// </summary>
+    public (List<RunEvent> Events, bool Closed) GetEventsSince(string runId, int since)
+    {
+        if (!_streams.TryGetValue(runId, out var stream))
+        {
+            return ([], false);
+        }
+
+        lock (stream)
+        {
+            return (stream.Backlog.Where(e => e.Seq > since).ToList(), stream.Closed);
+        }
+    }
+
+    /// <summary>
     /// Assina a run: primeiro os eventos com seq &gt; <paramref name="since"/>
     /// do backlog (replay), depois os vivos até o stream fechar.
     /// </summary>
