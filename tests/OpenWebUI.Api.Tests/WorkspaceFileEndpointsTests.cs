@@ -1023,6 +1023,9 @@ public class WorkspaceFileEndpointsTests
         WebApplicationFactory<Program> factory, string dbPath, bool bound = true)
     {
         var client = factory.CreateClient();
+        // O default de 100s do HttpClient não cobre cold-start da app de
+        // teste sob a carga da suite completa — flake observado em paralelo.
+        client.Timeout = TimeSpan.FromMinutes(5);
         var tag = Guid.NewGuid().ToString("N")[..6];
         var signup = await client.PostAsJsonAsync(
             "/api/v1/auths/signup", new SignUpRequest($"WF{tag}", $"wf{tag}@wf.local", "senha123"));
