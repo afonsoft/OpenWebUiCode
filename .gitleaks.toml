@@ -28,3 +28,12 @@ regexTarget = "line"
 regexes = [
   '''_n8nHasKey\s*=''',
 ]
+
+# Chaves de browser-storage (localStorage) — namespaces webui.* são nomes
+# de chave de preferência da UI, nunca credenciais.
+[[allowlists]]
+description = "Browser-storage key names (webui.*)"
+regexTarget = "secret"
+regexes = [
+  '''webui\.''',
+]
