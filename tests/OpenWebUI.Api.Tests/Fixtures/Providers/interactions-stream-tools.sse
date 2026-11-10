@@ -1,0 +1,21 @@
+event: interaction.created
+data: {"interaction":{"id":"v1_Tool","status":"in_progress","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+event: step.start
+data: {"index":0,"step":{"type":"function_call","id":"call_xyz789","name":"get_weather","arguments":{}},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":0,"delta":{"type":"arguments_delta","arguments":"{\"location\": \"San "},"event_type":"step.delta"}
+
+event: step.delta
+data: {"index":0,"delta":{"type":"arguments_delta","arguments":"Francisco\"}"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":0,"event_type":"step.stop"}
+
+event: interaction.completed
+data: {"interaction":{"id":"v1_Tool","status":"requires_action","usage":{"total_tokens":60,"total_input_tokens":50,"total_output_tokens":10}},"event_type":"interaction.completed"}
+
+event: done
+data: [DONE]
+
