@@ -694,6 +694,7 @@
   "chat.status_auto_approved": "auto-approved: {{name}}",
   "chat.status_paused": "paused",
   "chat.status_thinking": "Thinking…",
+  "chat.status_polling": "polling",
   "chat.status_writing": "Writing response…",
   "chat.status_step": "step {{step}}/{{max}}",
   "chat.progress.preparing_context": "Preparing context…",

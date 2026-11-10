@@ -579,6 +579,7 @@
   "chat.status_auto_approved": "auto-approuvé : {{name}}",
   "chat.status_paused": "en pause",
   "chat.status_thinking": "Réflexion…",
+  "chat.status_polling": "scrutation",
   "chat.status_writing": "Rédaction de la réponse…",
   "chat.status_step": "étape {{step}}/{{max}}",
   "chat.progress.preparing_context": "Préparation du contexte…",

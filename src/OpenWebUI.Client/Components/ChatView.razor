@@ -28,7 +28,7 @@
                         {
                             <AgentModeBadge Mode="@EffectiveAgentMode" />
                         }
-                        @if (_streaming && !string.IsNullOrEmpty(_statusLabel))
+                        @if (_streaming && !string.IsNullOrEmpty(StatusChipLabel))
                         {
                             <span class="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-gray-200 dark:border-gray-750 bg-gray-50 dark:bg-gray-850 px-2.5 py-1 text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400"
                                   role="status" aria-live="polite">
@@ -36,7 +36,7 @@
                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
                                 </svg>
-                                @_statusLabel
+                                @StatusChipLabel
                             </span>
                         }
                         @if (_streaming && _tps is { } tps)
@@ -396,7 +396,7 @@
                         OnAnswer="answer => AnswerQuestionAsync(pendingQuestion.CallId, answer)" />
                 </div>
             }
-            else if (_streaming && !string.IsNullOrEmpty(_statusLabel))
+            else if (_streaming && !string.IsNullOrEmpty(StatusChipLabel))
             {
                 @* No mobile o chip do header fica oculto — mantém o status inline *@
                 <div class="sm:hidden py-1 flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
@@ -404,7 +404,7 @@
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
                     </svg>
-                    @_statusLabel
+                    @StatusChipLabel
                 </div>
             }
 
@@ -1069,6 +1069,19 @@
     // Streaming de tools (SPEC-20261007-chat-tool-streaming):
     // fase atual, calls ao vivo e pedido de aprovação pendente.
     private string? _statusLabel;
+
+    /// <summary>
+    /// Fallback de polling ativo (SPEC-20261110): o attach SSE morreu
+    /// repetidamente atrás do proxy e a UI passou a buscar os eventos da
+    /// run via GET /events — o chip sinaliza o modo degradado.
+    /// </summary>
+    private bool _pollingFallback;
+
+    /// <summary>Label do chip de status — marca o modo polling-fallback.</summary>
+    private string? StatusChipLabel =>
+        _pollingFallback
+            ? $"{_statusLabel ?? L["chat.status_thinking"]} · {L["chat.status_polling"]}"
+            : _statusLabel;
     private bool _viewSource;
     private double? _tps;
     private readonly Queue<(DateTime At, int Chars)> _tpsWindow = new();
@@ -3551,6 +3564,10 @@
     // 45s = ~4 heartbeats perdidos (10s) + margem para jitter de proxy —
     // antes 35s/15s marcava stall em hiccup curto e re-anexava à toa.
     private const int StallMs = 45_000;
+    // Tempo para o 1º evento de um attach (o pad de ~2KB sai na hora numa
+    // conexão saudável): proxy que bufferiza o corpo segura tudo — cortar
+    // em 15s faz o polling-fallback assumir sem congelar a UI por 45s.
+    private const int FirstEventStallMs = 15_000;
     // Cadência de retry: até SoftEmptyAttaches o backoff exponencial é
     // rápido (0,5–4s); depois disso o attach continua em ~8s enquanto a
     // run estiver viva — proxies corporativos derrubam qualquer attach antes
@@ -3559,6 +3576,14 @@
     // ~40 attaches vazios (~35min de stall de 45s + 8s cada) sem ver a
     // run morrer: só então desiste — run viva demais já é anômalo.
     private const int HardEmptyAttaches = 40;
+    // SPEC-20261110: attaches vazios seguidos que chaveiam para o modo
+    // polling (o SSE morreu de vez atrás do proxy — GETs curtos passam).
+    private const int PollFallbackAttaches = 3;
+    // Cadência do polling-fallback — quase-real-time sem afogar o servidor.
+    private const int PollIntervalMs = 1_500;
+    // Falhas de transporte seguidas no polling antes de desistir
+    // (~2min no backoff máximo) — rede caida de vez não segura a UI.
+    private const int MaxPollFailures = 20;
 
     /// <summary>Estado mutável do loop de resume do stream da run.</summary>
     private sealed class RunConsumeState
@@ -3606,9 +3631,24 @@
             if (!state.SawEvent)
             {
                 state.EmptyAttaches++;
-                if (await HandleEmptyAttachAsync(chatId, runId, state, ct))
+                if (await HandleEmptyAttachAsync(
+                        chatId, runId, content, placeholder, index, state, ct))
                 {
                     return;
+                }
+
+                // SPEC-20261110: SSE morrendo sempre antes do 1º evento
+                // (proxy corporativo) → polling dedicado até a run fechar.
+                if (state.EmptyAttaches >= PollFallbackAttaches)
+                {
+                    if (await PollRunEventsAsync(
+                            chatId, runId, content, placeholder, index, state, ct))
+                    {
+                        return;
+                    }
+                    // Polling também falhou de rede — volta aos attaches
+                    // com contagem zerada (uma rede nova pode curar o SSE).
+                    state.EmptyAttaches = 0;
                 }
             }
             else
@@ -3649,7 +3689,9 @@
         RunConsumeState state, CancellationToken ct)
     {
         using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        stall.CancelAfter(StallMs);
+        // TTFB curto: o pad SSE chega na hora numa conexão saudável — nada
+        // em FirstEventStallMs = proxy bufferizando/derrubando o corpo.
+        stall.CancelAfter(FirstEventStallMs);
         try
         {
             await foreach (var evt in ChatStream.StreamRunEventsAsync(
@@ -3697,50 +3739,22 @@
     }
 
     /// <summary>
-    /// Attach vazio: confere o status da run antes de re-anexar.
-    /// Retorna true quando o consumo deve encerrar.
+    /// Attach vazio: faz um ciclo de polling (eventos + status + pendências)
+    /// antes de re-anexar — a UI já mostra o progresso acumulado aqui, sem
+    /// esperar o modo polling dedicado. Retorna true quando o consumo deve
+    /// encerrar.
     /// </summary>
     private async Task<bool> HandleEmptyAttachAsync(
-        string chatId, string runId, RunConsumeState state, CancellationToken ct)
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
     {
-        // O status check cai na mesma queda de rede que derrubou o
-        // attach — tratar como "run viva" e seguir o backoff em vez
-        // de abortar o resume com erro.
-        ChatRunResponse? polled = null;
-        var pollFailed = false;
-        try
+        var outcome = await PollRunOnceAsync(
+            chatId, runId, content, placeholder, index, state, ct);
+        if (outcome is RunPollOutcome.Terminal or RunPollOutcome.Gone)
         {
-            polled = await ChatStream.GetRunAsync(chatId, runId, ct);
-        }
-        catch (Exception ex) when (ClientErrors.IsTransient(ex))
-        {
-            pollFailed = true;
-        }
-        // Sem resposta: transitório → run viva; mas GET respondido
-        // com null (404) → run sumiu, encerra como antes.
-        var status = polled?.Status ?? (pollFailed ? "running" : null);
-        if (status is null or "completed" or "failed" or "stopped" or "interrupted")
-        {
-            // Run já morta quando o attach chega: exibe o motivo da
-            // falha em vez de encerrar em silêncio.
-            if (status == "failed" && polled?.Error is { } runError)
-            {
-                _error = runError;
-                await InvokeAsync(StateHasChanged);
-            }
             return true;
-        }
-        // Polling-fallback (SPEC-20261030): o GET da run devolve
-        // aprovação/pergunta pendente — o attach SSE que o proxy
-        // mata antes do 1º evento não esconde mais o card até o F5.
-        if (polled is not null
-            && (polled.PendingApproval is not null || polled.PendingQuestion is not null
-                || _pendingApproval is not null || _pendingQuestion is not null))
-        {
-            _pendingApproval = polled.PendingApproval;
-            _pendingQuestion = polled.PendingQuestion;
-            state.LastRender = DateTime.UtcNow;
-            await InvokeAsync(StateHasChanged);
         }
         if (state.EmptyAttaches >= HardEmptyAttaches)
         {
@@ -3749,6 +3763,157 @@
             return true;
         }
         return false;
+    }
+
+    /// <summary>Resultado de um ciclo de polling da run.</summary>
+    private enum RunPollOutcome
+    {
+        /// <summary>Eventos aplicados (ou nada novo) — run viva.</summary>
+        Ok,
+        /// <summary>Run chegou a estado terminal (status/evento/closed).</summary>
+        Terminal,
+        /// <summary>404 — a run não existe mais no servidor.</summary>
+        Gone,
+        /// <summary>Falha de transporte no GET — tratar como run viva.</summary>
+        Transient,
+    }
+
+    /// <summary>
+    /// Um ciclo do polling-fallback (SPEC-20261110): GET
+    /// <c>/runs/{id}/events?lastSeq</c> devolve o backlog SSE em JSON —
+    /// aplica os eventos pelo mesmo caminho do stream vivo, sincroniza
+    /// aprovação/pergunta pendente e cobre eventos perdidos via
+    /// <c>PartialContent</c>. Resposta curta atravessa proxies que matam SSE.
+    /// </summary>
+    private async Task<RunPollOutcome> PollRunOnceAsync(
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
+    {
+        RunEventsResponse? polled;
+        bool gone;
+        try
+        {
+            // O GET cai na mesma queda de rede que derrubou o attach —
+            // transitório conta como "run viva" e segue o backoff.
+            (polled, gone) = await ChatStream.GetRunEventsAsync(
+                chatId, runId, state.LastSeq, ct);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            return RunPollOutcome.Transient;
+        }
+        if (gone)
+        {
+            return RunPollOutcome.Gone;
+        }
+        if (polled is null)
+        {
+            return RunPollOutcome.Transient;
+        }
+
+        var terminal = false;
+        var touched = false;
+        foreach (var item in polled.Events)
+        {
+            foreach (var evt in ChatStream.ParseEventBlock(item.Payload, item.Seq))
+            {
+                if (evt.Seq > 0)
+                {
+                    state.LastSeq = Math.Max(state.LastSeq, evt.Seq);
+                }
+                touched = true;
+                if (await ApplyRunEventAsync(evt, content, placeholder, index))
+                {
+                    terminal = true;
+                }
+            }
+        }
+
+        // Backlog pode ter sido cortado (restart/overflow): o checkpoint
+        // persistido cobre o gap quando está à frente do que já vimos.
+        if (polled.PartialContent is { Length: > 0 } partial
+            && partial.Length > content.Length)
+        {
+            content.Clear();
+            content.Append(partial);
+            UpdateStreamingPlaceholder(content, placeholder, index);
+            touched = true;
+        }
+
+        // Aprovação/pergunta pendente chega por polling também — o card
+        // não depende do evento SSE que o proxy segurou.
+        if (polled.PendingApproval is not null || polled.PendingQuestion is not null
+            || _pendingApproval is not null || _pendingQuestion is not null)
+        {
+            _pendingApproval = polled.PendingApproval;
+            _pendingQuestion = polled.PendingQuestion;
+            touched = true;
+        }
+
+        if (polled.Status == "failed" && polled.Error is { } runError)
+        {
+            _error = runError;
+            touched = true;
+        }
+
+        if (touched)
+        {
+            state.LastRender = DateTime.UtcNow;
+            await InvokeAsync(StateHasChanged);
+            await ScrollToEndIfPinnedAsync();
+        }
+
+        return terminal || polled.Closed
+            || polled.Status is "completed" or "failed" or "stopped" or "interrupted"
+                ? RunPollOutcome.Terminal
+                : RunPollOutcome.Ok;
+    }
+
+    /// <summary>
+    /// Modo polling (SPEC-20261110): depois de attaches vazios seguidos o
+    /// SSE é considerado morto — cicla o GET /events até a run terminar.
+    /// Retorna true quando a run fechou; false só quando o teto de falhas
+    /// de rede estourou (o caller volta a tentar attach).
+    /// </summary>
+    private async Task<bool> PollRunEventsAsync(
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
+    {
+        _pollingFallback = true;
+        await InvokeAsync(StateHasChanged);
+        var failures = 0;
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var outcome = await PollRunOnceAsync(
+                    chatId, runId, content, placeholder, index, state, ct);
+                if (outcome is RunPollOutcome.Terminal or RunPollOutcome.Gone)
+                {
+                    return true;
+                }
+                failures = outcome == RunPollOutcome.Transient ? failures + 1 : 0;
+                if (failures >= MaxPollFailures)
+                {
+                    Console.WriteLine(
+                        $"polling da run {runId}: {failures} falhas seguidas, voltando aos attaches.");
+                    return false;
+                }
+                await Task.Delay(
+                    outcome == RunPollOutcome.Transient
+                        ? Math.Min(PollIntervalMs * (1 << Math.Min(failures, 3)), 12_000)
+                        : PollIntervalMs, ct);
+            }
+            return false;
+        }
+        finally
+        {
+            _pollingFallback = false;
+        }
     }
 
     /// <summary>
@@ -3842,6 +4007,27 @@
         ChatMessageModel placeholder, int index)
     {
         content.Append(delta.Text);
+        UpdateStreamingPlaceholder(content, placeholder, index);
+        TrackTps(delta.Text.Length);
+        // O auto-colapso do pensamento é derivado em
+        // ThinkingExpanded (hasDeltas=true) — aqui só o chip
+        // vira "Escrevendo resposta…".
+        if (_statusLabel == _thinkingLabel)
+        {
+            _statusLabel = L["chat.status_writing"];
+        }
+    }
+
+    /// <summary>
+    /// Escreve o acumulado na bolha de stream — resolve a posição viva do
+    /// placeholder (a lista pode ter sido reconstruída por reload/mensagens
+    /// duráveis) em vez de indexar às cegas. Usado pelo delta SSE e pelo
+    /// <c>PartialContent</c> do polling-fallback (SPEC-20261110).
+    /// </summary>
+    private void UpdateStreamingPlaceholder(
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index)
+    {
         var updated = placeholder with { Content = content.ToString() };
         var liveIdx = _streamingEntry is null
             ? -1
@@ -3861,14 +4047,6 @@
         }
         _streamingEntry = updated;
         _hasDeltas = true;
-        TrackTps(delta.Text.Length);
-        // O auto-colapso do pensamento é derivado em
-        // ThinkingExpanded (hasDeltas=true) — aqui só o chip
-        // vira "Escrevendo resposta…".
-        if (_statusLabel == _thinkingLabel)
-        {
-            _statusLabel = L["chat.status_writing"];
-        }
     }
 
     /// <summary>

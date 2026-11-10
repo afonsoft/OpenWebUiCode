@@ -1037,6 +1037,39 @@ public class RunCoverageTests
         Assert.That(eventos.Select(e => e.Payload), Does.Contain("data: live"));
     }
 
+    [Test]
+    public void Broadcaster_GetEventsSince_FiltraBacklogERefleteClosed()
+    {
+        // Polling-fallback (SPEC-20261110): o endpoint /events usa o mesmo
+        // backlog do SSE — seq > lastSeq, flag Closed quando a run fecha.
+        var broadcaster = new OpenWebUI.Infrastructure.Services.ChatRunBroadcaster();
+        broadcaster.Publish("r", "data: a");
+        broadcaster.Publish("r", "data: b");
+
+        var (primeira, aberta1) = broadcaster.GetEventsSince("r", 0);
+        Assert.Multiple(() =>
+        {
+            Assert.That(primeira.Select(e => e.Payload),
+                Is.EqualTo(new[] { "data: a", "data: b" }));
+            Assert.That(aberta1, Is.False);
+        });
+
+        var (resto, _) = broadcaster.GetEventsSince("r", primeira[^1].Seq);
+        Assert.That(resto, Is.Empty);
+
+        broadcaster.Complete("r");
+        var (_, fechada) = broadcaster.GetEventsSince("r", 0);
+        Assert.That(fechada, Is.True);
+
+        // Run sem stream (nenhum publish / backlog descartado): vazio+aberto.
+        var (vazio, closedVazio) = broadcaster.GetEventsSince("outra", 0);
+        Assert.Multiple(() =>
+        {
+            Assert.That(vazio, Is.Empty);
+            Assert.That(closedVazio, Is.False);
+        });
+    }
+
     private async Task<string> DbChatRunIdAsync(string chatId)
     {
         using var scope = _factory.Services.CreateScope();
