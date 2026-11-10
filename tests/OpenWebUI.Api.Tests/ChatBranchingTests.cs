@@ -853,7 +853,10 @@ public class ChatBranchingE2ETests
 
         var depois = await _client.GetFromJsonAsync<ChatResponse>(
             $"/api/v1/chats/{chat.Id}");
-        Assert.That(depois!.Messages[^1].ParentId, Is.EqualTo(pivot.Id),
+        // A run enfileirada pode concluir em paralelo e anexar a resposta do
+        // assistente — assert por id, não por posição (flake sob carga).
+        var altDepois = depois!.Messages.FirstOrDefault(m => m.Id == alt.Id);
+        Assert.That(altDepois?.ParentId, Is.EqualTo(pivot.Id),
             "ParentId armazenado sumiu num upsert de cliente legado");
     }
 

@@ -26,6 +26,9 @@ public class FileEndpointsTests
         Environment.SetEnvironmentVariable("ConnectionStrings__Default", $"Data Source={_dbPath}");
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
+        // Upload de 101MB (cap) precisa de folga além do default de 100s
+        // quando a suite roda em paralelo em máquina lenta.
+        _client.Timeout = TimeSpan.FromMinutes(5);
 
         var admin = await SignUpAsync("Admin", "admin@files.local", "senha123");
         UseToken(admin.Token);
