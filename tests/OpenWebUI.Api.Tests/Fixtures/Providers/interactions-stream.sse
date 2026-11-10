@@ -1,0 +1,33 @@
+event: interaction.created
+data: {"interaction":{"id":"v1_Chd","status":"in_progress","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+event: step.start
+data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":0,"delta":{"type":"thought_summary","content":{"type":"text","text":"raciocinando "}},"event_type":"step.delta"}
+
+event: step.delta
+data: {"index":0,"delta":{"type":"thought_signature","signature":"EvEFCu4F"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":0,"event_type":"step.stop"}
+
+event: step.start
+data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+event: step.delta
+data: {"index":1,"delta":{"type":"text","text":"oi "},"event_type":"step.delta"}
+
+event: step.delta
+data: {"index":1,"delta":{"type":"text","text":"mundo"},"event_type":"step.delta"}
+
+event: step.stop
+data: {"index":1,"event_type":"step.stop"}
+
+event: interaction.completed
+data: {"interaction":{"id":"v1_Chd","status":"completed","usage":{"total_tokens":40,"total_input_tokens":10,"total_output_tokens":5,"total_thought_tokens":25,"total_cached_tokens":0}},"event_type":"interaction.completed"}
+
+event: done
+data: [DONE]
+

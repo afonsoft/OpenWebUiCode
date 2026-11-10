@@ -101,6 +101,14 @@ execution-provider seam (remote sandbox for `shell_exec`/terminal/`lsp_*`).
 
 ## Screenshots
 
+| Adaptive/Fusion picker | Leader + Sidekick pair |
+|---|---|
+| ![Fusion first in the model selector](docs/screenshots/fusion-selector.png) | ![Leader and Sidekick selects](docs/screenshots/fusion-pair.png) |
+
+| Leader delegating to a sub-agent | Reviewed fusion answer |
+|---|---|
+| ![builtin_delegate_task mid-run](docs/screenshots/fusion-delegation.png) | ![completed fusion run](docs/screenshots/fusion-completed.png) |
+
 | Delegated sub-agents in parallel | Session tree + completion markers |
 |---|---|
 | ![delegate_task spawning two child runs](docs/screenshots/delegate-parallel.png) | ![parent markers + subtask tree](docs/screenshots/parent-notify.png) |
@@ -127,6 +135,18 @@ execution-provider seam (remote sandbox for `shell_exec`/terminal/`lsp_*`).
 
 ## Agent features (new — additive layer over upstream parity)
 
+- **Adaptive/Fusion model pair** — first item of the chat model picker: a
+  virtual `fusion:{leader}>{sidekick}` ref whose **Leader** (reasoning, plan,
+  review) orchestrates the run while every `delegate_task` sub-agent defaults
+  to the cheaper **Sidekick**. Both picks are restricted to the effective
+  `/api/models` catalog — re-validated server-side against spoofed refs; the
+  pair persists per chat (`ModelsJson`) and per browser (`webui.model`,
+  `webui.fusion.{leader,sidekick}`), gates budget on both models, auto-injects
+  the orchestration toolset (`delegate_task`, `team_task`, `team_message`,
+  `team_status`, `agent_catalog`, `run_result`, `todo_write`) plus a
+  coordination prompt, and publishes a `fusion` phase + note carrying the
+  active pair. Sub-agents communicate through the shared team task list and
+  member inboxes; the Leader keeps judgment calls and writes the final answer.
 - **`delegate_task`** — spawns a child chat + server-side run: `wait:false` returns
   `childRunId` immediately, `wait:true` (default) blocks up to 300s; `repo` and
   `persona` (a workspace Skill as system prompt) params; depth ≤ 3; each sub-agent

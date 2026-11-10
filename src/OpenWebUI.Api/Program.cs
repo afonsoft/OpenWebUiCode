@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -29,12 +30,21 @@ var connectionString = builder.Configuration.GetConnectionString("Default")
 builder.Services.AddDbContext<AppDbContext>(options =>
     ConfigureDatabase(options, connectionString));
 
+// Chaves do DataProtection persistidas no volume de dados — o default
+// /root/.aspnet/DataProtection-Keys morre com o container e todo payload
+// protegido fica ilegível após redeploy.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Join(
+        DataPaths.Root(builder.Environment.ContentRootPath),
+        "dataprotection-keys")));
+
 builder.Services.AddScoped<ConfigService>();
 builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddSingleton<GeminiContextCacheService>();
 builder.Services.AddScoped<ProviderService>();
 builder.Services.AddScoped<ProviderCapabilityService>();
 builder.Services.AddHostedService<ProviderCapabilityBootstrapper>();
+builder.Services.AddHostedService<DeepWikiMcpSeeder>();
 builder.Services.AddScoped<AutomationService>();
 builder.Services.AddScoped<ComboService>();
 builder.Services.AddScoped<ExternalAgentService>();
@@ -138,6 +148,8 @@ builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptCo
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AutoinvokeSkillsContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
+    OpenWebUI.Api.Completions.Contributors.KnowledgeNotesContributor>();
+builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.AgentMemoryContributor>();
 builder.Services.AddScoped<OpenWebUI.Infrastructure.SystemPrompt.ISystemPromptContributor,
     OpenWebUI.Api.Completions.Contributors.InstinctContributor>();
@@ -157,6 +169,10 @@ builder.Services.AddScoped<ContextBoundaryService>();
 builder.Services.AddScoped<ContextSnapshotService>();
 // Camadas de configuração por usuário (SPEC-20261014-config-layers).
 builder.Services.AddScoped<UserConfigOverlayService>();
+builder.Services.AddScoped<SkillImportService>();
+builder.Services.AddScoped<SkillToolRestrictionService>();
+builder.Services.AddScoped<PluginImportService>();
+builder.Services.AddScoped<ChatInsightsService>();
 // Pseudo-recurso history:// — leitura do histórico persistido (SPEC-20261014).
 builder.Services.AddScoped<HistoryResourceService>();
 // Referências nomeadas ref:// (SPEC-20261018-references): dir local ou
@@ -675,6 +691,8 @@ static void MapDomainEndpoints(WebApplication app)
     app.MapChatJobEndpoints();
     app.MapMcpEndpoints();
     app.MapUserMcpEndpoints();
+    app.MapCustomizeEndpoints();
+    app.MapInsightsEndpoints();
     app.MapMcpOAuthEndpoints();
     app.MapReferenceEndpoints();
     app.MapThemeEndpoints();

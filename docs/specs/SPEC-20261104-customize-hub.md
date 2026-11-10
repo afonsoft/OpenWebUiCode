@@ -9,8 +9,8 @@
 | Stack | `.NET` |
 | Repository | `/home/ubuntu/repos/OpenWebUiCode` |
 | Branch | `feature/Devin-20261104-customize-hub` |
-| Ticket | `[A DEFINIR]` — criar Issue após aprovação |
-| Status | `Approved` |
+| Ticket | `GH#689` — https://github.com/afonsoft/OpenWebUiCode/issues/689 |
+| Status | `Done` |
 | Depends on | `SPEC-20261104-model-visibility-gate` (padrão de escopo user/global consolidado) |
 
 ## 1. User Story
@@ -177,14 +177,14 @@ tests/OpenWebUI.Client.Tests/CustomizePageTests.cs       # NOVO
 
 ## 6. Acceptance Criteria
 
-- [ ] **Dado** usuário comum **quando** abre `/customize` **então** vê abas Knowledge/Skills/MCPs e item na sidebar; seções "Organização" aparecem read-only.
-- [ ] **Dado** admin que cria nota global pinada **quando** usuário envia mensagem **então** o system prompt contém a nota; usuário pode desativá-la para si (tombstone) sem afetar outros.
-- [ ] **Dado** nota com trigger "deploy" **quando** mensagem contém "deploy" **então** nota é injetada; quando não contém, não é.
-- [ ] **Dado** admin que clica "Importar de repositório" com `afonsoft/skills` **então** as 27 skills viram globais e aparecem para todos; reimport não duplica (upsert por nome).
-- [ ] **Dado** skill global com deny admin **quando** usuário tenta reativar **então** recebe erro e o toggle não liga.
-- [ ] **Dado** admin cadastra MCP stdio na seção org **quando** usuário abre aba MCPs **então** vê o servidor com toggle próprio; cadastro http-only na seção pessoal funciona.
-- [ ] **Dado** usuário em um chat **quando** escolhe "Sugerir conhecimento" e salva **então** a nota aparece na sua aba Knowledge.
-- [ ] Edge: flag/permissões off, conteúdo >8000 chars, repo inacessível, nome duplicado → erros amigáveis sem quebrar a página.
+- [x] **Dado** usuário comum **quando** abre `/customize` **então** vê abas Knowledge/Skills/MCPs e item na sidebar; seções "Organização" aparecem read-only.
+- [x] **Dado** admin que cria nota global pinada **quando** usuário envia mensagem **então** o system prompt contém a nota; usuário pode desativá-la para si (tombstone) sem afetar outros.
+- [x] **Dado** nota com trigger "deploy" **quando** mensagem contém "deploy" **então** nota é injetada; quando não contém, não é.
+- [x] **Dado** admin que clica "Importar de repositório" com `afonsoft/skills` **então** as 27 skills viram globais e aparecem para todos; reimport não duplica (upsert por nome).
+- [x] **Dado** skill global com deny admin **quando** usuário tenta reativar **então** recebe erro e o toggle não liga.
+- [x] **Dado** admin cadastra MCP stdio na seção org **quando** usuário abre aba MCPs **então** vê o servidor com toggle próprio; cadastro http-only na seção pessoal funciona.
+- [x] **Dado** usuário em um chat **quando** escolhe "Sugerir conhecimento" e salva **então** a nota aparece na sua aba Knowledge.
+- [x] Edge: flag/permissões off, conteúdo >8000 chars, repo inacessível, nome duplicado → erros amigáveis sem quebrar a página.
 
 ## 7. Task Plan
 
@@ -208,10 +208,21 @@ tests/OpenWebUI.Client.Tests/CustomizePageTests.cs       # NOVO
 
 ## 9. Definition of Done
 
-- [ ] `/customize` + 3 abas funcionais, item na sidebar.
-- [ ] Knowledge: CRUD escopado, pin/trigger, injeção no prompt, tombstone, "sugerir".
-- [ ] Skills: catálogo 3-fontes, CRUD escopado, deny global admin, import de repo (afonsoft/skills testado).
-- [ ] MCPs: seções org+pessoal unificadas sobre endpoints existentes.
-- [ ] Migration aplicada e testada; i18n 8 locales; drift guards verdes.
-- [ ] `.mcp.json` com DeepWiki commitado.
-- [ ] Testes NUnit+bUnit novos verdes; build limpo; SPEC marcada `Done`; Issue criada e linkada.
+- [x] `/customize` + 3 abas funcionais, item na sidebar.
+- [x] Knowledge: CRUD escopado, pin/trigger, injeção no prompt, tombstone, "sugerir".
+- [x] Skills: catálogo 3-fontes, CRUD escopado, deny global admin, import de repo (afonsoft/skills testado).
+- [x] MCPs: seções org+pessoal unificadas sobre endpoints existentes.
+- [x] Migration aplicada e testada; i18n 8 locales; drift guards verdes.
+- [x] `.mcp.json` com DeepWiki commitado.
+- [x] Testes NUnit+bUnit novos verdes (9 NUnit + 5 bUnit); build limpo; Issue criada e linkada (GH#689).
+- [x] SPEC arquivada em `docs/specs/` com `Status: Done` + `Delivered` (PR).
+
+## Delivered
+
+PR #692 (merged `f2f04ac`): `/customize` com abas Knowledge/Skills/MCPs;
+`KnowledgeNote` + `Skill.UserId` nullable + migration; endpoints
+`/api/v1/customize/*` (CRUD escopado, tombstones) e
+`/api/v1/admin/skills/{disabled,import}`; `KnowledgeNotesContributor`
+(pin+trigger→system prompt, cap 4000); SkillImportService GitHub→
+skills globais (`afonsoft/skills`, SSRF restrito); "Sugerir conhecimento"
+no chat; sidebar + i18n ×8; 9 NUnit + 5 bUnit. Closes #689.

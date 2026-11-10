@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Api.Endpoints;
 using OpenWebUI.Application.Contracts;
@@ -574,7 +575,8 @@ public static class ChatPipeline
         Microsoft.Extensions.Logging.ILogger? Log = null,
         int? MaxSteps = null,
         int MaxParallelTools = 4,
-        RunLoopCheckpoint? Resume = null);
+        RunLoopCheckpoint? Resume = null,
+        TimeSpan? ToolProgressInterval = null);
 
     public static async Task<ToolLoopOutcome?> RunToolLoopAsync(
         ChatCompletionRequest effective,
@@ -668,7 +670,8 @@ public static class ChatPipeline
             // e grupos de 1 seguem o caminho sequencial de sempre.
             await RunToolCallsAsync(
                 new ToolCallLoopCtx(state, tools, toolExecutor,
-                    builtinContext, maxParallelTools, callbacks, log),
+                    builtinContext, maxParallelTools, callbacks, log,
+                    options?.ToolProgressInterval),
                 step.ToolCalls, ct);
             state.Round++;
 
@@ -767,6 +770,41 @@ public static class ChatPipeline
 
     /// <summary>Máx 1 nudge de plano/promessa por turno — anti-loop.</summary>
     private const int MaxTurnNudges = 1;
+
+    // Guard de "falso sucesso" (incidente chat a7ef2949, run a6ed008e):
+    // o modelo encerrou o turno com um bloco de comandos shell e a
+    // alegação de ter executado/commitado — sem ter chamado NENHUMA tool.
+    // Com a lista de tarefas aberta isso é alucinação de execução: o
+    // nudge aponta que comandos impressos não rodam e exige tool call.
+    /// <summary>Máx 1 nudge de falso sucesso por turno — anti-loop.</summary>
+    private const int MaxFakeSuccessNudges = 1;
+
+    /// <summary>Prompt do guard de falso sucesso.</summary>
+    private const string FakeSuccessPrompt =
+        "Sua resposta descreveu comandos em bloco de código e declarou a "
+        + "execução concluída, mas nenhuma tool foi chamada — os comandos "
+        + "impressos NÃO rodaram. Não simule execução: chame agora a tool "
+        + "apropriada (shell/execução, escrita de arquivo, git) para "
+        + "executar cada passo de verdade.";
+
+    /// <summary>Bloco fenced contendo linha de comando shell — sinal 1 do
+    /// falso sucesso (o modelo "imprime" a execução em markdown).</summary>
+    private static readonly Regex ShellFencePattern = new(
+        "```(?:bash|sh|shell|zsh|console|powershell|cmd)?[^`]*"
+        + "(?:^|\\n)[ \\t]*(?:dotnet|git|sed|awk|touch|echo|cat|mv|cp|rm|"
+        + "mkdir|cd|npm|npx|yarn|pnpm|apt|apt-get|curl|wget|chmod|chown|"
+        + "python|python3|node|docker|kubectl|make|tar|unzip|ls|grep|find)\\b",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled,
+        RegexDefaults.MatchTimeout);
+
+    /// <summary>Alegação de conclusão/execução (pt/en) — sinal 2 do falso
+    /// sucesso.</summary>
+    private static readonly Regex CompletionClaimPattern = new(
+        "(implementad|conclu[ií]d|commitad|committed|commited|push(?:ed|ado)"
+        + "|sucesso|pronto|finaliz|executad|rodad|fixed|resolved"
+        + "|done\\b|complete\\b|all tests pass|tests? pass)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        RegexDefaults.MatchTimeout);
     // Continuações sintéticas de resposta truncada (finish_reason=length)
     // antes do erro output-limit (SPEC-20261016-provider-resilience RF-003).
     private const int MaxLengthContinuations = 3;
@@ -790,6 +828,9 @@ public static class ChatPipeline
         public int PendingTodos = -1;
         /// <summary>Nudges de fim-de-turno já injetados (SPEC-20261103-agent-turn-guard RF-001).</summary>
         public int TurnNudges;
+        /// <summary>Nudges de falso sucesso já injetados — execução
+        /// alegada em prosa sem tool call com a lista aberta.</summary>
+        public int FakeSuccessNudges;
     }
 
     /// <summary>Fronteira de rodada: promove steers pendentes — o turno
@@ -966,7 +1007,8 @@ public static class ChatPipeline
             {
                 throw new InvalidOperationException(
                     $"{code}: a chamada ao provedor falhou após "
-                    + $"{attempt + 1} tentativa(s).", ex);
+                    + $"{attempt + 1} tentativa(s)."
+                    + UpstreamErrorFormatter.For(ex), ex);
             }
             return null;
         }
@@ -1111,6 +1153,22 @@ public static class ChatPipeline
         {
             return null;
         }
+        // Guard de falso sucesso: bloco de comandos shell + alegação de
+        // conclusão com a lista de tarefas aberta — o modelo "imprimiu" a
+        // execução em markdown sem chamar nenhuma tool (incidente
+        // a7ef2949/run a6ed008e). Vem antes dos nudges genéricos: a
+        // assinatura é específica e o nudge mais acionável ("comandos
+        // impressos não rodam — chame a tool de verdade").
+        if (state.FakeSuccessNudges < MaxFakeSuccessNudges
+            && state.PendingTodos > 0
+            && LooksLikeFakeSuccess(step.Content))
+        {
+            state.FakeSuccessNudges++;
+            await InjectTurnGuardNudgeAsync(
+                state, step, FakeSuccessPrompt, callbacks, log, ct,
+                state.FakeSuccessNudges, MaxFakeSuccessNudges);
+            return null;
+        }
         if (state.PendingTodos > 0
             && state.AutoContinues < MaxAutoContinues && !lastStep)
         {
@@ -1130,7 +1188,8 @@ public static class ChatPipeline
             && await guard(step.Content ?? string.Empty, ct) is { } reminder)
         {
             state.TurnNudges++;
-            await InjectTurnGuardNudgeAsync(state, step, reminder, callbacks, log, ct);
+            await InjectTurnGuardNudgeAsync(state, step, reminder, callbacks, log, ct,
+                state.TurnNudges, MaxTurnNudges);
             return null;
         }
         // lastStep = último round toolless (MaxStepsPrompt): a saída
@@ -1219,6 +1278,13 @@ public static class ChatPipeline
         state.Round++;
     }
 
+    /// <summary>Bloco shell fenced + alegação de conclusão — a assinatura
+    /// do "executou em prosa" do incidente (comandos impressos ≠ tools).</summary>
+    private static bool LooksLikeFakeSuccess(string? content) =>
+        !string.IsNullOrEmpty(content)
+        && ShellFencePattern.IsMatch(content)
+        && CompletionClaimPattern.IsMatch(content);
+
     /// <summary>
     /// SPEC-20261103-agent-turn-guard RF-001: o texto da rodada entra no
     /// histórico como assistant interim + reminder user-note — mesma
@@ -1227,12 +1293,13 @@ public static class ChatPipeline
     private static async Task InjectTurnGuardNudgeAsync(
         ToolLoopMutable state, ProviderCompletion step, string reminder,
         ToolLoopCallbacks? callbacks,
-        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct,
+        int nudgeN, int nudgeMax)
     {
         log?.LogInformation(
             "Turno encerrado com plano/promessa sem tool-call — "
             + "nudge {N}/{Max} injetado.",
-            state.TurnNudges, MaxTurnNudges);
+            nudgeN, nudgeMax);
         var nudge = new ChatCompletionMessage("user", reminder);
         var interim = string.IsNullOrWhiteSpace(step.Content)
             ? null
@@ -1337,7 +1404,7 @@ public static class ChatPipeline
         ProviderToolCall call, ToolGateDecision gate, SemaphoreSlim? cap,
         ToolCallLoopCtx ctx, CancellationToken ct)
     {
-        var (_, tools, toolExecutor, builtinContext, _, _, log) = ctx;
+        var (_, tools, toolExecutor, builtinContext, _, _, log, _) = ctx;
         if (!gate.Approved)
         {
             return new ToolExecutionOutcome(
@@ -1373,10 +1440,12 @@ public static class ChatPipeline
                 {
                     // RF-A2 harness-seams: gate aprovado pode ter
                     // reescrito os args (interceptor tool.call).
-                    return await toolExecutor.ExecuteAsync(
-                        tools, call.Name,
-                        gate.RewriteArgsJson ?? call.ArgumentsJson,
-                        builtinContext, ct);
+                    return await AwaitWithToolProgressAsync(
+                        toolExecutor.ExecuteAsync(
+                            tools, call.Name,
+                            gate.RewriteArgsJson ?? call.ArgumentsJson,
+                            builtinContext, ct),
+                        call.Name, ctx, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -1400,6 +1469,36 @@ public static class ChatPipeline
         }
     }
 
+    /// <summary>Sinal de vida em tools longas: enquanto a execução não
+    /// termina, publica a fase <c>tool_wait</c> com o tempo decorrido —
+    /// a UI distingue tool trabalhando (dotnet test de minutos) de run
+    /// travada. Sem intervalo configurado ou sem callback, passa direto.
+    /// </summary>
+    private static async Task<ToolExecutionOutcome> AwaitWithToolProgressAsync(
+        Task<ToolExecutionOutcome> execTask, string toolName,
+        ToolCallLoopCtx ctx, CancellationToken ct)
+    {
+        if (ctx.ToolProgressInterval is not { } interval
+            || interval <= TimeSpan.Zero
+            || ctx.Callbacks?.OnPhaseAsync is not { } onPhase)
+        {
+            return await execTask;
+        }
+        var started = DateTimeOffset.UtcNow;
+        while (!execTask.IsCompleted)
+        {
+            var tick = await Task.WhenAny(execTask, Task.Delay(interval, ct));
+            if (tick == execTask)
+            {
+                break;
+            }
+            await onPhase("tool_wait",
+                $"{toolName} — {(long)(DateTimeOffset.UtcNow - started).TotalSeconds}s em execução",
+                ct);
+        }
+        return await execTask;
+    }
+
     /// <summary>Publicação sequencial do resultado: contagem de tarefas
     /// pendentes (reabre o budget de nudges), evento OnResult e a
     /// mensagem role=tool na janela e no tail.</summary>
@@ -1408,7 +1507,7 @@ public static class ChatPipeline
         ToolGateDecision gate, ToolExecutionOutcome outcome,
         TimeSpan elapsed, CancellationToken ct)
     {
-        var (state, _, _, _, _, callbacks, log) = ctx;
+        var (state, _, _, _, _, callbacks, log, _) = ctx;
         var denied = !gate.Approved;
         var output = outcome.Text;
         log?.LogInformation(
@@ -1454,13 +1553,14 @@ public static class ChatPipeline
         ToolLoopMutable State, IReadOnlyList<Tool> Tools,
         ToolExecutor ToolExecutor, BuiltinToolContext? BuiltinContext,
         int MaxParallelTools, ToolLoopCallbacks? Callbacks,
-        Microsoft.Extensions.Logging.ILogger? Log);
+        Microsoft.Extensions.Logging.ILogger? Log,
+        TimeSpan? ToolProgressInterval);
 
     private static async Task RunToolCallsAsync(
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
         CancellationToken ct)
     {
-        var (_, tools, toolExecutor, _, _, callbacks, _) = ctx;
+        var (_, tools, toolExecutor, _, _, callbacks, _, _) = ctx;
         for (var k = 0; k < calls.Count;)
         {
             // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
@@ -1497,7 +1597,7 @@ public static class ChatPipeline
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
         int start, int count, CancellationToken ct)
     {
-        var (_, _, _, _, maxParallelTools, callbacks, log) = ctx;
+        var (_, _, _, _, maxParallelTools, callbacks, log, _) = ctx;
         var gates = new ToolGateDecision[count];
         for (var g = 0; g < count; g++)
         {

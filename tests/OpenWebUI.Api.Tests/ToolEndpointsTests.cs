@@ -172,8 +172,9 @@ public class ToolEndpointsTests
         var list = await _client.GetFromJsonAsync<List<ToolResponse>>("/api/v1/tools/");
         Assert.Multiple(() =>
         {
-            // A lista inclui as tools built-in do catálogo (SPEC-20261007-chat-agent-tools).
-            Assert.That(list!.Count(t => t.Source != "builtin"), Is.EqualTo(1));
+            // A lista inclui a tool criada e as tools built-in do catálogo (SPEC-20261007-chat-agent-tools).
+            // Não conta não-builtin == 1: o banco do fixture é compartilhado entre os testes da classe.
+            Assert.That(list!.Any(t => t.Id == created.Id && t.Source != "builtin"), Is.True);
             Assert.That(list!.Count(t => t.Source == "builtin"), Is.GreaterThan(0));
         });
 
@@ -190,7 +191,7 @@ public class ToolEndpointsTests
         var deleted = await _client.DeleteAsync($"/api/v1/tools/{created.Id}");
         Assert.That(deleted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         var after = await _client.GetFromJsonAsync<List<ToolResponse>>("/api/v1/tools/");
-        Assert.That(after!.Count(t => t.Source != "builtin"), Is.EqualTo(0));
+        Assert.That(after!.All(t => t.Id != created.Id), Is.True);
     }
 
     [Test]

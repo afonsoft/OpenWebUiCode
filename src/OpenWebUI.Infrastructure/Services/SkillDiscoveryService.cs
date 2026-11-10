@@ -12,7 +12,10 @@ namespace OpenWebUI.Infrastructure.Services;
 public sealed record RepoEntry(
     string Name, string Description, string Path, string Body,
     string? Agent = null, string? Model = null, bool Subtask = false,
-    string Scope = "project", string? Mode = null, bool Autoinvoke = false);
+    string Scope = "project", string? Mode = null, bool Autoinvoke = false,
+    /// <summary>Frontmatter <c>allowed-tools:</c> (CSV ou <c>[a, b]</c>) —
+    /// paridade Devin (SPEC-20261104): restritivo quando a skill injeta.</summary>
+    List<string>? AllowedTools = null);
 
 /// <summary>Servidor MCP declarado em <c>.agents/mcp.json</c> (global ou do projeto).</summary>
 public sealed record AgentsMcpServer(
@@ -495,7 +498,8 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
                 && sa.Equals("true", StringComparison.OrdinalIgnoreCase),
             Scope: scope,
             Mode: fm.GetValueOrDefault("mode"),
-            Autoinvoke: IsTruthy(fm.GetValueOrDefault("autoinvoke")));
+            Autoinvoke: IsTruthy(fm.GetValueOrDefault("autoinvoke")),
+            AllowedTools: ParseAllowedTools(fm));
     }
 
     /// <summary>
@@ -526,7 +530,25 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
                 && sa.Equals("true", StringComparison.OrdinalIgnoreCase),
             Scope: scope,
             Mode: fm.GetValueOrDefault("mode"),
-            Autoinvoke: IsTruthy(fm.GetValueOrDefault("autoinvoke")));
+            Autoinvoke: IsTruthy(fm.GetValueOrDefault("autoinvoke")),
+            AllowedTools: ParseAllowedTools(fm));
+    }
+
+    /// <summary><c>allowed-tools:</c>/<c>allowed_tools:</c> — CSV ou
+    /// lista inline <c>[a, b]</c>; null = sem restrição.</summary>
+    internal static List<string>? ParseAllowedTools(Dictionary<string, string> fm)
+    {
+        var raw = fm.GetValueOrDefault("allowed-tools")
+            ?? fm.GetValueOrDefault("allowed_tools");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+        var tools = raw.Trim().Trim('[', ']')
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.Trim('"', '\'').ToLowerInvariant())
+            .Where(t => t.Length > 0).Distinct().ToList();
+        return tools.Count == 0 ? null : tools;
     }
 
     /// <summary>Valor de frontmatter interpretado como booleano true.</summary>

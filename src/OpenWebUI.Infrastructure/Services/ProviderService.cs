@@ -31,6 +31,70 @@ public class ProviderService(
     public RetryPolicyOptions RetryOptions { get; } =
         RetryPolicyOptions.FromConfig(cfg);
 
+    /// <summary>Ociosidade máxima entre linhas de um stream SSE/NDJSON
+    /// antes de estourar <see cref="TimeoutException"/> — entra na política
+    /// de retry como Timeout. <c>Providers:StreamIdleSeconds</c>
+    /// (≤0 desativa — só o ct do caller manda). Causa-raiz do stall de
+    /// produção: stream aberto sem bytes pendia o ReadLineAsync por tempo
+    /// indeterminado (só o timeout implícito do HttpClient limitava).</summary>
+    public TimeSpan StreamIdleTimeout { get; } =
+        cfg.GetValue("Providers:StreamIdleSeconds", 45) is > 0 and var idle
+            ? TimeSpan.FromSeconds(idle)
+            : Timeout.InfiniteTimeSpan;
+
+    /// <summary>Timeout explícito da fase request→headers de cada chamada
+    /// ao provider (<c>Providers:RequestTimeoutSeconds</c>, ≤0 desativa).
+    /// O corpo do stream NÃO é coberto — esse é o papel de
+    /// <see cref="StreamIdleTimeout"/>.</summary>
+    public TimeSpan RequestTimeout { get; } =
+        cfg.GetValue("Providers:RequestTimeoutSeconds", 100) is > 0 and var req
+            ? TimeSpan.FromSeconds(req)
+            : Timeout.InfiniteTimeSpan;
+
+    /// <summary>Lê uma linha do SSE com watchdog de ociosidade: silêncio
+    /// além de <see cref="StreamIdleTimeout"/> vira
+    /// <see cref="TimeoutException"/> (→ retry), não um ReadLineAsync
+    /// pendente para sempre.</summary>
+    private async Task<string?> ReadLineWithIdleAsync(
+        StreamReader reader, CancellationToken ct)
+    {
+        if (StreamIdleTimeout == Timeout.InfiniteTimeSpan)
+        {
+            return await reader.ReadLineAsync(ct);
+        }
+        return await reader.ReadLineAsync(ct).AsTask()
+            .WaitAsync(StreamIdleTimeout, ct);
+    }
+
+    /// <summary>Versão estática do watchdog para helpers sem instância.</summary>
+    private static async Task<string?> ReadLineWithIdleAsync(
+        StreamReader reader, TimeSpan idleTimeout, CancellationToken ct)
+    {
+        if (idleTimeout == Timeout.InfiniteTimeSpan)
+        {
+            return await reader.ReadLineAsync(ct);
+        }
+        return await reader.ReadLineAsync(ct).AsTask()
+            .WaitAsync(idleTimeout, ct);
+    }
+
+    /// <summary>SendAsync delimitado a request→headers por
+    /// <see cref="RequestTimeout"/>: o CTS linkado morre com o retorno —
+    /// o stream do corpo segue no ct do caller (e no watchdog de linha).</summary>
+    private async Task<HttpResponseMessage> SendProviderAsync(
+        HttpRequestMessage request, HttpCompletionOption option,
+        CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient();
+        if (RequestTimeout == Timeout.InfiniteTimeSpan)
+        {
+            return await client.SendAsync(request, option, ct);
+        }
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(RequestTimeout);
+        return await client.SendAsync(request, option, cts.Token);
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     // Cache curto da lista de modelos: sem ele, cada mensagem de chat
@@ -1165,8 +1229,8 @@ public class ProviderService(
     {
         using var httpRequest = BuildOpenAiRequest(request, connections, payload);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         if (!string.Equals(response.Content.Headers.ContentType?.MediaType,
@@ -1188,7 +1252,7 @@ public class ProviderService(
         var dsmlReasoning = new DeltaFilterChain(forReasoning: true);
         var diag = new OpenAiStreamDiag();
 
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (!line.StartsWith(SseDataPrefix, StringComparison.Ordinal))
             {
@@ -1569,19 +1633,53 @@ public class ProviderService(
     /// executa (a run "trava"). O filtro segura apenas o que pode ser o
     /// início do marcador, converte invokes completos em
     /// <see cref="ProviderToolCall"/> e some com o markup.
+    /// <para>
+    /// Variantes observadas em produção (chat a7ef2949, run a6ed008e —
+    /// DeepSeek via OmniRoute): o bloco real é
+    /// <c>function_calls</c> (não só <c>tool_calls</c>), os pipes vêm
+    /// full-width <c>｜</c> OU ASCII <c>|</c>, a tag de abertura chega
+    /// sem <c>&gt;</c> e o modelo repete marcadores espúrios antes do
+    /// invoke de verdade.
+    /// </para>
     /// </summary>
     private sealed class DsmlToolCallFilter
     {
-        private const string OpenMarker = "<｜DSML｜tool_calls>";
-        private const string CloseMarker = "</｜DSML｜tool_calls>";
+        /// <summary>Abertura de bloco: pipes full-width ou ASCII, nomes
+        /// <c>tool_calls</c>/<c>function_calls</c>, <c>&gt;</c> opcional.</summary>
+        private static readonly Regex OpenMarkerPattern = new(
+            "<[｜|]DSML[｜|](?:tool_calls|function_calls)>?",
+            RegexOptions.Compiled, RegexTimeout);
+        private static readonly Regex CloseMarkerPattern = new(
+            "</[｜|]DSML[｜|](?:tool_calls|function_calls)>",
+            RegexOptions.Compiled, RegexTimeout);
+        /// <summary>Qualquer tag/fragmento DSML — sanitiza o resíduo de
+        /// bloco sem fechamento (o markup nunca vaza).</summary>
+        private static readonly Regex DsmlTagPattern = new(
+            "</?[｜|]DSML[｜|][^>\n]*>?",
+            RegexOptions.Compiled, RegexTimeout);
+        /// <summary>Esqueletos de marcador para o sufixo segurado —
+        /// aberturas/fechamentos nas duas variantes de pipe mais os
+        /// elementos internos (invoke/parameter) que podem completar
+        /// no próximo chunk.</summary>
+        private static readonly string[] MarkerSkeletons =
+        [
+            "<｜DSML｜function_calls", "<｜DSML｜tool_calls",
+            "<|DSML|function_calls", "<|DSML|tool_calls",
+            "</｜DSML｜function_calls", "</｜DSML｜tool_calls",
+            "</|DSML|function_calls", "</|DSML|tool_calls",
+            "<｜DSML｜invoke", "<|DSML|invoke",
+            "<｜DSML｜parameter", "<|DSML|parameter",
+            "</｜DSML｜invoke", "</|DSML|invoke",
+            "</｜DSML｜parameter", "</|DSML|parameter",
+        ];
         /// <summary>Bloco aberto além desse tamanho é desistido (modelo quebrado).</summary>
         private const int MaxBlockLength = 256 * 1024;
 
         private static readonly Regex InvokePattern = new(
-            "<｜DSML｜invoke name=\"(?<name>[^\"]+)\"\\s*>(?<body>.*?)</｜DSML｜invoke>",
+            "<[｜|]DSML[｜|]invoke name=\"(?<name>[^\"]+)\"\\s*>(?<body>.*?)</[｜|]DSML[｜|]invoke>",
             RegexOptions.Singleline | RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex ParameterPattern = new(
-            "<｜DSML｜parameter name=\"(?<name>[^\"]+)\"(?<attrs>[^>]*)>(?<value>.*?)</｜DSML｜parameter>",
+            "<[｜|]DSML[｜|]parameter name=\"(?<name>[^\"]+)\"(?<attrs>[^>]*)>(?<value>.*?)</[｜|]DSML[｜|]parameter>",
             RegexOptions.Singleline | RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex StringAttrPattern = new(
             "string=\"(?<v>true|false)\"", RegexOptions.Compiled, RegexTimeout);
@@ -1621,27 +1719,31 @@ public class ProviderService(
             var pos = 0;
             while (pos < text.Length)
             {
-                var openIdx = text.IndexOf(OpenMarker, pos, StringComparison.Ordinal);
-                if (openIdx < 0)
+                var open = OpenMarkerPattern.Match(text, pos);
+                if (!open.Success)
                 {
                     break;
                 }
-                output.Append(text, pos, openIdx - pos);
-                var closeIdx = text.IndexOf(
-                    CloseMarker, openIdx + OpenMarker.Length, StringComparison.Ordinal);
-                if (closeIdx >= 0)
+                EmitSafe(output, text, pos, open.Index);
+                var close = CloseMarkerPattern.Match(text, open.Index + open.Length);
+                if (close.Success)
                 {
-                    ParseInvokes(text.AsSpan(openIdx, closeIdx + CloseMarker.Length - openIdx));
-                    pos = closeIdx + CloseMarker.Length;
+                    ParseInvokes(text.AsSpan(
+                        open.Index, close.Index + close.Length - open.Index));
+                    pos = close.Index + close.Length;
                     continue;
                 }
-                var tail = text.Length - openIdx;
+                var tail = text.Length - open.Index;
                 if (!flush && tail <= MaxBlockLength)
                 {
-                    _pending.Append(text, openIdx, tail);
+                    _pending.Append(text, open.Index, tail);
                     return output.ToString();
                 }
-                ParseInvokes(text.AsSpan(openIdx));
+                // Bloco sem fechamento (fim do stream ou gigante): invokes
+                // completos viram calls; o resíduo é sanitizado — markup e
+                // fragmentos de tag saem, a prosa do modelo fica.
+                ParseInvokes(text.AsSpan(open.Index));
+                output.Append(SanitizeBlockResidue(text[open.Index..]));
                 pos = text.Length;
             }
             // Sem bloco aberto restante: emite tudo menos o sufixo que pode
@@ -1650,7 +1752,7 @@ public class ProviderService(
             var safe = text.Length - pos - hold;
             if (safe > 0)
             {
-                output.Append(text, pos, safe);
+                EmitSafe(output, text, pos, pos + safe);
             }
             if (hold > 0)
             {
@@ -1659,21 +1761,55 @@ public class ProviderService(
             return output.ToString();
         }
 
+        /// <summary>Texto visível fora de bloco: elementos DSML órfãos
+        /// (invoke, parameter e fechamentos soltos) nunca são prosa
+        /// legítima — remove e emite o resto.</summary>
+        private static void EmitSafe(StringBuilder output, string text, int from, int to)
+        {
+            if (to <= from)
+            {
+                return;
+            }
+            output.Append(
+                ParameterPattern.Replace(
+                    InvokePattern.Replace(
+                        CloseMarkerPattern.Replace(text[from..to], string.Empty),
+                        string.Empty),
+                    string.Empty));
+        }
+
+        /// <summary>Resíduo de bloco sem fechamento: invokes já viraram
+        /// calls; saem os elementos completos, os marcadores e qualquer
+        /// fragmento de tag — a prosa do modelo é preservada.</summary>
+        private static string SanitizeBlockResidue(string block) =>
+            DsmlTagPattern.Replace(
+                ParameterPattern.Replace(
+                    InvokePattern.Replace(block, string.Empty),
+                    string.Empty),
+                string.Empty);
+
         /// <summary>Tamanho do sufixo de <paramref name="text"/> (depois de
-        /// <paramref name="pos"/>) que é prefixo do marcador de abertura —
-        /// não pode ser emitido ainda porque pode virar um bloco DSML.</summary>
+        /// <paramref name="pos"/>) que é prefixo de algum esqueleto de
+        /// marcador — não pode ser emitido ainda porque pode completar um
+        /// marcador DSML no próximo chunk.</summary>
         private static int HeldSuffixLength(string text, int pos)
         {
-            var max = Math.Min(OpenMarker.Length - 1, text.Length - pos);
-            for (var len = max; len > 0; len--)
+            var tail = text.AsSpan(text.Length - Math.Min(
+                MarkerSkeletons.Max(s => s.Length) - 1, text.Length - pos));
+            var best = 0;
+            foreach (var skel in MarkerSkeletons)
             {
-                if (text.AsSpan(text.Length - len, len)
-                    .SequenceEqual(OpenMarker.AsSpan(0, len)))
+                var max = Math.Min(skel.Length - 1, tail.Length);
+                for (var len = max; len > best; len--)
                 {
-                    return len;
+                    if (tail[^len..].SequenceEqual(skel.AsSpan(0, len)))
+                    {
+                        best = len;
+                        break;
+                    }
                 }
             }
-            return 0;
+            return best;
         }
 
         /// <summary>Converte os invokes de um bloco (completo ou truncado)
@@ -1758,8 +1894,8 @@ public class ProviderService(
         };
         ApplyExtraHeaders(httpRequest, request);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -1774,7 +1910,7 @@ public class ProviderService(
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         ProviderUsage? usage = null;
         string? doneReason = null;
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -2505,13 +2641,15 @@ public class ProviderService(
         return ParseAnthropicResponse(json);
     }
 
-    /// <summary>Lê eventos SSE (pares event:/data: separados por linha em branco).</summary>
+    /// <summary>Lê eventos SSE (pares event:/data: separados por linha em
+    /// branco) com o mesmo watchdog de ociosidade dos demais streams.</summary>
     private static async IAsyncEnumerable<(string Event, JsonNode? Data)> ReadSseEventsAsync(
-        StreamReader reader, [EnumeratorCancellation] CancellationToken ct)
+        StreamReader reader, TimeSpan idleTimeout,
+        [EnumeratorCancellation] CancellationToken ct)
     {
         string? eventName = null;
         JsonNode? data = null;
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, idleTimeout, ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -2558,13 +2696,13 @@ public class ProviderService(
         var payload = BuildAnthropicPayload(request, stream: true,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
 
-        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -2620,8 +2758,8 @@ public class ProviderService(
         var payload = BuildAnthropicPayload(request, stream: true,
             cacheAllowed: !IsOmniroute(connection.BaseUrl));
         using var httpRequest = NewAnthropicRequest(connection, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -2636,7 +2774,7 @@ public class ProviderService(
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
         var state = new AnthropicStreamState();
 
-        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -3053,7 +3191,12 @@ public class ProviderService(
     /// <summary>Flag <c>context_caching</c> por conexão (Settings) —
     /// bool true ou string "true".</summary>
     private static bool GoogleContextCachingEnabled(ProviderConnection conn) =>
-        conn.Settings?["context_caching"] is JsonValue v
+        GoogleSettingFlag(conn, "context_caching");
+
+    /// <summary>Flag booleana em <c>ProviderConnection.Settings</c> —
+    /// aceita bool true ou string "true".</summary>
+    private static bool GoogleSettingFlag(ProviderConnection conn, string key) =>
+        conn.Settings?[key] is JsonValue v
             && ((v.TryGetValue<bool>(out var b) && b)
                 || (v.TryGetValue<string>(out var s)
                     && string.Equals(s, "true",
@@ -3348,6 +3491,12 @@ public class ProviderService(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
+        // SPEC-20261103-gemini-interactions-api RF-005: flag por conexão —
+        // Interactions API quando on, generateContent (legacy) quando off.
+        if (GoogleSettingFlag(connection, "interactions_api"))
+        {
+            return await CompleteGoogleInteractionsAsync(request, connection, ct);
+        }
         var payload = BuildGooglePayload(request);
         await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
@@ -3361,6 +3510,10 @@ public class ProviderService(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
+        if (GoogleSettingFlag(connection, "interactions_api"))
+        {
+            return await CompleteGoogleInteractionsWithToolsAsync(request, connection, ct);
+        }
         var payload = BuildGooglePayload(request);
         await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: false, payload, request);
@@ -3377,11 +3530,20 @@ public class ProviderService(
         [EnumeratorCancellation] CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
+        if (GoogleSettingFlag(connection, "interactions_api"))
+        {
+            await foreach (var line in StreamGoogleInteractionsAsync(
+                request, connection, ct))
+            {
+                yield return line;
+            }
+            yield break;
+        }
         var payload = BuildGooglePayload(request);
         await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -3391,7 +3553,7 @@ public class ProviderService(
         var markupContent = new ReasoningMarkupFilter();
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
 
-        await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (_, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -3500,11 +3662,16 @@ public class ProviderService(
         CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
+        if (GoogleSettingFlag(connection, "interactions_api"))
+        {
+            return await StreamGoogleInteractionsToolsAsync(
+                request, connection, onDelta, onReasoning, ct);
+        }
         var payload = BuildGooglePayload(request);
         await TryApplyContextCacheAsync(request, connection, payload, ct);
         using var httpRequest = NewGoogleRequest(connection, request.Model, stream: true, payload, request);
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -3524,7 +3691,7 @@ public class ProviderService(
         // (SPEC-20261103-gemini-native-tools RF-002).
         var grounding = new List<(string Uri, string Title)>();
 
-        await foreach (var (_, data) in ReadSseEventsAsync(reader, ct))
+        await foreach (var (_, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
         {
             if (Prop(data, ErrorKey) is { } errorNode)
             {
@@ -3742,6 +3909,812 @@ public class ProviderService(
         }
     }
 
+    // ---------------- Google Interactions API ----------------
+    // SPEC-20261103-gemini-interactions-api: wire novo do Google
+    // (POST /interactions) roteado por Settings["interactions_api"] na
+    // conexão — generateContent virou legacy na doc oficial e fica como
+    // fallback. Steps tipados (thought/model_output/function_call) no lugar
+    // de candidates/parts; stream:true → SSE step.start/delta/stop.
+    // previous_interaction_id (stateful) e background ficam para a fase 2:
+    // aqui o histórico completo viaja em cada request com store:false.
+
+    /// <summary>Revisão exigida pela Interactions API no header
+    /// <c>Api-Revision</c> (doc get-started.md — obrigatório no wire).</summary>
+    private const string GoogleInteractionsApiRevision = "2026-05-20";
+
+    /// <summary>Request da Interactions API: POST {base}/interactions com
+    /// <c>x-goog-api-key</c> + <c>Api-Revision</c> — ausente/errado o gateway
+    /// responde 4xx (a Ensure traduz em ProviderHttpException).</summary>
+    private static HttpRequestMessage NewGoogleInteractionsRequest(
+        ProviderConnection connection, JsonObject payload,
+        ChatCompletionRequest? request = null)
+    {
+        var httpRequest = new HttpRequestMessage(
+            HttpMethod.Post, $"{TrimSlash(connection.BaseUrl)}/interactions")
+        {
+            Content = new StringContent(
+                payload.ToJsonString(), Encoding.UTF8, JsonMediaType),
+        };
+        if (!string.IsNullOrEmpty(connection.ApiKey))
+        {
+            httpRequest.Headers.Add("x-goog-api-key", connection.ApiKey);
+        }
+        httpRequest.Headers.Add("Api-Revision", GoogleInteractionsApiRevision);
+        if (request is not null)
+        {
+            ApplyExtraHeaders(httpRequest, request);
+        }
+        return httpRequest;
+    }
+
+    /// <summary>
+    /// Converte a conversa OpenAI-shaped para o wire da Interactions API:
+    /// <c>system</c> → <c>system_instruction</c> top-level; user → steps
+    /// <c>user_input</c>; assistant → <c>model_output</c> + um step
+    /// <c>function_call</c> por tool_call; tool → <c>function_result</c> com o
+    /// <c>call_id</c> do step original. Pergunta única colapsa para
+    /// <c>input</c> string (forma canônica da doc). <c>store:false</c> marca
+    /// o modo stateless — previous_interaction_id fica para a fase 2.
+    /// </summary>
+    private static JsonObject BuildGoogleInteractionsPayload(
+        ChatCompletionRequest request, bool stream)
+    {
+        var (system, steps) = BuildGoogleInteractionsInput(request);
+        // Pergunta única (um user_input com um part de texto) colapsa para
+        // input string — forma canônica da doc; histórico vai como steps[].
+        JsonNode input = steps.Count == 1
+            && Str(Prop(steps[0], "type")) == "user_input"
+            && Prop(steps[0], ContentKey) is JsonArray { Count: 1 } single
+            && Str(Prop(single[0], TextKey)) is { } singleText
+                ? JsonValue.Create(singleText)
+                : new JsonArray(steps.Cast<JsonNode>().ToArray());
+        var payload = new JsonObject
+        {
+            [ModelKey] = request.Model,
+            ["input"] = input,
+        };
+        if (system.Count > 0)
+        {
+            payload["system_instruction"] = string.Join("\n", system);
+        }
+        payload["store"] = false;
+        if (stream)
+        {
+            payload["stream"] = true;
+        }
+        var tools = BuildGoogleInteractionsTools(request);
+        if (tools.Count > 0)
+        {
+            payload[ToolsKey] = tools;
+        }
+        if (request.Params is { Count: > 0 })
+        {
+            var config = BuildGoogleInteractionsGenerationConfig(request.Params);
+            if (config.Count > 0)
+            {
+                payload["generation_config"] = config;
+            }
+        }
+        return payload;
+    }
+
+    /// <summary>Mapeia cada mensagem para os steps de input da Interactions,
+    /// separando <c>system_instruction</c> e populando o mapa id→nome das
+    /// tool calls (function_result ecoa o call_id do function_call).</summary>
+    private static (List<string> System, List<JsonObject> Steps)
+        BuildGoogleInteractionsInput(ChatCompletionRequest request)
+    {
+        var system = new List<string>();
+        var steps = new List<JsonObject>();
+        var toolNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in request.Messages)
+        {
+            if (m.Role == RoleSystem)
+            {
+                if (!string.IsNullOrWhiteSpace(m.Content))
+                {
+                    system.Add(m.Content);
+                }
+                continue;
+            }
+
+            if (m.ToolCallId is not null || m.Role == "tool")
+            {
+                steps.Add(new JsonObject
+                {
+                    ["type"] = "function_result",
+                    ["name"] = toolNames.TryGetValue(m.ToolCallId ?? "", out var n)
+                        ? n
+                        : m.ToolCallId ?? "tool",
+                    ["call_id"] = m.ToolCallId,
+                    ["result"] = new JsonArray(new JsonObject
+                    {
+                        ["type"] = TextKey, [TextKey] = m.Content,
+                    }),
+                });
+                continue;
+            }
+
+            if (m.Role == RoleAssistant)
+            {
+                AppendGoogleInteractionsModelSteps(m, steps, toolNames);
+                continue;
+            }
+
+            steps.Add(new JsonObject
+            {
+                ["type"] = "user_input",
+                [ContentKey] = new JsonArray(new JsonObject
+                {
+                    ["type"] = TextKey, [TextKey] = m.Content,
+                }),
+            });
+        }
+        return (system, steps);
+    }
+
+    /// <summary>Turno assistant → step <c>model_output</c> (texto) + steps
+    /// <c>function_call</c> derivados do <c>tool_calls</c> OpenAI-shaped.</summary>
+    private static void AppendGoogleInteractionsModelSteps(
+        ChatCompletionMessage m, List<JsonObject> steps,
+        Dictionary<string, string> toolNames)
+    {
+        if (!string.IsNullOrEmpty(m.Content))
+        {
+            steps.Add(new JsonObject
+            {
+                ["type"] = "model_output",
+                [ContentKey] = new JsonArray(new JsonObject
+                {
+                    ["type"] = TextKey, [TextKey] = m.Content,
+                }),
+            });
+        }
+        if (m.ToolCallsJson is null)
+        {
+            return;
+        }
+        foreach (var call in JsonNode.Parse(m.ToolCallsJson)!.AsArray())
+        {
+            var name = Str(Prop(Prop(call, FunctionKey), "name"));
+            if (name is null)
+            {
+                continue;
+            }
+            var id = Str(Prop(call, "id")) ?? Guid.NewGuid().ToString("N");
+            toolNames[id] = name;
+            JsonNode? args;
+            try
+            {
+                var argsRaw = Prop(call, FunctionKey)?[ArgumentsKey];
+                args = argsRaw is JsonValue s
+                    ? JsonNode.Parse(s.GetValue<string>())
+                    : argsRaw?.DeepClone();
+            }
+            catch (Exception)
+            {
+                args = new JsonObject();
+            }
+            steps.Add(new JsonObject
+            {
+                ["type"] = "function_call",
+                ["id"] = id,
+                ["name"] = name,
+                [ArgumentsKey] = args ?? new JsonObject(),
+            });
+        }
+    }
+
+    /// <summary>Tools OpenAI-shaped → <c>{type:"function",…}</c>; natives do
+    /// param <c>native_tools</c> → <c>{type:"google_search"|"code_execution"|
+    /// "url_context"}</c> (entries diretas no tools[] do wire novo).</summary>
+    private static JsonArray BuildGoogleInteractionsTools(
+        ChatCompletionRequest request)
+    {
+        var tools = new JsonArray();
+        if (request.Tools is { Count: > 0 })
+        {
+            foreach (var tool in request.Tools)
+            {
+                var fn = JsonNode.Parse(tool.GetRawText())?[FunctionKey];
+                var name = Str(Prop(fn, "name"));
+                if (name is null)
+                {
+                    continue;
+                }
+                tools.Add(new JsonObject
+                {
+                    ["type"] = FunctionKey,
+                    ["name"] = name,
+                    [DescriptionKey] = Str(Prop(fn, DescriptionKey)),
+                    ["parameters"] = Prop(fn, "parameters")?.DeepClone()
+                        ?? new JsonObject { ["type"] = ObjectKey },
+                });
+            }
+        }
+        if (request.Params is not null
+            && request.Params.TryGetValue("native_tools", out var nativeTools)
+            && Str(ToJsonNode(nativeTools)) is { Length: > 0 } nativeCsv)
+        {
+            foreach (var tool in nativeCsv.Split(
+                         [',', ';'],
+                         StringSplitOptions.RemoveEmptyEntries
+                         | StringSplitOptions.TrimEntries))
+            {
+                switch (tool.ToLowerInvariant())
+                {
+                    case "google_search":
+                    case "code_execution":
+                    case "url_context":
+                        tools.Add(new JsonObject
+                        {
+                            ["type"] = tool.ToLowerInvariant(),
+                        });
+                        break;
+                }
+            }
+        }
+        return tools;
+    }
+
+    /// <summary>Params OpenAI → <c>generation_config</c> da Interactions API
+    /// (snake_case: max_output_tokens/thinking_level/etc.).</summary>
+    private static JsonObject BuildGoogleInteractionsGenerationConfig(
+        IReadOnlyDictionary<string, object> parameters)
+    {
+        var config = new JsonObject();
+        foreach (var (key, value) in parameters)
+        {
+            switch (key)
+            {
+                case TemperatureKey:
+                    config[TemperatureKey] = ToJsonNode(value);
+                    break;
+                case TopPKey:
+                    config[TopPKey] = ToJsonNode(value);
+                    break;
+                case TopKKey:
+                    config[TopKKey] = ToJsonNode(value);
+                    break;
+                case MaxTokensKey:
+                case "max_completion_tokens":
+                    config["max_output_tokens"] = ToJsonNode(value);
+                    break;
+                case "stop":
+                    config["stop_sequences"] = value is string s
+                        ? new JsonArray(s)
+                        : ToJsonNode(value);
+                    break;
+                // thinking_budget numérico passa direto (budget de tokens);
+                // thinking_level (string low/high/…) é o campo novo da API.
+                case "thinking_budget":
+                    if (IntNum(ToJsonNode(value)) is { } tb)
+                    {
+                        config["thinking_budget"] = tb;
+                    }
+                    break;
+                case "thinking_level":
+                    if (Str(ToJsonNode(value)) is { Length: > 0 } level)
+                    {
+                        config["thinking_level"] = level;
+                    }
+                    break;
+            }
+        }
+        return config;
+    }
+
+    /// <summary>Parseia os <c>steps[]</c> da Interactions API:
+    /// <c>model_output</c> → content (annotations url_citation → fontes),
+    /// <c>thought</c> (summary) → reasoning, <c>function_call</c> →
+    /// tool_calls OpenAI-shape cujo id é o call_id que o function_result
+    /// ecoa de volta, e steps de server-side tools viram blocos/fontes.</summary>
+    private static ProviderCompletion ParseGoogleInteractionsResponse(
+        JsonNode? json)
+    {
+        if (Prop(json, ErrorKey) is { } bufferedError)
+        {
+            throw MidStreamProviderError(bufferedError);
+        }
+        var content = new StringBuilder();
+        var reasoning = new StringBuilder();
+        var calls = new List<ProviderToolCall>();
+        var callsJson = new JsonArray();
+        var sources = new List<(string Uri, string Title)>();
+        foreach (var step in Prop(json, "steps") as JsonArray ?? [])
+        {
+            switch (Str(Prop(step, "type")))
+            {
+                case "model_output":
+                    foreach (var part in Prop(step, ContentKey) as JsonArray ?? [])
+                    {
+                        if (Str(Prop(part, TextKey)) is { } text)
+                        {
+                            content.Append(text);
+                        }
+                        sources.AddRange(GoogleInteractionsCitations(part));
+                    }
+                    break;
+                case "thought":
+                    reasoning.Append(GoogleInteractionsThoughtText(step));
+                    break;
+                case "function_call":
+                    var id = Str(Prop(step, "id"))
+                        ?? Guid.NewGuid().ToString("N");
+                    var name = Str(Prop(step, "name")) ?? string.Empty;
+                    var args = Prop(step, ArgumentsKey)?.ToJsonString() ?? "{}";
+                    calls.Add(new ProviderToolCall(id, name, args));
+                    callsJson.Add(new JsonObject
+                    {
+                        ["id"] = id,
+                        ["type"] = FunctionKey,
+                        [FunctionKey] = new JsonObject
+                        {
+                            ["name"] = name,
+                            [ArgumentsKey] = args,
+                        },
+                    });
+                    break;
+                default:
+                    if (GoogleInteractionsExecBlock(step) is { } execBlock)
+                    {
+                        content.Append(execBlock);
+                    }
+                    sources.AddRange(GoogleInteractionsSources(step));
+                    break;
+            }
+        }
+        // Mesma sanitização dos demais caminhos: markup inline nunca alcança
+        // o Content persistido.
+        var (cleanText, lifted) = ReasoningMarkupFilter.Extract(content.ToString());
+        var (cleanThinking, _) = ReasoningMarkupFilter.Extract(
+            reasoning.ToString(), keepInnerText: true);
+        reasoning.Clear().Append(cleanThinking).Append(lifted);
+        return new ProviderCompletion(
+            cleanText + GoogleSourcesMarkdown(sources),
+            calls, callsJson.ToJsonString(),
+            reasoning.Length > 0 ? reasoning.ToString() : null,
+            Usage: ParseGoogleInteractionsUsage(json),
+            FinishReason: Str(Prop(json, "status")));
+    }
+
+    /// <summary>Texto legível de um step <c>thought</c>: summary (quando
+    /// thinking_summaries está on) ou parts de content — signature crua é
+    /// metadado opaco, não raciocínio apresentável.</summary>
+    private static string GoogleInteractionsThoughtText(JsonNode? step)
+    {
+        if (Str(Prop(step, "summary")) is { Length: > 0 } summary)
+        {
+            return summary;
+        }
+        var sb = new StringBuilder();
+        foreach (var part in Prop(step, ContentKey) as JsonArray ?? [])
+        {
+            sb.Append(Str(Prop(part, TextKey))
+                ?? Str(Prop(Prop(part, ContentKey), TextKey)));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Annotations <c>url_citation</c> de uma part model_output →
+    /// (uri, title) para a lista de fontes (mesmo formato do grounding).</summary>
+    private static IEnumerable<(string Uri, string Title)>
+        GoogleInteractionsCitations(JsonNode? part)
+    {
+        foreach (var ann in Prop(part, "annotations") as JsonArray ?? [])
+        {
+            if (Str(Prop(ann, "type")) == "url_citation"
+                && Str(Prop(ann, "url")) is { Length: > 0 } url)
+            {
+                yield return (url, Str(Prop(ann, "title")) ?? url);
+            }
+        }
+    }
+
+    /// <summary>Steps <c>*_result</c> de server-side tools (google_search,
+    /// url_context): extrai (uri, title) dos itens de result quando
+    /// presentes.</summary>
+    private static IEnumerable<(string Uri, string Title)>
+        GoogleInteractionsSources(JsonNode? step)
+    {
+        if (Str(Prop(step, "type")) is not ("google_search_result"
+            or "url_context_result"))
+        {
+            yield break;
+        }
+        foreach (var item in Prop(step, "result") as JsonArray ?? [])
+        {
+            var uri = Str(Prop(item, "url")) ?? Str(Prop(item, "uri"));
+            if (uri is { Length: > 0 })
+            {
+                yield return (uri, Str(Prop(item, "title")) ?? uri);
+            }
+        }
+    }
+
+    /// <summary>Steps <c>code_execution_call</c>/<c>code_execution_result</c>
+    /// viram bloco demarcado no content (mesma convenção do path legacy).</summary>
+    private static string? GoogleInteractionsExecBlock(JsonNode? step)
+    {
+        switch (Str(Prop(step, "type")))
+        {
+            case "code_execution_call":
+                var args = Prop(step, ArgumentsKey);
+                if (Str(Prop(args, "code")) is { Length: > 0 } code)
+                {
+                    var lang = Str(Prop(args, "language"))
+                        ?.ToLowerInvariant() ?? "python";
+                    return $"\n\n```{lang}\n{code}\n```\n";
+                }
+                return null;
+            case "code_execution_result":
+                var outcome = Str(Prop(step, "outcome")) ?? "OUTCOME_OK";
+                var output = Str(Prop(step, "output"))
+                    ?? Str(Prop(Prop(step, "result") is JsonArray { Count: > 0 } r
+                        ? r[0] : null, TextKey))
+                    ?? Prop(step, "result")?.ToJsonString();
+                return $"\n\n> execução: {outcome}\n```\n{output}\n```\n";
+            default:
+                return null;
+        }
+    }
+
+    /// <summary><c>usage</c> da Interactions API: total_input/output/
+    /// thought/cached tokens — lido do objeto de resposta ou do evento
+    /// <c>interaction.completed</c> (<c>interaction.usage</c>).</summary>
+    private static ProviderUsage? ParseGoogleInteractionsUsage(JsonNode? root)
+    {
+        var u = Prop(root, "usage") ?? Prop(Prop(root, "interaction"), "usage");
+        var input = IntNum(Prop(u, "total_input_tokens"));
+        var output = IntNum(Prop(u, "total_output_tokens"));
+        var thought = IntNum(Prop(u, "total_thought_tokens"));
+        var cached = IntNum(Prop(u, "total_cached_tokens"));
+        if (input is null && output is null && thought is null && cached is null)
+        {
+            return null;
+        }
+        return new ProviderUsage(input ?? 0, output ?? 0,
+            ReasoningTokens: thought, CachedTokens: cached);
+    }
+
+    private async Task<string> CompleteGoogleInteractionsAsync(
+        ChatCompletionRequest request, ProviderConnection connection,
+        CancellationToken ct)
+    {
+        var payload = BuildGoogleInteractionsPayload(request, stream: false);
+        using var httpRequest = NewGoogleInteractionsRequest(connection, payload, request);
+        using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
+        return ParseGoogleInteractionsResponse(json).Content;
+    }
+
+    private async Task<ProviderCompletion> CompleteGoogleInteractionsWithToolsAsync(
+        ChatCompletionRequest request, ProviderConnection connection,
+        CancellationToken ct)
+    {
+        var payload = BuildGoogleInteractionsPayload(request, stream: false);
+        using var httpRequest = NewGoogleInteractionsRequest(connection, payload, request);
+        using var response = await httpClientFactory.CreateClient().SendAsync(httpRequest, ct);
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
+        var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
+        return ParseGoogleInteractionsResponse(json);
+    }
+
+    /// <summary>Stream simples da Interactions API: <c>step.delta</c> de
+    /// texto vira chunk OpenAI; <c>thought_summary</c>/<c>thought_signature</c>
+    /// vai ao canal de reasoning; termina em [DONE].</summary>
+    private async IAsyncEnumerable<string> StreamGoogleInteractionsAsync(
+        ChatCompletionRequest request,
+        ProviderConnection connection,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var payload = BuildGoogleInteractionsPayload(request, stream: true);
+        using var httpRequest = NewGoogleInteractionsRequest(connection, payload, request);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+
+        // Mesma sanitização do path legacy: markup harmony/tags inline podem
+        // chegar dentro de delta.text via gateways compatíveis.
+        var markupContent = new ReasoningMarkupFilter();
+        var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
+
+        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
+        {
+            if (Prop(data, ErrorKey) is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
+            if (eventName != "step.delta")
+            {
+                continue;
+            }
+            if (BuildGoogleInteractionsDelta(data, markupContent, markupReasoning)
+                    is { Count: > 0 } delta)
+            {
+                yield return $"data: {NewChunkDelta(delta).ToJsonString()}";
+            }
+        }
+        if (BuildGoogleTailDelta(markupContent, markupReasoning)
+                is { Count: > 0 } tailDelta)
+        {
+            yield return $"data: {NewChunkDelta(tailDelta).ToJsonString()}";
+        }
+        yield return SseDoneLine;
+    }
+
+    /// <summary>Um <c>step.delta</c> Interactions → delta OpenAI-shaped:
+    /// <c>text</c> → content; <c>thought_summary</c>/<c>thought_signature</c>
+    /// → reasoning; demais tipos (image/audio/arguments_delta) não emitem
+    /// nada no stream simples.</summary>
+    private static JsonObject? BuildGoogleInteractionsDelta(
+        JsonNode? data,
+        ReasoningMarkupFilter markupContent,
+        ReasoningMarkupFilter markupReasoning)
+    {
+        var delta = Prop(data, DeltaKey);
+        switch (Str(Prop(delta, "type")))
+        {
+            case TextKey:
+                if (Str(Prop(delta, TextKey)) is not { Length: > 0 } text)
+                {
+                    return null;
+                }
+                var filtered = markupContent.Feed(text);
+                var reasoning = markupContent.TakeReasoning();
+                var chunk = new JsonObject();
+                if (filtered.Length > 0)
+                {
+                    chunk["content"] = filtered;
+                }
+                if (reasoning.Length > 0)
+                {
+                    chunk[ReasoningKey] = reasoning;
+                }
+                return chunk.Count > 0 ? chunk : null;
+            case "thought_summary":
+            case "thought_signature":
+                var rtext = Str(Prop(Prop(delta, ContentKey), TextKey))
+                    ?? Str(Prop(delta, TextKey))
+                    ?? Str(Prop(delta, "signature"));
+                if (string.IsNullOrEmpty(rtext))
+                {
+                    return null;
+                }
+                var filteredR = markupReasoning.Feed(rtext);
+                return filteredR.Length > 0
+                    ? new JsonObject { [ReasoningKey] = filteredR }
+                    : null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Round streamed Interactions: <c>step.start</c> function_call abre o
+    /// step (id/name), <c>arguments_delta</c> acumula o JSON dos args por
+    /// index, <c>step.stop</c> fecha a call. Server-side tools viram
+    /// blocos/fontes; usage vem no <c>interaction.completed</c>.
+    /// </summary>
+    private async Task<ProviderCompletion> StreamGoogleInteractionsToolsAsync(
+        ChatCompletionRequest request,
+        ProviderConnection connection,
+        Func<string, CancellationToken, Task>? onDelta,
+        Func<string, CancellationToken, Task>? onReasoning,
+        CancellationToken ct)
+    {
+        var payload = BuildGoogleInteractionsPayload(request, stream: true);
+        using var httpRequest = NewGoogleInteractionsRequest(connection, payload, request);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        await EnsureSuccessOrProviderErrorAsync(response, ct);
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+
+        var content = new StringBuilder();
+        var calls = new List<ProviderToolCall>();
+        var callsJson = new JsonArray();
+        var markupContent = new ReasoningMarkupFilter();
+        var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
+        var sources = new List<(string Uri, string Title)>();
+        var openSteps = new Dictionary<int, OpenInteractionCall>();
+        ProviderUsage? usage = null;
+        string? finishReason = null;
+
+        await foreach (var (eventName, data) in ReadSseEventsAsync(reader, StreamIdleTimeout, ct))
+        {
+            if (Prop(data, ErrorKey) is { } errorNode)
+            {
+                throw MidStreamProviderError(errorNode);
+            }
+            if (ParseGoogleInteractionsUsage(data) is { } chunkUsage)
+            {
+                usage = chunkUsage;
+            }
+            if (Str(Prop(Prop(data, "interaction"), "status"))
+                    is { Length: > 0 } status)
+            {
+                finishReason = status;
+            }
+            var index = IntNum(Prop(data, IndexKey)) ?? -1;
+            switch (eventName)
+            {
+                case "step.start":
+                    var step = Prop(data, "step");
+                    if (Str(Prop(step, "type")) == "function_call")
+                    {
+                        var open = new OpenInteractionCall(
+                            Str(Prop(step, "id"))
+                                ?? Guid.NewGuid().ToString("N"),
+                            Str(Prop(step, "name")) ?? string.Empty);
+                        if (Prop(step, ArgumentsKey) is JsonObject
+                            { Count: > 0 } presetArgs)
+                        {
+                            open.Args.Append(presetArgs.ToJsonString());
+                        }
+                        openSteps[index] = open;
+                    }
+                    else if (GoogleInteractionsExecBlock(step) is { } startExec)
+                    {
+                        content.Append(startExec);
+                        if (onDelta is not null)
+                        {
+                            await onDelta(startExec, ct);
+                        }
+                    }
+                    sources.AddRange(GoogleInteractionsSources(step));
+                    break;
+                case "step.delta":
+                    await ProcessGoogleInteractionsDeltaAsync(
+                        index, data, openSteps,
+                        new GoogleInteractionsStreamSink(
+                            content, markupContent, markupReasoning,
+                            onDelta, onReasoning),
+                        ct);
+                    break;
+                case "step.stop":
+                    if (openSteps.Remove(index, out var done))
+                    {
+                        AppendInteractionCall(done, calls, callsJson);
+                    }
+                    break;
+            }
+        }
+        // Stream encerrado sem step.stop (gateway cortou): fecha as calls
+        // abertas com os args acumulados até ali.
+        foreach (var leftover in openSteps.Values)
+        {
+            AppendInteractionCall(leftover, calls, callsJson);
+        }
+
+        var tail = markupContent.Flush();
+        if (tail.Length > 0)
+        {
+            content.Append(tail);
+            if (onDelta is not null)
+            {
+                await onDelta(tail, ct);
+            }
+        }
+        var tailReasoning = markupReasoning.Flush()
+            + markupContent.TakeReasoning();
+        if (tailReasoning.Length > 0 && onReasoning is not null)
+        {
+            await onReasoning(tailReasoning, ct);
+        }
+        var sourcesText = GoogleSourcesMarkdown(sources);
+        if (sourcesText.Length > 0)
+        {
+            content.Append(sourcesText);
+            if (onDelta is not null)
+            {
+                await onDelta(sourcesText, ct);
+            }
+        }
+
+        return new ProviderCompletion(
+            content.ToString(), calls, callsJson.ToJsonString(),
+            Usage: usage,
+            FinishReason: finishReason);
+    }
+
+    /// <summary>Estado mutável de um step function_call aberto no stream.</summary>
+    private sealed class OpenInteractionCall(string id, string name)
+    {
+        public string Id { get; } = id;
+        public string Name { get; } = name;
+        public StringBuilder Args { get; } = new();
+    }
+
+    /// <summary>Destinos do stream Interactions (content/reasoning).</summary>
+    private sealed record GoogleInteractionsStreamSink(
+        StringBuilder Content,
+        ReasoningMarkupFilter MarkupContent,
+        ReasoningMarkupFilter MarkupReasoning,
+        Func<string, CancellationToken, Task>? OnDelta,
+        Func<string, CancellationToken, Task>? OnReasoning);
+
+    /// <summary>Processa um <c>step.delta</c>: text → content (+reasoning
+    /// levantado do markup), thought_* → reasoning, arguments_delta →
+    /// acumulado no step aberto em <paramref name="openSteps"/>.</summary>
+    private static async Task ProcessGoogleInteractionsDeltaAsync(
+        int index,
+        JsonNode? data,
+        Dictionary<int, OpenInteractionCall> openSteps,
+        GoogleInteractionsStreamSink sink,
+        CancellationToken ct)
+    {
+        var (content, markupContent, markupReasoning, onDelta, onReasoning) = sink;
+        var delta = Prop(data, DeltaKey);
+        switch (Str(Prop(delta, "type")))
+        {
+            case TextKey:
+                if (Str(Prop(delta, TextKey)) is { Length: > 0 } text)
+                {
+                    var filtered = markupContent.Feed(text);
+                    if (filtered.Length > 0)
+                    {
+                        content.Append(filtered);
+                        if (onDelta is not null)
+                        {
+                            await onDelta(filtered, ct);
+                        }
+                    }
+                    if (onReasoning is not null
+                        && markupContent.TakeReasoning() is { Length: > 0 } lifted)
+                    {
+                        await onReasoning(lifted, ct);
+                    }
+                }
+                break;
+            case "thought_summary":
+            case "thought_signature":
+                var rtext = Str(Prop(Prop(delta, ContentKey), TextKey))
+                    ?? Str(Prop(delta, TextKey))
+                    ?? Str(Prop(delta, "signature"));
+                if (!string.IsNullOrEmpty(rtext))
+                {
+                    var filteredR = markupReasoning.Feed(rtext);
+                    if (filteredR.Length > 0 && onReasoning is not null)
+                    {
+                        await onReasoning(filteredR, ct);
+                    }
+                }
+                break;
+            case "arguments_delta":
+                if (openSteps.TryGetValue(index, out var fc)
+                    && Str(Prop(delta, ArgumentsKey)) is { } argChunk)
+                {
+                    fc.Args.Append(argChunk);
+                }
+                break;
+        }
+    }
+
+    /// <summary>Fecha um step function_call: args acumulados (ou "{}" quando
+    /// vazio) → <see cref="ProviderToolCall"/> + entry OpenAI-shaped.</summary>
+    private static void AppendInteractionCall(
+        OpenInteractionCall call,
+        List<ProviderToolCall> calls,
+        JsonArray callsJson)
+    {
+        var args = call.Args.Length > 0 ? call.Args.ToString() : "{}";
+        calls.Add(new ProviderToolCall(call.Id, call.Name, args));
+        callsJson.Add(new JsonObject
+        {
+            ["id"] = call.Id,
+            ["type"] = FunctionKey,
+            [FunctionKey] = new JsonObject
+            {
+                ["name"] = call.Name,
+                [ArgumentsKey] = args,
+            },
+        });
+    }
+
     /// <summary>
     /// Monta o payload chat-completions. <paramref name="provider"/> decide o
     /// formato das imagens (SPEC-20261013-chat-media-attachments RF-006):
@@ -3797,7 +4770,7 @@ public class ProviderService(
     /// sanitizado, imagens seguem o formato do provider (Ollama
     /// <c>images</c> vs OpenAI parts <c>image_url</c>).
     /// </summary>
-    private static JsonNode BuildOpenAiMessage(ChatCompletionMessage m, string provider)
+    internal static JsonNode BuildOpenAiMessage(ChatCompletionMessage m, string provider)
     {
         // Histórico pode conter markup DSML vazado de respostas
         // antigas (pré-filtro): devolvê-lo ao modelo induz a
@@ -3806,9 +4779,19 @@ public class ProviderService(
             && m.Content.Contains("<｜DSML｜", StringComparison.Ordinal)
             ? DsmlToolCallFilter.Extract(m.Content).Text
             : m.Content;
+        // Roles internas (ex.: marcador "compaction" do contexto) não
+        // existem no contrato OpenAI — upstream rejeita com 400
+        // ("role must be system, developer, user, assistant, tool, or
+        // function"). Colapsa para "user": o relatório de contexto
+        // segue chegando ao modelo (mesmo destino dos serializers
+        // Anthropic/Gemini).
+        var role = m.Role is "system" or "developer" or "user"
+            or "assistant" or "tool" or "function"
+            ? m.Role
+            : "user";
         var node = new JsonObject
         {
-            ["role"] = m.Role,
+            ["role"] = role,
             [ContentKey] = content,
         };
         if (m.Images is { Count: > 0 } images)
@@ -4036,8 +5019,8 @@ public class ProviderService(
         };
         ApplyExtraHeaders(httpRequest, request);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -4048,7 +5031,7 @@ public class ProviderService(
         var markupContent = new ReasoningMarkupFilter();
         var markupReasoning = new ReasoningMarkupFilter(keepInnerText: true);
 
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (ParseOllamaLine(line) is not { } node)
             {
@@ -4207,8 +5190,8 @@ public class ProviderService(
         }
         ApplyExtraHeaders(httpRequest, request);
 
-        using var response = await httpClientFactory.CreateClient()
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        using var response = await SendProviderAsync(
+            httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -4219,7 +5202,7 @@ public class ProviderService(
         // sem tools nada executa, mas o markup não pode poluir a UI.
         var dsmlContent = new DeltaFilterChain();
         var dsmlReasoning = new DeltaFilterChain(forReasoning: true);
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
         {
             if (string.IsNullOrWhiteSpace(line))
             {

@@ -1,0 +1,33 @@
+{
+  "id": "v1_ChdQUFvYXI",
+  "status": "requires_action",
+  "object": "interaction",
+  "model": "gemini-3.8-flash",
+  "usage": {
+    "total_tokens": 197,
+    "total_input_tokens": 150,
+    "total_output_tokens": 12,
+    "total_thought_tokens": 35,
+    "total_cached_tokens": 0
+  },
+  "created": "2026-06-09T12:01:25Z",
+  "steps": [
+    {
+      "type": "thought",
+      "summary": "O usuário pediu a temperatura; preciso chamar get_current_temperature.",
+      "signature": "EvEFCu4FAQw"
+    },
+    {
+      "type": "function_call",
+      "id": "call_abc123",
+      "name": "get_current_temperature",
+      "arguments": { "location": "London" }
+    },
+    {
+      "type": "model_output",
+      "content": [
+        { "type": "text", "text": "Consultando o clima..." }
+      ]
+    }
+  ]
+}

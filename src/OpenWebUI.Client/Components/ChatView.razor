@@ -9,6 +9,7 @@
 @inject BrowserStorage Storage
 @inject AttentionInboxState Attention
 @inject ToastService Toast
+@inject DialogService Dialogs
 @implements IDisposable
 
 <div class="flex h-full w-full min-w-0">
@@ -27,7 +28,7 @@
                         {
                             <AgentModeBadge Mode="@EffectiveAgentMode" />
                         }
-                        @if (_streaming && !string.IsNullOrEmpty(_statusLabel))
+                        @if (_streaming && !string.IsNullOrEmpty(StatusChipLabel))
                         {
                             <span class="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-gray-200 dark:border-gray-750 bg-gray-50 dark:bg-gray-850 px-2.5 py-1 text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400"
                                   role="status" aria-live="polite">
@@ -35,7 +36,7 @@
                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
                                 </svg>
-                                @_statusLabel
+                                @StatusChipLabel
                             </span>
                         }
                         @if (_streaming && _tps is { } tps)
@@ -130,6 +131,10 @@
                             <button class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
                                     title="@L["chat.share"]" aria-label="@L["chat.share"]" @onclick="ShareAsync">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
+                            </button>
+                            <button class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+                                    title="@L["chat.suggest_knowledge"]" aria-label="@L["chat.suggest_knowledge"]" @onclick="SuggestKnowledgeAsync">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" /></svg>
                             </button>
                         }
                         @if (_loadedChatId is not null && _branchCount > 1)
@@ -391,7 +396,7 @@
                         OnAnswer="answer => AnswerQuestionAsync(pendingQuestion.CallId, answer)" />
                 </div>
             }
-            else if (_streaming && !string.IsNullOrEmpty(_statusLabel))
+            else if (_streaming && !string.IsNullOrEmpty(StatusChipLabel))
             {
                 @* No mobile o chip do header fica oculto — mantém o status inline *@
                 <div class="sm:hidden py-1 flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
@@ -399,7 +404,7 @@
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
                     </svg>
-                    @_statusLabel
+                    @StatusChipLabel
                 </div>
             }
 
@@ -578,6 +583,55 @@
                                         @onclick="() => SelectMention(item)">
                                     <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@(item.Type is "dir" or "ref" ? item.Type : "file")</span>
                                     <span class="truncate">@item.Path</span>
+                                </button>
+                            }
+                        </div>
+                    }
+                    @if (_bangItems.Count > 0)
+                    {
+                        @* Dropdown !skill (SPEC-20261104-chat-bang-trigger): catálogo
+                           efetivo, badge de origem, ↑↓/Enter/Tab navega, Esc fecha. *@
+                        <div class="mention-list" role="listbox" aria-label="@L["chat.bang_skills"]">
+                            @for (var i = 0; i < _bangItems.Count; i++)
+                            {
+                                var item = _bangItems[i];
+                                var idx = i;
+                                <button class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer flex items-center gap-2 @(idx == _bangIndex ? "bg-gray-50 dark:bg-gray-850" : "")"
+                                        role="option" aria-selected="@(idx == _bangIndex)"
+                                        @onclick="() => SelectBangAsync(item)">
+                                    <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@item.Source</span>
+                                    <span class="truncate">!@item.Name</span>
+                                    @if (!string.IsNullOrWhiteSpace(item.AllowedTools))
+                                    {
+                                        <span class="text-[10px] px-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 shrink-0" title="@item.AllowedTools">@L["chat.bang_restricted"]</span>
+                                    }
+                                    @if (!string.IsNullOrEmpty(item.Description))
+                                    {
+                                        <span class="truncate text-gray-400 dark:text-gray-500">@item.Description</span>
+                                    }
+                                </button>
+                            }
+                        </div>
+                    }
+                    @if (_hashItems.Count > 0)
+                    {
+                        @* Dropdown #knowledge (SPEC-20261104-chat-hash-collections):
+                           coleções RAG + arquivos do usuário; seleção insere #nome
+                           (server-side ResolveReferenceFileIdsAsync resolve). *@
+                        <div class="mention-list" role="listbox" aria-label="@L["chat.hash_knowledge"]">
+                            @for (var i = 0; i < _hashItems.Count; i++)
+                            {
+                                var item = _hashItems[i];
+                                var idx = i;
+                                <button class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer flex items-center gap-2 @(idx == _hashIndex ? "bg-gray-50 dark:bg-gray-850" : "")"
+                                        role="option" aria-selected="@(idx == _hashIndex)"
+                                        @onclick="() => SelectHash(item)">
+                                    <span class="text-[10px] uppercase tracking-wide px-1 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0">@item.Kind</span>
+                                    <span class="truncate">#@item.Name</span>
+                                    @if (!string.IsNullOrEmpty(item.Description))
+                                    {
+                                        <span class="truncate text-gray-400 dark:text-gray-500">@item.Description</span>
+                                    }
                                 </button>
                             }
                         </div>
@@ -913,6 +967,25 @@
     private CancellationTokenSource? _mentionCts;
     private static readonly System.Text.RegularExpressions.Regex MentionTokenRegex =
         new(@"(?:^|\s)@(?<q>[\w./-]+)$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
+    // !skills do catálogo efetivo (SPEC-20261104-chat-bang-trigger RF-001):
+    // dropdown de skills org/pessoal/repo habilitadas — seleção injeta o corpo.
+    private List<SkillCatalogItem> _bangItems = [];
+    private List<SkillCatalogItem>? _bangSkills;
+    private int _bangIndex;
+    private CancellationTokenSource? _bangCts;
+    private static readonly System.Text.RegularExpressions.Regex BangTokenRegex =
+        new(@"(?:^|\s)!(?<q>[\w-]*)$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
+
+    // #knowledge do usuário (SPEC-20261104-chat-hash-collections RF-001):
+    // coleções + arquivos; seleção insere #nome — o server resolve via
+    // ChatPipeline.ResolveReferenceFileIdsAsync (mesmo token #nome).
+    private sealed record HashItem(string Name, string Kind, string? Description);
+    private List<HashItem> _hashItems = [];
+    private List<HashItem>? _hashAll;
+    private int _hashIndex;
+    private CancellationTokenSource? _hashCts;
+    private static readonly System.Text.RegularExpressions.Regex HashTokenRegex =
+        new(@"(?:^|\s)#(?<q>[\w.\-]*)$", System.Text.RegularExpressions.RegexOptions.Compiled, RegexDefaults.MatchTimeout);
     private List<RepoSkillItemResponse> _repoSkills = [];
     private List<RepoCommandItemResponse> _repoCommands = [];
     private List<McpPromptItemResponse> _mcpPrompts = [];
@@ -996,6 +1069,19 @@
     // Streaming de tools (SPEC-20261007-chat-tool-streaming):
     // fase atual, calls ao vivo e pedido de aprovação pendente.
     private string? _statusLabel;
+
+    /// <summary>
+    /// Fallback de polling ativo (SPEC-20261110): o attach SSE morreu
+    /// repetidamente atrás do proxy e a UI passou a buscar os eventos da
+    /// run via GET /events — o chip sinaliza o modo degradado.
+    /// </summary>
+    private bool _pollingFallback;
+
+    /// <summary>Label do chip de status — marca o modo polling-fallback.</summary>
+    private string? StatusChipLabel =>
+        _pollingFallback
+            ? $"{_statusLabel ?? L["chat.status_thinking"]} · {L["chat.status_polling"]}"
+            : _statusLabel;
     private bool _viewSource;
     private double? _tps;
     private readonly Queue<(DateTime At, int Chars)> _tpsWindow = new();
@@ -1740,6 +1826,8 @@
         Realtime.OnRunCompleted -= HandleRunCompleted;
         _cts?.Dispose();
         _mentionCts?.Dispose();
+        _bangCts?.Dispose();
+        _hashCts?.Dispose();
         _draftCts?.Dispose();
         _ttsRef?.Dispose();
         _selfRef?.Dispose();
@@ -1929,6 +2017,56 @@
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
+        // Dropdown !skill: ↑↓ navega, Enter/Tab seleciona, Esc fecha (RF-001).
+        if (_bangItems.Count > 0)
+        {
+            if (e.Key == "Escape")
+            {
+                _bangItems = [];
+                return;
+            }
+            if (e.Key == "ArrowDown")
+            {
+                _bangIndex = (_bangIndex + 1) % _bangItems.Count;
+                return;
+            }
+            if (e.Key == "ArrowUp")
+            {
+                _bangIndex = (_bangIndex - 1 + _bangItems.Count) % _bangItems.Count;
+                return;
+            }
+            if (e.Key is "Enter" or "Tab")
+            {
+                await SelectBangAsync(_bangItems[_bangIndex]);
+                return;
+            }
+        }
+
+        // Dropdown #knowledge: mesma navegação do !skill (RF-004).
+        if (_hashItems.Count > 0)
+        {
+            if (e.Key == "Escape")
+            {
+                _hashItems = [];
+                return;
+            }
+            if (e.Key == "ArrowDown")
+            {
+                _hashIndex = (_hashIndex + 1) % _hashItems.Count;
+                return;
+            }
+            if (e.Key == "ArrowUp")
+            {
+                _hashIndex = (_hashIndex - 1 + _hashItems.Count) % _hashItems.Count;
+                return;
+            }
+            if (e.Key is "Enter" or "Tab")
+            {
+                SelectHash(_hashItems[_hashIndex]);
+                return;
+            }
+        }
+
         // Esc fecha o dropdown de menções (RF-001).
         if (e.Key == "Escape" && _mentionItems.Count > 0)
         {
@@ -2008,6 +2146,8 @@
         // e '/' sozinho não abria nada).
         UpdatePromptSuggestions();
         QueueMentionLookup();
+        QueueBangLookup();
+        QueueHashLookup();
         await SaveDraftAsync();
     }
 
@@ -2123,6 +2263,175 @@
             _mentionPaths.Add(item.Path);
         }
         _mentionItems = [];
+    }
+
+    /// <summary>
+    /// Token !skill no fim do input (SPEC-20261104-chat-bang-trigger RF-001):
+    /// detecta <c>!query</c> (início ou após espaço) e agenda o filtro do
+    /// catálogo efetivo com debounce (~250ms).
+    /// </summary>
+    private void QueueBangLookup()
+    {
+        var match = BangTokenRegex.Match(_input);
+        _bangCts?.Cancel();
+        if (!match.Success)
+        {
+            _bangItems = [];
+            _bangIndex = 0;
+            return;
+        }
+
+        var query = match.Groups["q"].Value;
+        _bangCts = new CancellationTokenSource();
+        var ct = _bangCts.Token;
+        _ = RefreshBangSuggestionsAsync(query, ct);
+    }
+
+    /// <summary>Filtra o catálogo efetivo de skills (top-20) após o debounce.</summary>
+    private async Task RefreshBangSuggestionsAsync(string query, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(250, ct);
+            var skills = await EnsureBangSkillsAsync();
+            _bangItems = skills
+                .Where(s => query.Length == 0
+                    || s.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || s.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
+                .OrderBy(s => s.Source == "repo" ? 0 : s.Source == "global" ? 1 : 2)
+                .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(20)
+                .ToList();
+            _bangIndex = 0;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException)
+        {
+            // keystroke mais recente venceu — esperado.
+        }
+    }
+
+    /// <summary>Carrega e cacheia o catálogo efetivo de skills — só as
+    /// habilitadas para o usuário (deny admin e tombstone já filtram).</summary>
+    private async Task<List<SkillCatalogItem>> EnsureBangSkillsAsync()
+    {
+        if (_bangSkills is not null)
+        {
+            return _bangSkills;
+        }
+        try
+        {
+            var all = await Api.GetCustomizeSkillsAsync();
+            _bangSkills = all
+                .Where(s => s.EnabledForMe && !s.DisabledByAdmin)
+                .ToList();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] bang skills falhou: {ex.Message}");
+            return [];
+        }
+        return _bangSkills;
+    }
+
+    /// <summary>RF-002: remove o token <c>!query</c> e injeta o corpo da skill
+    /// no composer — DB usa o <c>Content</c> do catálogo; repo faz fetch.</summary>
+    private async Task SelectBangAsync(SkillCatalogItem item)
+    {
+        var match = BangTokenRegex.Match(_input);
+        var head = match.Success ? _input[..match.Index] : _input;
+        _bangItems = [];
+        _bangIndex = 0;
+
+        var content = item.Content;
+        if (item.Source == "repo" || content is null)
+        {
+            var detail = await Api.GetRepoSkillAsync(item.Name, _loadedChatId);
+            content = detail?.Content;
+        }
+        if (content is null)
+        {
+            Toast.Show(L["chat.bang_load_failed"], ToastType.Warning);
+            return;
+        }
+        _input = head + content;
+    }
+
+    /// Token #knowledge no fim do input (RF-001) — debounce como o !.
+    private void QueueHashLookup()
+    {
+        var match = HashTokenRegex.Match(_input);
+        _hashCts?.Cancel();
+        if (!match.Success)
+        {
+            _hashItems = [];
+            _hashIndex = 0;
+            return;
+        }
+
+        var query = match.Groups["q"].Value;
+        _hashCts = new CancellationTokenSource();
+        var ct = _hashCts.Token;
+        _ = RefreshHashSuggestionsAsync(query, ct);
+    }
+
+    /// <summary>Filtra coleções+arquivos (top-20, collections primeiro).</summary>
+    private async Task RefreshHashSuggestionsAsync(string query, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(250, ct);
+            var all = await EnsureHashItemsAsync();
+            _hashItems = all
+                .Where(h => query.Length == 0
+                    || h.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || h.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
+                .Take(20)
+                .ToList();
+            _hashIndex = 0;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException)
+        {
+            // keystroke mais recente venceu — esperado.
+        }
+    }
+
+    /// <summary>Carrega e cacheia coleções (kind=collection) + arquivos do
+    /// usuário (kind=file) — os dois shapes que o server resolve em #nome.</summary>
+    private async Task<List<HashItem>> EnsureHashItemsAsync()
+    {
+        if (_hashAll is not null)
+        {
+            return _hashAll;
+        }
+        try
+        {
+            var collections = Api.GetKnowledgeAsync();
+            var files = Api.GetFilesAsync();
+            _hashAll = (await collections)
+                .Select(c => new HashItem(c.Name, "collection", c.Description))
+                .Concat((await files).Select(f => new HashItem(f.Filename, "file", null)))
+                .OrderBy(h => h.Kind == "collection" ? 0 : 1)
+                .ThenBy(h => h.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            await Console.Error.WriteLineAsync($"[ChatView] hash knowledge falhou: {ex.Message}");
+            return [];
+        }
+        return _hashAll;
+    }
+
+    /// <summary>RF-003: substitui o token <c>#query</c> por <c>#nome </c>.</summary>
+    private void SelectHash(HashItem item)
+    {
+        var match = HashTokenRegex.Match(_input);
+        var head = match.Success ? _input[..match.Index] : _input;
+        _input = $"{head}#{item.Name} ";
+        _hashItems = [];
+        _hashIndex = 0;
     }
 
     /// <summary>
@@ -2412,8 +2721,11 @@
         {
             return; // catálogo indisponível: sem aviso (fail-open).
         }
+        // Ref fusion resolve ao leader — é ele quem produz a resposta
+        // (SPEC-20261106) e define a capacidade de visão da run.
         var current = _chatModels?.FirstOrDefault(
-            m => string.Equals(m.Id, _model, StringComparison.OrdinalIgnoreCase));
+            m => string.Equals(m.Id, FusionModelRef.LeaderOrSelf(_model!),
+                StringComparison.OrdinalIgnoreCase));
         if (current is not null)
         {
             _visionWarning = current.Capabilities is not { } caps
@@ -3007,6 +3319,36 @@
         }
     }
 
+    /// <summary>RF-005 (SPEC-20261104-customize-hub): rascunha uma nota de
+    /// conhecimento a partir do chat — título = título do chat, conteúdo
+    /// livre via prompt; salva no escopo pessoal e oferece abrir o hub.</summary>
+    private async Task SuggestKnowledgeAsync()
+    {
+        if (_loadedChatId is null)
+        {
+            return;
+        }
+
+        var content = await Dialogs.PromptAsync(L["chat.suggest_knowledge_prompt"]);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return;
+        }
+
+        var note = await Api.CreateKnowledgeNoteAsync(
+            new KnowledgeNoteRequest(_chatTitle, null, content.Trim(), Pinned: false));
+        if (note is null)
+        {
+            _error = L["customize.save_failed"];
+            return;
+        }
+
+        if (await Dialogs.ConfirmAsync(L["chat.knowledge_saved"]))
+        {
+            Nav.NavigateTo("/customize/knowledge");
+        }
+    }
+
     private async Task StreamAssistantAsync(
         IReadOnlyList<string> fileIds, string? runContent = null,
         IReadOnlyList<string>? mentionPaths = null,
@@ -3020,7 +3362,8 @@
         }
 
         var placeholder = new ChatMessageModel(
-            Guid.NewGuid().ToString(), "assistant", string.Empty, _model,
+            Guid.NewGuid().ToString(), "assistant", string.Empty,
+            FusionModelRef.LeaderOrSelf(_model!),
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _messages.Add(placeholder);
         _streamingEntry = placeholder;
@@ -3092,7 +3435,8 @@
         (string Name, string Args, string Prompt)? pendingCommand = null)
     {
         var placeholder = new ChatMessageModel(
-            Guid.NewGuid().ToString(), "assistant", string.Empty, _model,
+            Guid.NewGuid().ToString(), "assistant", string.Empty,
+            FusionModelRef.LeaderOrSelf(_model!),
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         _messages.Add(placeholder);
         _streamingEntry = placeholder;
@@ -3220,6 +3564,10 @@
     // 45s = ~4 heartbeats perdidos (10s) + margem para jitter de proxy —
     // antes 35s/15s marcava stall em hiccup curto e re-anexava à toa.
     private const int StallMs = 45_000;
+    // Tempo para o 1º evento de um attach (o pad de ~2KB sai na hora numa
+    // conexão saudável): proxy que bufferiza o corpo segura tudo — cortar
+    // em 15s faz o polling-fallback assumir sem congelar a UI por 45s.
+    private const int FirstEventStallMs = 15_000;
     // Cadência de retry: até SoftEmptyAttaches o backoff exponencial é
     // rápido (0,5–4s); depois disso o attach continua em ~8s enquanto a
     // run estiver viva — proxies corporativos derrubam qualquer attach antes
@@ -3228,6 +3576,14 @@
     // ~40 attaches vazios (~35min de stall de 45s + 8s cada) sem ver a
     // run morrer: só então desiste — run viva demais já é anômalo.
     private const int HardEmptyAttaches = 40;
+    // SPEC-20261110: attaches vazios seguidos que chaveiam para o modo
+    // polling (o SSE morreu de vez atrás do proxy — GETs curtos passam).
+    private const int PollFallbackAttaches = 3;
+    // Cadência do polling-fallback — quase-real-time sem afogar o servidor.
+    private const int PollIntervalMs = 1_500;
+    // Falhas de transporte seguidas no polling antes de desistir
+    // (~2min no backoff máximo) — rede caida de vez não segura a UI.
+    private const int MaxPollFailures = 20;
 
     /// <summary>Estado mutável do loop de resume do stream da run.</summary>
     private sealed class RunConsumeState
@@ -3275,9 +3631,24 @@
             if (!state.SawEvent)
             {
                 state.EmptyAttaches++;
-                if (await HandleEmptyAttachAsync(chatId, runId, state, ct))
+                if (await HandleEmptyAttachAsync(
+                        chatId, runId, content, placeholder, index, state, ct))
                 {
                     return;
+                }
+
+                // SPEC-20261110: SSE morrendo sempre antes do 1º evento
+                // (proxy corporativo) → polling dedicado até a run fechar.
+                if (state.EmptyAttaches >= PollFallbackAttaches)
+                {
+                    if (await PollRunEventsAsync(
+                            chatId, runId, content, placeholder, index, state, ct))
+                    {
+                        return;
+                    }
+                    // Polling também falhou de rede — volta aos attaches
+                    // com contagem zerada (uma rede nova pode curar o SSE).
+                    state.EmptyAttaches = 0;
                 }
             }
             else
@@ -3318,7 +3689,9 @@
         RunConsumeState state, CancellationToken ct)
     {
         using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        stall.CancelAfter(StallMs);
+        // TTFB curto: o pad SSE chega na hora numa conexão saudável — nada
+        // em FirstEventStallMs = proxy bufferizando/derrubando o corpo.
+        stall.CancelAfter(FirstEventStallMs);
         try
         {
             await foreach (var evt in ChatStream.StreamRunEventsAsync(
@@ -3366,43 +3739,22 @@
     }
 
     /// <summary>
-    /// Attach vazio: confere o status da run antes de re-anexar.
-    /// Retorna true quando o consumo deve encerrar.
+    /// Attach vazio: faz um ciclo de polling (eventos + status + pendências)
+    /// antes de re-anexar — a UI já mostra o progresso acumulado aqui, sem
+    /// esperar o modo polling dedicado. Retorna true quando o consumo deve
+    /// encerrar.
     /// </summary>
     private async Task<bool> HandleEmptyAttachAsync(
-        string chatId, string runId, RunConsumeState state, CancellationToken ct)
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
     {
-        // O status check cai na mesma queda de rede que derrubou o
-        // attach — tratar como "run viva" e seguir o backoff em vez
-        // de abortar o resume com erro.
-        ChatRunResponse? polled = null;
-        var pollFailed = false;
-        try
-        {
-            polled = await ChatStream.GetRunAsync(chatId, runId, ct);
-        }
-        catch (Exception ex) when (ClientErrors.IsTransient(ex))
-        {
-            pollFailed = true;
-        }
-        // Sem resposta: transitório → run viva; mas GET respondido
-        // com null (404) → run sumiu, encerra como antes.
-        var status = polled?.Status ?? (pollFailed ? "running" : null);
-        if (status is null or "completed" or "failed" or "stopped" or "interrupted")
+        var outcome = await PollRunOnceAsync(
+            chatId, runId, content, placeholder, index, state, ct);
+        if (outcome is RunPollOutcome.Terminal or RunPollOutcome.Gone)
         {
             return true;
-        }
-        // Polling-fallback (SPEC-20261030): o GET da run devolve
-        // aprovação/pergunta pendente — o attach SSE que o proxy
-        // mata antes do 1º evento não esconde mais o card até o F5.
-        if (polled is not null
-            && (polled.PendingApproval is not null || polled.PendingQuestion is not null
-                || _pendingApproval is not null || _pendingQuestion is not null))
-        {
-            _pendingApproval = polled.PendingApproval;
-            _pendingQuestion = polled.PendingQuestion;
-            state.LastRender = DateTime.UtcNow;
-            await InvokeAsync(StateHasChanged);
         }
         if (state.EmptyAttaches >= HardEmptyAttaches)
         {
@@ -3411,6 +3763,157 @@
             return true;
         }
         return false;
+    }
+
+    /// <summary>Resultado de um ciclo de polling da run.</summary>
+    private enum RunPollOutcome
+    {
+        /// <summary>Eventos aplicados (ou nada novo) — run viva.</summary>
+        Ok,
+        /// <summary>Run chegou a estado terminal (status/evento/closed).</summary>
+        Terminal,
+        /// <summary>404 — a run não existe mais no servidor.</summary>
+        Gone,
+        /// <summary>Falha de transporte no GET — tratar como run viva.</summary>
+        Transient,
+    }
+
+    /// <summary>
+    /// Um ciclo do polling-fallback (SPEC-20261110): GET
+    /// <c>/runs/{id}/events?lastSeq</c> devolve o backlog SSE em JSON —
+    /// aplica os eventos pelo mesmo caminho do stream vivo, sincroniza
+    /// aprovação/pergunta pendente e cobre eventos perdidos via
+    /// <c>PartialContent</c>. Resposta curta atravessa proxies que matam SSE.
+    /// </summary>
+    private async Task<RunPollOutcome> PollRunOnceAsync(
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
+    {
+        RunEventsResponse? polled;
+        bool gone;
+        try
+        {
+            // O GET cai na mesma queda de rede que derrubou o attach —
+            // transitório conta como "run viva" e segue o backoff.
+            (polled, gone) = await ChatStream.GetRunEventsAsync(
+                chatId, runId, state.LastSeq, ct);
+        }
+        catch (Exception ex) when (ClientErrors.IsTransient(ex))
+        {
+            return RunPollOutcome.Transient;
+        }
+        if (gone)
+        {
+            return RunPollOutcome.Gone;
+        }
+        if (polled is null)
+        {
+            return RunPollOutcome.Transient;
+        }
+
+        var terminal = false;
+        var touched = false;
+        foreach (var item in polled.Events)
+        {
+            foreach (var evt in ChatStream.ParseEventBlock(item.Payload, item.Seq))
+            {
+                if (evt.Seq > 0)
+                {
+                    state.LastSeq = Math.Max(state.LastSeq, evt.Seq);
+                }
+                touched = true;
+                if (await ApplyRunEventAsync(evt, content, placeholder, index))
+                {
+                    terminal = true;
+                }
+            }
+        }
+
+        // Backlog pode ter sido cortado (restart/overflow): o checkpoint
+        // persistido cobre o gap quando está à frente do que já vimos.
+        if (polled.PartialContent is { Length: > 0 } partial
+            && partial.Length > content.Length)
+        {
+            content.Clear();
+            content.Append(partial);
+            UpdateStreamingPlaceholder(content, placeholder, index);
+            touched = true;
+        }
+
+        // Aprovação/pergunta pendente chega por polling também — o card
+        // não depende do evento SSE que o proxy segurou.
+        if (polled.PendingApproval is not null || polled.PendingQuestion is not null
+            || _pendingApproval is not null || _pendingQuestion is not null)
+        {
+            _pendingApproval = polled.PendingApproval;
+            _pendingQuestion = polled.PendingQuestion;
+            touched = true;
+        }
+
+        if (polled.Status == "failed" && polled.Error is { } runError)
+        {
+            _error = runError;
+            touched = true;
+        }
+
+        if (touched)
+        {
+            state.LastRender = DateTime.UtcNow;
+            await InvokeAsync(StateHasChanged);
+            await ScrollToEndIfPinnedAsync();
+        }
+
+        return terminal || polled.Closed
+            || polled.Status is "completed" or "failed" or "stopped" or "interrupted"
+                ? RunPollOutcome.Terminal
+                : RunPollOutcome.Ok;
+    }
+
+    /// <summary>
+    /// Modo polling (SPEC-20261110): depois de attaches vazios seguidos o
+    /// SSE é considerado morto — cicla o GET /events até a run terminar.
+    /// Retorna true quando a run fechou; false só quando o teto de falhas
+    /// de rede estourou (o caller volta a tentar attach).
+    /// </summary>
+    private async Task<bool> PollRunEventsAsync(
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
+    {
+        _pollingFallback = true;
+        await InvokeAsync(StateHasChanged);
+        var failures = 0;
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var outcome = await PollRunOnceAsync(
+                    chatId, runId, content, placeholder, index, state, ct);
+                if (outcome is RunPollOutcome.Terminal or RunPollOutcome.Gone)
+                {
+                    return true;
+                }
+                failures = outcome == RunPollOutcome.Transient ? failures + 1 : 0;
+                if (failures >= MaxPollFailures)
+                {
+                    Console.WriteLine(
+                        $"polling da run {runId}: {failures} falhas seguidas, voltando aos attaches.");
+                    return false;
+                }
+                await Task.Delay(
+                    outcome == RunPollOutcome.Transient
+                        ? Math.Min(PollIntervalMs * (1 << Math.Min(failures, 3)), 12_000)
+                        : PollIntervalMs, ct);
+            }
+            return false;
+        }
+        finally
+        {
+            _pollingFallback = false;
+        }
     }
 
     /// <summary>
@@ -3481,6 +3984,13 @@
             case ChatStreamService.ChatStreamEvent.Advisor advice:
                 AddAdvisorActivity(advice);
                 break;
+            case ChatStreamService.ChatStreamEvent.Error runError:
+                // Falha terminal da run (executor publica {"error":…} e
+                // fecha o stream): antes entrava como "queda de
+                // transporte", re-anexava e morria em silêncio — o
+                // sintoma "chat travado" (runs 1199dd6b/c0d240ea).
+                _error = runError.Message;
+                return true;
         }
         return false;
     }
@@ -3497,6 +4007,27 @@
         ChatMessageModel placeholder, int index)
     {
         content.Append(delta.Text);
+        UpdateStreamingPlaceholder(content, placeholder, index);
+        TrackTps(delta.Text.Length);
+        // O auto-colapso do pensamento é derivado em
+        // ThinkingExpanded (hasDeltas=true) — aqui só o chip
+        // vira "Escrevendo resposta…".
+        if (_statusLabel == _thinkingLabel)
+        {
+            _statusLabel = L["chat.status_writing"];
+        }
+    }
+
+    /// <summary>
+    /// Escreve o acumulado na bolha de stream — resolve a posição viva do
+    /// placeholder (a lista pode ter sido reconstruída por reload/mensagens
+    /// duráveis) em vez de indexar às cegas. Usado pelo delta SSE e pelo
+    /// <c>PartialContent</c> do polling-fallback (SPEC-20261110).
+    /// </summary>
+    private void UpdateStreamingPlaceholder(
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index)
+    {
         var updated = placeholder with { Content = content.ToString() };
         var liveIdx = _streamingEntry is null
             ? -1
@@ -3516,14 +4047,6 @@
         }
         _streamingEntry = updated;
         _hasDeltas = true;
-        TrackTps(delta.Text.Length);
-        // O auto-colapso do pensamento é derivado em
-        // ThinkingExpanded (hasDeltas=true) — aqui só o chip
-        // vira "Escrevendo resposta…".
-        if (_statusLabel == _thinkingLabel)
-        {
-            _statusLabel = L["chat.status_writing"];
-        }
     }
 
     /// <summary>
@@ -3611,6 +4134,13 @@
                 break;
             case "awaiting_approval":
                 _statusLabel = L["chat.status_approval"];
+                break;
+            case "fusion":
+                // SPEC-20261106: chip mostra o par ativo
+                // (label = "Leader x → Sidekick y" publicado pelo executor).
+                _statusLabel = phase.Status.Label is { Length: > 0 } fusionLbl
+                    ? $"{L["models.fusion"]} — {fusionLbl}"
+                    : L["models.fusion"];
                 break;
             default:
                 _paused = false;

@@ -1531,8 +1531,8 @@ public class Skill
     /// <summary>Identificador único (GUID).</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString();
 
-    /// <summary>Dono da skill.</summary>
-    public string UserId { get; set; } = string.Empty;
+    /// <summary>Dono da skill; <c>null</c> = global da organização (admin).</summary>
+    public string? UserId { get; set; } = string.Empty;
 
     /// <summary>Nome de exibição.</summary>
     public string Name { get; set; } = string.Empty;
@@ -1543,8 +1543,46 @@ public class Skill
     /// <summary>Conteúdo markdown/instrução injetado no system prompt.</summary>
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>Tools permitidas quando a skill está ativa (CSV) —
+    /// paridade Devin <c>allowed-tools</c> (SPEC-20261104): null = sem
+    /// restrição; preenchido = só essas + as built-in essenciais.</summary>
+    public string? AllowedTools { get; set; }
+
     /// <summary>Se a skill está habilitada.</summary>
     public bool IsActive { get; set; } = true;
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+
+    /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>Nota de conhecimento estilo Devin (SPEC-20261104-customize-hub):
+/// instruções/contexto injetadas no system prompt quando <see cref="Pinned"/>
+/// ou quando o <see cref="Trigger"/> casa a mensagem do usuário.
+/// <see cref="UserId"/> <c>null</c> = nota global da organização (admin);
+/// tombstones por usuário em <c>u:{id}:knowledge-disabled</c>.</summary>
+public class KnowledgeNote
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Dono da nota; <c>null</c> = global da organização (admin).</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>Título curto — único por owner.</summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Descrição/palavras-chave de quando aplicar a nota
+    /// (obrigatório quando <see cref="Pinned"/> é false).</summary>
+    public string? Trigger { get; set; }
+
+    /// <summary>Conteúdo markdown injetado no contexto (máx. 8000 chars).</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>Nota pinada é sempre injetada, ignorando o trigger.</summary>
+    public bool Pinned { get; set; }
 
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
@@ -2555,5 +2593,56 @@ public class GenerationContextEntry
     public long CreatedAt { get; set; }
 
     /// <summary>Última atualização (epoch seconds).</summary>
+    public long UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Insight materializado de um chat (SPEC-20261104-session-insights-v2):
+/// classificação heurística (tamanho/categoria/issues) computada de forma
+/// incremental e última análise LLM gerada sob demanda — um registro por chat.
+/// </summary>
+public class ChatInsight
+{
+    /// <summary>Chat dono do insight — PK (1 insight por chat).</summary>
+    [System.ComponentModel.DataAnnotations.Key]
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Dono do chat (consultas admin agregadas por período).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Classe de tamanho: XS | S | M | L | XL.</summary>
+    public string SizeClass { get; set; } = "XS";
+
+    /// <summary>Categoria determinística (feature, bugfix, research…) ou
+    /// <c>uncategorized</c>.</summary>
+    public string Category { get; set; } = "uncategorized";
+
+    /// <summary>Issues agregadas das runs, JSON
+    /// <c>[{label, impact, description, count}]</c>.</summary>
+    public string IssuesJson { get; set; } = "[]";
+
+    /// <summary>Timeline de eventos relevantes, JSON
+    /// <c>[{at, kind, title, ref}]</c> (cap 100).</summary>
+    public string TimelineJson { get; set; } = "[]";
+
+    /// <summary>Métricas agregadas snapshot, JSON
+    /// <c>{tokensIn, tokensOut, costUsd, runs, userMessages}</c>.</summary>
+    public string MetricsJson { get; set; } = "{}";
+
+    /// <summary>Última análise LLM persistida, JSON
+    /// <c>{summary, issues[], improvedPrompt, changes[], actionItems[],
+    /// knowledgeUsed[]}</c>; null até o primeiro generate.</summary>
+    public string? AnalysisJson { get; set; }
+
+    /// <summary>Modelo que gerou a análise atual.</summary>
+    public string? ModelId { get; set; }
+
+    /// <summary>Último run incluído na heurística (recálculo incremental).</summary>
+    public string? LastRunId { get; set; }
+
+    /// <summary>Geração da análise atual (epoch seconds; null = nunca).</summary>
+    public long? GeneratedAt { get; set; }
+
+    /// <summary>Última atualização da heurística (epoch seconds).</summary>
     public long UpdatedAt { get; set; }
 }

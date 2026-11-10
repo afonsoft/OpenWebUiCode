@@ -102,6 +102,47 @@ public class ChatStreamServiceTests
     }
 
     [Test]
+    public async Task RunEvents_ChunkDeErro_ViraEventoError()
+    {
+        // O executor publica {"error":…} quando a run morre (provider
+        // down). Antes isso lançava InvalidOperationException e o
+        // ChatView engolia como queda de transporte — a run encerrava
+        // muda e o chat parecia "travado" (incidente 2026-11-07).
+        var sse = "data: {\"error\":\"server-error: provedor falhou\"}\n\n"
+            + "data: [DONE]\n";
+        var service = CreateService(sse);
+
+        var eventos = new List<ChatStreamService.ChatStreamEvent>();
+        await foreach (var evt in service.StreamRunEventsAsync("c1", "r1"))
+        {
+            eventos.Add(evt);
+        }
+
+        var erro = eventos
+            .OfType<ChatStreamService.ChatStreamEvent.Error>().Single();
+        Assert.That(erro.Message,
+            Is.EqualTo("server-error: provedor falhou"));
+    }
+
+    [Test]
+    public async Task RunEvents_ChunkDeErroObjeto_ExtraiMessage()
+    {
+        // Shape OpenAI: {"error":{"message":…}} (gateways/providers).
+        var sse = "data: {\"error\":{\"message\":\"boom\"}}\n\ndata: [DONE]\n";
+        var service = CreateService(sse);
+
+        var eventos = new List<ChatStreamService.ChatStreamEvent>();
+        await foreach (var evt in service.StreamRunEventsAsync("c1", "r1"))
+        {
+            eventos.Add(evt);
+        }
+
+        var erro = eventos
+            .OfType<ChatStreamService.ChatStreamEvent.Error>().Single();
+        Assert.That(erro.Message, Is.EqualTo("boom"));
+    }
+
+    [Test]
     public async Task RunEvents_Changes_ParseSnapshot()
     {
         var sse = string.Join('\n',
@@ -195,6 +236,43 @@ public class ChatStreamServiceTests
             Assert.That(
                 eventos.OfType<ChatStreamService.ChatStreamEvent.Delta>().Single().Text,
                 Is.EqualTo("a"));
+        });
+    }
+
+    [Test]
+    public void ParseEventBlock_BlocoSseCru_ViraEventosTipados()
+    {
+        // Polling-fallback (SPEC-20261110): o backlog vem como bloco SSE
+        // cru (linhas event:/data:) — o parse reusa o caminho do stream.
+        var service = CreateService("");
+
+        var eventos = service.ParseEventBlock(
+            "event: tasks\ndata: {\"tasks\":[{\"id\":\"t1\",\"content\":\"x\",\"status\":\"in_progress\"}]}",
+            seq: 42).ToList();
+
+        var tasks = eventos.OfType<ChatStreamService.ChatStreamEvent.Tasks>().Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(tasks.Seq, Is.EqualTo(42));
+            Assert.That(tasks.Snapshot.Tasks[0].Id, Is.EqualTo("t1"));
+        });
+    }
+
+    [Test]
+    public void ParseEventBlock_DeltaOpenAiEDone_SoProduzDelta()
+    {
+        var service = CreateService("");
+
+        var eventos = service.ParseEventBlock(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"oi\"}}]}", seq: 7)
+            .Concat(service.ParseEventBlock("data: [DONE]", seq: 8))
+            .ToList();
+
+        var delta = eventos.OfType<ChatStreamService.ChatStreamEvent.Delta>().Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(delta.Text, Is.EqualTo("oi"));
+            Assert.That(delta.Seq, Is.EqualTo(7));
         });
     }
 

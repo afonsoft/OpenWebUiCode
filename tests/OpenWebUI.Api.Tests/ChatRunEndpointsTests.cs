@@ -367,6 +367,59 @@ public class ChatRunEndpointsTests
     }
 
     [Test]
+    public async Task Events_RunFinalizada_DevolveBacklogEStatus()
+    {
+        // Polling-fallback (SPEC-20261110): o backlog SSE sai em JSON curto —
+        // eventos com seq ordenado + status terminal da run.
+        var auth = await SignUpAsync("RunI", "runi@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync([]);
+        var run = await EnfileirarAsync(chat.Id, "conteúdo");
+        var final = await AguardarFinalAsync(chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("failed"));
+
+        var resp = await _client.GetFromJsonAsync<RunEventsResponse>(
+            $"/api/v1/chats/{chat.Id}/runs/{run.Id}/events?lastSeq=0");
+        Assert.That(resp, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(resp!.Status, Is.EqualTo("failed"));
+            Assert.That(resp.Error, Is.Not.Null.And.Not.Empty);
+            Assert.That(resp.Events, Is.Not.Empty);
+            Assert.That(resp.LastSeq, Is.EqualTo(resp.Events[^1].Seq));
+            // Seq estritamente crescente — o cliente resume por lastSeq.
+            Assert.That(resp.Events.Select(e => e.Seq),
+                Is.Ordered.Ascending.And.Unique);
+        });
+
+        // lastSeq no fim do backlog → resposta vazia, sem duplicar.
+        var vazio = await _client.GetFromJsonAsync<RunEventsResponse>(
+            $"/api/v1/chats/{chat.Id}/runs/{run.Id}/events?lastSeq={resp!.LastSeq}");
+        Assert.That(vazio!.Events, Is.Empty);
+    }
+
+    [Test]
+    public async Task Events_IsolamentoENaoEncontrado()
+    {
+        var dono = await SignUpAsync("RunJ", "runj@runs.local");
+        UseToken(dono.Token);
+        var chat = await CriarChatAsync([]);
+        var run = await EnfileirarAsync(chat.Id, "segredo");
+
+        var outro = await SignUpAsync("RunK", "runk@runs.local");
+        UseToken(outro.Token);
+        var alheio = await _client.GetAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{run.Id}/events");
+        var inexistente = await _client.GetAsync(
+            $"/api/v1/chats/{chat.Id}/runs/run-que-nao-existe/events");
+        Assert.Multiple(() =>
+        {
+            Assert.That(alheio.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+            Assert.That(inexistente.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        });
+    }
+
+    [Test]
     public async Task Steer_RunViva_PersisteInboxDuravel()
     {
         // SPEC-20261010-steer-queue: POST em run viva grava linha pending.

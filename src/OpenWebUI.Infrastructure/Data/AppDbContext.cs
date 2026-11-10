@@ -151,7 +151,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     /// <summary>Skills do workspace.</summary>
     public DbSet<Skill> Skills => Set<Skill>();
+
+    /// <summary>Notas de conhecimento org/pessoal (SPEC-20261104-customize-hub).</summary>
+    public DbSet<KnowledgeNote> KnowledgeNotes => Set<KnowledgeNote>();
     public DbSet<AgentMemory> AgentMemories => Set<AgentMemory>();
+
+    /// <summary>Insights por chat (SPEC-20261104-session-insights-v2).</summary>
+    public DbSet<ChatInsight> ChatInsights => Set<ChatInsight>();
 
     /// <summary>Functions do ecossistema de plugins.</summary>
     public DbSet<Function> Functions => Set<Function>();

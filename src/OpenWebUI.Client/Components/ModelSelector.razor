@@ -17,6 +17,10 @@
         <button class="flex items-center gap-1.5 rounded-xl px-2 py-1 text-[0.9375rem] font-normal text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 transition cursor-pointer"
                 aria-haspopup="listbox" aria-expanded="@_open" @ref="_trigger"
                 @onclick="ToggleOpen">
+            @if (IsFusion)
+            {
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5 shrink-0 text-blue-500" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" /></svg>
+            }
             <span class="truncate max-w-[16rem]">@(SelectedName)</span>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5 text-gray-400"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
         </button>
@@ -26,6 +30,89 @@
             <div class="fixed inset-0 z-40" @onclick="() => _open = false"></div>
             <div class="absolute left-0 top-full mt-1 z-50 w-64 max-h-80 overflow-y-auto scrollbar-hidden rounded-2xl bg-white dark:bg-gray-850 border border-gray-100 dark:border-gray-800 shadow-lg py-1"
                  role="listbox" aria-label="@L["models.select"]" @ref="_menu" @onkeydown="OnMenuKeyDown">
+                @* SPEC-20261106 adaptive-fusion: primeiro item fixo — par
+                   Leader (raciocínio/plano) + Sidekick (execução) escolhidos
+                   dentre os modelos do catálogo do chat. *@
+                <div class="px-3 pt-2 pb-1 text-[0.6875rem] uppercase tracking-wide text-gray-400 dark:text-gray-500">@L["models.adaptive"]</div>
+                <button class="w-full flex items-center justify-between px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer"
+                        role="option" aria-selected="@IsFusion"
+                        title="@L["models.fusion_hint"]"
+                        @onclick="SelectFusionAsync">
+                    <span class="flex items-center gap-1.5 truncate">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5 shrink-0 text-blue-500" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" /></svg>
+                        <span class="truncate">@L["models.fusion"]</span>
+                    </span>
+                    @if (IsFusion)
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-3.5 shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                    }
+                </button>
+
+                @if (IsFusion)
+                {
+                    <div class="mx-2 mb-1 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/40 px-2.5 py-2 flex flex-col gap-2"
+                         @onkeydown:stopPropagation="true">
+                        <label class="flex flex-col gap-1">
+                            <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
+                                @L["models.fusion_leader"]
+                                <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_leader_hint"]</span>
+                            </span>
+                            <select class="w-full rounded-lg border border-gray-200 dark:border-gray-750 bg-white dark:bg-gray-850 px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+                                    aria-label="@L["models.fusion_leader"]"
+                                    value="@_leader" @onchange="OnLeaderChanged">
+                                @foreach (var m in _models)
+                                {
+                                    <option value="@m.Id" selected="@(m.Id == _leader)">@m.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="flex flex-col gap-1">
+                            <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
+                                @L["models.fusion_leader2"]
+                                <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_fallback_hint"]</span>
+                            </span>
+                            <select class="w-full rounded-lg border border-gray-200 dark:border-gray-750 bg-white dark:bg-gray-850 px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+                                    aria-label="@L["models.fusion_leader2"]"
+                                    value="@_leader2" @onchange="OnLeader2Changed">
+                                <option value="">@L["models.fusion_none"]</option>
+                                @foreach (var m in _models)
+                                {
+                                    <option value="@m.Id" selected="@(m.Id == _leader2)">@m.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="flex flex-col gap-1">
+                            <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
+                                @L["models.fusion_sidekick"]
+                                <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_sidekick_hint"]</span>
+                            </span>
+                            <select class="w-full rounded-lg border border-gray-200 dark:border-gray-750 bg-white dark:bg-gray-850 px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+                                    aria-label="@L["models.fusion_sidekick"]"
+                                    value="@_sidekick" @onchange="OnSidekickChanged">
+                                @foreach (var m in _models)
+                                {
+                                    <option value="@m.Id" selected="@(m.Id == _sidekick)">@m.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="flex flex-col gap-1">
+                            <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
+                                @L["models.fusion_sidekick2"]
+                                <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_fallback_hint"]</span>
+                            </span>
+                            <select class="w-full rounded-lg border border-gray-200 dark:border-gray-750 bg-white dark:bg-gray-850 px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+                                    aria-label="@L["models.fusion_sidekick2"]"
+                                    value="@_sidekick2" @onchange="OnSidekick2Changed">
+                                <option value="">@L["models.fusion_none"]</option>
+                                @foreach (var m in _models)
+                                {
+                                    <option value="@m.Id" selected="@(m.Id == _sidekick2)">@m.Name</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                }
+
                 @foreach (var group in _models.GroupBy(m => m.Provider))
                 {
                     <div class="px-3 pt-2 pb-1 text-[0.6875rem] uppercase tracking-wide text-gray-400 dark:text-gray-500">@ProviderLabel(group.Key)</div>
@@ -55,16 +142,41 @@
     [Parameter] public EventCallback<string?> ValueChanged { get; set; }
 
     private const string ModelKey = "webui.model";
+    private const string FusionLeaderKey = "webui.fusion.leader";
+    private const string FusionLeader2Key = "webui.fusion.leader2";
+    private const string FusionSidekickKey = "webui.fusion.sidekick";
+    private const string FusionSidekick2Key = "webui.fusion.sidekick2";
     private List<ModelInfo>? _models;
     private bool _open;
     private bool _focusMenu;
+    private string? _leader;
+    private string? _leader2;
+    private string? _sidekick;
+    private string? _sidekick2;
     private ElementReference _trigger;
     private ElementReference _menu;
 
+    /// <summary>Seleção atual é o par Adaptive/Fusion (SPEC-20261106).</summary>
+    private bool IsFusion => FusionModelRef.IsFusion(Value);
+
     private string SelectedName =>
-        _models?.FirstOrDefault(m => m.Id == Value)?.Name ?? L["models.select"];
+        IsFusion ? L["models.fusion"]
+        : _models?.FirstOrDefault(m => m.Id == Value)?.Name ?? L["models.select"];
 
     protected override async Task OnInitializedAsync() => await LoadModelsAsync();
+
+    /// <summary>Chat restaurado com ref fusion: os selects espelham o par
+    /// do <see cref="Value"/> (chat.ModelsJson persiste a ref composta).</summary>
+    protected override void OnParametersSet()
+    {
+        if (FusionModelRef.TryParseChain(Value, out var ls, out var ss))
+        {
+            _leader = ls[0];
+            _leader2 = ls.Count > 1 ? ls[1] : null;
+            _sidekick = ss[0];
+            _sidekick2 = ss.Count > 1 ? ss[1] : null;
+        }
+    }
 
     /// <summary>Busca a lista de modelos — offline vira lista vazia com
     /// retry ao reabrir o menu (nunca propaga pra error UI).</summary>
@@ -88,6 +200,23 @@
             return;
         }
 
+        // O Value do pai é autoridade: o ChatView restaura
+        // chat.Models[0] nele ao abrir o chat. O default do storage/
+        // catálogo só decide quando Value está vazio (chat novo) —
+        // sobrescrever aqui era o bug que voltava o seletor pro
+        // primeiro modelo ao trocar de chat e retornar.
+        if (!string.IsNullOrEmpty(Value))
+        {
+            if (FusionModelRef.TryParseChain(Value, out var curLs, out var curSs))
+            {
+                _leader = curLs[0];
+                _leader2 = curLs.Count > 1 ? curLs[1] : null;
+                _sidekick = curSs[0];
+                _sidekick2 = curSs.Count > 1 ? curSs[1] : null;
+            }
+            return;
+        }
+
         string? saved;
         try
         {
@@ -97,6 +226,23 @@
         {
             saved = null;
         }
+
+        if (FusionModelRef.TryParseChain(saved, out var savedLs, out var savedSs)
+            && HasModel(savedLs[0]) && HasModel(savedSs[0]))
+        {
+            _leader = savedLs[0];
+            _leader2 = savedLs.Count > 1 && HasModel(savedLs[1]) ? savedLs[1] : null;
+            _sidekick = savedSs[0];
+            _sidekick2 = savedSs.Count > 1 && HasModel(savedSs[1]) ? savedSs[1] : null;
+            var restored = CurrentFusionValue();
+            if (restored != Value)
+            {
+                Value = restored;
+                await ValueChanged.InvokeAsync(restored);
+            }
+            return;
+        }
+
         var selected = _models.Any(m => m.Id == saved)
             ? saved
             : _models.FirstOrDefault()?.Id;
@@ -140,6 +286,88 @@
         {
             await JS.InvokeVoidAsync("openwebui.menuNav", _menu, e.Key);
         }
+    }
+
+    private bool HasModel(string? id) =>
+        id is not null && _models?.Any(m => m.Id == id) == true;
+
+    /// <summary>Seleciona o modo fusion: o menu fica aberto com os selects
+    /// Leader/Sidekick — defaults = par salvo ou primeiro modelo do catálogo.</summary>
+    private async Task SelectFusionAsync()
+    {
+        _leader = HasModel(_leader) ? _leader
+            : (await Storage.GetAsync(FusionLeaderKey)) is { } stored && HasModel(stored)
+            ? stored : _models!.First().Id;
+        _leader2 = HasModel(_leader2) ? _leader2
+            : (await Storage.GetAsync(FusionLeader2Key)) is { } storedL2 && HasModel(storedL2)
+            ? storedL2 : null;
+        _sidekick = HasModel(_sidekick) ? _sidekick
+            : (await Storage.GetAsync(FusionSidekickKey)) is { } storedSk && HasModel(storedSk)
+            ? storedSk : _models!.First().Id;
+        _sidekick2 = HasModel(_sidekick2) ? _sidekick2
+            : (await Storage.GetAsync(FusionSidekick2Key)) is { } storedSk2 && HasModel(storedSk2)
+            ? storedSk2 : null;
+        await ApplyFusionValueAsync();
+        await _trigger.FocusAsync();
+    }
+
+    private async Task OnLeaderChanged(ChangeEventArgs e)
+    {
+        _leader = e.Value?.ToString();
+        await ApplyFusionValueAsync();
+    }
+
+    private async Task OnLeader2Changed(ChangeEventArgs e)
+    {
+        _leader2 = e.Value?.ToString() is { Length: > 0 } v ? v : null;
+        await ApplyFusionValueAsync();
+    }
+
+    private async Task OnSidekickChanged(ChangeEventArgs e)
+    {
+        _sidekick = e.Value?.ToString();
+        await ApplyFusionValueAsync();
+    }
+
+    private async Task OnSidekick2Changed(ChangeEventArgs e)
+    {
+        _sidekick2 = e.Value?.ToString() is { Length: > 0 } v ? v : null;
+        await ApplyFusionValueAsync();
+    }
+
+    /// <summary>Ref fusion atual — segundo slot só emite quando preenchido
+    /// e diferente do primeiro da mesma posição.</summary>
+    private string? CurrentFusionValue()
+    {
+        if (_leader is null || _sidekick is null)
+        {
+            return null;
+        }
+        var leaders = _leader2 is not null
+            && !_leader2.Equals(_leader, StringComparison.OrdinalIgnoreCase)
+                ? new[] { _leader, _leader2 }
+                : new[] { _leader };
+        var sidekicks = _sidekick2 is not null
+            && !_sidekick2.Equals(_sidekick, StringComparison.OrdinalIgnoreCase)
+                ? new[] { _sidekick, _sidekick2 }
+                : new[] { _sidekick };
+        return FusionModelRef.Format(leaders, sidekicks);
+    }
+
+    /// <summary>Grava a cadeia e publica <c>fusion:{L1[,L2]}&gt;{S1[,S2]}</c>.</summary>
+    private async Task ApplyFusionValueAsync()
+    {
+        if (CurrentFusionValue() is not { } value)
+        {
+            return;
+        }
+        Value = value;
+        await Storage.SetAsync(ModelKey, value);
+        await Storage.SetAsync(FusionLeaderKey, _leader!);
+        await Storage.SetAsync(FusionLeader2Key, _leader2 ?? "");
+        await Storage.SetAsync(FusionSidekickKey, _sidekick!);
+        await Storage.SetAsync(FusionSidekick2Key, _sidekick2 ?? "");
+        await ValueChanged.InvokeAsync(value);
     }
 
     private async Task SelectAsync(string value)

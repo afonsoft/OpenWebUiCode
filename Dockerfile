@@ -53,6 +53,11 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
     dotnet publish src/OpenWebUI.Api/OpenWebUI.Api.csproj \
       -c Release -r "$RID" --self-contained true -o /app/publish
 
+# csharp-ls — language server de C# do LSP do agente
+# (SPEC-20261009-lsp-diagnostics): instalado como dotnet tool no stage SDK;
+# no runtime-deps roda sobre o runtime compartilhado de /opt/dotnet.
+RUN dotnet tool install --tool-path /tools csharp-ls
+
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS runtime
 
 # curl para o HEALTHCHECK; git para o workspace IDE; sudo para o agente
@@ -78,11 +83,14 @@ RUN apt-get update \
 # (lsof, strace, psmisc), shell (shellcheck) e terminal (tmux, nano, less,
 # htop). Runtimes pesados (python, gcc) ficam de fora de propósito — o
 # agente tem root+sudo e instala sob demanda.
+# bubblewrap: binário presente para o sandbox opcional do shell_exec
+# (SPEC-20261031-sandboxed-exec) — sem efeito enquanto Sandbox:Enabled=false;
+# quando a flag for ativada o confinamento funciona sem rebuild da imagem.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       jq ripgrep fd-find unzip zip sqlite3 tree file nano lsof dnsutils \
       iputils-ping netcat-openbsd openssh-client rsync tmux htop shellcheck \
-      less psmisc strace \
+      less psmisc strace bubblewrap \
  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
  && rm -rf /var/lib/apt/lists/*
 
@@ -108,6 +116,24 @@ RUN git clone --depth 1 -b "v${NVM_VERSION}" https://github.com/nvm-sh/nvm.git "
  && chmod +x /usr/local/bin/nvm \
  && printf 'export NVM_DIR=/opt/nvm\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' > /etc/profile.d/nvm.sh \
  && printf '. /etc/profile.d/nvm.sh\n' >> /etc/bash.bashrc
+
+# SDK .NET compartilhado (não só runtime): o csharp-ls do LSP do agente
+# (SPEC-20261009-lsp-diagnostics) resolve o SDK via MSBuildLocator e falha
+# no initialize sem ele ("No .NET SDKs were found"). O app segue
+# self-contained; o SDK também põe `dotnet` no PATH p/ o agente
+# (restore/build/test nos workspaces).
+# ROLL_FORWARD=LatestMajor: tools compiladas p/ TFM anterior rodam sobre o
+# runtime mais novo sem reinstalação.
+ARG DOTNET_SDK_CHANNEL=10.0
+ENV DOTNET_ROOT=/opt/dotnet \
+    DOTNET_ROLL_FORWARD=LatestMajor
+RUN curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+ && bash /tmp/dotnet-install.sh --channel "$DOTNET_SDK_CHANNEL" \
+      --install-dir /opt/dotnet \
+ && rm /tmp/dotnet-install.sh \
+ && ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet
+COPY --from=build /tools /opt/tools
+ENV PATH=/opt/tools:$PATH
 
 WORKDIR /app
 COPY --from=build /app/publish ./
