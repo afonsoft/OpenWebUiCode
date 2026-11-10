@@ -68,6 +68,21 @@
                         </label>
                         <label class="flex flex-col gap-1">
                             <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
+                                @L["models.fusion_leader2"]
+                                <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_fallback_hint"]</span>
+                            </span>
+                            <select class="w-full rounded-lg border border-gray-200 dark:border-gray-750 bg-white dark:bg-gray-850 px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+                                    aria-label="@L["models.fusion_leader2"]"
+                                    value="@_leader2" @onchange="OnLeader2Changed">
+                                <option value="">@L["models.fusion_none"]</option>
+                                @foreach (var m in _models)
+                                {
+                                    <option value="@m.Id" selected="@(m.Id == _leader2)">@m.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="flex flex-col gap-1">
+                            <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
                                 @L["models.fusion_sidekick"]
                                 <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_sidekick_hint"]</span>
                             </span>
@@ -77,6 +92,21 @@
                                 @foreach (var m in _models)
                                 {
                                     <option value="@m.Id" selected="@(m.Id == _sidekick)">@m.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="flex flex-col gap-1">
+                            <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
+                                @L["models.fusion_sidekick2"]
+                                <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_fallback_hint"]</span>
+                            </span>
+                            <select class="w-full rounded-lg border border-gray-200 dark:border-gray-750 bg-white dark:bg-gray-850 px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+                                    aria-label="@L["models.fusion_sidekick2"]"
+                                    value="@_sidekick2" @onchange="OnSidekick2Changed">
+                                <option value="">@L["models.fusion_none"]</option>
+                                @foreach (var m in _models)
+                                {
+                                    <option value="@m.Id" selected="@(m.Id == _sidekick2)">@m.Name</option>
                                 }
                             </select>
                         </label>
@@ -113,12 +143,16 @@
 
     private const string ModelKey = "webui.model";
     private const string FusionLeaderKey = "webui.fusion.leader";
+    private const string FusionLeader2Key = "webui.fusion.leader2";
     private const string FusionSidekickKey = "webui.fusion.sidekick";
+    private const string FusionSidekick2Key = "webui.fusion.sidekick2";
     private List<ModelInfo>? _models;
     private bool _open;
     private bool _focusMenu;
     private string? _leader;
+    private string? _leader2;
     private string? _sidekick;
+    private string? _sidekick2;
     private ElementReference _trigger;
     private ElementReference _menu;
 
@@ -135,10 +169,12 @@
     /// do <see cref="Value"/> (chat.ModelsJson persiste a ref composta).</summary>
     protected override void OnParametersSet()
     {
-        if (FusionModelRef.TryParse(Value, out var l, out var s))
+        if (FusionModelRef.TryParseChain(Value, out var ls, out var ss))
         {
-            _leader = l;
-            _sidekick = s;
+            _leader = ls[0];
+            _leader2 = ls.Count > 1 ? ls[1] : null;
+            _sidekick = ss[0];
+            _sidekick2 = ss.Count > 1 ? ss[1] : null;
         }
     }
 
@@ -171,10 +207,12 @@
         // primeiro modelo ao trocar de chat e retornar.
         if (!string.IsNullOrEmpty(Value))
         {
-            if (FusionModelRef.TryParse(Value, out var curLeader, out var curSidekick))
+            if (FusionModelRef.TryParseChain(Value, out var curLs, out var curSs))
             {
-                _leader = curLeader;
-                _sidekick = curSidekick;
+                _leader = curLs[0];
+                _leader2 = curLs.Count > 1 ? curLs[1] : null;
+                _sidekick = curSs[0];
+                _sidekick2 = curSs.Count > 1 ? curSs[1] : null;
             }
             return;
         }
@@ -189,15 +227,18 @@
             saved = null;
         }
 
-        if (FusionModelRef.TryParse(saved, out var savedLeader, out var savedSidekick)
-            && HasModel(savedLeader) && HasModel(savedSidekick))
+        if (FusionModelRef.TryParseChain(saved, out var savedLs, out var savedSs)
+            && HasModel(savedLs[0]) && HasModel(savedSs[0]))
         {
-            _leader = savedLeader;
-            _sidekick = savedSidekick;
-            if (saved != Value)
+            _leader = savedLs[0];
+            _leader2 = savedLs.Count > 1 && HasModel(savedLs[1]) ? savedLs[1] : null;
+            _sidekick = savedSs[0];
+            _sidekick2 = savedSs.Count > 1 && HasModel(savedSs[1]) ? savedSs[1] : null;
+            var restored = CurrentFusionValue();
+            if (restored != Value)
             {
-                Value = saved;
-                await ValueChanged.InvokeAsync(saved);
+                Value = restored;
+                await ValueChanged.InvokeAsync(restored);
             }
             return;
         }
@@ -257,9 +298,15 @@
         _leader = HasModel(_leader) ? _leader
             : (await Storage.GetAsync(FusionLeaderKey)) is { } stored && HasModel(stored)
             ? stored : _models!.First().Id;
+        _leader2 = HasModel(_leader2) ? _leader2
+            : (await Storage.GetAsync(FusionLeader2Key)) is { } storedL2 && HasModel(storedL2)
+            ? storedL2 : null;
         _sidekick = HasModel(_sidekick) ? _sidekick
             : (await Storage.GetAsync(FusionSidekickKey)) is { } storedSk && HasModel(storedSk)
             ? storedSk : _models!.First().Id;
+        _sidekick2 = HasModel(_sidekick2) ? _sidekick2
+            : (await Storage.GetAsync(FusionSidekick2Key)) is { } storedSk2 && HasModel(storedSk2)
+            ? storedSk2 : null;
         await ApplyFusionValueAsync();
         await _trigger.FocusAsync();
     }
@@ -270,24 +317,56 @@
         await ApplyFusionValueAsync();
     }
 
+    private async Task OnLeader2Changed(ChangeEventArgs e)
+    {
+        _leader2 = e.Value?.ToString() is { Length: > 0 } v ? v : null;
+        await ApplyFusionValueAsync();
+    }
+
     private async Task OnSidekickChanged(ChangeEventArgs e)
     {
         _sidekick = e.Value?.ToString();
         await ApplyFusionValueAsync();
     }
 
-    /// <summary>Grava o par e publica <c>fusion:{leader}&gt;{sidekick}</c>.</summary>
-    private async Task ApplyFusionValueAsync()
+    private async Task OnSidekick2Changed(ChangeEventArgs e)
+    {
+        _sidekick2 = e.Value?.ToString() is { Length: > 0 } v ? v : null;
+        await ApplyFusionValueAsync();
+    }
+
+    /// <summary>Ref fusion atual — segundo slot só emite quando preenchido
+    /// e diferente do primeiro da mesma posição.</summary>
+    private string? CurrentFusionValue()
     {
         if (_leader is null || _sidekick is null)
         {
+            return null;
+        }
+        var leaders = _leader2 is not null
+            && !_leader2.Equals(_leader, StringComparison.OrdinalIgnoreCase)
+                ? new[] { _leader, _leader2 }
+                : new[] { _leader };
+        var sidekicks = _sidekick2 is not null
+            && !_sidekick2.Equals(_sidekick, StringComparison.OrdinalIgnoreCase)
+                ? new[] { _sidekick, _sidekick2 }
+                : new[] { _sidekick };
+        return FusionModelRef.Format(leaders, sidekicks);
+    }
+
+    /// <summary>Grava a cadeia e publica <c>fusion:{L1[,L2]}&gt;{S1[,S2]}</c>.</summary>
+    private async Task ApplyFusionValueAsync()
+    {
+        if (CurrentFusionValue() is not { } value)
+        {
             return;
         }
-        var value = FusionModelRef.Format(_leader, _sidekick);
         Value = value;
         await Storage.SetAsync(ModelKey, value);
-        await Storage.SetAsync(FusionLeaderKey, _leader);
-        await Storage.SetAsync(FusionSidekickKey, _sidekick);
+        await Storage.SetAsync(FusionLeaderKey, _leader!);
+        await Storage.SetAsync(FusionLeader2Key, _leader2 ?? "");
+        await Storage.SetAsync(FusionSidekickKey, _sidekick!);
+        await Storage.SetAsync(FusionSidekick2Key, _sidekick2 ?? "");
         await ValueChanged.InvokeAsync(value);
     }
 

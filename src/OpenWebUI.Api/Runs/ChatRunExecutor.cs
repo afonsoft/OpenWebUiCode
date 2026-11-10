@@ -166,6 +166,25 @@ public sealed class ChatRunExecutor(
             ? request.Model[ComboService.Prefix.Length..]
             : null;
         var comboAttemptsLeft = 1;
+        // fusion:{L1,L2}>{S1,S2} e chain:{m1,m2,…} (SPEC-20261110
+        // fusion-fallback-chain): cadeia ordenada de fallback — falha de
+        // provedor sem side-effects avança para a próxima posição. O ref
+        // fusion fica no request (o pairing resolve a posição por
+        // tentativa); chain: reescreve o modelo antes de cada tentativa.
+        var fusionChain = FusionModelRef.TryParseChain(
+            request.Model, out var fusionLeaders, out var fusionSidekicks)
+            ? FusionModelRef.EffectiveChain(fusionLeaders, fusionSidekicks)
+            : null;
+        var plainChain = fusionChain is null
+            && ChainModelRef.TryParse(request.Model, out var parsedChain)
+                ? parsedChain
+                : null;
+        var modelChain = fusionChain ?? plainChain;
+        var chainPos = 0;
+        // Conteúdo parcial já injetado como mensagem assistant — em avanço
+        // de cadeia só o trecho NOVO vira contexto (evita duplicar a parte
+        // que a tentativa anterior já escreveu no histórico).
+        var injectedContentLen = 0;
         while (true)
         {
             if (comboRef is not null)
@@ -179,12 +198,17 @@ public sealed class ChatRunExecutor(
                 request = resolvedRequest;
                 comboAttemptsLeft = attemptsLeft;
             }
+            else if (plainChain is not null)
+            {
+                request = request with { Model = plainChain[chainPos] };
+            }
 
             try
             {
                 await ExecuteAttemptAsync(
                     new AttemptCtx(run, user, request, commandMode,
-                        resumePlan, budgetLimits, comboRef, state, sw),
+                        resumePlan, budgetLimits, comboRef, chainPos,
+                        state, sw),
                     ct);
                 return;
             }
@@ -194,13 +218,37 @@ public sealed class ChatRunExecutor(
             }
             catch (Exception ex)
             {
-                var (retry, attemptsLeft) = await HandleRunFailureAsync(
+                var decision = await HandleRunFailureAsync(
                     new RunFailure(run, ex, state.Content.ToString(),
-                        state.ToolMessages, comboRef, request.Model, sw,
-                        comboAttemptsLeft));
-                if (retry)
+                        state.ToolMessages, comboRef, request.Model,
+                        modelChain, chainPos, sw, comboAttemptsLeft));
+                if (decision.Retry)
                 {
-                    comboAttemptsLeft = attemptsLeft;
+                    comboAttemptsLeft = decision.ComboAttemptsLeft;
+                    if (decision.NextChainPos is { } nextPos
+                        && modelChain is not null)
+                    {
+                        chainPos = nextPos;
+                        if (state.Content.Length > injectedContentLen)
+                        {
+                            // O modelo da próxima posição continua o texto
+                            // parcial em vez de recomeçar do zero.
+                            request = request with
+                            {
+                                Messages = [.. request.Messages,
+                                    new ChatCompletionMessage("assistant",
+                                        state.Content.ToString()[injectedContentLen..])],
+                            };
+                            injectedContentLen = state.Content.Length;
+                        }
+                        await config.SetAsync(
+                            $"r:{run.Id}:fusion.active",
+                            modelChain[chainPos], CancellationToken.None);
+                        await PublishPhaseAsync(run,
+                            fusionChain is not null ? "fusion" : "chain",
+                            $"Fallback {chainPos + 1}/{modelChain.Count}: "
+                            + modelChain[chainPos]);
+                    }
                     continue;
                 }
             }
@@ -236,7 +284,7 @@ public sealed class ChatRunExecutor(
     private sealed record AttemptCtx(
         ChatRun Run, User User, ChatCompletionRequest Request,
         string? CommandMode, RunResumePlan? ResumePlan,
-        BudgetLimits BudgetLimits, string? ComboRef,
+        BudgetLimits BudgetLimits, string? ComboRef, int ChainPos,
         RunStreamState State, Stopwatch Sw);
 
     /// <summary>Parâmetros do tool loop com hooks (S107).</summary>
@@ -251,7 +299,7 @@ public sealed class ChatRunExecutor(
         AttemptCtx a, CancellationToken ct)
     {
         var (run, user, request, commandMode, resumePlan, budgetLimits,
-            comboRef, state, sw) = a;
+            comboRef, chainPos, state, sw) = a;
         // Modelos pipeline:{id} e arena:{model} encerram a run por
         // conta própria (DONE próprio após FinishAsync).
         if (await TrySpecialModelAsync(request, run, user, ct))
@@ -259,10 +307,11 @@ public sealed class ChatRunExecutor(
             return;
         }
 
-        // fusion:{leader}>{sidekick} (SPEC-20261106): grava o par no kv,
-        // reescreve o modelo para o leader e injeta prompt/tools de
-        // orquestração. null = run já encerrada (par inválido/budget).
-        if (await ApplyFusionPairingAsync(run, request, user, ct)
+        // fusion:{L1,L2}>{S1,S2} (SPEC-20261106 + cadeia SPEC-20261110):
+        // grava o par/cadeia no kv, reescreve o modelo para a posição
+        // ativa da cadeia e injeta prompt/tools de orquestração.
+        // null = run já encerrada (par inválido/budget).
+        if (await ApplyFusionPairingAsync(run, request, user, chainPos, ct)
                 is not { } fusedRequest)
         {
             return;
@@ -635,31 +684,37 @@ public sealed class ChatRunExecutor(
     /// <see langword="null"/> = run já encerrada (budget negado).
     /// </summary>
     private async Task<ChatCompletionRequest?> ApplyFusionPairingAsync(
-        ChatRun run, ChatCompletionRequest request, User user, CancellationToken ct)
+        ChatRun run, ChatCompletionRequest request, User user,
+        int chainPos, CancellationToken ct)
     {
-        if (!FusionModelRef.TryParse(request.Model, out var leader, out var sidekick))
+        if (!FusionModelRef.TryParseChain(
+                request.Model, out var leaders, out var sidekicks))
         {
             return request;
         }
 
-        // Os DOIS modelos do par têm de pertencer ao catálogo efetivo do
-        // chat ("Ele só pode selecionar os modelos disponíveis no chat") —
-        // validação server-side contra spoofing de id (o picker do client
-        // já restringe a seleção, mas a ref pode vir forjada na request).
+        // TODOS os modelos das duas cadeias têm de pertencer ao catálogo
+        // efetivo do chat ("Ele só pode selecionar os modelos disponíveis
+        // no chat") — validação server-side contra spoofing de id (o
+        // picker do client já restringe a seleção, mas a ref pode vir
+        // forjada na request).
+        var chain = FusionModelRef.EffectiveChain(leaders, sidekicks);
+        var pos = Math.Clamp(chainPos, 0, chain.Count - 1);
+        var active = chain[pos];
         var catalogIds = (await providers.ListModelsAsync(ct))
             .Select(m => m.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (!catalogIds.Contains(leader) || !catalogIds.Contains(sidekick))
+        var missing = chain.FirstOrDefault(id => !catalogIds.Contains(id));
+        if (missing is not null)
         {
-            var bad = !catalogIds.Contains(leader) ? leader : sidekick;
             await FailAsync(run,
-                $"model_not_in_catalog: '{bad}' não está no catálogo de "
+                $"model_not_in_catalog: '{missing}' não está no catálogo de "
                 + "modelos do chat — Adaptive/Fusion só aceita modelos disponíveis.");
             return null;
         }
 
-        // Gate de budget nos DOIS modelos do par — run.Model composto tem
+        // Gate de budget em TODOS os candidatos — run.Model composto tem
         // tier desconhecido e atravessaria o gate do prelúdio sem checagem.
-        foreach (var paired in new[] { leader, sidekick })
+        foreach (var paired in chain)
         {
             var gate = await budgets.CheckStartAsync(user.Id, paired, ct);
             if (!gate.Allowed)
@@ -669,13 +724,22 @@ public sealed class ChatRunExecutor(
             }
         }
 
+        var leader = leaders[0];
+        var sidekick = sidekicks[0];
         await config.SetAsync($"r:{run.Id}:fusion.leader", leader, ct);
-        await config.SetAsync($"r:{run.Id}:fusion.sidekick", sidekick, ct);
+        // SPEC-20261110: a kv do sidekick carrega a cadeia completa dos
+        // filhos — sidekicks primeiro, leaders como fallback final —
+        // serializada como chain:{…} (id simples quando a cadeia é 1).
+        var childChain = FusionModelRef.EffectiveChain(sidekicks, leaders);
+        await config.SetAsync($"r:{run.Id}:fusion.sidekick",
+            childChain.Count == 1 ? childChain[0] : ChainModelRef.Format(childChain), ct);
+        await config.SetAsync($"r:{run.Id}:fusion.active", active, ct);
 
         await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
-            new { status = "fusion", leader, sidekick }, ct);
-        await PublishPhaseAsync(
-            run, "fusion", $"Leader {leader} → Sidekick {sidekick}");
+            new { status = "fusion", leader, sidekick, active, chain }, ct);
+        await PublishPhaseAsync(run, "fusion", pos == 0
+            ? $"Leader {leader} → Sidekick {sidekick}"
+            : $"Fallback {pos + 1}/{chain.Count}: {active}");
 
         var toolIds = (request.ToolIds ?? []).ToList();
         foreach (var required in FusionToolIds)
@@ -688,9 +752,10 @@ public sealed class ChatRunExecutor(
 
         return request with
         {
-            Model = leader,
+            Model = active,
             ToolIds = toolIds,
-            Messages = [new ChatCompletionMessage(RoleSystem, FusionPrompt(leader, sidekick)),
+            Messages = [new ChatCompletionMessage(RoleSystem, FusionPrompt(active,
+                string.Join(", ", childChain))),
                 .. request.Messages],
         };
     }
@@ -1573,19 +1638,26 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>Falha na tentativa — combo com conteúdo vazio retenta o
-    /// próximo candidato (<c>Retry</c>); senão fecha a run como failed.</summary>
+    /// próximo candidato; fusion/chain avança a cadeia em falha de
+    /// provedor sem side-effects (<c>Retry</c>); senão fecha a run
+    /// como failed.</summary>
     /// <summary>Parâmetros do tratamento de falha da run (S107).</summary>
     private sealed record RunFailure(
         ChatRun Run, Exception Ex, string Content,
         IReadOnlyList<ChatCompletionMessage>? ToolMessages,
         string? ComboRef, string CurrentModel,
+        IReadOnlyList<string>? ModelChain, int ChainPos,
         Stopwatch Sw, int ComboAttemptsLeft);
 
-    private async Task<(bool Retry, int AttemptsLeft)> HandleRunFailureAsync(
+    /// <summary>Decisão do tratamento de falha (S107).</summary>
+    private sealed record FailureDecision(
+        bool Retry, int ComboAttemptsLeft, int? NextChainPos);
+
+    private async Task<FailureDecision> HandleRunFailureAsync(
         RunFailure f)
     {
         var (run, ex, content, toolMessages, comboRef, currentModel,
-            sw, comboAttemptsLeft) = f;
+            modelChain, chainPos, sw, comboAttemptsLeft) = f;
         // Combo: falha transitória sem nenhum delta emitido → report e
         // retenta com o próximo candidato (content vazio garante que o
         // cliente ainda não viu resposta parcial).
@@ -1600,8 +1672,25 @@ public sealed class ChatRunExecutor(
                 logger.LogWarning(
                     "Run {RunId}: modelo {Model} do combo {Combo} falhou — próximo candidato.",
                     run.Id, currentModel, comboRef);
-                return (true, comboAttemptsLeft - 1);
+                return new FailureDecision(true, comboAttemptsLeft - 1, null);
             }
+        }
+
+        // fusion/chain (SPEC-20261110): falha de provedor avança a cadeia
+        // — leaders esgotam antes dos sidekicks (ordem declarada). Gate
+        // de segurança: ToolMessages vazio = nenhum side-effect de tool
+        // foi executado pela posição que falhou; conteúdo parcial é
+        // preservado e vira contexto da próxima tentativa.
+        if (modelChain is not null
+            && chainPos + 1 < modelChain.Count
+            && IsProviderFailure(ex)
+            && (toolMessages?.Count ?? 0) == 0)
+        {
+            logger.LogWarning(
+                "Run {RunId}: modelo {Model} falhou ({Error}) — avançando para {Next} ({Pos}/{Total}).",
+                run.Id, modelChain[chainPos], ex.Message,
+                modelChain[chainPos + 1], chainPos + 2, modelChain.Count);
+            return new FailureDecision(true, comboAttemptsLeft, chainPos + 1);
         }
 
         // Qualquer falha fecha a run como failed — uma exceção que escapasse
@@ -1631,8 +1720,24 @@ public sealed class ChatRunExecutor(
         run.Error = message;
         await FinishAsync(run, content, ChatRunStatus.Failed, toolMessages);
         broadcaster.Publish(run.Id, SseDoneLine);
-        return (false, 0);
+        return new FailureDecision(false, 0, null);
     }
+
+    /// <summary>
+    /// Falhas elegíveis ao avanço da cadeia fusion/chain (SPEC-20261110):
+    /// erros de transporte/provedor — nunca bugs de aplicação, validação,
+    /// budget ou catálogo. Cancelamento do usuário não chega aqui
+    /// (capturado como <see cref="OperationCanceledException"/> antes).
+    /// </summary>
+    private static readonly string[] ProviderFailurePrefixes =
+        ["server-error:", "rate-limit:", "provider-timeout:"];
+
+    private static bool IsProviderFailure(Exception ex) =>
+        ex is HttpRequestException or TaskCanceledException or TimeoutException
+            or ProviderHttpException
+        || (ex is InvalidOperationException ioe
+            && ProviderFailurePrefixes.Any(p =>
+                ioe.Message.StartsWith(p, StringComparison.Ordinal)));
 
     /// <summary>Publica o evento <c>status</c> de fase no stream da run.</summary>
     private async Task PublishPhaseAsync(ChatRun run, string phase, string? label,

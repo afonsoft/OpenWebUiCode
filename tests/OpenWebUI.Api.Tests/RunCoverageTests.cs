@@ -37,6 +37,9 @@ public class RunCoverageTests
     {
         _dbPath = Path.Join(Path.GetTempPath(), $"openwebui-cov-{Guid.NewGuid():N}.db");
         Environment.SetEnvironmentVariable("ConnectionStrings__Default", $"Data Source={_dbPath}");
+        // Falha upstream resolve na 1ª tentativa — sem isso a cadeia
+        // fusion/chain gastaria 6 retries (delays de até 10s) por posição.
+        Environment.SetEnvironmentVariable("Providers__MaxAttempts", "1");
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
         _mockBase = StartMock();
@@ -123,6 +126,13 @@ public class RunCoverageTests
                 await ServeChatCompletionsAsync(ctx, body, ct);
                 continue;
             }
+            if (path == "/v1/models")
+            {
+                await WriteJsonAsync(ctx, 200,
+                    "{\"data\":[{\"id\":\"gpt-mock\"},{\"id\":\"gpt-mock-2\"},"
+                    + "{\"id\":\"gpt-mock-3\"},{\"id\":\"gpt-mock-bad\"}]}", ct);
+                continue;
+            }
             if (path == "/pipes/models")
             {
                 await WriteJsonAsync(ctx, 200, "[{\"id\":\"covpipe\",\"name\":\"Cov Pipe\"}]", ct);
@@ -152,10 +162,36 @@ public class RunCoverageTests
     private volatile int _chatFailStatus;
     private volatile string? _chatFailBody;
 
+    /// <summary>Token de modelo que falha com 429 simulado — a request cujo
+    /// campo <c>model</c> contém o token recebe erro de provedor (teste do
+    /// fallback de cadeia fusion/chain, SPEC-20261110). null = desligado.</summary>
+    private volatile string? _chatFailModel;
+
+    private static string? TryReadModel(string body)
+    {
+        try
+        {
+            return JsonDocument.Parse(body).RootElement
+                .TryGetProperty("model", out var m) ? m.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Completion OpenAI-compatível: stream → SSE; não-stream → loop de tools.</summary>
     private async Task ServeChatCompletionsAsync(
         HttpListenerContext ctx, string body, CancellationToken ct)
     {
+        if (_chatFailModel is { } failToken
+            && TryReadModel(body) is { } calledModel
+            && calledModel.Contains(failToken, StringComparison.Ordinal))
+        {
+            await WriteJsonAsync(ctx, 429,
+                "{\"error\":{\"message\":\"rate limit simulado\"}}", ct);
+            return;
+        }
         if (_chatFailStatus > 0)
         {
             await WriteJsonAsync(ctx, _chatFailStatus,
@@ -943,6 +979,124 @@ public class RunCoverageTests
         var run = await EnfileirarAsync(chat.Id, "oi", model: "arena:ghost");
         var final = await AguardarFinalAsync(chat.Id, run.Id);
         Assert.That(final.Status, Is.EqualTo("completed"));
+    }
+
+    // ---- Cadeia fusion/chain (SPEC-20261110 fusion-fallback-chain) ----
+
+    // Leader 1 falha no provider (429 simulado) → a run avança para o
+    // Leader 2 ANTES do sidekick (ordem declarada) e completa nele.
+    [Test]
+    public async Task Fusion_LeaderFalha_AvancaParaLeader2ECompleta()
+    {
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("Fus", $"fus-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        _chatFailModel = "gpt-mock-bad";
+        try
+        {
+            var run = await EnfileirarAsync(chat.Id, "oi",
+                model: "fusion:gpt-mock-bad,gpt-mock-2>gpt-mock");
+            var final = await AguardarFinalAsync(chat.Id, run.Id);
+            Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+
+            using var stream = await _client.GetAsync(
+                $"/api/v1/chats/{chat.Id}/runs/{run.Id}/stream?lastSeq=0");
+            var body = await stream.Content.ReadAsStringAsync();
+            Assert.That(body, Does.Contain("Fallback 2/3: gpt-mock-2"));
+            // O fusion injeta as tools de orquestração → o mock responde
+            // tool_call e o loop fecha com a resposta pós-tool.
+            Assert.That(body, Does.Contain("resposta via tool"));
+
+            using var scope = _factory.Services.CreateScope();
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            // fusion.active registra a posição que venceu; fusion.sidekick
+            // herda a cadeia dos filhos (sidekicks → leaders, formato chain:).
+            Assert.That(await config.GetAsync<string?>(
+                $"r:{run.Id}:fusion.active", null, CancellationToken.None),
+                Is.EqualTo("gpt-mock-2"));
+            Assert.That(await config.GetAsync<string?>(
+                $"r:{run.Id}:fusion.sidekick", null, CancellationToken.None),
+                Is.EqualTo(
+                    "chain:gpt-mock,gpt-mock-bad,gpt-mock-2"));
+        }
+        finally
+        {
+            _chatFailModel = null;
+        }
+    }
+
+    // Toda a cadeia falha → a run termina failed com erro de provedor.
+    [Test]
+    public async Task Fusion_CadeiaEsgotada_RunFalha()
+    {
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("FusAll", $"fusall-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        _chatFailModel = "gpt-mock";
+        try
+        {
+            var run = await EnfileirarAsync(chat.Id, "oi",
+                model: "fusion:gpt-mock-bad>gpt-mock-3");
+            var final = await AguardarFinalAsync(chat.Id, run.Id);
+            Assert.That(final.Status, Is.EqualTo("failed"));
+            Assert.That(final.Error, Is.Not.Null.And.Not.Empty);
+        }
+        finally
+        {
+            _chatFailModel = null;
+        }
+    }
+
+    // Candidato fora do catálogo: a ref é rejeitada antes de qualquer
+    // chamada upstream — validação server-side contra id forjado.
+    [Test]
+    public async Task Fusion_CandidatoForaDoCatalogo_RunFalha()
+    {
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("FusCat", $"fuscat-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        var run = await EnfileirarAsync(chat.Id, "oi",
+            model: "fusion:gpt-mock,fora-do-catalogo>gpt-mock-2");
+        var final = await AguardarFinalAsync(chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("failed"));
+        Assert.That(final.Error, Does.Contain("model_not_in_catalog"));
+    }
+
+    // chain:{m1,m2} sem orquestração: avança por falha de provedor e
+    // completa na segunda posição.
+    [Test]
+    public async Task Chain_RefAvanca_ECompleta()
+    {
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("Chn", $"chn-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        _chatFailModel = "gpt-mock-bad";
+        try
+        {
+            var run = await EnfileirarAsync(chat.Id, "oi",
+                model: "chain:gpt-mock-bad,gpt-mock-2");
+            var final = await AguardarFinalAsync(chat.Id, run.Id);
+            Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+
+            using var stream = await _client.GetAsync(
+                $"/api/v1/chats/{chat.Id}/runs/{run.Id}/stream?lastSeq=0");
+            var body = await stream.Content.ReadAsStringAsync();
+            Assert.That(body, Does.Contain("Fallback 2/2: gpt-mock-2"));
+            Assert.That(body, Does.Contain("resposta mock openai"));
+        }
+        finally
+        {
+            _chatFailModel = null;
+        }
     }
 
     // ---- Executor direto: falhas antes do provider ----

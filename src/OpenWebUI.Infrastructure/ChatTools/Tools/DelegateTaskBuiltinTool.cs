@@ -852,6 +852,8 @@ public sealed class DelegateTaskBuiltinTool(
             // SPEC-20261106 adaptive-fusion: sub-agentes de uma run fusion
             // rodam no Sidekick do par por default (kv gravada pelo
             // executor); `model:`/`agent:` explícito continua vencendo.
+            // SPEC-20261110: a kv pode carregar uma ref chain:{…} — os
+            // filhos herdam a cadeia de fallback (sidekicks → leaders).
             var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
             var sidekick = await config.GetAsync<string?>(
                 $"r:{parentRun.Id}:fusion.sidekick", null, ct);
