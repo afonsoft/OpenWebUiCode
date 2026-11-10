@@ -138,10 +138,13 @@ public static class TaskEndpoints
         // Fallback do papel = modelo do chat; ref fusion resolve ao leader
         // e chain:{…} ao primeiro membro (SPEC-20261106/20261110 — a ref
         // composta não é id de provider).
-        var fallbackModel = ChainModelRef.TryParse(request.Model, out var first)
+        var fallbackModel =
+            ChainModelRef.TryParse(request.Model, out var first)
             && first.Count > 0
                 ? first[0]
-                : FusionModelRef.LeaderOrSelf(request.Model);
+                : AdaptiveModelRef.TryParse(request.Model, out var pool)
+                    ? pool[0]
+                    : FusionModelRef.LeaderOrSelf(request.Model);
         return (await roles.ResolveAsync(
             "tasks", user.Id, fallbackModel, ct), user.Id);
     }

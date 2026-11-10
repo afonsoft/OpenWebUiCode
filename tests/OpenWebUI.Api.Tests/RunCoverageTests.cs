@@ -1099,6 +1099,106 @@ public class RunCoverageTests
         }
     }
 
+    // ---- Pool adaptive (SPEC-20261110 adaptive-model-pool) ----
+
+    // Preferido (M1) falha no provider → a run avança para M2 e
+    // completa; a posição que venceu vira sticky e a que falhou
+    // acumula reputação negativa nos kvs do chat.
+    [Test]
+    public async Task Adaptive_PreferidoFalha_AvancaCompletaEGravaEstado()
+    {
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("Adp", $"adp-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        _chatFailModel = "gpt-mock-bad";
+        try
+        {
+            var run = await EnfileirarAsync(chat.Id, "oi",
+                model: "adaptive:gpt-mock-bad,gpt-mock-2");
+            var final = await AguardarFinalAsync(chat.Id, run.Id);
+            Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+
+            using var stream = await _client.GetAsync(
+                $"/api/v1/chats/{chat.Id}/runs/{run.Id}/stream?lastSeq=0");
+            var body = await stream.Content.ReadAsStringAsync();
+            Assert.That(body, Does.Contain("Fallback 2/2: gpt-mock-2"));
+            Assert.That(body, Does.Contain("resposta mock openai"));
+
+            using var scope = _factory.Services.CreateScope();
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            // Posição que venceu vira o sticky do chat; a que falhou
+            // acumula falha consecutiva no índice 0.
+            Assert.That(await config.GetAsync<string?>(
+                $"r:{run.Id}:adaptive.active", null, CancellationToken.None),
+                Is.EqualTo("gpt-mock-2"));
+            Assert.That(await config.GetAsync(
+                $"c:{chat.Id}:adaptive.sticky", 0, CancellationToken.None),
+                Is.EqualTo(1));
+            Assert.That(await config.GetAsync(
+                $"c:{chat.Id}:adaptive.fails", new int[4],
+                CancellationToken.None),
+                Is.EqualTo(new[] { 1, 0, 0, 0 }));
+        }
+        finally
+        {
+            _chatFailModel = null;
+        }
+    }
+
+    // Preferido queimado (fails[0] >= K) → a run começa direto no
+    // sticky, sem tentar M1; a fase publicada explica o start.
+    [Test]
+    public async Task Adaptive_PreferidoQueimado_IniciaNoSticky()
+    {
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("AdpS", $"adps-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            await config.SetAsync(
+                $"c:{chat.Id}:adaptive.fails", new[] { 3, 0, 0, 0 },
+                CancellationToken.None);
+            await config.SetAsync(
+                $"c:{chat.Id}:adaptive.sticky", 1, CancellationToken.None);
+        }
+
+        var run = await EnfileirarAsync(chat.Id, "oi",
+            model: "adaptive:gpt-mock-bad,gpt-mock-2");
+        var final = await AguardarFinalAsync(chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"), final.Error);
+
+        using var stream = await _client.GetAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{run.Id}/stream?lastSeq=0");
+        var body = await stream.Content.ReadAsStringAsync();
+        Assert.That(body, Does.Contain("Sticky: iniciando em gpt-mock-2"));
+        // gpt-mock-bad nunca foi chamado — não houve fallback intra-run.
+        Assert.That(body, Does.Not.Contain("Fallback"));
+    }
+
+    // Candidato fora do catálogo: a ref é rejeitada antes de qualquer
+    // chamada upstream — validação server-side contra id forjado.
+    [Test]
+    public async Task Adaptive_CandidatoForaDoCatalogo_RunFalha()
+    {
+        await ConfigurarOpenAiMockAsync();
+        var auth = await SignUpAsync("AdpC", $"adpc-{Guid.NewGuid():N}@cov.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync();
+
+        var run = await EnfileirarAsync(chat.Id, "oi",
+            model: "adaptive:gpt-mock,fora-do-catalogo");
+        var final = await AguardarFinalAsync(chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("failed"));
+        Assert.That(final.Error, Does.Contain("model_not_in_catalog"));
+    }
+
     // ---- Executor direto: falhas antes do provider ----
 
     private async Task<ChatRun> ExecutarDiretoAsync(

@@ -188,6 +188,32 @@ next run to replay `[summary] + tail` instead of the full history.
 
 ![Settings → Combos](../screenshots/settings-combos.png)
 
+### 13.1 Adaptive model refs (`fusion:` / `chain:` / `adaptive:`)
+
+Beyond server-resolved combos, the chat `Model` field accepts
+**composite refs** picked in the model selector (the "Adaptive" family)
+or typed directly:
+
+- **`fusion:{L1,L2}>{S1,S2}`** — orchestration pair: the Leader reasons,
+  plans and reviews; the Sidekick executes the plan in sub-agents
+  (`delegate_task` inherits `chain:{S1,S2,L1,L2}`). Leaders and
+  sidekicks accept ordered chains — a provider failure with no tool
+  side-effects advances in declared order (L1→L2→S1→S2), carrying the
+  partial content over as context for the next position.
+- **`chain:{m1,m2,…}`** — plain in-run fallback chain with no
+  orchestration and no memory between runs.
+- **`adaptive:{m1,…,m4}`** — an ordered pool of 2–4 models **with
+  per-chat memory**: the run always tries the preferred (M1) first and
+  advances M2→M3→M4 on provider failure. The
+  `c:{chat}:adaptive.{sticky,fails,probe}` state remembers what worked —
+  once M1 accumulates 3 consecutive failures as the start position,
+  later runs begin at the last successful model (*sticky*), and a
+  **30-minute probe** retries the preferred one until it recovers.
+  Selector slots 3–4 are optional.
+- Every transition publishes a stream phase (`fusion`/`adaptive`/`chain`)
+  visible over SSE and the polling fallback; `r:{run}:adaptive.active`
+  records the winning position.
+
 ## 14. Agent personas
 
 `GET`/`POST`/`PUT`/`DELETE /api/v1/agent-personas[/{id}]` (+ `/{id}/message`,
