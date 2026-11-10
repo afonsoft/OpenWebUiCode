@@ -579,6 +579,7 @@
   "chat.status_auto_approved": "自動承認: {{name}}",
   "chat.status_paused": "一時停止中",
   "chat.status_thinking": "えています…",
+  "chat.status_polling": "ポーリング",
   "chat.status_writing": "をいています…",
   "chat.status_step": "ステップ {{step}}/{{max}}",
   "chat.progress.preparing_context": "コンテキストを準備中…",

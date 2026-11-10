@@ -29,6 +29,7 @@ public static class ChatRunEndpoints
         group.MapGet("/{id}/runs/active", GetActiveRunAsync);
         group.MapGet("/{id}/runs/{runId}", GetRunAsync);
         group.MapGet("/{id}/runs/{runId}/stream", StreamRunAsync);
+        group.MapGet("/{id}/runs/{runId}/events", GetRunEventsAsync);
         group.MapPost("/{id}/runs/{runId}/stop", StopRunAsync);
         group.MapPost("/{id}/runs/{runId}/pause", PauseRunAsync);
         group.MapPost("/{id}/runs/{runId}/resume", ResumeRunAsync);
@@ -448,6 +449,49 @@ public static class ChatRunEndpoints
             PendingApproval = asked as RunApprovalAskedEvent,
             PendingQuestion = asked as RunQuestionAskedEvent,
         });
+    }
+
+    /// <summary>
+    /// Polling-fallback do attach (SPEC-20261110-run-stream-polling-
+    /// fallback): o mesmo backlog seq-numerado do SSE em JSON curto —
+    /// atravessa proxies corporativos que derrubam/bufferizam o stream.
+    /// Devolve eventos com seq &gt; <c>lastSeq</c> + status, erro,
+    /// <see cref="ChatRun.PartialContent"/> e aprovação/pergunta pendente.
+    /// </summary>
+    private static async Task<IResult> GetRunEventsAsync(
+        string id,
+        string runId,
+        HttpContext http,
+        AppDbContext db,
+        ChatRunBroadcaster broadcaster,
+        ChatRunApprovals approvals,
+        int? lastSeq,
+        CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var run = await db.ChatRuns.AsNoTracking()
+            .FirstOrDefaultAsync(
+                r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
+        if (run is null)
+        {
+            return Results.NotFound(new { detail = RunNotFoundMessage });
+        }
+
+        var since = lastSeq ?? 0;
+        var (events, closed) = broadcaster.GetEventsSince(runId, since);
+        var asked = approvals.PendingAsked(runId);
+        return Results.Ok(new RunEventsResponse(
+            run.Status, closed,
+            events.Count > 0 ? events[^1].Seq : since,
+            run.PartialContent, run.Error,
+            events.Select(e => new RunEventItem(e.Seq, e.Payload)).ToList(),
+            asked as RunApprovalAskedEvent,
+            asked as RunQuestionAskedEvent));
     }
 
     /// <summary>

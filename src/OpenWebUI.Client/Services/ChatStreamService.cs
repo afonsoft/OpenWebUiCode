@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -257,6 +258,74 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             HttpMethod.Post, $"/api/v1/chats/{chatId}/runs/{runId}/resume");
         using var response = await http.SendAsync(httpRequest, ct);
         return response.IsSuccessStatusCode;
+    }
+
+    /// <summary>
+    /// Polling-fallback do attach SSE (SPEC-20261110-run-stream-polling-
+    /// fallback): devolve o backlog numerado da run em JSON curto — para
+    /// redes/proxies que matam o stream antes do primeiro evento.
+    /// <see cref="RunEventsResponse"/> null em erro de transporte ou
+    /// resposta não-JSON; <c>Gone=true</c> quando a run não existe mais.
+    /// </summary>
+    public async Task<(RunEventsResponse? Events, bool Gone)> GetRunEventsAsync(
+        string chatId, string runId, int lastSeq = 0, CancellationToken ct = default)
+    {
+        using var httpRequest = auth.CreateRequest(
+            HttpMethod.Get,
+            $"/api/v1/chats/{chatId}/runs/{runId}/events?lastSeq={lastSeq}");
+        using var response = await http.SendAsync(httpRequest, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return (null, true);
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            return (null, false);
+        }
+
+        try
+        {
+            return (await response.Content.ReadFromJsonAsync<RunEventsResponse>(ct), false);
+        }
+        catch (JsonException)
+        {
+            return (null, false);
+        }
+    }
+
+    /// <summary>
+    /// Converte um bloco SSE cru do backlog (linhas <c>event:</c>/
+    /// <c>data:</c> devolvidas pelo polling) em <see cref="ChatStreamEvent"/>s
+    /// — reusa o mesmo parser do stream vivo. <c>data: [DONE]</c> é
+    /// ignorado: o fechamento vem do flag <c>Closed</c> da resposta.
+    /// </summary>
+    public IEnumerable<ChatStreamEvent> ParseEventBlock(string payload, int seq)
+    {
+        string? eventName = null;
+        foreach (var rawLine in payload.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (line.StartsWith("event:", StringComparison.Ordinal))
+            {
+                eventName = line["event:".Length..].Trim();
+                continue;
+            }
+            if (!line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var data = line["data:".Length..].Trim();
+            if (data == "[DONE]")
+            {
+                continue;
+            }
+            foreach (var item in ProduceEvents(data, eventName, seq))
+            {
+                yield return item;
+            }
+            eventName = null;
+        }
     }
 
     /// <summary>

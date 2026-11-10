@@ -579,6 +579,7 @@
   "chat.status_auto_approved": "自动批准：{{name}}",
   "chat.status_paused": "已暂停",
   "chat.status_thinking": "…",
+  "chat.status_polling": "轮询",
   "chat.status_writing": "…",
   "chat.status_step": "步骤 {{step}}/{{max}}",
   "chat.progress.preparing_context": "正在准备上下文…",

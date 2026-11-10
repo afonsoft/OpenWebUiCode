@@ -239,6 +239,43 @@ public class ChatStreamServiceTests
         });
     }
 
+    [Test]
+    public void ParseEventBlock_BlocoSseCru_ViraEventosTipados()
+    {
+        // Polling-fallback (SPEC-20261110): o backlog vem como bloco SSE
+        // cru (linhas event:/data:) — o parse reusa o caminho do stream.
+        var service = CreateService("");
+
+        var eventos = service.ParseEventBlock(
+            "event: tasks\ndata: {\"tasks\":[{\"id\":\"t1\",\"content\":\"x\",\"status\":\"in_progress\"}]}",
+            seq: 42).ToList();
+
+        var tasks = eventos.OfType<ChatStreamService.ChatStreamEvent.Tasks>().Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(tasks.Seq, Is.EqualTo(42));
+            Assert.That(tasks.Snapshot.Tasks[0].Id, Is.EqualTo("t1"));
+        });
+    }
+
+    [Test]
+    public void ParseEventBlock_DeltaOpenAiEDone_SoProduzDelta()
+    {
+        var service = CreateService("");
+
+        var eventos = service.ParseEventBlock(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"oi\"}}]}", seq: 7)
+            .Concat(service.ParseEventBlock("data: [DONE]", seq: 8))
+            .ToList();
+
+        var delta = eventos.OfType<ChatStreamService.ChatStreamEvent.Delta>().Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(delta.Text, Is.EqualTo("oi"));
+            Assert.That(delta.Seq, Is.EqualTo(7));
+        });
+    }
+
     private ChatStreamService CreateService(string sseBody)
     {
         var http = new HttpClient(new StubHandler((_, _) =>
