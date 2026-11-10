@@ -347,6 +347,13 @@ public static class ApiEndpoints
         {
             request = request with { Model = chainFirst[0] };
         }
+        else if (AdaptiveModelRef.TryParse(request.Model, out var adaptiveFirst)
+                 && adaptiveFirst.Count > 0)
+        {
+            // adaptive:{…} (SPEC-20261110): sem run, o pool não aplica —
+            // resolve para o preferido.
+            request = request with { Model = adaptiveFirst[0] };
+        }
 
         // Gate global do admin (SPEC-20261104-model-visibility-gate RF-008):
         // modelo desabilitado sem fonte própria do provider → 403 antes de

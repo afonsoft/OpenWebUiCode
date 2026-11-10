@@ -204,6 +204,103 @@ public class FusionModeTests
             Is.EqualTo("ollama:qwen3:8b"));
     }
 
+    // ---- adaptive:{m1,…,m4} (SPEC-20261110 adaptive-model-pool) ----
+
+    // Contrato: ref válida round-trips via Format/TryParse; ids com ':'
+    // e '/' passam intactos (só a vírgula separa posições).
+    [Test]
+    public void AdaptiveRef_RoundTrip_PoolOrdenado()
+    {
+        var value = AdaptiveModelRef.Format(
+            ["auto/claude-opus", "openai/gpt-5", "ollama:qwen3:8b"]);
+        Assert.That(value, Is.EqualTo(
+            "adaptive:auto/claude-opus,openai/gpt-5,ollama:qwen3:8b"));
+        Assert.That(AdaptiveModelRef.TryParse(value, out var pool), Is.True);
+        Assert.That(pool, Is.EqualTo(
+            new[] { "auto/claude-opus", "openai/gpt-5", "ollama:qwen3:8b" }));
+        Assert.That(AdaptiveModelRef.IsAdaptive(value), Is.True);
+        Assert.That(AdaptiveModelRef.IsAdaptive("ADAPTIVE:a,b"), Is.True);
+        Assert.That(AdaptiveModelRef.IsAdaptive("chain:a,b"), Is.False);
+    }
+
+    // Refs malformadas não são adaptive: sem prefixo, corpo vazio, slot
+    // vazio, pool fora dos limites 2–4.
+    [Test]
+    public void AdaptiveRef_Invalidas_Falham()
+    {
+        Assert.That(AdaptiveModelRef.TryParse(null, out _), Is.False);
+        Assert.That(AdaptiveModelRef.TryParse("gpt-5", out _), Is.False);
+        Assert.That(AdaptiveModelRef.TryParse("adaptive:", out _), Is.False);
+        Assert.That(AdaptiveModelRef.TryParse("adaptive:a", out _), Is.False);
+        Assert.That(AdaptiveModelRef.TryParse("adaptive:a,,b", out _), Is.False);
+        Assert.That(AdaptiveModelRef.TryParse("adaptive:a,", out _), Is.False);
+        Assert.That(AdaptiveModelRef.TryParse(
+            "adaptive:a,b,c,d,e", out _), Is.False);
+        Assert.That(AdaptiveModelRef.TryParse(
+            "fusion:a>b", out _), Is.False);
+    }
+
+    // Dedup case-insensitive preserva a primeira posição; duplicados
+    // podem derrubar o pool abaixo do mínimo.
+    [Test]
+    public void AdaptiveRef_Duplicados_DedupPrimeiraPosicao()
+    {
+        Assert.That(AdaptiveModelRef.TryParse(
+            "adaptive:a,B,b,c", out var pool), Is.True);
+        Assert.That(pool, Is.EqualTo(new[] { "a", "B", "c" }));
+        Assert.That(AdaptiveModelRef.TryParse(
+            "adaptive:a,A", out _), Is.False);
+    }
+
+    // FirstOrSelf: caminhos sem run (tasks, playground, metadata) usam
+    // o preferido; modelos comuns passam intocados.
+    [Test]
+    public void AdaptiveRef_FirstOrSelf_Preferido()
+    {
+        Assert.That(AdaptiveModelRef.FirstOrSelf("adaptive:m1,m2"),
+            Is.EqualTo("m1"));
+        Assert.That(AdaptiveModelRef.FirstOrSelf("gpt-5"),
+            Is.EqualTo("gpt-5"));
+        // Espaços nos slots são tolerados.
+        Assert.That(AdaptiveModelRef.TryParse(
+            "adaptive: m1 , m2 ", out var pool), Is.True);
+        Assert.That(pool, Is.EqualTo(new[] { "m1", "m2" }));
+    }
+
+    // RF-002: estado por chat — c:{chat}:adaptive.{sticky,fails,probe}
+    // roundtrip pelo ConfigService (contrato persistido do pool).
+    [Test]
+    public async Task AdaptiveKv_EstadoPorChat_Roundtrip()
+    {
+        using var scope = _provider.CreateScope();
+        var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+
+        Assert.That(await config.GetAsync(
+            "c:chat-1:adaptive.sticky", 0, CancellationToken.None), Is.Zero);
+        Assert.That(await config.GetAsync(
+            "c:chat-1:adaptive.fails", new int[4], CancellationToken.None),
+            Is.EqualTo(new int[4]));
+
+        await config.SetAsync(
+            "c:chat-1:adaptive.sticky", 2, CancellationToken.None);
+        await config.SetAsync(
+            "c:chat-1:adaptive.fails", new[] { 3, 0, 1, 0 }, CancellationToken.None);
+        await config.SetAsync(
+            "c:chat-1:adaptive.probe", 1_800_000_000L, CancellationToken.None);
+
+        Assert.That(await config.GetAsync(
+            "c:chat-1:adaptive.sticky", 0, CancellationToken.None), Is.EqualTo(2));
+        Assert.That(await config.GetAsync(
+            "c:chat-1:adaptive.fails", new int[4], CancellationToken.None),
+            Is.EqualTo(new[] { 3, 0, 1, 0 }));
+        Assert.That(await config.GetAsync(
+            "c:chat-1:adaptive.probe", 0L, CancellationToken.None),
+            Is.EqualTo(1_800_000_000L));
+        // Chat isolado não vê o estado do vizinho.
+        Assert.That(await config.GetAsync(
+            "c:chat-2:adaptive.sticky", 0, CancellationToken.None), Is.Zero);
+    }
+
     private sealed class FusionEnv(string root) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = "Test";

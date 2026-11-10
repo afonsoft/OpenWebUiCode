@@ -188,6 +188,31 @@ faz a próxima run reprocessar `[resumo] + cauda` em vez do histórico inteiro.
 
 ![Configurações → Combos](../screenshots/settings-combos.png)
 
+### 13.1 Refs de modelo adaptativas (`fusion:` / `chain:` / `adaptive:`)
+
+Além dos combos (resolvidos no servidor), o campo `Model` do chat aceita
+**refs compostas** escolhidas no seletor de modelos (família "Adaptativo")
+ou digitadas diretamente:
+
+- **`fusion:{L1,L2}>{S1,S2}`** — par de orquestração: o Leader raciocina,
+  planeja e revisa; o Sidekick executa o plano em sub-agentes
+  (`delegate_task` herda `chain:{S1,S2,L1,L2}`). Leaders e sidekicks
+  aceitam cadeias ordenadas — falha de provedor sem side-effects avança
+  na ordem declarada (L1→L2→S1→S2), preservando o conteúdo parcial como
+  contexto da próxima posição.
+- **`chain:{m1,m2,…}`** — cadeia de fallback pura dentro da run, sem
+  orquestração nem memória entre runs.
+- **`adaptive:{m1,…,m4}`** — pool ordenado de 2–4 modelos **com memória
+  por chat**: a run tenta sempre o preferido (M1) e avança M2→M3→M4 em
+  falha de provedor. O estado `c:{chat}:adaptive.{sticky,fails,probe}`
+  lembra quem funcionou — quando M1 acumula 3 falhas consecutivas como
+  início, as próximas runs começam no último modelo bem-sucedido
+  (*sticky*), e uma **sonda de 30min** re-tenta o preferido até ele se
+  recuperar. Slots 3–4 do seletor são opcionais.
+- Todas as trocas publicam fases no stream (`fusion`/`adaptive`/`chain`)
+  visíveis no SSE e no polling-fallback; `r:{run}:adaptive.active`
+  registra a posição vencedora.
+
 ## 14. Personas de agente
 
 `GET`/`POST`/`PUT`/`DELETE /api/v1/agent-personas[/{id}]` (+ `/{id}/message`,

@@ -8,7 +8,7 @@
 | Type | `Feature/Resilience` |
 | Stack | `.NET` |
 | Repository | `OpenWebUiCode` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Depende de | SPEC-20261110 (fusion-fallback-chain — classificação de falhas, avanço de cadeia, gate de side-effect, eventos de fase), SPEC-20261106 (adaptive-fusion — mesma família no seletor) |
 
 ## 1. User Story
@@ -174,3 +174,13 @@ Segundo membro fixo da família **Adaptive** no seletor (hoje só `fusion:`):
 - **Janela da sonda**: proposto **30 min**. Alternativas: fixo 15/60min, backoff exponencial (30→60→120… cap 4h).
 - **Escopo do estado**: proposto por-chat. Alternativa global por usuário (uma reputação para todos os chats do ref) — mais simples de raciocinar, menos adaptado a contextos distintos.
 - **Nome de exibição**: "Adaptive Pool" no seletor — colide minimamente com a família "Adaptativo" existente (que hoje só abriga o Fusion); alternativa "Adaptive (4 modelos)". Ref `adaptive:` mantido conforme pedido.
+
+## Delivered (2026-11-10)
+
+- `src/OpenWebUI.Application/Contracts/AdaptiveModelRef.cs` — ref `adaptive:{m1,…,m4}`: parse/format, dedup case-insensitive, limites 2–4, `FirstOrSelf`/`IsAdaptive`.
+- `ChatRunExecutor` — `AdaptivePoolState` (kvs `c:{chat}:adaptive.{sticky,fails,probe}`, K=3, sonda 30min), `ApplyAdaptivePoolAsync` (catálogo + budget por candidato, `r:{run}:adaptive.active`, fases `adaptive`/`Sticky`/`Sonda`), integração com `modelChain`/`chainPos` (gate de side-effect + conteúdo parcial reusados do fusion-chain).
+- `DelegateTaskBuiltinTool` — filhos de run adaptive herdam o ref inteiro (estado próprio por chat-filho).
+- `ApiEndpoints`/`TaskEndpoints` — `adaptive:` resolve ao preferido fora de run.
+- `ModelSelector.razor` — opção "Adaptive Pool" na família Adaptativo com 4 selects (slots 3–4 opcionais), storage `webui.adaptive.{0-3}`, i18n nos 8 locales (`models.adaptive_pool`, `models.adaptive_pool_hint`, `models.adaptive_slot`).
+- Testes — 5 de contrato (`AdaptiveRef_*`/`AdaptiveKv_*` em `FusionModeTests`) + 3 e2e (`Adaptive_*` em `RunCoverageTests`).
+- Docs — `docs/features.md` bullet; `docs/pt/RECURSOS-AGENTE.md` e `docs/en/AGENT-FEATURES.md` §13.1.

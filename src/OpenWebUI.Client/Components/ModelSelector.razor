@@ -48,6 +48,55 @@
                     }
                 </button>
 
+                @* SPEC-20261110 adaptive-model-pool: segundo membro da
+                   família Adaptive — pool ordenado de até 4 modelos com
+                   fallback + sticky entre runs. *@
+                <button class="w-full flex items-center justify-between px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer"
+                        role="option" aria-selected="@IsAdaptive"
+                        title="@L["models.adaptive_pool_hint"]"
+                        @onclick="SelectAdaptiveAsync">
+                    <span class="flex items-center gap-1.5 truncate">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5 shrink-0 text-emerald-500" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                        <span class="truncate">@L["models.adaptive_pool"]</span>
+                    </span>
+                    @if (IsAdaptive)
+                    {
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-3.5 shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                    }
+                </button>
+
+                @if (IsAdaptive)
+                {
+                    <div class="mx-2 mb-1 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/40 px-2.5 py-2 flex flex-col gap-2"
+                         @onkeydown:stopPropagation="true">
+                        @for (var i = 0; i < 4; i++)
+                        {
+                            var slot = i;
+                            <label class="flex flex-col gap-1">
+                                <span class="text-[0.6875rem] font-medium text-gray-500 dark:text-gray-400">
+                                    @string.Format(L["models.adaptive_slot"], slot + 1)
+                                    @if (slot > 1)
+                                    {
+                                        <span class="font-normal text-gray-400 dark:text-gray-500">— @L["models.fusion_fallback_hint"]</span>
+                                    }
+                                </span>
+                                <select class="w-full rounded-lg border border-gray-200 dark:border-gray-750 bg-white dark:bg-gray-850 px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer"
+                                        aria-label="@string.Format(L["models.adaptive_slot"], slot + 1)"
+                                        value="@_adaptive[slot]" @onchange="e => OnAdaptiveChanged(slot, e)">
+                                    @if (slot > 1)
+                                    {
+                                        <option value="">@L["models.fusion_none"]</option>
+                                    }
+                                    @foreach (var m in _models)
+                                    {
+                                        <option value="@m.Id" selected="@(m.Id == _adaptive[slot])">@m.Name</option>
+                                    }
+                                </select>
+                            </label>
+                        }
+                    </div>
+                }
+
                 @if (IsFusion)
                 {
                     <div class="mx-2 mb-1 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/40 px-2.5 py-2 flex flex-col gap-2"
@@ -146,6 +195,8 @@
     private const string FusionLeader2Key = "webui.fusion.leader2";
     private const string FusionSidekickKey = "webui.fusion.sidekick";
     private const string FusionSidekick2Key = "webui.fusion.sidekick2";
+    private const string AdaptiveSlotKey = "webui.adaptive.{0}";
+    private const int AdaptiveSlots = 4;
     private List<ModelInfo>? _models;
     private bool _open;
     private bool _focusMenu;
@@ -153,14 +204,19 @@
     private string? _leader2;
     private string? _sidekick;
     private string? _sidekick2;
+    private readonly string?[] _adaptive = new string?[AdaptiveSlots];
     private ElementReference _trigger;
     private ElementReference _menu;
 
     /// <summary>Seleção atual é o par Adaptive/Fusion (SPEC-20261106).</summary>
     private bool IsFusion => FusionModelRef.IsFusion(Value);
 
+    /// <summary>Seleção atual é o pool Adaptive (SPEC-20261110).</summary>
+    private bool IsAdaptive => AdaptiveModelRef.IsAdaptive(Value);
+
     private string SelectedName =>
         IsFusion ? L["models.fusion"]
+        : IsAdaptive ? L["models.adaptive_pool"]
         : _models?.FirstOrDefault(m => m.Id == Value)?.Name ?? L["models.select"];
 
     protected override async Task OnInitializedAsync() => await LoadModelsAsync();
@@ -175,6 +231,13 @@
             _leader2 = ls.Count > 1 ? ls[1] : null;
             _sidekick = ss[0];
             _sidekick2 = ss.Count > 1 ? ss[1] : null;
+        }
+        else if (AdaptiveModelRef.TryParse(Value, out var pool))
+        {
+            for (var i = 0; i < AdaptiveSlots; i++)
+            {
+                _adaptive[i] = i < pool.Count ? pool[i] : null;
+            }
         }
     }
 
@@ -214,6 +277,13 @@
                 _sidekick = curSs[0];
                 _sidekick2 = curSs.Count > 1 ? curSs[1] : null;
             }
+            else if (AdaptiveModelRef.TryParse(Value, out var curPool))
+            {
+                for (var i = 0; i < AdaptiveSlots; i++)
+                {
+                    _adaptive[i] = i < curPool.Count ? curPool[i] : null;
+                }
+            }
             return;
         }
 
@@ -239,6 +309,22 @@
             {
                 Value = restored;
                 await ValueChanged.InvokeAsync(restored);
+            }
+            return;
+        }
+
+        if (AdaptiveModelRef.TryParse(saved, out var savedPool)
+            && savedPool.All(HasModel))
+        {
+            for (var i = 0; i < AdaptiveSlots; i++)
+            {
+                _adaptive[i] = i < savedPool.Count ? savedPool[i] : null;
+            }
+            var restoredPool = CurrentAdaptiveValue();
+            if (restoredPool != Value)
+            {
+                Value = restoredPool;
+                await ValueChanged.InvokeAsync(restoredPool);
             }
             return;
         }
@@ -309,6 +395,60 @@
             ? storedSk2 : null;
         await ApplyFusionValueAsync();
         await _trigger.FocusAsync();
+    }
+
+    /// <summary>Seleciona o pool adaptive: menu fica aberto com os 4
+    /// selects — slots 1-2 obrigatórios (defaults = salvos ou os dois
+    /// primeiros do catálogo), 3-4 opcionais.</summary>
+    private async Task SelectAdaptiveAsync()
+    {
+        for (var i = 0; i < AdaptiveSlots; i++)
+        {
+            var stored = await Storage.GetAsync(string.Format(AdaptiveSlotKey, i));
+            _adaptive[i] = HasModel(_adaptive[i]) ? _adaptive[i]
+                : HasModel(stored) ? stored
+                : i < 2 && i < _models!.Count ? _models![i].Id
+                : i < 2 ? _models!.First().Id
+                : null;
+        }
+        await ApplyAdaptiveValueAsync();
+        await _trigger.FocusAsync();
+    }
+
+    private async Task OnAdaptiveChanged(int slot, ChangeEventArgs e)
+    {
+        _adaptive[slot] = e.Value?.ToString() is { Length: > 0 } v ? v : null;
+        await ApplyAdaptiveValueAsync();
+    }
+
+    /// <summary>Ref adaptive atual — slots 1-2 obrigatórios, vazios do
+    /// meio são saltados mantendo a ordem; duplicados removidos.</summary>
+    private string? CurrentAdaptiveValue()
+    {
+        var pool = _adaptive.Where(m => m is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return pool.Count >= AdaptiveModelRef.MinMembers
+            ? AdaptiveModelRef.Format(pool)
+            : null;
+    }
+
+    /// <summary>Grava os slots e publica <c>adaptive:{m1,…,m4}</c>.</summary>
+    private async Task ApplyAdaptiveValueAsync()
+    {
+        if (CurrentAdaptiveValue() is not { } value)
+        {
+            return;
+        }
+        Value = value;
+        await Storage.SetAsync(ModelKey, value);
+        for (var i = 0; i < AdaptiveSlots; i++)
+        {
+            await Storage.SetAsync(
+                string.Format(AdaptiveSlotKey, i), _adaptive[i] ?? "");
+        }
+        await ValueChanged.InvokeAsync(value);
     }
 
     private async Task OnLeaderChanged(ChangeEventArgs e)

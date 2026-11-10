@@ -179,8 +179,35 @@ public sealed class ChatRunExecutor(
             && ChainModelRef.TryParse(request.Model, out var parsedChain)
                 ? parsedChain
                 : null;
-        var modelChain = fusionChain ?? plainChain;
+        // adaptive:{m1,…,m4} (SPEC-20261110 adaptive-model-pool): pool
+        // ordenado com memória por chat — o início da cadeia é o sticky
+        // quando o preferido acumula falhas consecutivas; a sonda
+        // re-tenta o preferido depois do cooldown.
+        var adaptivePool = fusionChain is null && plainChain is null
+            && AdaptiveModelRef.TryParse(request.Model, out var parsedPool)
+                ? parsedPool
+                : null;
+        var modelChain = fusionChain ?? plainChain ?? adaptivePool;
+        var adaptiveState = adaptivePool is null
+            ? null
+            : await AdaptivePoolState.LoadAsync(config, run.ChatId, ct);
         var chainPos = 0;
+        if (adaptiveState is not null && adaptivePool is not null)
+        {
+            chainPos = adaptiveState.StartIndex(adaptivePool.Count);
+            if (adaptiveState.Probed)
+            {
+                await PublishPhaseAsync(run, "adaptive",
+                    $"Sonda: re-tentando o preferido {adaptivePool[0]}");
+            }
+            else if (chainPos > 0)
+            {
+                await PublishPhaseAsync(run, "adaptive",
+                    $"Sticky: iniciando em {adaptivePool[chainPos]} "
+                    + $"({chainPos + 1}/{adaptivePool.Count}) — "
+                    + "o preferido acumulou falhas consecutivas");
+            }
+        }
         // Conteúdo parcial já injetado como mensagem assistant — em avanço
         // de cadeia só o trecho NOVO vira contexto (evita duplicar a parte
         // que a tentativa anterior já escreveu no histórico).
@@ -208,8 +235,13 @@ public sealed class ChatRunExecutor(
                 await ExecuteAttemptAsync(
                     new AttemptCtx(run, user, request, commandMode,
                         resumePlan, budgetLimits, comboRef, chainPos,
-                        state, sw),
+                        adaptiveState, state, sw),
                     ct);
+                if (adaptiveState is not null)
+                {
+                    await adaptiveState.RecordSuccessAsync(
+                        config, run.ChatId, chainPos, ct);
+                }
                 return;
             }
             catch (OperationCanceledException ex)
@@ -228,6 +260,15 @@ public sealed class ChatRunExecutor(
                     if (decision.NextChainPos is { } nextPos
                         && modelChain is not null)
                     {
+                        if (adaptiveState is not null)
+                        {
+                            // A posição que falhou perde reputação — K
+                            // falhas consecutivas como start tiram o
+                            // modelo do início das próximas runs.
+                            await adaptiveState.RecordFailureAsync(
+                                config, run.ChatId, chainPos,
+                                CancellationToken.None);
+                        }
                         chainPos = nextPos;
                         if (state.Content.Length > injectedContentLen)
                         {
@@ -242,10 +283,13 @@ public sealed class ChatRunExecutor(
                             injectedContentLen = state.Content.Length;
                         }
                         await config.SetAsync(
-                            $"r:{run.Id}:fusion.active",
+                            adaptivePool is not null
+                                ? $"r:{run.Id}:adaptive.active"
+                                : $"r:{run.Id}:fusion.active",
                             modelChain[chainPos], CancellationToken.None);
                         await PublishPhaseAsync(run,
-                            fusionChain is not null ? "fusion" : "chain",
+                            fusionChain is not null ? "fusion"
+                                : adaptivePool is not null ? "adaptive" : "chain",
                             $"Fallback {chainPos + 1}/{modelChain.Count}: "
                             + modelChain[chainPos]);
                     }
@@ -285,7 +329,7 @@ public sealed class ChatRunExecutor(
         ChatRun Run, User User, ChatCompletionRequest Request,
         string? CommandMode, RunResumePlan? ResumePlan,
         BudgetLimits BudgetLimits, string? ComboRef, int ChainPos,
-        RunStreamState State, Stopwatch Sw);
+        AdaptivePoolState? Adaptive, RunStreamState State, Stopwatch Sw);
 
     /// <summary>Parâmetros do tool loop com hooks (S107).</summary>
     private sealed record ToolLoopRunCtx(
@@ -299,7 +343,7 @@ public sealed class ChatRunExecutor(
         AttemptCtx a, CancellationToken ct)
     {
         var (run, user, request, commandMode, resumePlan, budgetLimits,
-            comboRef, chainPos, state, sw) = a;
+            comboRef, chainPos, adaptive, state, sw) = a;
         // Modelos pipeline:{id} e arena:{model} encerram a run por
         // conta própria (DONE próprio após FinishAsync).
         if (await TrySpecialModelAsync(request, run, user, ct))
@@ -317,6 +361,18 @@ public sealed class ChatRunExecutor(
             return;
         }
         request = fusedRequest;
+
+        // adaptive:{m1,…,m4} (SPEC-20261110 adaptive-model-pool):
+        // valida pool no catálogo + budget, grava adaptive.active e
+        // resolve request.Model para a posição ativa (chainPos já vem
+        // do estado adaptativo — sticky quando o preferido está queimado).
+        // null = run já encerrada (pool inválido/budget).
+        if (await ApplyAdaptivePoolAsync(run, request, user, chainPos, adaptive, ct)
+                is not { } adaptedRequest)
+        {
+            return;
+        }
+        request = adaptedRequest;
 
         var prepared = await PrepareRunContextAsync(
             run, request, user, commandMode, resumePlan, ct);
@@ -758,6 +814,175 @@ public sealed class ChatRunExecutor(
                 string.Join(", ", childChain))),
                 .. request.Messages],
         };
+    }
+
+    /// <summary>Estado adaptativo por chat do pool <c>adaptive:</c>
+    /// (SPEC-20261110): reputação por posição — <c>fails[i]</c> conta
+    /// falhas consecutivas do candidato i; <c>sticky</c> é o último que
+    /// completou; <c>probeAt</c> agenda a re-tentativa do preferido.
+    /// Persiste nos kvs <c>c:{chat}:adaptive.{sticky,fails,probe}</c>.
+    /// </summary>
+    private sealed class AdaptivePoolState
+    {
+        /// <summary>Falhas consecutivas como start antes do sticky (K).</summary>
+        public const int StickyThreshold = 3;
+
+        private static readonly TimeSpan ProbeInterval = TimeSpan.FromMinutes(30);
+
+        /// <summary>Índice do último candidato que completou uma run.</summary>
+        public int Sticky { get; private set; }
+
+        /// <summary>Falhas consecutivas por posição do pool.</summary>
+        public int[] Fails { get; private set; } =
+            new int[AdaptiveModelRef.MaxMembers];
+
+        /// <summary>Unix ts da sonda de recuperação (0 = sem sonda).</summary>
+        public long ProbeAt { get; private set; }
+
+        /// <summary>A carga zerou a reputação por sonda expirada.</summary>
+        public bool Probed { get; private set; }
+
+        /// <summary>Carrega o estado do chat; aplica a sonda se vencida.</summary>
+        public static async Task<AdaptivePoolState> LoadAsync(
+            ConfigService config, string chatId, CancellationToken ct)
+        {
+            var s = new AdaptivePoolState
+            {
+                Sticky = await config.GetAsync(
+                    $"c:{chatId}:adaptive.sticky", 0, ct),
+                Fails = await config.GetAsync(
+                    $"c:{chatId}:adaptive.fails",
+                    new int[AdaptiveModelRef.MaxMembers], ct),
+                ProbeAt = await config.GetAsync(
+                    $"c:{chatId}:adaptive.probe", 0L, ct),
+            };
+            if (s.Fails.Length != AdaptiveModelRef.MaxMembers)
+            {
+                var fails = s.Fails;
+                Array.Resize(ref fails, AdaptiveModelRef.MaxMembers);
+                s.Fails = fails;
+            }
+            // Sonda vencida → reputação zera e o preferido volta a valer
+            // (quota renovada/provider recuperado re-entra sozinho).
+            if (s.ProbeAt > 0
+                && s.ProbeAt <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            {
+                Array.Clear(s.Fails);
+                s.Sticky = 0;
+                s.ProbeAt = 0;
+                s.Probed = true;
+            }
+            return s;
+        }
+
+        /// <summary>Posição de início da run dentro do pool
+        /// (<paramref name="poolSize"/> posições).</summary>
+        public int StartIndex(int poolSize)
+        {
+            if (Fails[0] < StickyThreshold)
+            {
+                return 0;
+            }
+            var start = Math.Clamp(Sticky, 0, poolSize - 1);
+            if (Fails[start] >= StickyThreshold)
+            {
+                // Sticky também queimado — menor posição com reputação ok.
+                var first = Array.FindIndex(Fails,
+                    f => f < StickyThreshold);
+                start = first >= 0 && first < poolSize ? first : 0;
+            }
+            return start;
+        }
+
+        /// <summary>A posição <paramref name="pos"/> falhou na tentativa —
+        /// incrementa a reputação negativa e agenda a sonda do preferido.
+        /// </summary>
+        public async Task RecordFailureAsync(
+            ConfigService config, string chatId, int pos, CancellationToken ct)
+        {
+            Fails[pos]++;
+            if (pos == 0)
+            {
+                ProbeAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    + (long)ProbeInterval.TotalSeconds;
+            }
+            await SaveAsync(config, chatId, ct);
+        }
+
+        /// <summary>A run completou em <paramref name="pos"/> — vira o
+        /// sticky e zera a própria reputação negativa.</summary>
+        public async Task RecordSuccessAsync(
+            ConfigService config, string chatId, int pos, CancellationToken ct)
+        {
+            Sticky = pos;
+            Fails[pos] = 0;
+            await SaveAsync(config, chatId, ct);
+        }
+
+        private async Task SaveAsync(
+            ConfigService config, string chatId, CancellationToken ct)
+        {
+            await config.SetAsync(
+                $"c:{chatId}:adaptive.sticky", Sticky, ct);
+            await config.SetAsync(
+                $"c:{chatId}:adaptive.fails", Fails, ct);
+            await config.SetAsync(
+                $"c:{chatId}:adaptive.probe", ProbeAt, ct);
+        }
+    }
+
+    /// <summary>Pool <c>adaptive:{m1,…,m4}</c> (SPEC-20261110
+    /// adaptive-model-pool): valida todos os candidatos no catálogo e no
+    /// budget, grava <c>adaptive.active</c> e reescreve
+    /// <c>request.Model</c> para a posição da cadeia — sem prompt/tools
+    /// de orquestração (o pool não tem roles).</summary>
+    /// <returns>Request com o modelo ativo, ou <c>null</c> quando a run
+    /// já foi encerrada (pool fora do catálogo/budget).</returns>
+    private async Task<ChatCompletionRequest?> ApplyAdaptivePoolAsync(
+        ChatRun run, ChatCompletionRequest request, User user,
+        int chainPos, AdaptivePoolState? state, CancellationToken ct)
+    {
+        if (state is null
+            || !AdaptiveModelRef.TryParse(request.Model, out var pool))
+        {
+            return request;
+        }
+
+        var catalogIds = (await providers.ListModelsAsync(ct))
+            .Select(m => m.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missing = pool.FirstOrDefault(id => !catalogIds.Contains(id));
+        if (missing is not null)
+        {
+            await FailAsync(run,
+                $"model_not_in_catalog: '{missing}' não está no catálogo de "
+                + "modelos do chat — Adaptive Pool só aceita modelos disponíveis.");
+            return null;
+        }
+
+        // Gate de budget em TODOS os candidatos — o ref composto não tem
+        // tier próprio e atravessaria o gate do prelúdio sem checagem.
+        foreach (var candidate in pool)
+        {
+            var gate = await budgets.CheckStartAsync(user.Id, candidate, ct);
+            if (!gate.Allowed)
+            {
+                await FailAsync(run, $"{gate.Code}: {gate.Detail}");
+                return null;
+            }
+        }
+
+        var pos = Math.Clamp(chainPos, 0, pool.Count - 1);
+        var active = pool[pos];
+        await config.SetAsync($"r:{run.Id}:adaptive.active", active, ct);
+        await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+            new { status = "adaptive", active, pos, pool }, ct);
+        if (pos > 0)
+        {
+            await PublishPhaseAsync(run, "adaptive",
+                $"Candidato {pos + 1}/{pool.Count}: {active}");
+        }
+
+        return request with { Model = active };
     }
 
     /// <summary>Prompt de coordenação do modo fusion — o leader orquestra,

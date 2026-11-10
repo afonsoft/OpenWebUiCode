@@ -854,6 +854,13 @@ public sealed class DelegateTaskBuiltinTool(
             // executor); `model:`/`agent:` explícito continua vencendo.
             // SPEC-20261110: a kv pode carregar uma ref chain:{…} — os
             // filhos herdam a cadeia de fallback (sidekicks → leaders).
+            // SPEC-20261110 adaptive-model-pool: filhos de uma run
+            // adaptive herdam o ref inteiro — cada chat-filho desenvolve
+            // reputação/sticky próprios no pool.
+            if (AdaptiveModelRef.IsAdaptive(parentRun.Model))
+            {
+                return (parentRun.Model, null);
+            }
             var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
             var sidekick = await config.GetAsync<string?>(
                 $"r:{parentRun.Id}:fusion.sidekick", null, ct);
