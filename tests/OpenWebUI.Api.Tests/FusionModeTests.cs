@@ -99,6 +99,87 @@ public class FusionModeTests
         Assert.That((l, s), Is.EqualTo(("a", "b")));
     }
 
+    // SPEC-20261110 fusion-fallback-chain: cada papel aceita cadeia
+    // ordenada separada por vírgula — TryParseChain extrai os dois lados.
+    [Test]
+    public void TryParseChain_CadeiaCompleta_ExtraiOsDoisPapeis()
+    {
+        Assert.That(FusionModelRef.TryParseChain(
+            "fusion:auto/claude-opus,auto/claude-sonnet>auto/glm,auto/kimi",
+            out var leaders, out var sidekicks), Is.True);
+        Assert.That(leaders, Is.EqualTo(
+            new[] { "auto/claude-opus", "auto/claude-sonnet" }));
+        Assert.That(sidekicks, Is.EqualTo(
+            new[] { "auto/glm", "auto/kimi" }));
+    }
+
+    // O par legado fusion:{L}>{S} é a cadeia de 1 — TryParse continua
+    // devolvendo a primeira posição de cada lado (backward-compat).
+    [Test]
+    public void TryParseChain_ParLegado_CadeiaDeUm()
+    {
+        Assert.That(FusionModelRef.TryParseChain("fusion:a>b",
+            out var leaders, out var sidekicks), Is.True);
+        Assert.That(leaders, Is.EqualTo(new[] { "a" }));
+        Assert.That(sidekicks, Is.EqualTo(new[] { "b" }));
+        Assert.That(FusionModelRef.TryParse(
+            "fusion:L1,L2>S1,S2", out var l, out var s), Is.True);
+        Assert.That((l, s), Is.EqualTo(("L1", "S1")));
+    }
+
+    // Slots vazios e ref malformada são rejeitados.
+    [Test]
+    public void TryParseChain_SlotVazio_Falha()
+    {
+        Assert.That(FusionModelRef.TryParseChain(
+            "fusion:a,>b", out _, out _), Is.False);
+        Assert.That(FusionModelRef.TryParseChain(
+            "fusion:a>b,", out _, out _), Is.False);
+        Assert.That(FusionModelRef.TryParseChain(
+            "fusion:a,,b>c", out _, out _), Is.False);
+        Assert.That(FusionModelRef.TryParseChain(
+            "chain:a>b", out _, out _), Is.False);
+        Assert.That(FusionModelRef.TryParseChain(null, out _, out _), Is.False);
+    }
+
+    // Cadeia efetiva = leaders primeiro, depois sidekicks, dedup
+    // case-insensitive preservando a primeira posição.
+    [Test]
+    public void EffectiveChain_LeadersPrimeiro_Dedup()
+    {
+        var chain = FusionModelRef.EffectiveChain(
+            ["L1", "L2"], ["S1", "L2", "S2", "l1"]);
+        Assert.That(chain, Is.EqualTo(new[] { "L1", "L2", "S1", "S2" }));
+    }
+
+    // chain:{m1,m2,…} — ref de fallback dos filhos, sem semântica fusion.
+    [Test]
+    public void ChainModelRef_RoundTrip_EInvalidas()
+    {
+        var value = ChainModelRef.Format(["auto/glm", "auto/kimi", "auto/opus"]);
+        Assert.That(value, Is.EqualTo("chain:auto/glm,auto/kimi,auto/opus"));
+        Assert.That(ChainModelRef.TryParse(value, out var chain), Is.True);
+        Assert.That(chain, Is.EqualTo(
+            new[] { "auto/glm", "auto/kimi", "auto/opus" }));
+
+        Assert.That(ChainModelRef.TryParse("chain:", out _), Is.False);
+        Assert.That(ChainModelRef.TryParse("chain:a,,b", out _), Is.False);
+        Assert.That(ChainModelRef.TryParse("gpt-5", out _), Is.False);
+        Assert.That(ChainModelRef.TryParse(null, out _), Is.False);
+        Assert.That(ChainModelRef.IsChain("CHAIN:a,b"), Is.True);
+    }
+
+    // LeaderOrSelf com ref de cadeia: devolve a primeira posição —
+    // caminhos sem orquestração (tasks/playground) usam o leader 1.
+    [Test]
+    public void LeaderOrSelf_Cadeia_DevolvePrimeiroLeader()
+    {
+        Assert.That(FusionModelRef.LeaderOrSelf("fusion:L1,L2>S1,S2"),
+            Is.EqualTo("L1"));
+        Assert.That(FusionModelRef.LeaderOrSelf("chain:a,b"),
+            Is.EqualTo("chain:a,b"));
+    }
+
     // RF-003: kv do par — o executor grava r:{run}:fusion.sidekick e o
     // delegate_task a lê como modelo default dos sub-agentes; aqui o
     // roundtrip no ConfigService garante o contrato persistido.
