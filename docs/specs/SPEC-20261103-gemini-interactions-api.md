@@ -7,10 +7,9 @@
 | Feature | `gemini-interactions-api` |
 | Type | `Feature` |
 | Stack | `.NET` |
-| Repository | `/home/ubuntu/repos/OpenWebUiCode` |
-| Branch | `feat/gemini-interactions-api-20261103` |
+| Repository | `OpenWebUiCode` |
 | Ticket | `GH#679` |
-| Status | `Approved` |
+| Status | `Completed` |
 | Parent | provider improvements sweep 2026-11-03 (gemini track) |
 
 ## 1. User Story
@@ -95,13 +94,13 @@ Sem mudança externa — chat/OpenAI-compatible inalterado; a mudança é intern
 
 ## 6. Acceptance Criteria
 
-- [ ] Conexão com flag → request vai para `/v1beta/interactions` com `Api-Revision` correto (assert via stub HTTP).
-- [ ] Function call e native tools funcionam no novo wire (fixtures).
-- [ ] Usage/thinking/function_call mapeados para `ProviderUsage`/tool_calls/reasoning.
-- [ ] Streaming normaliza `step.delta` para SSE OpenAI-shape.
-- [ ] Flag ausente → path legacy intacto (regressão Gemini suíte verde).
-- [ ] Erros classificados como no legacy (429/5xx/mid-stream).
-- [ ] `dotnet test` verde.
+- [x] Conexão com flag → request vai para `/v1beta/interactions` com `Api-Revision` correto (assert via stub HTTP).
+- [x] Function call e native tools funcionam no novo wire (fixtures).
+- [x] Usage/thinking/function_call mapeados para `ProviderUsage`/tool_calls/reasoning.
+- [x] Streaming normaliza `step.delta` para SSE OpenAI-shape.
+- [x] Flag ausente → path legacy intacto (regressão Gemini suíte verde).
+- [x] Erros classificados como no legacy (429/5xx/mid-stream).
+- [x] `dotnet test` verde.
 
 ## 7. Task Plan
 
@@ -114,3 +113,7 @@ Sem mudança externa — chat/OpenAI-compatible inalterado; a mudança é intern
 ## 8. Effort Estimate
 
 `~6-8h` — wire novo com superfície menor que generateContent, mas parse de steps/deltas tipados é trabalho real; rede de segurança de #660 absorve a regressão.
+
+## Delivered
+
+Mergeado em `main` — commit `aa2aa2c` (merge `f7b73bb`). Issue de tracking: #679. Cobertura: `tests/OpenWebUI.Api.Tests/Providers/GeminiInteractionsTests.cs` (15 testes cobrindo os 7 ACs).
