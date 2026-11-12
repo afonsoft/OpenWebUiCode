@@ -1,6 +1,60 @@
 # SONAR_FIX_TODO_BOARD — PR review sweep (PRs #432–#466)
 
-Branch: `fix/pr-review-sweep-20261019` (base `main` @ `6f85ceef3`)
+## Sweep 2026-11-11 — branch `fix/sonar-issues-20261111`
+
+Fonte: SonarCloud `afonsoft_open-webui` (2.450 issues abertas no snapshot;
+157 acionáveis em `src/`, `tests/`, `tools/`, `Dockerfile` — as demais são
+achados de vendor/docs já cobertos por exclusões do scan).
+Snapshot bruto: `.sonar_devin_auto_fix/sonarqube_issues.json`;
+classificação: `.sonar_devin_auto_fix/actionable_by_file.json`.
+
+### Corrigidos nesta branch
+
+| Regra | Arquivos | Status |
+|-------|----------|--------|
+| S7044 (URI não sanitizada) | `Client/Services/ApiService.cs`, `AuthService.cs` | [x] upload/API com URI segura relativa ao `BaseAddress` |
+| S5693 (tamanho de request) | `ApiService.cs` (upload), `ChatView.razor` (`file.Size`) | [x] limite de corpo explícito |
+| S6444 ×4 (regex sem timeout) | plugin/skill/index services | [x] `matchTimeout` explícito |
+| S5034 ×2 (ValueTask multi-uso) | `Api/Endpoints/ChatRunEndpoints.cs` | [x] consumo único via helpers |
+| S4487 ×10 (campos só escritos — Razor) | `Ide.razor`, `MainLayout.razor` | [x] campos → auto-properties |
+| S2365 + S3218 ×2 | `ModelManagerDialog.razor`, `GatewayInboundService.cs` | [x] property leve; shadowing renomeado |
+| S3776 ×22 (complexidade) | `PluginImportService`, `SkillImportService`, `CodeSearchBuiltinTool`, `ChatInsightsService`, `InsightsEndpoints`, `InsightsPanel`, `ContextCompactionService`, `ChatRunExecutor`, `ChatView`, `ModelSelector`, `ProviderService` | [x] extração de helpers/records (`ExecutionPlan`, `AdvanceChainAsync`, `HeadSummaryArgs`, `CollectAttachmentInfo`, `HandleStallRecoveryAsync`, `ApplyPolledEventsAsync`, `ResolveSlotAsync`, `ApplyGoogleNativeTools`, `HandleStepStartAsync`, `Apply{Text,Thought}DeltaAsync`, `MarkLastAnthropicUserMessage`) |
+| S107 ×7 (muitos params) | `ChatRunEndpoints`, `ChatPipeline`, `ComboEndpoints`, `ContextCompactionService` | [x] `[AsParameters]`/records de args (`CompactionState`) |
+| S3358 ×14 (ternário aninhado) | `TaskEndpoints`, `CustomizeEndpoints`, `ModelSelector`, `InsightsPanel`, `ChatView` | [x] switch/condicionais explícitas |
+| S9422 ×4 (lock) | serviços com `object` lock | [x] `System.Threading.Lock` |
+| S1192 ×15 (literal repetido) | `ProviderService`, `ChatInsightsService`, `ChatStreamService` | [x] consts (`UsageKey`, `ParametersKey`, `ThinkingBudgetKey`, `ResultKey`, `ThoughtKey`, `InteractionsApiKey`, `SevMedium`…) |
+| S3267/S8969/S2589/S1854/S1172/S1125/S6672/S2234/S9415/S6608/S108 | pontuais | [x] LINQ/early-return/named args/`ILogger<T>` correto/`[0]`/static local fn |
+| S6580 (culture) | `GeminiContextCacheService.cs` | [x] `InvariantCulture` + `RoundtripKind` |
+| S2925 ×2 (Thread.Sleep em teste) | `ChatBangTests`, `ChatHashTests` | [x] `async Task` + `await Task.Delay` |
+| S1135 (falsos "TODO" de substring) | `Program.cs`, `DeepWikiMcpSeeder`, `ContextCompactionService` | [x] rewording ("todos", `builtin_todo_write`, "todo payload") |
+| python:S8786 | `tools/check-spec-status.py` | [x] regex `[^|]+` greedy linear (documentado) |
+
+### Falsos positivos / decisões documentadas
+
+- **json:S2068 ×3** (`pt-BR.json` i18n) — labels de UI ("Senha atual" etc.), não credenciais. Triagem manual no SonarCloud (requer token).
+- **docker:S6471** — container single-tenant roda como root por design (o processo É o agente); já documentado no Dockerfile.
+- **docker:S7031** — RUNs consecutivos separados intencionalmente por camadas lógicas (apt base × toolbelt); cache de layers.
+- **S7039 (CSP)** — `'unsafe-inline'` exigido pelos scripts inline de `index.html`; `'unsafe-eval'` removido, `'wasm-unsafe-eval'` apenas. Nonces/hashes = refactor futuro.
+- **python:S7503 ×4** (`mock_ollama.py`) — handlers aiohttp DEVEM ser coroutines (contrato do framework); comentário no arquivo.
+- **css:S9423 ×5** (`tailwind.input.css`) — `!important` obrigatório no bloco `prefers-reduced-motion` (a11y).
+- **javascript:S2486 ×7 / S1874 ×3** — catches com fallback documentado e APIs legadas (`execCommand`, `addListener`) mantidas como fallback de browser antigo.
+- **S2325** em `SafeInParallel` — membro de `IBuiltinChatTool`, não pode ser static.
+- **S8969** em `WorkspaceFileEndpoints`/`ProviderCapabilityService` — `!` restaurado: compilador não prova não-nulo (CS8602/CS8604).
+
+### Verificação
+
+- `dotnet build --configuration Release`: 0 erros, 0 warnings.
+- `dotnet test`: Client.Tests 159/159; Api.Tests 2927/2928 — única falha
+  `ChatBranchingE2ETests.SharedChat_RenderizaApenasCaminhoAtivo`, flake de
+  timing sob carga paralela (passa isolado; enqueue+share não foram tocados).
+- Drift guards: `check-css-classes`, `check-form-a11y`, `check-i18n-parity`, `check-spec-status` — OK.
+- Métrica do snapshot: 125 de 157 acionáveis corrigidas; 32 mantidas como
+  falso positivo / decisão de design (tabela acima). A contagem oficial no
+  SonarCloud só fecha após o próximo scan do CI sobre esta branch.
+
+---
+
+Branch anterior: `fix/pr-review-sweep-20261019` (base `main` @ `6f85ceef3`)
 SPEC: `.specs/SPEC-20261019-pr-review-sweep.md`
 Fontes: SonarCloud (32 issues) + GitHub Advanced Security/CodeQL (15 alerts) + Devin Review (9 bugs + 8 analysis + 3 automation).
 

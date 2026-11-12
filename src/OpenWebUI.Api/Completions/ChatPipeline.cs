@@ -1165,8 +1165,10 @@ public static class ChatPipeline
         {
             state.FakeSuccessNudges++;
             await InjectTurnGuardNudgeAsync(
-                state, step, FakeSuccessPrompt, callbacks, log, ct,
-                state.FakeSuccessNudges, MaxFakeSuccessNudges);
+                state, step,
+                new TurnGuardNudge(FakeSuccessPrompt,
+                    state.FakeSuccessNudges, MaxFakeSuccessNudges),
+                callbacks, log, ct);
             return null;
         }
         if (state.PendingTodos > 0
@@ -1188,8 +1190,9 @@ public static class ChatPipeline
             && await guard(step.Content ?? string.Empty, ct) is { } reminder)
         {
             state.TurnNudges++;
-            await InjectTurnGuardNudgeAsync(state, step, reminder, callbacks, log, ct,
-                state.TurnNudges, MaxTurnNudges);
+            await InjectTurnGuardNudgeAsync(state, step,
+                new TurnGuardNudge(reminder, state.TurnNudges, MaxTurnNudges),
+                callbacks, log, ct);
             return null;
         }
         // lastStep = último round toolless (MaxStepsPrompt): a saída
@@ -1229,7 +1232,7 @@ public static class ChatPipeline
             state.ToolMessages.Add(interimQueued);
         }
         state.Messages.AddRange(queued);
-        if (callbacks?.OnMessagesAddedAsync is { } added)
+        if (callbacks.OnMessagesAddedAsync is { } added)
         {
             await added(
                 interimQueued is null ? queued
@@ -1290,17 +1293,20 @@ public static class ChatPipeline
     /// histórico como assistant interim + reminder user-note — mesma
     /// mecânica do nudge de todos (a promessa não some do contexto).
     /// </summary>
+    /// <summary>Parâmetros do nudge de turn-guard (reminder + contadores
+    /// n/max da série de nudges da run).</summary>
+    private sealed record TurnGuardNudge(string Reminder, int N, int Max);
+
     private static async Task InjectTurnGuardNudgeAsync(
-        ToolLoopMutable state, ProviderCompletion step, string reminder,
+        ToolLoopMutable state, ProviderCompletion step, TurnGuardNudge nudge,
         ToolLoopCallbacks? callbacks,
-        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct,
-        int nudgeN, int nudgeMax)
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
     {
         log?.LogInformation(
             "Turno encerrado com plano/promessa sem tool-call — "
             + "nudge {N}/{Max} injetado.",
-            nudgeN, nudgeMax);
-        var nudge = new ChatCompletionMessage("user", reminder);
+            nudge.N, nudge.Max);
+        var nudgeMsg = new ChatCompletionMessage("user", nudge.Reminder);
         var interim = string.IsNullOrWhiteSpace(step.Content)
             ? null
             : new ChatCompletionMessage(RoleAssistant, step.Content);
@@ -1309,11 +1315,11 @@ public static class ChatPipeline
             state.Messages.Add(interim);
             state.ToolMessages.Add(interim);
         }
-        state.Messages.Add(nudge);
+        state.Messages.Add(nudgeMsg);
         if (callbacks?.OnMessagesAddedAsync is { } added)
         {
             await added(
-                interim is null ? [nudge] : [interim, nudge],
+                interim is null ? [nudgeMsg] : [interim, nudgeMsg],
                 interim is null ? [] : [interim], ct);
         }
         state.Round++;

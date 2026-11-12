@@ -81,52 +81,8 @@ public sealed class CodeSearchBuiltinTool(
 
         // Semântico: embed query + chunks ainda sem vetor (budget/call);
         // erro de embeddings → lexical puro no mesmo call (RF-004).
-        List<Chunk>? semRank = null;
-        var degraded = embeddings is null;
-        var degradeReason = embeddings is null
-            ? "sem provider de embeddings configurado" : (string?)null;
-        if (embeddings is not null)
-        {
-            try
-            {
-                var qv = await embeddings.EmbedAsync(query, ct);
-                if (qv is not null)
-                {
-                    var missing = chunks.Where(c => c.Vector is null)
-                        .Take(WorkspaceIndexService.MaxEmbedPerCall).ToList();
-                    if (missing.Count > 0)
-                    {
-                        var vecs = await embeddings.EmbedBatchAsync(
-                            missing.Select(c => c.Text).ToArray(), ct);
-                        if (vecs is not null)
-                        {
-                            for (var i = 0; i < missing.Count
-                                && i < vecs.Length; i++)
-                            {
-                                missing[i].Vector = vecs[i];
-                            }
-                        }
-                    }
-                    semRank = chunks.Where(c => c.Vector is not null)
-                        .Select(c => (C: c,
-                            S: WorkspaceIndexService.Cosine(qv, c.Vector!)))
-                        .Where(x => x.S > 0)
-                        .OrderByDescending(x => x.S)
-                        .Select(x => x.C)
-                        .ToList();
-                }
-                else
-                {
-                    degraded = true;
-                    degradeReason = "provider de embeddings indisponível";
-                }
-            }
-            catch (Exception ex)
-            {
-                degraded = true;
-                degradeReason = $"embeddings falharam: {ex.Message}";
-            }
-        }
+        var (semRank, degraded, degradeReason) =
+            await SemanticRankAsync(chunks, query, ct);
 
         var mode = semRank is { Count: > 0 } ? "hybrid" : "lexical";
         var merged = semRank is { Count: > 0 }
@@ -167,6 +123,52 @@ public sealed class CodeSearchBuiltinTool(
             degrade_reason = degradeReason,
             mode,
         });
+    }
+
+    /// <summary>Rank semântico (cosine) com degrade honesto: sem provider,
+    /// provider indisponível ou exceção → <c>Degraded=true</c> e rank
+    /// <c>null</c> (o caller funde só quando há vetores).</summary>
+    private async Task<(List<Chunk>? Rank, bool Degraded, string? Reason)> SemanticRankAsync(
+        List<Chunk> chunks, string query, CancellationToken ct)
+    {
+        if (embeddings is null)
+        {
+            return (null, true, "sem provider de embeddings configurado");
+        }
+        try
+        {
+            var qv = await embeddings.EmbedAsync(query, ct);
+            if (qv is null)
+            {
+                return (null, true, "provider de embeddings indisponível");
+            }
+            var missing = chunks.Where(c => c.Vector is null)
+                .Take(WorkspaceIndexService.MaxEmbedPerCall).ToList();
+            if (missing.Count > 0)
+            {
+                var vecs = await embeddings.EmbedBatchAsync(
+                    missing.Select(c => c.Text).ToArray(), ct);
+                if (vecs is not null)
+                {
+                    for (var i = 0; i < missing.Count && i < vecs.Length; i++)
+                    {
+                        missing[i].Vector = vecs[i];
+                    }
+                }
+            }
+            var rank = chunks.Where(c => c.Vector is not null)
+                .Select(c => (C: c,
+                    S: WorkspaceIndexService.Cosine(qv, c.Vector!)))
+                .Where(x => x.S > 0)
+                .OrderByDescending(x => x.S)
+                .Select(x => x.C)
+                .ToList();
+            return (rank, false, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, true, $"embeddings falharam: {ex.Message}");
+        }
     }
 
     /// <summary>path_filter: glob quando contém coringa, substring senão.</summary>

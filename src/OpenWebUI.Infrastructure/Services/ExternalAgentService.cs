@@ -31,7 +31,7 @@ public sealed class ExternalAgentService(ConfigService config)
 
     private static readonly TimeSpan DetectBudget = TimeSpan.FromSeconds(2);
     private static readonly Dictionary<string, (DateTimeOffset At, bool Found, string? Path)> DetectCache = new();
-    private static readonly object DetectLock = new();
+    private static readonly System.Threading.Lock DetectLock = new();
 
     /// <summary>Registry estático (RF-001).</summary>
     public static readonly IReadOnlyList<ExternalAgentDef> Known =

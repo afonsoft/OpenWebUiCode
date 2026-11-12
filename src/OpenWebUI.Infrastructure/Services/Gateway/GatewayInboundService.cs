@@ -326,7 +326,7 @@ public sealed class GatewayInboundService(
     /// <summary>Dados de auditoria de entrega inbound (S107).</summary>
     public sealed record AuditInfo(
         string ChannelId, string? PeerId, string DeliveryDirection, string DeliveryStatus,
-        string? MessageId, string? RunId, string? Excerpt, string? Error);
+        string? MessageId, string? RunId, string? Text, string? Error);
 
     /// <summary>Persiste auditoria de entrega inbound (excerpt truncado).</summary>
     public async Task AuditAsync(AuditInfo a, CancellationToken ct)
@@ -339,7 +339,7 @@ public sealed class GatewayInboundService(
             Status = a.DeliveryStatus,
             MessageId = a.MessageId,
             RunId = a.RunId,
-            Excerpt = a.Excerpt,
+            Excerpt = a.Text,
             Error = a.Error is { Length: > 500 } ? a.Error[..500] : a.Error,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
         });

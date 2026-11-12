@@ -14,7 +14,7 @@ internal sealed class AcpHost
 {
     private readonly HttpClient _http;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly object _outGate = new();
+    private readonly System.Threading.Lock _outGate = new();
 
     /// <summary>Token Bearer exigido a los clientes (OPENWEBUI_ACP_TOKEN).</summary>
     public string? Token { get; }

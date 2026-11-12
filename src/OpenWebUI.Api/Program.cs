@@ -31,7 +31,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     ConfigureDatabase(options, connectionString));
 
 // Chaves do DataProtection persistidas no volume de dados — o default
-// /root/.aspnet/DataProtection-Keys morre com o container e todo payload
+// /root/.aspnet/DataProtection-Keys morre com o container e o payload
 // protegido fica ilegível após redeploy.
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Join(

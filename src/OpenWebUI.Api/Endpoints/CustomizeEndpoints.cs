@@ -532,7 +532,7 @@ public static class CustomizeEndpoints
         return new KnowledgeNoteResponse(
             n.Id, n.Title, n.Trigger, n.Content, n.Pinned,
             global ? "org" : "personal",
-            global ? !disabled.Contains(n.Id) : true,
+            !global || !disabled.Contains(n.Id),
             n.UserId == userId || (global && isAdmin),
             n.UpdatedAt);
     }
@@ -576,7 +576,11 @@ public static class CustomizeEndpoints
         }
         var tools = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(t => t.ToLowerInvariant()).Distinct().ToList();
+        if (tools.Count == 0)
+        {
+            return null;
+        }
         var joined = string.Join(',', tools);
-        return tools.Count == 0 ? null : joined.Length > 500 ? joined[..500] : joined;
+        return joined.Length > 500 ? joined[..500] : joined;
     }
 }

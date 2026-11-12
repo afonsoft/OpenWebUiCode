@@ -10,6 +10,14 @@ namespace OpenWebUI.Api.Endpoints;
 /// <summary>CRUD de combos de modelos com failover (SPEC-20261016-model-combos RF-005).</summary>
 public static class ComboEndpoints
 {
+    private const string AdminRole = "admin";
+
+    /// <summary>Deps dos endpoints de escrita — catálogo efetivo + DB.</summary>
+    internal sealed record ComboDeps(
+        AppDbContext Db, ProviderService Providers,
+        PipelineClientService Pipelines, HybridCache Cache,
+        ModelCapabilityResolver Capabilities);
+
     /// <summary>Mapeia as rotas de combos.</summary>
     public static RouteGroupBuilder MapComboEndpoints(this IEndpointRouteBuilder app)
     {
@@ -61,7 +69,7 @@ public static class ComboEndpoints
             return Results.Unauthorized();
         }
 
-        var isAdmin = user.Role == "admin";
+        var isAdmin = user.Role == AdminRole;
         var combos = await db.ModelCombos.AsNoTracking()
             .Include(c => c.Items)
             // SPEC-20261104-model-visibility-gate RF-004: não-admin vê só os
@@ -76,11 +84,10 @@ public static class ComboEndpoints
     /// <summary>Ids do catálogo efetivo do usuário — a validação de itens do
     /// combo usa a mesma fonte do picker da UI (RF-004).</summary>
     private static async Task<HashSet<string>> EffectiveModelIdsAsync(
-        User user, AppDbContext db, ProviderService providers,
-        PipelineClientService pipelines, HybridCache cache,
-        ModelCapabilityResolver capabilities, CancellationToken ct) =>
+        User user, ComboDeps deps, CancellationToken ct) =>
         (await ApiEndpoints.GetCachedModelListAsync(
-            user, providers, db, pipelines, cache, capabilities, ct))
+            user, deps.Providers, deps.Db, deps.Pipelines, deps.Cache,
+            deps.Capabilities, ct))
             .Data.Select(m => m.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -98,10 +105,9 @@ public static class ComboEndpoints
 
     private static async Task<IResult> CreateAsync(
         ComboUpsertRequest request,
-        HttpContext http, AppDbContext db, ProviderService providers,
-        PipelineClientService pipelines, HybridCache cache,
-        ModelCapabilityResolver capabilities, CancellationToken ct)
+        HttpContext http, [AsParameters] ComboDeps deps, CancellationToken ct)
     {
+        var db = deps.Db;
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
         {
@@ -109,14 +115,14 @@ public static class ComboEndpoints
         }
         var error = Validate(request)
             ?? ValidateItemsCatalog(request, await EffectiveModelIdsAsync(
-                user, db, providers, pipelines, cache, capabilities, ct));
+                user, deps, ct));
         if (error is not null)
         {
             return Results.BadRequest(new { detail = error });
         }
 
         var ownerId = request.Global == true ? null : user.Id;
-        if (ownerId is null && user.Role != "admin")
+        if (ownerId is null && user.Role != AdminRole)
         {
             return Results.Json(new { detail = "Combos globais exigem admin." },
                 statusCode: StatusCodes.Status403Forbidden);
@@ -165,10 +171,9 @@ public static class ComboEndpoints
 
     private static async Task<IResult> UpdateAsync(
         string id, ComboUpsertRequest request,
-        HttpContext http, AppDbContext db, ProviderService providers,
-        PipelineClientService pipelines, HybridCache cache,
-        ModelCapabilityResolver capabilities, CancellationToken ct)
+        HttpContext http, [AsParameters] ComboDeps deps, CancellationToken ct)
     {
+        var db = deps.Db;
         var (user, combo) = await FindAsync(id, http, db, ct, write: true);
         if (user is null)
         {
@@ -180,7 +185,7 @@ public static class ComboEndpoints
         }
         var error = Validate(request)
             ?? ValidateItemsCatalog(request, await EffectiveModelIdsAsync(
-                user, db, providers, pipelines, cache, capabilities, ct));
+                user, deps, ct));
         if (error is not null)
         {
             return Results.BadRequest(new { detail = error });
@@ -269,9 +274,9 @@ public static class ComboEndpoints
 
         // Global desabilitado não é legível por não-admin (mesmo escopo da lista).
         var canRead = combo.UserId == user.Id
-            || (combo.UserId is null && (combo.Enabled || user.Role == "admin"));
+            || (combo.UserId is null && (combo.Enabled || user.Role == AdminRole));
         var canWrite = combo.UserId == user.Id
-            || (combo.UserId is null && user.Role == "admin");
+            || (combo.UserId is null && user.Role == AdminRole);
         var allowed = write ? canWrite : canRead;
         return (user, allowed ? combo : null);
     }

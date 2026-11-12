@@ -22,6 +22,9 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
     private const long SizeS = 5_000, SizeM = 25_000, SizeL = 100_000, SizeXl = 300_000;
     private const int TimelineCap = 100;
     private const int EventScanCap = 500;
+    private const string SevMedium = "medium";
+    private const string KindEvent = "event";
+    private const string KindError = "error";
 
     /// <summary>Garante o insight materializado do chat — recomputa quando há
     /// runs novas (recálculo é barato: varre runs+eventos do próprio chat).</summary>
@@ -50,7 +53,7 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
 
         var metrics = ComputeMetrics(runs, userMessages);
         var issues = ComputeIssues(runs, events);
-        var timeline = ComputeTimeline(runs, events);
+        var timeline = ComputeTimeline(events);
         var size = ClassifySize(metrics.TokensIn + metrics.TokensOut);
         var category = ClassifyCategory(chat, events);
 
@@ -75,15 +78,11 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
     {
         long tin = 0, tout = 0;
         decimal cost = 0m;
-        foreach (var run in runs)
+        foreach (var metaJson in runs.Select(run => run.MetaJson).OfType<string>())
         {
-            if (run.MetaJson is null)
-            {
-                continue;
-            }
             try
             {
-                using var doc = JsonDocument.Parse(run.MetaJson);
+                using var doc = JsonDocument.Parse(metaJson);
                 if (!doc.RootElement.TryGetProperty("usage", out var usage))
                 {
                     continue;
@@ -128,7 +127,7 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
         if (failed > 0)
         {
             issues.Add(new InsightIssue("run_failed",
-                failed >= 3 ? "high" : "medium",
+                failed >= 3 ? "high" : SevMedium,
                 $"{failed} run(s) terminaram em erro", failed));
         }
 
@@ -137,7 +136,7 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
         if (retries > 0)
         {
             issues.Add(new InsightIssue("provider_retry",
-                retries >= 3 ? "high" : "medium",
+                retries >= 3 ? "high" : SevMedium,
                 $"{retries} retry/recuperação de provider", retries));
         }
 
@@ -146,7 +145,7 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
         if (toolFails > 0)
         {
             issues.Add(new InsightIssue("tool_failure",
-                toolFails >= 3 ? "medium" : "low",
+                toolFails >= 3 ? SevMedium : "low",
                 $"{toolFails} tool call(s) com falha", toolFails));
         }
 
@@ -154,7 +153,7 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
             ContainsAny(e.PayloadJson, "overflow", "compact"));
         if (overflow > 0)
         {
-            issues.Add(new InsightIssue("context_overflow", "medium",
+            issues.Add(new InsightIssue("context_overflow", SevMedium,
                 $"{overflow} recuperação(ões) de contexto", overflow));
         }
 
@@ -171,22 +170,22 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
 
     /// <summary>Timeline cor-codificada (cap 100, mais recentes primeiro — RF-002).</summary>
     private static List<InsightTimelineEvent> ComputeTimeline(
-        List<ChatRun> runs, List<ChatRunEvent> events)
+        List<ChatRunEvent> events)
     {
         var timeline = new List<InsightTimelineEvent>();
         foreach (var e in events)
         {
             var (kind, title) = e.Type switch
             {
-                "tool_call" => ("event", $"tool: {PayloadTitle(e.PayloadJson)}"),
+                "tool_call" => (KindEvent, $"tool: {PayloadTitle(e.PayloadJson)}"),
                 "tool_result" => ContainsAny(e.PayloadJson, "error", "failed", "exception")
-                    ? ("error", $"tool falhou: {PayloadTitle(e.PayloadJson)}")
-                    : ("event", $"tool ok: {PayloadTitle(e.PayloadJson)}"),
+                    ? (KindError, $"tool falhou: {PayloadTitle(e.PayloadJson)}")
+                    : (KindEvent, $"tool ok: {PayloadTitle(e.PayloadJson)}"),
                 "step_finished" => ("value", "step concluído"),
                 "note" => ContainsAny(e.PayloadJson, "retry", "recover")
                     ? ("warn", "retry/recuperação")
-                    : ("event", "nota"),
-                _ => ("event", e.Type),
+                    : (KindEvent, "nota"),
+                _ => (KindEvent, e.Type),
             };
             timeline.Add(new InsightTimelineEvent(
                 e.CreatedAt, kind, Truncate(title, 80), e.RunId));
@@ -247,13 +246,14 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
         try
         {
             using var doc = JsonDocument.Parse(payload);
-            foreach (var prop in doc.RootElement.EnumerateObject())
+            var title = doc.RootElement.EnumerateObject()
+                .Select(prop => prop.Value)
+                .Where(v => v.ValueKind == JsonValueKind.String)
+                .Select(v => v.GetString())
+                .FirstOrDefault(v => v is { Length: > 0 });
+            if (title is not null)
             {
-                if (prop.Value.ValueKind == JsonValueKind.String
-                    && prop.Value.GetString() is { Length: > 0 } s)
-                {
-                    return s;
-                }
+                return title;
             }
         }
         catch (JsonException)
@@ -299,26 +299,8 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
 
             if (item.Kind == "knowledge")
             {
-                var exists = await db.KnowledgeNotes.AsNoTracking()
-                    .AnyAsync(n => n.UserId == user.Id && n.Title == title, ct);
-                if (exists)
-                {
-                    skipped.Add(new InsightApplySkip(item.Kind, "duplicate"));
-                    continue;
-                }
-                var note = new KnowledgeNote
-                {
-                    UserId = user.Id,
-                    Title = title,
-                    Trigger = Truncate(text, 500),
-                    Content = text,
-                    Pinned = false,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                };
-                db.KnowledgeNotes.Add(note);
-                await db.SaveChangesAsync(ct);
-                applied.Add(new InsightApplyResult(item.Kind, note.Id, title));
+                await ApplyKnowledgeAsync(user, item, title, text, now,
+                    applied, skipped, ct);
             }
             else if (item.Kind == "memory")
             {
@@ -328,29 +310,8 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
                     repoSlug = binding?.Repo;
                     repoResolved = true;
                 }
-                var scope = repoSlug is not null ? "repo" : "global";
-                var existing = await db.AgentMemories
-                    .FirstOrDefaultAsync(m => m.UserId == user.Id
-                        && m.Scope == scope && m.RepoSlug == repoSlug
-                        && m.Title == title, ct);
-                if (existing is not null)
-                {
-                    skipped.Add(new InsightApplySkip(item.Kind, "duplicate"));
-                    continue;
-                }
-                var memory = new AgentMemory
-                {
-                    UserId = user.Id,
-                    Scope = scope,
-                    RepoSlug = repoSlug,
-                    Title = title,
-                    Content = text,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                };
-                db.AgentMemories.Add(memory);
-                await db.SaveChangesAsync(ct);
-                applied.Add(new InsightApplyResult(item.Kind, memory.Id, title));
+                await ApplyMemoryAsync(user, item, title, text, repoSlug, now,
+                    applied, skipped, ct);
             }
             else
             {
@@ -360,5 +321,66 @@ public sealed class ChatInsightsService(AppDbContext db, WorkspaceRepoService re
         }
 
         return new InsightApplyResponse(applied, skipped);
+    }
+
+    /// <summary><c>knowledge</c>→<see cref="KnowledgeNote"/> pessoal;
+    /// duplicata por título → skip.</summary>
+    private async Task ApplyKnowledgeAsync(
+        User user, InsightApplyItem item, string title, string text, long now,
+        List<InsightApplyResult> applied, List<InsightApplySkip> skipped,
+        CancellationToken ct)
+    {
+        var exists = await db.KnowledgeNotes.AsNoTracking()
+            .AnyAsync(n => n.UserId == user.Id && n.Title == title, ct);
+        if (exists)
+        {
+            skipped.Add(new InsightApplySkip(item.Kind, "duplicate"));
+            return;
+        }
+        var note = new KnowledgeNote
+        {
+            UserId = user.Id,
+            Title = title,
+            Trigger = Truncate(text, 500),
+            Content = text,
+            Pinned = false,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.KnowledgeNotes.Add(note);
+        await db.SaveChangesAsync(ct);
+        applied.Add(new InsightApplyResult(item.Kind, note.Id, title));
+    }
+
+    /// <summary><c>memory</c>→<see cref="AgentMemory"/> no escopo repo
+    /// (chat com binding) ou global; duplicata por título → skip.</summary>
+    private async Task ApplyMemoryAsync(
+        User user, InsightApplyItem item, string title, string text,
+        string? repoSlug, long now, List<InsightApplyResult> applied,
+        List<InsightApplySkip> skipped, CancellationToken ct)
+    {
+        var scope = repoSlug is not null ? "repo" : "global";
+        var existing = await db.AgentMemories
+            .FirstOrDefaultAsync(m => m.UserId == user.Id
+                && m.Scope == scope && m.RepoSlug == repoSlug
+                && m.Title == title, ct);
+        if (existing is not null)
+        {
+            skipped.Add(new InsightApplySkip(item.Kind, "duplicate"));
+            return;
+        }
+        var memory = new AgentMemory
+        {
+            UserId = user.Id,
+            Scope = scope,
+            RepoSlug = repoSlug,
+            Title = title,
+            Content = text,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.AgentMemories.Add(memory);
+        await db.SaveChangesAsync(ct);
+        applied.Add(new InsightApplyResult(item.Kind, memory.Id, title));
     }
 }

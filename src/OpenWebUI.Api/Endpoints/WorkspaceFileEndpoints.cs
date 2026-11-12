@@ -700,5 +700,5 @@ public static class WorkspaceFileEndpoints
     internal sealed record WorkspaceFileDeps(
         AppDbContext Db, WorkspaceRepoService Repos,
         ConfigService Config, IConfiguration Configuration,
-        Infrastructure.Lsp.LspService Lsp, ILogger<Program> Logger);
+        Infrastructure.Lsp.LspService Lsp, ILogger<WorkspaceFileDeps> Logger);
 }

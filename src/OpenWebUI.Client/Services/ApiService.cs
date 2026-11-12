@@ -685,10 +685,22 @@ public class ApiService(HttpClient http, AuthService auth)
         await SendAsync<List<FileResponse>>(HttpMethod.Get, "/api/v1/files/") ?? [];
 
     /// <summary>Envia um arquivo via multipart/form-data.</summary>
-    public async Task<FileResponse?> UploadFileAsync(Stream content, string fileName, string? contentType)
+    public async Task<FileResponse?> UploadFileAsync(Stream content, string fileName,
+        string? contentType, long? contentLength = null)
     {
         using var form = new MultipartFormDataContent();
         using var streamContent = new StreamContent(content);
+        // S5693: declara o tamanho do corpo quando o stream é bounded —
+        // o servidor rejeita acima de MaxUploadRequestBytes; declarar o
+        // Content-Length evita upload chunked sem limite declarado.
+        if (content.CanSeek)
+        {
+            streamContent.Headers.ContentLength = content.Length;
+        }
+        else if (contentLength is { } declared)
+        {
+            streamContent.Headers.ContentLength = declared;
+        }
         if (!string.IsNullOrEmpty(contentType))
         {
             streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
