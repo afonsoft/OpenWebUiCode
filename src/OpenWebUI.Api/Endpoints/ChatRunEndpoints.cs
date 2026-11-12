@@ -458,14 +458,15 @@ public static class ChatRunEndpoints
     /// Devolve eventos com seq &gt; <c>lastSeq</c> + status, erro,
     /// <see cref="ChatRun.PartialContent"/> e aprovação/pergunta pendente.
     /// </summary>
+    /// <summary>Path + query do polling/attach de eventos da run.</summary>
+    internal sealed record RunEventsQuery(string Id, string RunId, int? LastSeq);
+
     private static async Task<IResult> GetRunEventsAsync(
-        string id,
-        string runId,
+        [AsParameters] RunEventsQuery q,
         HttpContext http,
         AppDbContext db,
         ChatRunBroadcaster broadcaster,
         ChatRunApprovals approvals,
-        int? lastSeq,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -476,15 +477,15 @@ public static class ChatRunEndpoints
 
         var run = await db.ChatRuns.AsNoTracking()
             .FirstOrDefaultAsync(
-                r => r.Id == runId && r.ChatId == id && r.UserId == user.Id, ct);
+                r => r.Id == q.RunId && r.ChatId == q.Id && r.UserId == user.Id, ct);
         if (run is null)
         {
             return Results.NotFound(new { detail = RunNotFoundMessage });
         }
 
-        var since = lastSeq ?? 0;
-        var (events, closed) = broadcaster.GetEventsSince(runId, since);
-        var asked = approvals.PendingAsked(runId);
+        var since = q.LastSeq ?? 0;
+        var (events, closed) = broadcaster.GetEventsSince(q.RunId, since);
+        var asked = approvals.PendingAsked(q.RunId);
         return Results.Ok(new RunEventsResponse(
             run.Status, closed,
             events.Count > 0 ? events[^1].Seq : since,
@@ -583,15 +584,16 @@ public static class ChatRunEndpoints
         IAsyncEnumerator<ChatRunBroadcaster.RunEvent> enumerator,
         CancellationToken ct)
     {
-        // ValueTask é consumo único — materializa em Task antes do WhenAny.
+        // ValueTask é consumo único — materializa em Task via helpers que
+        // o aguardam exatamente uma vez (S5034) antes do WhenAny.
         // PeriodicTimer aceita um único wait pendente: o tick é criado
         // uma vez e só re-armado depois de completar.
-        var moveNext = enumerator.MoveNextAsync().AsTask();
+        var moveNext = AwaitMoveNextAsync(enumerator);
         var moveNextConsumed = false;
         try
         {
             using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(10));
-            var tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
+            var tick = AwaitTickAsync(heartbeat, ct);
             while (true)
             {
                 var winner = await Task.WhenAny(moveNext, tick);
@@ -601,7 +603,7 @@ public static class ChatRunEndpoints
                     await writer.WriteLineAsync(": hb");
                     await writer.WriteLineAsync();
                     await writer.FlushAsync(ct);
-                    tick = heartbeat.WaitForNextTickAsync(ct).AsTask();
+                    tick = AwaitTickAsync(heartbeat, ct);
                     continue;
                 }
 
@@ -615,7 +617,7 @@ public static class ChatRunEndpoints
                 await writer.WriteLineAsync(evt.Payload);
                 await writer.WriteLineAsync();
                 await writer.FlushAsync(ct);
-                moveNext = enumerator.MoveNextAsync().AsTask();
+                moveNext = AwaitMoveNextAsync(enumerator);
                 moveNextConsumed = false;
             }
         }
@@ -638,6 +640,19 @@ public static class ChatRunEndpoints
             }
         }
     }
+
+    /// <summary>Consome o <see cref="ValueTask{T}"/> de
+    /// <see cref="IAsyncEnumerator{T}.MoveNextAsync"/> exatamente uma
+    /// vez (S5034) e o expõe como <see cref="Task{T}"/> para o
+    /// <see cref="Task.WhenAny(Task[])"/>.</summary>
+    private static async Task<bool> AwaitMoveNextAsync(
+        IAsyncEnumerator<ChatRunBroadcaster.RunEvent> enumerator) =>
+        await enumerator.MoveNextAsync();
+
+    /// <summary>Idem para <see cref="PeriodicTimer.WaitForNextTickAsync(CancellationToken)"/>.</summary>
+    private static async Task<bool> AwaitTickAsync(
+        PeriodicTimer timer, CancellationToken ct) =>
+        await timer.WaitForNextTickAsync(ct);
 
     /// <summary>Pede a interrupção de uma run ativa.</summary>
     /// <summary>

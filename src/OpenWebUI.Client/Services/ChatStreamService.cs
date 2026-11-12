@@ -16,6 +16,8 @@ namespace OpenWebUI.Client.Services;
 /// </summary>
 public class ChatStreamService(HttpClient http, AuthService auth)
 {
+    private const string EventPrefix = "event:";
+    private const string DataPrefix = "data:";
     /// <summary>
     /// Evento tipado do stream de uma run (SPEC-20261007-chat-tool-streaming):
     /// delta de texto, tool_call/tool_result, fase de status ou pedido de
@@ -305,17 +307,17 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         foreach (var rawLine in payload.Split('\n'))
         {
             var line = rawLine.TrimEnd('\r');
-            if (line.StartsWith("event:", StringComparison.Ordinal))
+            if (line.StartsWith(EventPrefix, StringComparison.Ordinal))
             {
-                eventName = line["event:".Length..].Trim();
+                eventName = line[EventPrefix.Length..].Trim();
                 continue;
             }
-            if (!line.StartsWith("data:", StringComparison.Ordinal))
+            if (!line.StartsWith(DataPrefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var data = line["data:".Length..].Trim();
+            var data = line[DataPrefix.Length..].Trim();
             if (data == "[DONE]")
             {
                 continue;
@@ -431,9 +433,9 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             heartbeat = true;
             return true;
         }
-        if (line.StartsWith("event:", StringComparison.Ordinal))
+        if (line.StartsWith(EventPrefix, StringComparison.Ordinal))
         {
-            eventName = line["event:".Length..].Trim();
+            eventName = line[EventPrefix.Length..].Trim();
             return true;
         }
         if (line.StartsWith("id:", StringComparison.Ordinal))
@@ -443,7 +445,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
             _ = int.TryParse(line["id:".Length..].Trim(), out lastSeq);
             return true;
         }
-        return !line.StartsWith("data:", StringComparison.Ordinal);
+        return !line.StartsWith(DataPrefix, StringComparison.Ordinal);
     }
 
     /// Parser SSE: lê pares `event:`/`data:` e produz
@@ -473,7 +475,7 @@ public class ChatStreamService(HttpClient http, AuthService auth)
                 continue;
             }
 
-            var payload = line["data:".Length..].Trim();
+            var payload = line[DataPrefix.Length..].Trim();
             if (payload == "[DONE]")
             {
                 yield break;

@@ -254,20 +254,7 @@
             var result = await Api.ApplyInsightSuggestionsAsync(ChatId, supported);
             if (result is not null)
             {
-                var appliedTitles = result.Applied.Select(a => a.Title).ToHashSet();
-                var skippedReasons = result.Skipped.Select(s => s.Reason).ToList();
-                for (var i = 0; i < items.Count; i++)
-                {
-                    if (_applyState.ContainsKey(i) || items[i].Kind is not ("knowledge" or "memory"))
-                    {
-                        continue;
-                    }
-                    var title = items[i].Text.Trim();
-                    title = title.Length <= 120 ? title : title[..120];
-                    _applyState[i] = appliedTitles.Contains(title)
-                        ? "applied"
-                        : skippedReasons.FirstOrDefault() ?? "failed";
-                }
+                ReconcileApplyState(items, result);
             }
         }
         catch
@@ -275,6 +262,26 @@
             // estado individual fica pendente — usuário pode retentar por item.
         }
         _applying = false;
+    }
+
+    /// <summary>Marca <c>_applyState</c> por item aplicado/skipped após o apply-all.</summary>
+    private void ReconcileApplyState(
+        IReadOnlyList<InsightActionItem> items, InsightApplyResponse result)
+    {
+        var appliedTitles = result.Applied.Select(a => a.Title).ToHashSet();
+        var skippedReasons = result.Skipped.Select(s => s.Reason).ToList();
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (_applyState.ContainsKey(i) || items[i].Kind is not ("knowledge" or "memory"))
+            {
+                continue;
+            }
+            var title = items[i].Text.Trim();
+            title = title.Length <= 120 ? title : title[..120];
+            _applyState[i] = appliedTitles.Contains(title)
+                ? "applied"
+                : skippedReasons.FirstOrDefault() ?? "failed";
+        }
     }
 
     /// <summary>RF-003: kind=skill → editor do /customize com draft.</summary>

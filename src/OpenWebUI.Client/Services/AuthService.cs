@@ -176,6 +176,7 @@ public class AuthService(
         // — "%2e%2e" não pode escapar a conferência de segmentos.
         var decoded = Uri.UnescapeDataString(path);
         if (!uri.StartsWith('/') || uri.StartsWith("//", StringComparison.Ordinal)
+            || decoded.StartsWith("//", StringComparison.Ordinal)
             || path.IndexOf('\\') >= 0 || decoded.IndexOf('\\') >= 0
             || path.Split('/').Any(static s => s is "..")
             || decoded.Split('/').Any(static s => s is ".."))
@@ -183,7 +184,27 @@ public class AuthService(
             throw new ArgumentException("URI deve ser um path relativo de mesma origem.", nameof(uri));
         }
 
-        var request = new HttpRequestMessage(method, uri);
+        // S7044: resolve contra a origem do app e exige mesma autoridade —
+        // o path validado acima não pode trocar de host/esquema/porta.
+        Uri requestUri;
+        if (http.BaseAddress is null)
+        {
+            requestUri = new Uri(uri, UriKind.Relative);
+        }
+        else
+        {
+            var absolute = new Uri(http.BaseAddress, uri);
+            if (!string.Equals(
+                    absolute.GetLeftPart(UriPartial.Authority),
+                    http.BaseAddress.GetLeftPart(UriPartial.Authority),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("URI deve ser um path relativo de mesma origem.", nameof(uri));
+            }
+            requestUri = absolute;
+        }
+
+        var request = new HttpRequestMessage(method, requestUri);
         if (_token is not null)
         {
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _token);

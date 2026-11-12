@@ -27,7 +27,7 @@ public sealed class ToolInstallBuiltinTool(
     /// metacaracteres de shell → impossível injetar comando.</summary>
     private static readonly Regex SafePackage = new(
         @"^[A-Za-z0-9][A-Za-z0-9._+@/:~=\[\],\^\-]*$",
-        RegexOptions.Compiled);
+        RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     /// <summary>Templates por gerenciador allowlisted; <c>{0}</c> é o
     /// pacote já validado por <see cref="SafePackage"/>.</summary>
@@ -82,7 +82,7 @@ public sealed class ToolInstallBuiltinTool(
         var package = args.TryGetProperty("package", out var p)
             ? p.GetString() : null;
         if (string.IsNullOrWhiteSpace(manager)
-            || !Managers.TryGetValue(manager, out var template))
+            || !Managers.TryGetValue(manager, out _))
         {
             return new BuiltinToolResult(
                 $"Gerenciador '{manager}' fora da allowlist "
@@ -107,6 +107,16 @@ public sealed class ToolInstallBuiltinTool(
             return await VerifyAsync(binary, package, context, timeout, ct);
         }
 
+        return await RunInstallAsync(
+            manager, package, binary, args, context, timeout, ct);
+    }
+
+    /// <summary>Executa o install (env do agente + sudo preparado) e
+    /// verifica o binário ao final.</summary>
+    private async Task<BuiltinToolResult> RunInstallAsync(
+        string manager, string package, string binary, JsonElement args,
+        BuiltinToolContext context, TimeSpan timeout, CancellationToken ct)
+    {
         var command = BuildCommand(manager, package);
         var env = agentEnv is null || runner is not null
             ? AgentEnv.Empty
@@ -132,10 +142,9 @@ public sealed class ToolInstallBuiltinTool(
                 });
         }
 
-        var verified = await VerifyAsync(
+        return await VerifyAsync(
             binary, package, context, timeout, ct,
             new { manager, package, command });
-        return verified;
     }
 
     /// <summary>Monta o comando do template do gerenciador; go install

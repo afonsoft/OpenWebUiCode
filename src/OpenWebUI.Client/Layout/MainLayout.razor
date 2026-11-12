@@ -39,7 +39,7 @@
 
 @code {
     private bool _ready;
-    private bool _settingsOpen;
+    private bool _settingsOpen { get; set; }
     private bool _mobileMenu;
 
     protected override async Task OnInitializedAsync()

@@ -214,10 +214,12 @@
     /// <summary>Seleção atual é o pool Adaptive (SPEC-20261110).</summary>
     private bool IsAdaptive => AdaptiveModelRef.IsAdaptive(Value);
 
-    private string SelectedName =>
-        IsFusion ? L["models.fusion"]
-        : IsAdaptive ? L["models.adaptive_pool"]
-        : _models?.FirstOrDefault(m => m.Id == Value)?.Name ?? L["models.select"];
+    private string SelectedName => (IsFusion, IsAdaptive) switch
+    {
+        (true, _) => L["models.fusion"],
+        (_, true) => L["models.adaptive_pool"],
+        _ => _models?.FirstOrDefault(m => m.Id == Value)?.Name ?? L["models.select"],
+    };
 
     protected override async Task OnInitializedAsync() => await LoadModelsAsync();
 
@@ -268,35 +270,70 @@
         // catálogo só decide quando Value está vazio (chat novo) —
         // sobrescrever aqui era o bug que voltava o seletor pro
         // primeiro modelo ao trocar de chat e retornar.
-        if (!string.IsNullOrEmpty(Value))
+        if (RestoreFromValue())
         {
-            if (FusionModelRef.TryParseChain(Value, out var curLs, out var curSs))
-            {
-                _leader = curLs[0];
-                _leader2 = curLs.Count > 1 ? curLs[1] : null;
-                _sidekick = curSs[0];
-                _sidekick2 = curSs.Count > 1 ? curSs[1] : null;
-            }
-            else if (AdaptiveModelRef.TryParse(Value, out var curPool))
-            {
-                for (var i = 0; i < AdaptiveSlots; i++)
-                {
-                    _adaptive[i] = i < curPool.Count ? curPool[i] : null;
-                }
-            }
             return;
         }
 
-        string? saved;
+        var saved = await TryGetSavedAsync();
+        if (await RestoreFromSavedAsync(saved))
+        {
+            return;
+        }
+
+        var selected = _models.Any(m => m.Id == saved)
+            ? saved
+            : _models.FirstOrDefault()?.Id;
+
+        if (selected != Value)
+        {
+            Value = selected;
+            await ValueChanged.InvokeAsync(selected);
+        }
+    }
+
+    /// <summary>Espelha os selects a partir do <see cref="Value"/> do pai
+    /// (ref fusion/adaptive ou modelo simples). true = consumido.</summary>
+    private bool RestoreFromValue()
+    {
+        if (string.IsNullOrEmpty(Value))
+        {
+            return false;
+        }
+        if (FusionModelRef.TryParseChain(Value, out var curLs, out var curSs))
+        {
+            _leader = curLs[0];
+            _leader2 = curLs.Count > 1 ? curLs[1] : null;
+            _sidekick = curSs[0];
+            _sidekick2 = curSs.Count > 1 ? curSs[1] : null;
+        }
+        else if (AdaptiveModelRef.TryParse(Value, out var curPool))
+        {
+            for (var i = 0; i < AdaptiveSlots; i++)
+            {
+                _adaptive[i] = i < curPool.Count ? curPool[i] : null;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Modelo persistido do storage — falha de leitura vira null.</summary>
+    private async Task<string?> TryGetSavedAsync()
+    {
         try
         {
-            saved = await Storage.GetAsync(ModelKey);
+            return await Storage.GetAsync(ModelKey);
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
         {
-            saved = null;
+            return null;
         }
+    }
 
+    /// <summary>Restaura do storage: ref fusion, pool adaptive ou modelo
+    /// simples válido no catálogo. true = restaurou (caller encerra).</summary>
+    private async Task<bool> RestoreFromSavedAsync(string? saved)
+    {
         if (FusionModelRef.TryParseChain(saved, out var savedLs, out var savedSs)
             && HasModel(savedLs[0]) && HasModel(savedSs[0]))
         {
@@ -310,7 +347,7 @@
                 Value = restored;
                 await ValueChanged.InvokeAsync(restored);
             }
-            return;
+            return true;
         }
 
         if (AdaptiveModelRef.TryParse(saved, out var savedPool)
@@ -326,18 +363,9 @@
                 Value = restoredPool;
                 await ValueChanged.InvokeAsync(restoredPool);
             }
-            return;
+            return true;
         }
-
-        var selected = _models.Any(m => m.Id == saved)
-            ? saved
-            : _models.FirstOrDefault()?.Id;
-
-        if (selected != Value)
-        {
-            Value = selected;
-            await ValueChanged.InvokeAsync(selected);
-        }
+        return false;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -374,6 +402,17 @@
         }
     }
 
+    /// <summary>Fallback do slot adaptive: i-ésimo do catálogo quando
+    /// existe; o primeiro senão; null nos slots opcionais (3-4).</summary>
+    private string? AdaptiveFallback(int i)
+    {
+        if (i >= 2)
+        {
+            return null;
+        }
+        return i < _models!.Count ? _models[i].Id : _models[0].Id;
+    }
+
     private bool HasModel(string? id) =>
         id is not null && _models?.Any(m => m.Id == id) == true;
 
@@ -381,20 +420,24 @@
     /// Leader/Sidekick — defaults = par salvo ou primeiro modelo do catálogo.</summary>
     private async Task SelectFusionAsync()
     {
-        _leader = HasModel(_leader) ? _leader
-            : (await Storage.GetAsync(FusionLeaderKey)) is { } stored && HasModel(stored)
-            ? stored : _models!.First().Id;
-        _leader2 = HasModel(_leader2) ? _leader2
-            : (await Storage.GetAsync(FusionLeader2Key)) is { } storedL2 && HasModel(storedL2)
-            ? storedL2 : null;
-        _sidekick = HasModel(_sidekick) ? _sidekick
-            : (await Storage.GetAsync(FusionSidekickKey)) is { } storedSk && HasModel(storedSk)
-            ? storedSk : _models!.First().Id;
-        _sidekick2 = HasModel(_sidekick2) ? _sidekick2
-            : (await Storage.GetAsync(FusionSidekick2Key)) is { } storedSk2 && HasModel(storedSk2)
-            ? storedSk2 : null;
+        _leader = await ResolveSlotAsync(_leader, FusionLeaderKey, _models![0].Id);
+        _leader2 = await ResolveSlotAsync(_leader2, FusionLeader2Key, null);
+        _sidekick = await ResolveSlotAsync(_sidekick, FusionSidekickKey, _models![0].Id);
+        _sidekick2 = await ResolveSlotAsync(_sidekick2, FusionSidekick2Key, null);
         await ApplyFusionValueAsync();
         await _trigger.FocusAsync();
+    }
+
+    /// <summary>Slot de select: valor atual válido &gt; storage &gt; fallback.</summary>
+    private async Task<string?> ResolveSlotAsync(
+        string? current, string storageKey, string? fallback)
+    {
+        if (HasModel(current))
+        {
+            return current;
+        }
+        var stored = await Storage.GetAsync(storageKey);
+        return HasModel(stored) ? stored : fallback;
     }
 
     /// <summary>Seleciona o pool adaptive: menu fica aberto com os 4
@@ -404,12 +447,8 @@
     {
         for (var i = 0; i < AdaptiveSlots; i++)
         {
-            var stored = await Storage.GetAsync(string.Format(AdaptiveSlotKey, i));
-            _adaptive[i] = HasModel(_adaptive[i]) ? _adaptive[i]
-                : HasModel(stored) ? stored
-                : i < 2 && i < _models!.Count ? _models![i].Id
-                : i < 2 ? _models!.First().Id
-                : null;
+            _adaptive[i] = await ResolveSlotAsync(_adaptive[i],
+                string.Format(AdaptiveSlotKey, i), AdaptiveFallback(i));
         }
         await ApplyAdaptiveValueAsync();
         await _trigger.FocusAsync();

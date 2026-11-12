@@ -142,14 +142,14 @@ public sealed class ChatHashTests
     }
 
     [Test]
-    public void Hash_DentroDePalavra_NaoAbre()
+    public async Task Hash_DentroDePalavra_NaoAbre()
     {
         using var ctx = Setup();
         var cut = ctx.Render<ChatView>();
         var textarea = cut.Find("textarea");
 
         textarea.Input("oi#foo");
-        System.Threading.Thread.Sleep(400);
+        await Task.Delay(400);
         Assert.That(cut.FindAll(".mention-list [role=option]"), Is.Empty);
     }
 }

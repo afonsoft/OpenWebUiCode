@@ -17,7 +17,7 @@ namespace OpenWebUI.Infrastructure.Services;
 ///   <c>deepwiki</c> (<c>http</c>, <c>https://mcp.deepwiki.com/mcp</c>) e
 ///   marca <c>seed.deepwiki-mcp</c> — se o admin remover o server depois,
 ///   o marker impede recriação (respeita a decisão).</item>
-///   <item>Todo boot com o server habilitado e <b>sem tools
+///   <item>A cada boot com o server habilitado e <b>sem tools
 ///   materializadas</b>: tenta <c>RefreshToolsAsync</c> — self-healing
 ///   para boot offline (LastError gravado pelo refresh; próximo boot
 ///   tenta de novo).</item>
@@ -54,7 +54,8 @@ public sealed class DeepWikiMcpSeeder(
                 .FirstOrDefaultAsync(s => s.Id == ServerId, stoppingToken);
             if (server is null)
             {
-                if (db.ConfigEntries.Find(SeedMarkerKey) is not null)
+                if (await db.ConfigEntries.FindAsync(
+                        [SeedMarkerKey], stoppingToken) is not null)
                 {
                     return;   // admin removeu após o seed — não recria.
                 }
@@ -100,9 +101,8 @@ public sealed class DeepWikiMcpSeeder(
                 }
                 catch (InvalidOperationException ex)
                 {
-                    logger?.LogWarning(
-                        "DeepWiki MCP: refresh falhou ({Error}) — nova tentativa no próximo boot.",
-                        ex.Message);
+                    logger?.LogWarning(ex,
+                        "DeepWiki MCP: refresh falhou — nova tentativa no próximo boot.");
                 }
             }
         }

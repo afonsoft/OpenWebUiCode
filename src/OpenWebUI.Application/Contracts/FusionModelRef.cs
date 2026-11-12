@@ -111,13 +111,7 @@ public static class FusionModelRef
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var chain = new List<string>(leaders.Count + sidekicks.Count);
-        foreach (var id in leaders.Concat(sidekicks))
-        {
-            if (seen.Add(id))
-            {
-                chain.Add(id);
-            }
-        }
+        chain.AddRange(leaders.Concat(sidekicks).Where(seen.Add));
         return chain;
     }
 

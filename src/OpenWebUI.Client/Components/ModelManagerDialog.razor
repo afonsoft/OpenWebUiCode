@@ -31,7 +31,7 @@
                                 @onclick="() => _provider = null">
                             @L["models.all_providers"]
                         </button>
-                        @foreach (var p in Providers)
+                        @foreach (var p in GetProviders())
                         {
                             <button type="button"
                                     class="px-2 py-0.5 text-xs rounded-full @(_provider == p ? "bg-gray-200 dark:bg-gray-700" : "bg-gray-100 dark:bg-gray-800")"
@@ -49,14 +49,14 @@
                         {
                             <div>
                                 <div class="flex items-center justify-between text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                                    <span>@group.Key (@group.Enabled/@group.Total)</span>
+                                    <span>@group.Provider (@group.Enabled/@group.Total)</span>
                                     <span class="flex gap-2">
                                         <button type="button" class="underline"
-                                                @onclick="() => SetGroupAsync(group.Key, true)">
+                                                @onclick="() => SetGroupAsync(group.Provider, true)">
                                             @L["models.enable_all"]
                                         </button>
                                         <button type="button" class="underline"
-                                                @onclick="() => SetGroupAsync(group.Key, false)">
+                                                @onclick="() => SetGroupAsync(group.Provider, false)">
                                             @L["models.disable_all"]
                                         </button>
                                     </span>
@@ -157,7 +157,7 @@
 
     private static string Key(CatalogModel m) => $"{m.Provider}:{m.Id}";
 
-    private IReadOnlyList<string> Providers =>
+    private IReadOnlyList<string> GetProviders() =>
         _items.Select(m => m.Provider).Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(p => p).ToList();
 
@@ -167,7 +167,7 @@
         return (ofProvider.Count(m => m.Enabled), ofProvider.Count);
     }
 
-    private sealed record Group(string Key, int Enabled, int Total, List<CatalogModel> Items);
+    private sealed record Group(string Provider, int Enabled, int Total, List<CatalogModel> Items);
 
     private IEnumerable<Group> Groups() => _items
         .Where(m => (_provider is null || m.Provider == _provider)

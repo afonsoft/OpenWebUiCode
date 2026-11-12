@@ -259,34 +259,37 @@ public static class InsightsEndpoints
         }
         try
         {
-            var doc = JsonDocument.Parse(raw[start..(end + 1)]).RootElement;
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            return new InsightAnalysis(
-                Summary: doc.TryGetProperty("summary", out var s) ? s.GetString() ?? "" : "",
-                Issues: StrList(doc, "issues"),
-                ImprovedPrompt: doc.TryGetProperty("improvedPrompt", out var ip)
-                    ? ip.GetString() : null,
-                Changes: doc.TryGetProperty("changes", out var ch)
-                    ? ch.EnumerateArray().Select(e => new InsightChange(
-                        e.TryGetProperty("what", out var w) ? w.GetString() ?? "" : "",
-                        e.TryGetProperty("why", out var y) ? y.GetString() ?? "" : ""))
-                        .ToList()
-                    : [],
-                ActionItems: doc.TryGetProperty("actionItems", out var ai)
-                    ? ai.EnumerateArray().Select(e => new InsightActionItem(
-                        e.TryGetProperty("kind", out var k) ? k.GetString() ?? "repo" : "repo",
-                        e.TryGetProperty("text", out var t) ? t.GetString() ?? "" : ""))
-                        .ToList()
-                    : [],
-                KnowledgeUsed: StrList(doc, "knowledgeUsed"),
-                ModelId: model,
-                GeneratedAt: now);
+            return ParseAnalysis(
+                JsonDocument.Parse(raw[start..(end + 1)]).RootElement, model);
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    /// <summary>Parse tolerante do JSON do modelo → <see cref="InsightAnalysis"/>.</summary>
+    private static InsightAnalysis ParseAnalysis(JsonElement doc, string model) =>
+        new(
+            Summary: doc.TryGetProperty("summary", out var s) ? s.GetString() ?? "" : "",
+            Issues: StrList(doc, "issues"),
+            ImprovedPrompt: doc.TryGetProperty("improvedPrompt", out var ip)
+                ? ip.GetString() : null,
+            Changes: doc.TryGetProperty("changes", out var ch)
+                ? ch.EnumerateArray().Select(e => new InsightChange(
+                    e.TryGetProperty("what", out var w) ? w.GetString() ?? "" : "",
+                    e.TryGetProperty("why", out var y) ? y.GetString() ?? "" : ""))
+                    .ToList()
+                : [],
+            ActionItems: doc.TryGetProperty("actionItems", out var ai)
+                ? ai.EnumerateArray().Select(e => new InsightActionItem(
+                    e.TryGetProperty("kind", out var k) ? k.GetString() ?? "repo" : "repo",
+                    e.TryGetProperty("text", out var t) ? t.GetString() ?? "" : ""))
+                    .ToList()
+                : [],
+            KnowledgeUsed: StrList(doc, "knowledgeUsed"),
+            ModelId: model,
+            GeneratedAt: DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
     private static List<string> StrList(JsonElement doc, string name) =>
         doc.TryGetProperty(name, out var arr) && arr.ValueKind == JsonValueKind.Array

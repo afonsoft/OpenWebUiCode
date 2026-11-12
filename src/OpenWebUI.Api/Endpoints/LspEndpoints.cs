@@ -456,8 +456,7 @@ public static class LspEndpoints
                         items = arr;
                     }
                 }
-                LspPosition? from = null;
-                var list = ParseCompletionItems(items, ref from);
+                var list = ParseCompletionItems(items, out LspPosition? from);
                 return Results.Ok(new LspCompletionResponse(
                     true, from ?? new LspPosition(request.Line, Math.Max(0, request.Col - 1)), list));
             }
@@ -470,9 +469,10 @@ public static class LspEndpoints
 
     /// <summary>Mapeia os itens LSP pro shape do CM autocomplete.</summary>
     private static List<LspCompletionItem> ParseCompletionItems(
-        JsonElement items, ref LspPosition? from)
+        JsonElement items, out LspPosition? from)
     {
         var list = new List<LspCompletionItem>();
+        from = null;
         if (items.ValueKind != JsonValueKind.Array)
         {
             return list;

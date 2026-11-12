@@ -173,8 +173,8 @@ else
     private bool _loadFailed;
     private WorkspaceRepoResponse? _repo;
     private WorkspaceGitResponse? _git;
-    private List<ChatJobResponse> _jobs = [];
-    private IReadOnlyList<WorkspaceCheckpointItem> _checkpoints = [];
+    private List<ChatJobResponse> _jobs { get; set; } = [];
+    private IReadOnlyList<WorkspaceCheckpointItem> _checkpoints { get; set; } = [];
     /// <summary>Chat cujo binding resolve o workspace da IDE (?chatId= — SPEC-20261010-workspace-chatid-scope).</summary>
     [Parameter, SupplyParameterFromQuery] public string? ChatId { get; set; }
 
@@ -194,18 +194,18 @@ else
     private int _sideW = 224;
     private int _auxW = 288;
     private int _bottomH = 220;
-    private IReadOnlyList<LspDiagnosticItem> _problems = [];
-    private int _errCount;
-    private int _warnCount;
+    private IReadOnlyList<LspDiagnosticItem> _problems { get; set; } = [];
+    private int _errCount { get; set; }
+    private int _warnCount { get; set; }
     private DotNetObjectReference<Ide>? _selfRef;
     // Quick Open (Fase B): estado + caches lazy.
     private bool _qoOpen;
     private string _qoSeed = "";
-    private IReadOnlyList<string> _qoFiles = [];
-    private IReadOnlyList<IdeQuickOpen.IdeCommand> _qoCommands = [];
-    private IReadOnlyList<IdeQuickOpen.IdeSymbol> _qoSymbols = [];
+    private IReadOnlyList<string> _qoFiles { get; set; } = [];
+    private IReadOnlyList<IdeQuickOpen.IdeCommand> _qoCommands { get; set; } = [];
+    private IReadOnlyList<IdeQuickOpen.IdeSymbol> _qoSymbols { get; set; } = [];
     private bool _filesLoaded;
-    private IReadOnlyDictionary<string, string>? _gitStatus;
+    private IReadOnlyDictionary<string, string>? _gitStatus { get; set; }
 
     /// <inheritdoc/>
     protected override async Task OnInitializedAsync() => await LoadInitAsync();
@@ -250,8 +250,21 @@ else
             _auxW = await SashAsync("aux", _auxW);
             _bottomH = await SashAsync("bottom", _bottomH);
             await RefreshSideAsync();
-            _poll = new Timer(_ => _ = RefreshSideAsync(), null,
+            _poll = new Timer(PollRefreshTick, null,
                 TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        }
+    }
+
+    /// <summary>Tick do poll de sidebar — falha ignora, o próximo tick retenta.</summary>
+    private async void PollRefreshTick(object? state)
+    {
+        try
+        {
+            await RefreshSideAsync();
+        }
+        catch (Exception)
+        {
+            // transientes ou não — o poll nunca derruba a página.
         }
     }
 

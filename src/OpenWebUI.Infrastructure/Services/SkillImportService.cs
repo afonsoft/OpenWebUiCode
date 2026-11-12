@@ -23,7 +23,7 @@ public sealed partial class SkillImportService(
 
     private static readonly Regex RepoUrlRe = new(
         @"^https?://github\.com/(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     /// <summary>
     /// Baixa e importa as skills de <paramref name="repoUrl"/>.
@@ -55,39 +55,16 @@ public sealed partial class SkillImportService(
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         linked.CancelAfter(TimeSpan.FromSeconds(60));
 
-        JsonElement repoInfo;
-        try
-        {
-            repoInfo = await http.GetFromJsonAsync<JsonElement>(
-                $"https://api.github.com/repos/{owner}/{repo}", linked.Token);
-            if (repoInfo.ValueKind == JsonValueKind.Undefined)
-            {
-                throw new InvalidOperationException("github: resposta vazia do GitHub.");
-            }
-        }
-        catch (Exception ex) when (ex is not InvalidOperationException)
-        {
-            throw new InvalidOperationException($"github: falha ao consultar o repositório — {ex.Message}");
-        }
+        var repoInfo = await GetGitHubJsonAsync(http,
+            $"https://api.github.com/repos/{owner}/{repo}",
+            "consultar o repositório", linked.Token);
         var branch = repoInfo.TryGetProperty("default_branch", out var b)
             ? b.GetString() ?? "main"
             : "main";
 
-        JsonElement tree;
-        try
-        {
-            tree = await http.GetFromJsonAsync<JsonElement>(
-                $"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1",
-                linked.Token);
-            if (tree.ValueKind == JsonValueKind.Undefined)
-            {
-                throw new InvalidOperationException("github: resposta vazia do GitHub.");
-            }
-        }
-        catch (Exception ex) when (ex is not InvalidOperationException)
-        {
-            throw new InvalidOperationException($"github: falha ao ler a árvore do repo — {ex.Message}");
-        }
+        var tree = await GetGitHubJsonAsync(http,
+            $"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1",
+            "ler a árvore do repo", linked.Token);
 
         var prefix = $"{path}/";
         var files = tree.GetProperty("tree").EnumerateArray()
@@ -101,73 +78,102 @@ public sealed partial class SkillImportService(
         var imported = new List<string>();
         var skipped = new List<SkillImportSkip>();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
         foreach (var file in files)
         {
-            var dirName = file.Split('/')[^2];
-            if (wanted is not null && !wanted.Contains(dirName))
-            {
-                skipped.Add(new SkillImportSkip(dirName, "não selecionado"));
-                continue;
-            }
-
-            string body;
-            try
-            {
-                body = await http.GetStringAsync(
-                    $"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file}",
-                    linked.Token);
-            }
-            catch (Exception ex)
-            {
-                skipped.Add(new SkillImportSkip(dirName, $"falha no download — {ex.Message}"));
-                continue;
-            }
-            if (body.Length > MaxFileBytes)
-            {
-                skipped.Add(new SkillImportSkip(dirName, "arquivo maior que 2MB"));
-                continue;
-            }
-
-            var (name, description, content, allowedTools) = ParseSkillMarkdown(body);
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                name = dirName;
-            }
-            if (wanted is not null && !wanted.Contains(dirName) && !wanted.Contains(name))
-            {
-                skipped.Add(new SkillImportSkip(name, "não selecionado"));
-                continue;
-            }
-
-            var existing = await db.Skills.FirstOrDefaultAsync(
-                s => s.UserId == null && s.Name == name, linked.Token);
-            if (existing is null)
-            {
-                db.Skills.Add(new Skill
-                {
-                    UserId = null,
-                    Name = name,
-                    Description = description,
-                    Content = content,
-                    AllowedTools = allowedTools,
-                    IsActive = true,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                });
-            }
-            else
-            {
-                existing.Description = description;
-                existing.Content = content;
-                existing.AllowedTools = allowedTools;
-                existing.UpdatedAt = now;
-            }
-            imported.Add(name);
+            await ImportFileAsync(file, owner, repo, branch, wanted, http,
+                linked.Token, now, imported, skipped);
         }
-
         await db.SaveChangesAsync(ct);
         return new SkillImportResult(imported, skipped);
+    }
+
+    /// <summary>GET JSON da API do GitHub com erro mapeado por ação
+    /// (<c>github: falha ao {action}</c>); resposta Undefined vira
+    /// "resposta vazia".</summary>
+    private static async Task<JsonElement> GetGitHubJsonAsync(
+        HttpClient http, string url, string action, CancellationToken ct)
+    {
+        try
+        {
+            var json = await http.GetFromJsonAsync<JsonElement>(url, ct);
+            if (json.ValueKind == JsonValueKind.Undefined)
+            {
+                throw new InvalidOperationException("github: resposta vazia do GitHub.");
+            }
+            return json;
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            throw new InvalidOperationException($"github: falha ao {action} — {ex.Message}");
+        }
+    }
+
+    /// <summary>Baixa e faz upsert de um <c>SKILL.md</c> da árvore —
+    /// falhas por arquivo viram <paramref name="skipped"/>, nunca abortam.</summary>
+    private async Task ImportFileAsync(
+        string file, string owner, string repo, string branch,
+        HashSet<string>? wanted, HttpClient http, CancellationToken ct,
+        long now, List<string> imported, List<SkillImportSkip> skipped)
+    {
+        var dirName = file.Split('/')[^2];
+        if (wanted is not null && !wanted.Contains(dirName))
+        {
+            skipped.Add(new SkillImportSkip(dirName, "não selecionado"));
+            return;
+        }
+
+        string body;
+        try
+        {
+            body = await http.GetStringAsync(
+                $"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file}", ct);
+        }
+        catch (Exception ex)
+        {
+            skipped.Add(new SkillImportSkip(dirName, $"falha no download — {ex.Message}"));
+            return;
+        }
+        if (body.Length > MaxFileBytes)
+        {
+            skipped.Add(new SkillImportSkip(dirName, "arquivo maior que 2MB"));
+            return;
+        }
+
+        var (name, description, content, allowedTools) = ParseSkillMarkdown(body);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = dirName;
+        }
+        if (wanted is not null && !wanted.Contains(dirName) && !wanted.Contains(name))
+        {
+            skipped.Add(new SkillImportSkip(name, "não selecionado"));
+            return;
+        }
+
+        var existing = await db.Skills.FirstOrDefaultAsync(
+            s => s.UserId == null && s.Name == name, ct);
+        if (existing is null)
+        {
+            db.Skills.Add(new Skill
+            {
+                UserId = null,
+                Name = name,
+                Description = description,
+                Content = content,
+                AllowedTools = allowedTools,
+                IsActive = true,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+        }
+        else
+        {
+            existing.Description = description;
+            existing.Content = content;
+            existing.AllowedTools = allowedTools;
+            existing.UpdatedAt = now;
+        }
+        imported.Add(name);
     }
 
     /// <summary>

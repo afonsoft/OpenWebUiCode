@@ -249,7 +249,7 @@ public sealed class FileReadBuiltinTool(
             var itemPath = item.ValueKind is JsonValueKind.Object
                 && item.TryGetProperty("path", out var ip)
                 ? ip.GetString() : null;
-            var display = string.IsNullOrEmpty(itemPath) ? "?" : itemPath!;
+            var display = string.IsNullOrEmpty(itemPath) ? "?" : itemPath;
 
             sb.AppendLine($"=== {display} ===");
             if (usedChars >= MaxBatchChars)

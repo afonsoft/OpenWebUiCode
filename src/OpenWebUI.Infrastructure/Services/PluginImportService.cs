@@ -27,7 +27,7 @@ public sealed partial class PluginImportService(
 
     private static readonly Regex RepoUrlRe = new(
         @"^https?://github\.com/(?<owner>[A-Za-z0-9_.-]+)/(?<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1));
 
     /// <summary>
     /// Baixa <c>plugin.json</c> de <paramref name="repoUrl"/> e importa
@@ -61,6 +61,25 @@ public sealed partial class PluginImportService(
         var skipped = new List<PluginImportSkip>();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
+        await ImportManifestSkillsAsync(manifest, files, http, owner, repo,
+            branch, now, linked.Token, importedSkills, skipped);
+        await ImportManifestCommandsAsync(manifest, files, http, owner, repo,
+            branch, now, linked.Token, importedSkills, skipped);
+        await ImportManifestMcpsAsync(manifest, warnings, now, linked.Token,
+            importedMcps);
+
+        await db.SaveChangesAsync(ct);
+        return new PluginImportResult(importedSkills, importedMcps, skipped, warnings);
+    }
+
+    /// <summary>Entradas <c>skills[]</c> do manifesto: resolve SKILL.md,
+    /// baixa e faz upsert por nome.</summary>
+    private async Task ImportManifestSkillsAsync(
+        JsonElement manifest, List<string> files, HttpClient http,
+        string owner, string repo, string branch, long now,
+        CancellationToken ct, List<string> importedSkills,
+        List<PluginImportSkip> skipped)
+    {
         foreach (var path in StringsOf(manifest, "skills"))
         {
             var resolved = ResolveSkillPath(files, path);
@@ -73,7 +92,7 @@ public sealed partial class PluginImportService(
             {
                 var body = await http.GetStringAsync(
                     $"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{resolved}",
-                    linked.Token);
+                    ct);
                 if (body.Length > MaxFileBytes)
                 {
                     skipped.Add(new PluginImportSkip($"skills:{path}", "arquivo maior que 2MB"));
@@ -82,7 +101,7 @@ public sealed partial class PluginImportService(
                 var (name, description, content, allowedTools) =
                     SkillImportService.ParseSkillMarkdown(body);
                 var skillName = string.IsNullOrWhiteSpace(name) ? path : name;
-                await UpsertSkillAsync(skillName, description, content, allowedTools, now, linked.Token);
+                await UpsertSkillAsync(skillName, description, content, allowedTools, now, ct);
                 importedSkills.Add(skillName);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -90,9 +109,16 @@ public sealed partial class PluginImportService(
                 skipped.Add(new PluginImportSkip($"skills:{path}", $"falha no download — {ex.Message}"));
             }
         }
+    }
 
-        // Commands → skills globais (aproximação documentada: command de
-        // repo vira skill injetável; não existe entidade Command no DB).
+    /// <summary>Commands → skills globais (aproximação documentada: command
+    /// de repo vira skill injetável; não existe entidade Command no DB).</summary>
+    private async Task ImportManifestCommandsAsync(
+        JsonElement manifest, List<string> files, HttpClient http,
+        string owner, string repo, string branch, long now,
+        CancellationToken ct, List<string> importedSkills,
+        List<PluginImportSkip> skipped)
+    {
         foreach (var path in StringsOf(manifest, "commands"))
         {
             var resolved = files.FirstOrDefault(f =>
@@ -106,14 +132,14 @@ public sealed partial class PluginImportService(
             {
                 var body = await http.GetStringAsync(
                     $"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{resolved}",
-                    linked.Token);
+                    ct);
                 if (body.Length > MaxFileBytes)
                 {
                     skipped.Add(new PluginImportSkip($"commands:{path}", "arquivo maior que 2MB"));
                     continue;
                 }
                 var name = Path.GetFileNameWithoutExtension(resolved);
-                await UpsertSkillAsync(name, $"Plugin command {name}", body, null, now, linked.Token);
+                await UpsertSkillAsync(name, $"Plugin command {name}", body, null, now, ct);
                 importedSkills.Add(name);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -121,11 +147,18 @@ public sealed partial class PluginImportService(
                 skipped.Add(new PluginImportSkip($"commands:{path}", $"falha no download — {ex.Message}"));
             }
         }
+    }
 
+    /// <summary>Entradas <c>mcps[]</c> do manifesto: upsert por nome
+    /// (sempre desabilitado e sem headers — secrets configurados na UI).</summary>
+    private async Task ImportManifestMcpsAsync(
+        JsonElement manifest, List<string> warnings, long now,
+        CancellationToken ct, List<string> importedMcps)
+    {
         foreach (var mcp in McpsOf(manifest, warnings))
         {
             var existing = await db.McpServers.FirstOrDefaultAsync(
-                s => s.UserId == null && s.Name == mcp.Name, linked.Token);
+                s => s.UserId == null && s.Name == mcp.Name, ct);
             if (existing is null)
             {
                 // Guardrail SPEC-20261104: MCP importado nasce desabilitado
@@ -156,9 +189,6 @@ public sealed partial class PluginImportService(
             }
             importedMcps.Add(mcp.Name);
         }
-
-        await db.SaveChangesAsync(ct);
-        return new PluginImportResult(importedSkills, importedMcps, skipped, warnings);
     }
 
     /// <summary>Upsert de skill global por nome (idempotente).</summary>
@@ -225,48 +255,59 @@ public sealed partial class PluginImportService(
         foreach (var el in arr.EnumerateArray())
         {
             i++;
-            if (el.ValueKind != JsonValueKind.Object
-                || !el.TryGetProperty("name", out var n)
-                || n.ValueKind != JsonValueKind.String
-                || string.IsNullOrWhiteSpace(n.GetString()))
+            if (TryParseMcpSpec(el, i, warnings) is { } spec)
             {
-                warnings.Add($"mcps[{i}] ignorado — objeto sem 'name'.");
-                continue;
+                result.Add(spec);
             }
-            var transport = el.TryGetProperty("transport", out var t)
-                && t.ValueKind == JsonValueKind.String
-                    ? t.GetString()!.Trim().ToLowerInvariant()
-                    : "http";
-            var url = el.TryGetProperty("url", out var u)
-                && u.ValueKind == JsonValueKind.String ? u.GetString() : null;
-            var command = el.TryGetProperty("command", out var c)
-                && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
-            if (transport == "http" && string.IsNullOrWhiteSpace(url))
-            {
-                warnings.Add($"mcps[{i}] '{n.GetString()}' ignorado — http sem 'url'.");
-                continue;
-            }
-            if (transport == "stdio" && string.IsNullOrWhiteSpace(command))
-            {
-                warnings.Add($"mcps[{i}] '{n.GetString()}' ignorado — stdio sem 'command'.");
-                continue;
-            }
-            if (el.TryGetProperty("headers", out var hdrs) && hdrs.ValueKind == JsonValueKind.Object)
-            {
-                warnings.Add(
-                    $"mcps[{i}] '{n.GetString()}' — 'headers' ignorado (secrets nunca do manifest; configure na UI).");
-            }
-            result.Add(new PluginMcpSpec
-            {
-                Name = n.GetString()!.Trim(),
-                Transport = transport is "http" or "stdio" ? transport : "http",
-                Url = url,
-                Command = command,
-                Args = StringListOf(el, "args"),
-                EnvNames = StringListOf(el, "env"),
-            });
         }
         return result;
+    }
+
+    /// <summary>Parse de uma entrada <c>mcps[i]</c>; inválida → warning e
+    /// <c>null</c>.</summary>
+    private static PluginMcpSpec? TryParseMcpSpec(
+        JsonElement el, int i, List<string> warnings)
+    {
+        if (el.ValueKind != JsonValueKind.Object
+            || !el.TryGetProperty("name", out var n)
+            || n.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(n.GetString()))
+        {
+            warnings.Add($"mcps[{i}] ignorado — objeto sem 'name'.");
+            return null;
+        }
+        var transport = el.TryGetProperty("transport", out var t)
+            && t.ValueKind == JsonValueKind.String
+                ? t.GetString()!.Trim().ToLowerInvariant()
+                : "http";
+        var url = el.TryGetProperty("url", out var u)
+            && u.ValueKind == JsonValueKind.String ? u.GetString() : null;
+        var command = el.TryGetProperty("command", out var c)
+            && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+        if (transport == "http" && string.IsNullOrWhiteSpace(url))
+        {
+            warnings.Add($"mcps[{i}] '{n.GetString()}' ignorado — http sem 'url'.");
+            return null;
+        }
+        if (transport == "stdio" && string.IsNullOrWhiteSpace(command))
+        {
+            warnings.Add($"mcps[{i}] '{n.GetString()}' ignorado — stdio sem 'command'.");
+            return null;
+        }
+        if (el.TryGetProperty("headers", out var hdrs) && hdrs.ValueKind == JsonValueKind.Object)
+        {
+            warnings.Add(
+                $"mcps[{i}] '{n.GetString()}' — 'headers' ignorado (secrets nunca do manifest; configure na UI).");
+        }
+        return new PluginMcpSpec
+        {
+            Name = n.GetString()!.Trim(),
+            Transport = transport is "http" or "stdio" ? transport : "http",
+            Url = url,
+            Command = command,
+            Args = StringListOf(el, "args"),
+            EnvNames = StringListOf(el, "env"),
+        };
     }
 
     private static List<string>? StringListOf(JsonElement el, string key) =>

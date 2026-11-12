@@ -85,6 +85,10 @@
         }
     }
 
+    /// <summary>Sentinela de aceite para dialogs não-prompt (contrato do
+    /// <see cref="DialogService"/>).</summary>
+    private const bool Accepted = true;
+
     private void Cancel()
     {
         Dialogs.Resolve(Dialogs.Current?.Kind is DialogKind.Prompt ? null : false);
@@ -92,7 +96,7 @@
 
     private void Accept()
     {
-        Dialogs.Resolve(Dialogs.Current?.Kind == DialogKind.Prompt ? _input : true);
+        Dialogs.Resolve(Dialogs.Current?.Kind == DialogKind.Prompt ? _input : Accepted);
     }
 
     public void Dispose()

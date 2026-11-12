@@ -12,7 +12,7 @@ public sealed class JsonLinesRunObserver : IAgentRunObserver
 {
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web);
-    private static readonly object Gate = new();
+    private static readonly System.Threading.Lock Gate = new();
 
     /// <inheritdoc/>
     public Task OnRunEventAsync(AgentRunEvent e, CancellationToken ct)

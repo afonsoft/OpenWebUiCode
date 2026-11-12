@@ -55,7 +55,7 @@ public sealed class ComboService(AppDbContext db)
 
     // comboId → eventos (instante, tokens) na janela de 60s.
     private static readonly ConcurrentDictionary<string, List<(DateTimeOffset At, int Tokens)>> Windows = new();
-    private static readonly object WindowLock = new();
+    private static readonly System.Threading.Lock WindowLock = new();
 
     /// <summary>Clock injetável para testes (RF-T5).</summary>
     internal static Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.UtcNow;

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -106,7 +107,10 @@ public sealed class GeminiContextCacheService(
             return null;
         }
         var expiresAt = DateTimeOffset.TryParse(
-            Str(Prop(json, "expireTime")), out var exp)
+            Str(Prop(json, "expireTime")),
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind,
+            out var exp)
             ? exp
             : DateTimeOffset.UtcNow.Add(DefaultTtl);
         _entries[key] = new Entry(

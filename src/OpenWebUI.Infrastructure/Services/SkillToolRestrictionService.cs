@@ -50,38 +50,8 @@ public sealed class SkillToolRestrictionService(
         string userId, string? modelRef, string? workdir, CancellationToken ct)
     {
         var restrictive = new List<HashSet<string>>(2);
-
-        // 1) DB skills do modelo custom (MetaJson.skill_ids).
-        var ids = await ModelSkillIdsAsync(userId, modelRef, ct);
-        if (ids.Count > 0)
-        {
-            var dbAllowed = await db.Skills.AsNoTracking()
-                .Where(s => ids.Contains(s.Id) && s.IsActive && s.AllowedTools != null)
-                .Select(s => s.AllowedTools)
-                .ToListAsync(ct);
-            foreach (var csv in dbAllowed)
-            {
-                restrictive.Add(SplitCsv(csv));
-            }
-        }
-
-        // 2) Skills autoinvoke do repo/global/remoto ativas p/ o usuário.
-        await remote.RefreshIfStaleAsync(config, ct);
-        var scan = skills.Scan(string.IsNullOrWhiteSpace(workdir) ? null : workdir);
-        var auto = scan.Skills.Where(s => s.Autoinvoke && s.AllowedTools is { Count: > 0 }).ToList();
-        if (auto.Count > 0)
-        {
-            var hidden = await overlay.HiddenSkillNamesAsync(userId, ct);
-            var adminOff = await overlay.AdminDisabledSkillNamesAsync(ct);
-            foreach (var s in auto)
-            {
-                if (!hidden.Contains(s.Name) && !adminOff.Contains(s.Name))
-                {
-                    restrictive.Add([.. s.AllowedTools!]);
-                }
-            }
-        }
-
+        await AddDbSkillRestrictionsAsync(userId, modelRef, restrictive, ct);
+        await AddAutoInvokeRestrictionsAsync(userId, workdir, restrictive, ct);
         if (restrictive.Count == 0)
         {
             return null;
@@ -95,6 +65,42 @@ public sealed class SkillToolRestrictionService(
         return intersection.Count > 0
             ? intersection
             : [.. EssentialBuiltins];
+    }
+
+    /// <summary>1) DB skills do modelo custom (MetaJson.skill_ids).</summary>
+    private async Task AddDbSkillRestrictionsAsync(
+        string userId, string? modelRef, List<HashSet<string>> restrictive,
+        CancellationToken ct)
+    {
+        var ids = await ModelSkillIdsAsync(userId, modelRef, ct);
+        if (ids.Count == 0)
+        {
+            return;
+        }
+        var dbAllowed = await db.Skills.AsNoTracking()
+            .Where(s => ids.Contains(s.Id) && s.IsActive && s.AllowedTools != null)
+            .Select(s => s.AllowedTools)
+            .ToListAsync(ct);
+        restrictive.AddRange(dbAllowed.Select(SplitCsv));
+    }
+
+    /// <summary>2) Skills autoinvoke do repo/global/remoto ativas p/ o usuário.</summary>
+    private async Task AddAutoInvokeRestrictionsAsync(
+        string userId, string? workdir, List<HashSet<string>> restrictive,
+        CancellationToken ct)
+    {
+        await remote.RefreshIfStaleAsync(config, ct);
+        var scan = skills.Scan(string.IsNullOrWhiteSpace(workdir) ? null : workdir);
+        var auto = scan.Skills.Where(s => s.Autoinvoke && s.AllowedTools is { Count: > 0 }).ToList();
+        if (auto.Count == 0)
+        {
+            return;
+        }
+        var hidden = await overlay.HiddenSkillNamesAsync(userId, ct);
+        var adminOff = await overlay.AdminDisabledSkillNamesAsync(ct);
+        restrictive.AddRange(auto
+            .Where(s => !hidden.Contains(s.Name) && !adminOff.Contains(s.Name))
+            .Select(s => (HashSet<string>)[.. s.AllowedTools!]));
     }
 
     /// <summary>

@@ -308,8 +308,8 @@ public sealed class ContextCompactionService(
         /// <summary>Records verbatim das últimas mensagens <c>role=user</c>
         /// do trecho compactado (RF-006) — extração mecânica, não-LLM.</summary>
         IReadOnlyList<string>? UserMessages = null,
-        /// <summary>JSON das tasks do último <c>builtin_todo_write</c> no
-        /// trecho compactado (RF-007) — sobrevive à compactação.</summary>
+        /// <summary>JSON do plano de tasks do último tool call de plano
+        /// no trecho compactado (RF-007) — sobrevive à compactação.</summary>
         string? TodosJson = null);
 
     /// <summary>
@@ -464,17 +464,17 @@ public sealed class ContextCompactionService(
             }
 
             var head = await ComputeHeadSummaryAsync(
-                db, config, roles, summarizer,
-                chatId, history, model, userId, t, ct);
+                new HeadSummaryArgs(config, roles, summarizer,
+                    chatId, history, model, userId), t, ct);
             if (head.HeadEnd <= 0 || head.Summary is null)
             {
                 return false;
             }
 
-            await PersistCompactionAsync(chatId, head.HeadEnd,
-                head.Summary.Text,
-                HasDigest(head.Summary) ? head.Summary : null,
-                head.TurnPrefix, head.UserRecords, head.TodosJson, ct);
+            await PersistCompactionAsync(chatId,
+                new CompactionState(head.HeadEnd, head.Summary.Text,
+                    HasDigest(head.Summary) ? head.Summary : null,
+                    head.TurnPrefix, head.UserRecords, head.TodosJson), ct);
             return true;
         }
         catch (Exception ex)
@@ -484,6 +484,14 @@ public sealed class ContextCompactionService(
         }
     }
 
+    /// <summary>Entrada do corte+resumo do head: serviços resolvidos no
+    /// scope do caller (instância ou scope próprio da task de spawn) e o
+    /// pedido (chat, janela, modelo, usuário).</summary>
+    private sealed record HeadSummaryArgs(
+        ConfigService Cfg, ModelRoleResolver Roles, IContextSummarizer Sum,
+        string ChatId, IReadOnlyList<ChatCompletionMessage> History,
+        string Model, string? UserId);
+
     /// <summary>
     /// Corte do head + transcript podado + chamada do summarizer — trecho
     /// compartilhado entre a compactação síncrona e a task de spawn
@@ -491,33 +499,29 @@ public sealed class ContextCompactionService(
     /// turno partido e o resumo (null = summarizer indisponível).
     /// </summary>
     private static async Task<HeadSummary>
-        ComputeHeadSummaryAsync(
-            AppDbContext dbCtx, ConfigService cfg,
-            ModelRoleResolver roleResolver, IContextSummarizer sum,
-            string chatId, IReadOnlyList<ChatCompletionMessage> history,
-            string model, string? userId, Thresholds t, CancellationToken ct)
+        ComputeHeadSummaryAsync(HeadSummaryArgs a, Thresholds t, CancellationToken ct)
     {
-        var headEnd = SplitIndex(history, t);
+        var headEnd = SplitIndex(a.History, t);
         if (headEnd <= 0)
         {
             return new HeadSummary(0, null, null, [], null);
         }
-        var (turnPrefix, summaryEnd) = ComputeTurnSplit(history, headEnd, chatId);
+        var (turnPrefix, summaryEnd) = ComputeTurnSplit(a.History, headEnd, a.ChatId);
         var (transcript, headStart) = await BuildTranscriptAsync(
-            cfg, chatId, history, summaryEnd, ct);
+            a.Cfg, a.ChatId, a.History, summaryEnd, ct);
         // Extrações mecânicas (RF-006/007): verbatim determinístico do
         // head pré-poda — independente do que o summarizer devolver.
         var records = ExtractUserRecords(
-            history.Take(summaryEnd).ToList(),
-            await cfg.GetAsync("compaction:user_records", 20, ct),
-            await cfg.GetAsync("compaction:user_records_chars", 4_000, ct));
-        var todos = ExtractTodosJson(history.Take(summaryEnd).ToList());
+            a.History.Take(summaryEnd).ToList(),
+            await a.Cfg.GetAsync("compaction:user_records", 20, ct),
+            await a.Cfg.GetAsync("compaction:user_records_chars", 4_000, ct));
+        var todos = ExtractTodosJson(a.History.Take(summaryEnd).ToList());
         // Papel "memory" (SPEC-20261013-model-roles): resumo roda no
         // modelo do papel quando configurado; senão no modelo da run.
-        var summaryModel = userId is null
-            ? model
-            : await roleResolver.ResolveAsync("memory", userId, model, ct);
-        var summary = await sum.SummarizeAsync(summaryModel, transcript, userId, ct);
+        var summaryModel = a.UserId is null
+            ? a.Model
+            : await a.Roles.ResolveAsync("memory", a.UserId, a.Model, ct);
+        var summary = await a.Sum.SummarizeAsync(summaryModel, transcript, a.UserId, ct);
         // Sanity (RF-005): breadcrumbs "[pos]" fora do range do transcript
         // são âncoras alucinadas — descarta best-effort.
         if (summary?.Breadcrumbs is { Count: > 0 })
@@ -560,7 +564,7 @@ public sealed class ContextCompactionService(
     }
 
     /// <summary>Pacote do head: cutoff, prefixo de turno, resumo e as
-    /// extrações mecânicas (records verbatim + todo JSON).</summary>
+    /// extrações mecânicas (records verbatim + JSON do plano).</summary>
     private sealed record HeadSummary(
         int HeadEnd, string? TurnPrefix, ContextSummary? Summary,
         IReadOnlyList<string> UserRecords, string? TodosJson);
@@ -605,8 +609,8 @@ public sealed class ContextCompactionService(
     }
 
     /// <summary>
-    /// RF-007: JSON <c>todos</c> do último <c>builtin:todo_write</c> no
-    /// head — o snapshot do plano sobrevive à compactação. Parse falho →
+    /// RF-007: snapshot JSON do plano persistido pelo último call da
+    /// tool de tasks no head — sobrevive à compactação. Parse falho →
     /// omite a seção (nunca falha a run). Cap de 4k chars. O nome
     /// persistido pode chegar com prefixo <c>builtin:</c> (tool_call do
     /// provider) ou <c>builtin_</c> (formas internas) — casa os dois.
@@ -614,47 +618,55 @@ public sealed class ContextCompactionService(
     private static string? ExtractTodosJson(IReadOnlyList<ChatCompletionMessage> head)
     {
         const string toolName = "todo_write";
-        const int maxChars = 4_000;
         for (var i = head.Count - 1; i >= 0; i--)
         {
             var calls = head[i].ToolCallsJson;
-            if (calls is null || !calls.Contains(toolName, StringComparison.Ordinal))
+            if (calls is not null && calls.Contains(toolName, StringComparison.Ordinal)
+                && TryExtractTodosJson(calls) is { } found)
             {
-                continue;
+                return found;
             }
-            try
+        }
+        return null;
+    }
+
+    /// <summary>Varre as tool_calls de uma mensagem procurando a do
+    /// plano de tasks; devolve o JSON <c>todos</c> (cap 4k) ou null.</summary>
+    private static string? TryExtractTodosJson(string calls)
+    {
+        const int maxChars = 4_000;
+        try
+        {
+            using var doc = JsonDocument.Parse(calls);
+            foreach (var call in doc.RootElement.EnumerateArray())
             {
-                using var doc = JsonDocument.Parse(calls);
-                foreach (var call in doc.RootElement.EnumerateArray())
+                var fnName = call.TryGetProperty("function", out var fn)
+                    && fn.TryGetProperty("name", out var name)
+                        ? name.GetString() : null;
+                var isTodo = fnName is "builtin:todo_write" or "builtin_todo_write"
+                    or "todo_write";
+                if (!isTodo || !fn.TryGetProperty("arguments", out var argsEl))
                 {
-                    var fnName = call.TryGetProperty("function", out var fn)
-                        && fn.TryGetProperty("name", out var name)
-                            ? name.GetString() : null;
-                    var isTodo = fnName is "builtin:todo_write" or "builtin_todo_write"
-                        or "todo_write";
-                    if (!isTodo || !fn.TryGetProperty("arguments", out var argsEl))
-                    {
-                        continue;
-                    }
-                    var argsJson = argsEl.ValueKind == JsonValueKind.String
-                        ? argsEl.GetString() : argsEl.GetRawText();
-                    if (argsJson is null)
-                    {
-                        continue;
-                    }
-                    using var args = JsonDocument.Parse(argsJson);
-                    if (args.RootElement.TryGetProperty("todos", out var todos)
-                        && todos.ValueKind == JsonValueKind.Array)
-                    {
-                        var raw = todos.GetRawText();
-                        return raw.Length > maxChars ? raw[..maxChars] : raw;
-                    }
+                    continue;
+                }
+                var argsJson = argsEl.ValueKind == JsonValueKind.String
+                    ? argsEl.GetString() : argsEl.GetRawText();
+                if (argsJson is null)
+                {
+                    continue;
+                }
+                using var args = JsonDocument.Parse(argsJson);
+                if (args.RootElement.TryGetProperty("todos", out var todos)
+                    && todos.ValueKind == JsonValueKind.Array)
+                {
+                    var raw = todos.GetRawText();
+                    return raw.Length > maxChars ? raw[..maxChars] : raw;
                 }
             }
-            catch (JsonException)
-            {
-                // Call malformada não bloqueia: segue varrendo para trás.
-            }
+        }
+        catch (JsonException)
+        {
+            // Call malformada não bloqueia: segue varrendo para trás.
         }
         return null;
     }
@@ -743,6 +755,33 @@ public sealed class ContextCompactionService(
     private async Task<long> AttachmentBytesAsync(
         IReadOnlyList<ChatCompletionMessage> history, CancellationToken ct)
     {
+        var (bytes, fileIds) = CollectAttachmentInfo(history);
+        if (fileIds is null || fileIds.Count == 0)
+        {
+            return bytes;
+        }
+        var found = await db.Files.AsNoTracking()
+            .Where(f => fileIds.Contains(f.Id))
+            .Select(f => new { f.Id, f.Size })
+            .ToListAsync(ct);
+        var foundIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var f in found)
+        {
+            bytes += Math.Max(0L, f.Size);
+            foundIds.Add(f.Id);
+        }
+        // Arquivo sem registro cai na estimativa chars×0.75 da mensagem.
+        bytes += history
+            .Where(m => m.FileIds is { Count: > 0 })
+            .Sum(m => m.FileIds!.Count(id => !foundIds.Contains(id))
+                * (long)((m.Content?.Length ?? 0) * 0.75));
+        return bytes;
+    }
+
+    /// <summary>Bytes das imagens inline + conjunto de FileIds da janela.</summary>
+    private static (long Bytes, HashSet<string>? FileIds) CollectAttachmentInfo(
+        IReadOnlyList<ChatCompletionMessage> history)
+    {
         long bytes = 0;
         HashSet<string>? fileIds = null;
         foreach (var m in history)
@@ -763,34 +802,7 @@ public sealed class ContextCompactionService(
                 }
             }
         }
-        if (fileIds is null || fileIds.Count == 0)
-        {
-            return bytes;
-        }
-        var found = await db.Files.AsNoTracking()
-            .Where(f => fileIds.Contains(f.Id))
-            .Select(f => new { f.Id, f.Size })
-            .ToListAsync(ct);
-        var foundIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var f in found)
-        {
-            bytes += Math.Max(0L, f.Size);
-            foundIds.Add(f.Id);
-        }
-        foreach (var m in history)
-        {
-            if (m.FileIds is { Count: > 0 } ids)
-            {
-                foreach (var id in ids)
-                {
-                    if (!foundIds.Contains(id))
-                    {
-                        bytes += (long)((m.Content?.Length ?? 0) * 0.75);
-                    }
-                }
-            }
-        }
-        return bytes;
+        return (bytes, fileIds);
     }
 
     /// <summary>Task de background: resume o head do snapshot e grava
@@ -810,17 +822,19 @@ public sealed class ContextCompactionService(
                 await using var scope = scopes.CreateAsyncScope();
                 var sp = scope.ServiceProvider;
                 await CompactToPendingCoreAsync(
-                    sp.GetRequiredService<AppDbContext>(),
-                    sp.GetRequiredService<ConfigService>(),
-                    sp.GetRequiredService<IContextSummarizer>(),
-                    sp.GetRequiredService<ModelRoleResolver>(),
-                    chatId, snapshot, model, userId, t, estimateTokens, ct);
+                    new HeadSummaryArgs(
+                        sp.GetRequiredService<ConfigService>(),
+                        sp.GetRequiredService<ModelRoleResolver>(),
+                        sp.GetRequiredService<IContextSummarizer>(),
+                        chatId, snapshot, model, userId),
+                    t, estimateTokens, ct);
             }
             else
             {
                 await CompactToPendingCoreAsync(
-                    db, config, summarizer, roles,
-                    chatId, snapshot, model, userId, t, estimateTokens, ct);
+                    new HeadSummaryArgs(config, roles, summarizer,
+                        chatId, snapshot, model, userId),
+                    t, estimateTokens, ct);
             }
         }
         catch (Exception ex)
@@ -830,16 +844,11 @@ public sealed class ContextCompactionService(
         }
     }
 
-    private async Task CompactToPendingCoreAsync(
-        AppDbContext dbCtx, ConfigService cfg,
-        IContextSummarizer sum, ModelRoleResolver roleResolver,
-        string chatId, IReadOnlyList<ChatCompletionMessage> snapshot,
-        string model, string? userId, Thresholds t, int estimateTokens,
+    private static async Task CompactToPendingCoreAsync(
+        HeadSummaryArgs a, Thresholds t, int estimateTokens,
         CancellationToken ct)
     {
-        var head = await ComputeHeadSummaryAsync(
-            dbCtx, cfg, roleResolver, sum,
-            chatId, snapshot, model, userId, t, ct);
+        var head = await ComputeHeadSummaryAsync(a, t, ct);
         if (head.HeadEnd <= 0 || head.Summary is null)
         {
             return;
@@ -847,7 +856,7 @@ public sealed class ContextCompactionService(
         var state = new CompactionState(head.HeadEnd, head.Summary.Text,
             HasDigest(head.Summary) ? head.Summary : null, head.TurnPrefix,
             head.UserRecords, head.TodosJson);
-        await cfg.SetAsync(KvKeyPending(chatId),
+        await a.Cfg.SetAsync(KvKeyPending(a.ChatId),
             new PendingCompaction(state,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 estimateTokens), ct);
@@ -883,10 +892,7 @@ public sealed class ContextCompactionService(
                 KvKeyPending(chatId), null, ct);
             return new PendingApplyResult(false, null, null);
         }
-        await PersistCompactionAsync(chatId, pending.State.Cutoff,
-            pending.State.Summary, pending.State.Digest,
-            pending.State.TurnPrefix, pending.State.UserMessages,
-            pending.State.TodosJson, ct);
+        await PersistCompactionAsync(chatId, pending.State, ct);
         await config.SetAsync<PendingCompaction?>(
             KvKeyPending(chatId), null, ct);
         return new PendingApplyResult(
@@ -1117,7 +1123,7 @@ public sealed class ContextCompactionService(
                     if (headEnd > 0)
                     {
                         await PersistCompactionAsync(
-                            chatId, headEnd, text, null, null, null, null, ct);
+                            chatId, new CompactionState(headEnd, text), ct);
                         return new CompactResult(true, true, null);
                     }
                 }
@@ -1151,14 +1157,9 @@ public sealed class ContextCompactionService(
 
     /// <summary>Persiste kv + marcador <c>compaction</c> no leaf ativo.</summary>
     private async Task PersistCompactionAsync(
-        string chatId, int headEnd, string summary,
-        ContextSummary? digest, string? turnPrefix,
-        IReadOnlyList<string>? userMessages, string? todosJson,
-        CancellationToken ct)
+        string chatId, CompactionState state, CancellationToken ct)
     {
-        await config.SetAsync(KvKey(chatId),
-            new CompactionState(headEnd, summary, digest, turnPrefix,
-                userMessages, todosJson), ct);
+        await config.SetAsync(KvKey(chatId), state, ct);
 
         var tracked = await db.Chats.Include(c => c.Messages)
             .FirstOrDefaultAsync(c => c.Id == chatId, ct);
@@ -1169,7 +1170,7 @@ public sealed class ContextCompactionService(
             // (SPEC-20261013-chat-branching): outro ramo não o herda.
             var marker = new ChatMessage
             {
-                ChatId = tracked.Id, Role = "compaction", Content = summary,
+                ChatId = tracked.Id, Role = "compaction", Content = state.Summary,
                 Position = pos, Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 ParentId = BranchService.ResolveLeaf(tracked)?.Id,
             };

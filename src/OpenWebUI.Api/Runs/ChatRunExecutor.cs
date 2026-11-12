@@ -98,6 +98,9 @@ public sealed class ChatRunExecutor(
     /// <summary>Bytes de delta acumulados antes de gravar um checkpoint.</summary>
     private const int CheckpointBytes = 2048;
 
+    /// <summary>Fase reportada ao UI quando a pool adaptativa assume a run.</summary>
+    private const string AdaptivePhase = "adaptive";
+
     /// <summary>Preset de aprovação com juiz LLM (SPEC smart-permission).</summary>
     private const string SmartPreset = "smart";
 
@@ -153,24 +156,38 @@ public sealed class ChatRunExecutor(
         {
             return;
         }
-        var (request, user, budgetLimits, resumePlan, commandMode) = prelude;
+        var plan = await ResolveExecutionPlanAsync(prelude.Request, run, ct);
+        await RunWithFallbackAsync(plan, prelude, run,
+            new RunStreamState(), Stopwatch.StartNew(), ct);
+    }
 
-        var state = new RunStreamState();
-        var sw = Stopwatch.StartNew();
+    /// <summary>Plano de execução: refs especiais do modelo (combo/fusion/
+    /// chain/adaptive), a cadeia de fallback ordenada e a posição inicial.</summary>
+    private sealed record ExecutionPlan(
+        string? ComboRef, IReadOnlyList<string>? FusionChain,
+        IReadOnlyList<string>? PlainChain, IReadOnlyList<string>? AdaptivePool,
+        IReadOnlyList<string>? ModelChain, AdaptivePoolState? AdaptiveState,
+        int StartPos);
 
-        // combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada tentativa
-        // resolve o modelo efetivo; falha transitória ANTES do primeiro delta
-        // (content vazio ⇒ nenhum SSE parcial foi emitido) → report + próximo
-        // candidato. Cancelamento nunca queima cooldown.
+    /// <summary>combo:{id|nome} (SPEC-20261016-model-combos RF-003): cada
+    /// tentativa resolve o modelo efetivo; falha transitória ANTES do
+    /// primeiro delta (content vazio ⇒ nenhum SSE parcial foi emitido) →
+    /// report + próximo candidato. Cancelamento nunca queima cooldown.
+    /// fusion:{L1,L2}>{S1,S2} e chain:{m1,m2,…} (SPEC-20261110
+    /// fusion-fallback-chain): cadeia ordenada de fallback — falha de
+    /// provedor sem side-effects avança para a próxima posição. O ref
+    /// fusion fica no request (o pairing resolve a posição por
+    /// tentativa); chain: reescreve o modelo antes de cada tentativa.
+    /// adaptive:{m1,…,m4} (SPEC-20261110 adaptive-model-pool): pool
+    /// ordenado com memória por chat — o início da cadeia é o sticky
+    /// quando o preferido acumula falhas consecutivas; a sonda
+    /// re-tenta o preferido depois do cooldown.</summary>
+    private async Task<ExecutionPlan> ResolveExecutionPlanAsync(
+        ChatCompletionRequest request, ChatRun run, CancellationToken ct)
+    {
         var comboRef = request.Model.StartsWith(ComboService.Prefix, StringComparison.Ordinal)
             ? request.Model[ComboService.Prefix.Length..]
             : null;
-        var comboAttemptsLeft = 1;
-        // fusion:{L1,L2}>{S1,S2} e chain:{m1,m2,…} (SPEC-20261110
-        // fusion-fallback-chain): cadeia ordenada de fallback — falha de
-        // provedor sem side-effects avança para a próxima posição. O ref
-        // fusion fica no request (o pairing resolve a posição por
-        // tentativa); chain: reescreve o modelo antes de cada tentativa.
         var fusionChain = FusionModelRef.TryParseChain(
             request.Model, out var fusionLeaders, out var fusionSidekicks)
             ? FusionModelRef.EffectiveChain(fusionLeaders, fusionSidekicks)
@@ -179,10 +196,6 @@ public sealed class ChatRunExecutor(
             && ChainModelRef.TryParse(request.Model, out var parsedChain)
                 ? parsedChain
                 : null;
-        // adaptive:{m1,…,m4} (SPEC-20261110 adaptive-model-pool): pool
-        // ordenado com memória por chat — o início da cadeia é o sticky
-        // quando o preferido acumula falhas consecutivas; a sonda
-        // re-tenta o preferido depois do cooldown.
         var adaptivePool = fusionChain is null && plainChain is null
             && AdaptiveModelRef.TryParse(request.Model, out var parsedPool)
                 ? parsedPool
@@ -191,33 +204,46 @@ public sealed class ChatRunExecutor(
         var adaptiveState = adaptivePool is null
             ? null
             : await AdaptivePoolState.LoadAsync(config, run.ChatId, ct);
-        var chainPos = 0;
+        var startPos = 0;
         if (adaptiveState is not null && adaptivePool is not null)
         {
-            chainPos = adaptiveState.StartIndex(adaptivePool.Count);
+            startPos = adaptiveState.StartIndex(adaptivePool.Count);
             if (adaptiveState.Probed)
             {
-                await PublishPhaseAsync(run, "adaptive",
+                await PublishPhaseAsync(run, AdaptivePhase,
                     $"Sonda: re-tentando o preferido {adaptivePool[0]}");
             }
-            else if (chainPos > 0)
+            else if (startPos > 0)
             {
-                await PublishPhaseAsync(run, "adaptive",
-                    $"Sticky: iniciando em {adaptivePool[chainPos]} "
-                    + $"({chainPos + 1}/{adaptivePool.Count}) — "
+                await PublishPhaseAsync(run, AdaptivePhase,
+                    $"Sticky: iniciando em {adaptivePool[startPos]} "
+                    + $"({startPos + 1}/{adaptivePool.Count}) — "
                     + "o preferido acumulou falhas consecutivas");
             }
         }
+        return new ExecutionPlan(comboRef, fusionChain, plainChain,
+            adaptivePool, modelChain, adaptiveState, startPos);
+    }
+
+    /// <summary>Loop de tentativas com fallback de cadeia: resolve o
+    /// modelo da posição, roda a tentativa e avança em falha transitória.</summary>
+    private async Task RunWithFallbackAsync(
+        ExecutionPlan plan, RunPrelude prelude, ChatRun run,
+        RunStreamState state, Stopwatch sw, CancellationToken ct)
+    {
+        var request = prelude.Request;
+        var comboAttemptsLeft = 1;
+        var chainPos = plan.StartPos;
         // Conteúdo parcial já injetado como mensagem assistant — em avanço
         // de cadeia só o trecho NOVO vira contexto (evita duplicar a parte
         // que a tentativa anterior já escreveu no histórico).
         var injectedContentLen = 0;
         while (true)
         {
-            if (comboRef is not null)
+            if (plan.ComboRef is not null)
             {
                 var (resolvedRequest, attemptsLeft) = await ResolveComboModelAsync(
-                    run, request, comboRef, ct);
+                    run, request, plan.ComboRef, ct);
                 if (resolvedRequest is null)
                 {
                     return;
@@ -225,21 +251,22 @@ public sealed class ChatRunExecutor(
                 request = resolvedRequest;
                 comboAttemptsLeft = attemptsLeft;
             }
-            else if (plainChain is not null)
+            else if (plan.PlainChain is not null)
             {
-                request = request with { Model = plainChain[chainPos] };
+                request = request with { Model = plan.PlainChain[chainPos] };
             }
 
             try
             {
                 await ExecuteAttemptAsync(
-                    new AttemptCtx(run, user, request, commandMode,
-                        resumePlan, budgetLimits, comboRef, chainPos,
-                        adaptiveState, state, sw),
+                    new AttemptCtx(run, prelude.User, request,
+                        prelude.CommandMode, prelude.ResumePlan,
+                        prelude.Limits, plan.ComboRef, chainPos,
+                        plan.AdaptiveState, state, sw),
                     ct);
-                if (adaptiveState is not null)
+                if (plan.AdaptiveState is not null)
                 {
-                    await adaptiveState.RecordSuccessAsync(
+                    await plan.AdaptiveState.RecordSuccessAsync(
                         config, run.ChatId, chainPos, ct);
                 }
                 return;
@@ -252,46 +279,18 @@ public sealed class ChatRunExecutor(
             {
                 var decision = await HandleRunFailureAsync(
                     new RunFailure(run, ex, state.Content.ToString(),
-                        state.ToolMessages, comboRef, request.Model,
-                        modelChain, chainPos, sw, comboAttemptsLeft));
+                        state.ToolMessages, plan.ComboRef, request.Model,
+                        plan.ModelChain, chainPos, sw, comboAttemptsLeft));
                 if (decision.Retry)
                 {
                     comboAttemptsLeft = decision.ComboAttemptsLeft;
                     if (decision.NextChainPos is { } nextPos
-                        && modelChain is not null)
+                        && plan.ModelChain is not null)
                     {
-                        if (adaptiveState is not null)
-                        {
-                            // A posição que falhou perde reputação — K
-                            // falhas consecutivas como start tiram o
-                            // modelo do início das próximas runs.
-                            await adaptiveState.RecordFailureAsync(
-                                config, run.ChatId, chainPos,
-                                CancellationToken.None);
-                        }
+                        (request, injectedContentLen) = await AdvanceChainAsync(
+                            plan, run, request, state, chainPos, nextPos,
+                            injectedContentLen, ct);
                         chainPos = nextPos;
-                        if (state.Content.Length > injectedContentLen)
-                        {
-                            // O modelo da próxima posição continua o texto
-                            // parcial em vez de recomeçar do zero.
-                            request = request with
-                            {
-                                Messages = [.. request.Messages,
-                                    new ChatCompletionMessage("assistant",
-                                        state.Content.ToString()[injectedContentLen..])],
-                            };
-                            injectedContentLen = state.Content.Length;
-                        }
-                        await config.SetAsync(
-                            adaptivePool is not null
-                                ? $"r:{run.Id}:adaptive.active"
-                                : $"r:{run.Id}:fusion.active",
-                            modelChain[chainPos], CancellationToken.None);
-                        await PublishPhaseAsync(run,
-                            fusionChain is not null ? "fusion"
-                                : adaptivePool is not null ? "adaptive" : "chain",
-                            $"Fallback {chainPos + 1}/{modelChain.Count}: "
-                            + modelChain[chainPos]);
                     }
                     continue;
                 }
@@ -306,6 +305,51 @@ public sealed class ChatRunExecutor(
 
             return;
         }
+    }
+
+    /// <summary>Avanço de cadeia após falha: reputação adaptive, injeção
+    /// do parcial como assistant, kv <c>:active</c> e fase Fallback.</summary>
+    private async Task<(ChatCompletionRequest Request, int InjectedLen)> AdvanceChainAsync(
+        ExecutionPlan plan, ChatRun run, ChatCompletionRequest request,
+        RunStreamState state, int chainPos, int nextPos,
+        int injectedContentLen, CancellationToken ct)
+    {
+        if (plan.AdaptiveState is not null)
+        {
+            // A posição que falhou perde reputação — K falhas consecutivas
+            // como start tiram o modelo do início das próximas runs.
+            await plan.AdaptiveState.RecordFailureAsync(
+                config, run.ChatId, chainPos, CancellationToken.None);
+        }
+        var next = request;
+        var len = injectedContentLen;
+        if (state.Content.Length > injectedContentLen)
+        {
+            // O modelo da próxima posição continua o texto parcial em vez
+            // de recomeçar do zero.
+            next = request with
+            {
+                Messages = [.. request.Messages,
+                    new ChatCompletionMessage("assistant",
+                        state.Content.ToString()[injectedContentLen..])],
+            };
+            len = state.Content.Length;
+        }
+        await config.SetAsync(
+            plan.AdaptivePool is not null
+                ? $"r:{run.Id}:adaptive.active"
+                : $"r:{run.Id}:fusion.active",
+            plan.ModelChain![nextPos], CancellationToken.None);
+        var activeKind = plan.AdaptivePool is not null
+            ? AdaptivePhase : "chain";
+        if (plan.FusionChain is not null)
+        {
+            activeKind = "fusion";
+        }
+        await PublishPhaseAsync(run, activeKind,
+            $"Fallback {nextPos + 1}/{plan.ModelChain!.Count}: "
+            + plan.ModelChain[nextPos]);
+        return (next, len);
     }
 
     /// <summary>Run cancelada: aprovações pendentes resolvem, a run fecha
@@ -786,7 +830,8 @@ public sealed class ChatRunExecutor(
         // SPEC-20261110: a kv do sidekick carrega a cadeia completa dos
         // filhos — sidekicks primeiro, leaders como fallback final —
         // serializada como chain:{…} (id simples quando a cadeia é 1).
-        var childChain = FusionModelRef.EffectiveChain(sidekicks, leaders);
+        var childChain = FusionModelRef.EffectiveChain(
+                leaders: sidekicks, sidekicks: leaders);
         await config.SetAsync($"r:{run.Id}:fusion.sidekick",
             childChain.Count == 1 ? childChain[0] : ChainModelRef.Format(childChain), ct);
         await config.SetAsync($"r:{run.Id}:fusion.active", active, ct);
@@ -798,13 +843,8 @@ public sealed class ChatRunExecutor(
             : $"Fallback {pos + 1}/{chain.Count}: {active}");
 
         var toolIds = (request.ToolIds ?? []).ToList();
-        foreach (var required in FusionToolIds)
-        {
-            if (!toolIds.Contains(required, StringComparer.OrdinalIgnoreCase))
-            {
-                toolIds.Add(required);
-            }
-        }
+        toolIds.AddRange(FusionToolIds.Where(required =>
+            !toolIds.Contains(required, StringComparer.OrdinalIgnoreCase)));
 
         return request with
         {
@@ -975,10 +1015,10 @@ public sealed class ChatRunExecutor(
         var active = pool[pos];
         await config.SetAsync($"r:{run.Id}:adaptive.active", active, ct);
         await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
-            new { status = "adaptive", active, pos, pool }, ct);
+            new { status = AdaptivePhase, active, pos, pool }, ct);
         if (pos > 0)
         {
-            await PublishPhaseAsync(run, "adaptive",
+            await PublishPhaseAsync(run, AdaptivePhase,
                 $"Candidato {pos + 1}/{pool.Count}: {active}");
         }
 
@@ -4060,12 +4100,13 @@ public sealed class ChatRunExecutor(
         // sem mensagem no chat e a UI recarregada não mostrava nada
         // (incidente 2026-11-07, provider sem créditos → "chat travado").
         // Persiste o erro como bloco visível do assistant.
-        var persistContent = status == ChatRunStatus.Failed
-            && run.Error is { Length: > 0 } failNote
-                ? content.Length > 0
-                    ? $"{content}\n\n> ⚠️ {failNote}"
-                    : $"> ⚠️ {failNote}"
-                : content;
+        var persistContent = content;
+        if (status == ChatRunStatus.Failed && run.Error is { Length: > 0 } failNote)
+        {
+            persistContent = content.Length > 0
+                ? $"{content}\n\n> ⚠️ {failNote}"
+                : $"> ⚠️ {failNote}";
+        }
         run.PartialContent = persistContent;
 
         // RF-006 run-recovery: lastSeq final no meta — posição do stream

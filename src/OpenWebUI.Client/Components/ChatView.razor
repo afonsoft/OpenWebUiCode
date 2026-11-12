@@ -2017,54 +2017,15 @@
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        // Dropdown !skill: ↑↓ navega, Enter/Tab seleciona, Esc fecha (RF-001).
-        if (_bangItems.Count > 0)
+        // Dropdowns !skill / #knowledge: ↑↓ navega, Enter/Tab seleciona,
+        // Esc fecha (RF-001/RF-004).
+        if (_bangItems.Count > 0 && await HandleBangKeyAsync(e))
         {
-            if (e.Key == "Escape")
-            {
-                _bangItems = [];
-                return;
-            }
-            if (e.Key == "ArrowDown")
-            {
-                _bangIndex = (_bangIndex + 1) % _bangItems.Count;
-                return;
-            }
-            if (e.Key == "ArrowUp")
-            {
-                _bangIndex = (_bangIndex - 1 + _bangItems.Count) % _bangItems.Count;
-                return;
-            }
-            if (e.Key is "Enter" or "Tab")
-            {
-                await SelectBangAsync(_bangItems[_bangIndex]);
-                return;
-            }
+            return;
         }
-
-        // Dropdown #knowledge: mesma navegação do !skill (RF-004).
-        if (_hashItems.Count > 0)
+        if (_hashItems.Count > 0 && HandleHashKey(e))
         {
-            if (e.Key == "Escape")
-            {
-                _hashItems = [];
-                return;
-            }
-            if (e.Key == "ArrowDown")
-            {
-                _hashIndex = (_hashIndex + 1) % _hashItems.Count;
-                return;
-            }
-            if (e.Key == "ArrowUp")
-            {
-                _hashIndex = (_hashIndex - 1 + _hashItems.Count) % _hashItems.Count;
-                return;
-            }
-            if (e.Key is "Enter" or "Tab")
-            {
-                SelectHash(_hashItems[_hashIndex]);
-                return;
-            }
+            return;
         }
 
         // Esc fecha o dropdown de menções (RF-001).
@@ -2102,6 +2063,50 @@
         }
 
         UpdatePromptSuggestions();
+    }
+
+    /// <summary>Teclas do dropdown !skill — true = consumida.</summary>
+    private async Task<bool> HandleBangKeyAsync(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Escape":
+                _bangItems = [];
+                return true;
+            case "ArrowDown":
+                _bangIndex = (_bangIndex + 1) % _bangItems.Count;
+                return true;
+            case "ArrowUp":
+                _bangIndex = (_bangIndex - 1 + _bangItems.Count) % _bangItems.Count;
+                return true;
+            case "Enter" or "Tab":
+                await SelectBangAsync(_bangItems[_bangIndex]);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Teclas do dropdown #knowledge — true = consumida.</summary>
+    private bool HandleHashKey(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Escape":
+                _hashItems = [];
+                return true;
+            case "ArrowDown":
+                _hashIndex = (_hashIndex + 1) % _hashItems.Count;
+                return true;
+            case "ArrowUp":
+                _hashIndex = (_hashIndex - 1 + _hashItems.Count) % _hashItems.Count;
+                return true;
+            case "Enter" or "Tab":
+                SelectHash(_hashItems[_hashIndex]);
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>
@@ -2298,7 +2303,12 @@
                 .Where(s => query.Length == 0
                     || s.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                     || s.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
-                .OrderBy(s => s.Source == "repo" ? 0 : s.Source == "global" ? 1 : 2)
+                .OrderBy(s => s.Source switch
+                {
+                    "repo" => 0,
+                    "global" => 1,
+                    _ => 2,
+                })
                 .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
                 .Take(20)
                 .ToList();
@@ -2604,7 +2614,7 @@
     private async Task<FileResponse?> UploadBrowserFileAsync(IBrowserFile file, string fileName)
     {
         await using var stream = file.OpenReadStream(maxAllowedSize: MaxUploadBytes);
-        return await Api.UploadFileAsync(stream, fileName, file.ContentType);
+        return await Api.UploadFileAsync(stream, fileName, file.ContentType, file.Size);
     }
 
     /// <summary>attachments-v2 RF-002: abre o seletor de pasta (webkitdirectory).</summary>
@@ -3625,36 +3635,10 @@
                 return;
             }
 
-            // Attach que não rendeu nenhum evento: a run pode já ter
-            // finalizado (close sem fase terminal) — confere o status antes
-            // de gastar backoff re-anexando.
-            if (!state.SawEvent)
+            if (await HandleStallRecoveryAsync(
+                    chatId, runId, content, placeholder, index, state, ct))
             {
-                state.EmptyAttaches++;
-                if (await HandleEmptyAttachAsync(
-                        chatId, runId, content, placeholder, index, state, ct))
-                {
-                    return;
-                }
-
-                // SPEC-20261110: SSE morrendo sempre antes do 1º evento
-                // (proxy corporativo) → polling dedicado até a run fechar.
-                if (state.EmptyAttaches >= PollFallbackAttaches)
-                {
-                    if (await PollRunEventsAsync(
-                            chatId, runId, content, placeholder, index, state, ct))
-                    {
-                        return;
-                    }
-                    // Polling também falhou de rede — volta aos attaches
-                    // com contagem zerada (uma rede nova pode curar o SSE).
-                    state.EmptyAttaches = 0;
-                }
-            }
-            else
-            {
-                state.SawEvent = false;
-                state.EmptyAttaches = 0;
+                return;
             }
 
             await Task.Delay(
@@ -3662,6 +3646,46 @@
                     ? 8_000
                     : Math.Min(500 * (1 << state.EmptyAttaches), 4_000), ct);
         }
+    }
+
+    /// <summary>Attach sem eventos: polling de verificação e, em attaches
+    /// vazios seguidos, o modo polling dedicado. true = consumo encerra.</summary>
+    private async Task<bool> HandleStallRecoveryAsync(
+        string chatId, string runId,
+        System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index,
+        RunConsumeState state, CancellationToken ct)
+    {
+        if (state.SawEvent)
+        {
+            state.SawEvent = false;
+            state.EmptyAttaches = 0;
+            return false;
+        }
+        // Attach que não rendeu nenhum evento: a run pode já ter
+        // finalizado (close sem fase terminal) — confere o status antes
+        // de gastar backoff re-anexando.
+        state.EmptyAttaches++;
+        if (await HandleEmptyAttachAsync(
+                chatId, runId, content, placeholder, index, state, ct))
+        {
+            return true;
+        }
+
+        // SPEC-20261110: SSE morrendo sempre antes do 1º evento
+        // (proxy corporativo) → polling dedicado até a run fechar.
+        if (state.EmptyAttaches >= PollFallbackAttaches)
+        {
+            if (await PollRunEventsAsync(
+                    chatId, runId, content, placeholder, index, state, ct))
+            {
+                return true;
+            }
+            // Polling também falhou de rede — volta aos attaches
+            // com contagem zerada (uma rede nova pode curar o SSE).
+            state.EmptyAttaches = 0;
+        }
+        return false;
     }
 
     /// <summary>Zera o estado visual da run antes de anexar o stream.</summary>
@@ -3813,6 +3837,29 @@
             return RunPollOutcome.Transient;
         }
 
+        var (terminal, touched) = await ApplyPolledEventsAsync(
+            polled, content, placeholder, index, state);
+
+        if (touched)
+        {
+            state.LastRender = DateTime.UtcNow;
+            await InvokeAsync(StateHasChanged);
+            await ScrollToEndIfPinnedAsync();
+        }
+
+        return terminal || polled.Closed
+            || polled.Status is "completed" or "failed" or "stopped" or "interrupted"
+                ? RunPollOutcome.Terminal
+                : RunPollOutcome.Ok;
+    }
+
+    /// <summary>Aplica o estado devolvido pelo GET /events: backlog de
+    /// eventos, <c>PartialContent</c>, pendências e erro. Devolve
+    /// (terminal, touched) — touched manda re-renderizar.</summary>
+    private async Task<(bool Terminal, bool Touched)> ApplyPolledEventsAsync(
+        RunEventsResponse polled, System.Text.StringBuilder content,
+        ChatMessageModel placeholder, int index, RunConsumeState state)
+    {
         var terminal = false;
         var touched = false;
         foreach (var item in polled.Events)
@@ -3857,18 +3904,7 @@
             _error = runError;
             touched = true;
         }
-
-        if (touched)
-        {
-            state.LastRender = DateTime.UtcNow;
-            await InvokeAsync(StateHasChanged);
-            await ScrollToEndIfPinnedAsync();
-        }
-
-        return terminal || polled.Closed
-            || polled.Status is "completed" or "failed" or "stopped" or "interrupted"
-                ? RunPollOutcome.Terminal
-                : RunPollOutcome.Ok;
+        return (terminal, touched);
     }
 
     /// <summary>

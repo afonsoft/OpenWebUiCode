@@ -209,7 +209,7 @@ public sealed class ChatBangTests
     }
 
     [Test]
-    public void Bang_DentroDePalavra_NaoAbre()
+    public async Task Bang_DentroDePalavra_NaoAbre()
     {
         using var ctx = Setup();
         var cut = ctx.Render<ChatView>();
@@ -218,7 +218,7 @@ public sealed class ChatBangTests
         textarea.Input("oi!");
 
         // Sem dropdown — o regex exige boundary (^ ou espaço) antes do !.
-        System.Threading.Thread.Sleep(400);
+        await Task.Delay(400);
         Assert.That(cut.FindAll(".mention-list [role=option]"), Is.Empty);
     }
 }

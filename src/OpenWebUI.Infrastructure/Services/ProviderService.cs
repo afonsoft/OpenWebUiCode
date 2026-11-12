@@ -595,13 +595,9 @@ public class ProviderService(
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void Add(IEnumerable<ModelInfo> models, string source)
         {
-            foreach (var m in models)
-            {
-                if (seen.Add($"{m.Provider}:{m.Id}"))
-                {
-                    result.Add(new SourcedModel(m, source));
-                }
-            }
+            result.AddRange(models
+                .Where(m => seen.Add($"{m.Provider}:{m.Id}"))
+                .Select(m => new SourcedModel(m, source)));
         }
 
         if (userConns is not null)
@@ -1074,7 +1070,7 @@ public class ProviderService(
     {
         if (openAi)
         {
-            var u = Prop(root, "usage");
+            var u = Prop(root, UsageKey);
             if (IntNum(Prop(u, "prompt_tokens")) is not { } prompt)
             {
                 return null;
@@ -1378,7 +1374,7 @@ public class ProviderService(
         }
         // Chunk final com stream_options.include_usage traz usage
         // sem choices (SPEC-20261016-agent-steps-usage RF-004).
-        if (Prop(node, "usage") is not null)
+        if (Prop(node, UsageKey) is not null)
         {
             diag.StreamUsage = ParseUsage(node, openAi: true);
         }
@@ -2108,6 +2104,12 @@ public class ProviderService(
     private const string MessageKey = "message";
     private const string ErrorKey = "error";
     private const string ChoicesKey = "choices";
+    private const string UsageKey = "usage";
+    private const string ParametersKey = "parameters";
+    private const string ThinkingBudgetKey = "thinking_budget";
+    private const string ResultKey = "result";
+    private const string ThoughtKey = "thought";
+    private const string InteractionsApiKey = "interactions_api";
     private const string ToolCallsKey = "tool_calls";
     private const string FunctionKey = "function";
     private const string ArgumentsKey = "arguments";
@@ -2421,7 +2423,7 @@ public class ProviderService(
             {
                 ["name"] = name,
                 [DescriptionKey] = fn![DescriptionKey]?.GetValue<string>(),
-                ["input_schema"] = fn["parameters"]?.DeepClone()
+                ["input_schema"] = fn[ParametersKey]?.DeepClone()
                     ?? new JsonObject { ["type"] = ObjectKey },
             });
         }
@@ -2452,7 +2454,7 @@ public class ProviderService(
                 // SPEC-20261103-anthropic-thinking-config RF-001/RF-002:
                 // knob first-class de extended thinking (model params,
                 // variant settings ou connection settings → Params).
-                case "thinking_budget":
+                case ThinkingBudgetKey:
                     ApplyThinkingBudget(payload, value);
                     break;
                 case "stop":
@@ -2499,7 +2501,6 @@ public class ProviderService(
     /// </summary>
     private static void ApplyAnthropicCacheControl(JsonObject payload)
     {
-        JsonObject Marker() => new() { ["type"] = "ephemeral" };
         // SPEC-20261103-agent-prompt-cache RF-002: marca todos os blocos
         // menos o último — com o split estático/dinâmico do pipeline, o
         // bloco dinâmico (último) fica fora do prefixo cacheável.
@@ -2509,35 +2510,46 @@ public class ProviderService(
             {
                 if (sysBlocks[i] is JsonObject b)
                 {
-                    b[CacheControlKey] = Marker();
+                    b[CacheControlKey] = EphemeralMarker();
                 }
             }
         }
         if (payload[ToolsKey] is JsonArray tools && tools.Count > 0
             && tools[^1] is JsonObject lastTool)
         {
-            lastTool[CacheControlKey] = Marker();
+            lastTool[CacheControlKey] = EphemeralMarker();
         }
-        if (payload["messages"] is JsonArray msgs
-            && msgs.LastOrDefault(m =>
-                m?["role"]?.GetValue<string>() == "user") is JsonObject lastUser)
+        MarkLastAnthropicUserMessage(payload);
+    }
+
+    private static JsonObject EphemeralMarker() =>
+        new() { ["type"] = "ephemeral" };
+
+    /// <summary>Marca o último bloco text da última user msg — content
+    /// string vira array de partes com o marker embutido.</summary>
+    private static void MarkLastAnthropicUserMessage(JsonObject payload)
+    {
+        if (payload["messages"] is not JsonArray msgs
+            || msgs.LastOrDefault(m =>
+                m?["role"]?.GetValue<string>() == "user") is not JsonObject lastUser)
         {
-            if (lastUser[ContentKey] is JsonArray blocks
-                && blocks.LastOrDefault(b =>
-                    b?["type"]?.GetValue<string>() == TextKey) is JsonObject textBlock)
-            {
-                textBlock[CacheControlKey] = Marker();
-            }
-            else if (lastUser[ContentKey] is JsonValue)
-            {
-                lastUser[ContentKey] = new JsonArray(
-                    new JsonObject
-                    {
-                        ["type"] = TextKey,
-                        [TextKey] = lastUser[ContentKey]!.DeepClone(),
-                        [CacheControlKey] = Marker(),
-                    });
-            }
+            return;
+        }
+        if (lastUser[ContentKey] is JsonArray blocks
+            && blocks.LastOrDefault(b =>
+                b?["type"]?.GetValue<string>() == TextKey) is JsonObject textBlock)
+        {
+            textBlock[CacheControlKey] = EphemeralMarker();
+        }
+        else if (lastUser[ContentKey] is JsonValue)
+        {
+            lastUser[ContentKey] = new JsonArray(
+                new JsonObject
+                {
+                    ["type"] = TextKey,
+                    [TextKey] = lastUser[ContentKey]!.DeepClone(),
+                    [CacheControlKey] = EphemeralMarker(),
+                });
         }
     }
 
@@ -2838,7 +2850,7 @@ public class ProviderService(
     /// (SPEC-20261103-providers-usage-tokens RF-001).</summary>
     private static ProviderUsage? ParseAnthropicUsage(JsonNode? root)
     {
-        var u = Prop(root, "usage");
+        var u = Prop(root, UsageKey);
         var input = IntNum(Prop(u, "input_tokens"));
         var output = IntNum(Prop(u, "output_tokens"));
         if (input is null && output is null)
@@ -2933,7 +2945,7 @@ public class ProviderService(
     /// <c>message_delta</c>).</summary>
     private static void CaptureAnthropicUsage(JsonNode? node, AnthropicStreamState state)
     {
-        var u = Prop(node, "usage");
+        var u = Prop(node, UsageKey);
         if (u is null)
         {
             return;
@@ -3101,38 +3113,7 @@ public class ProviderService(
             && request.Params.TryGetValue("native_tools", out var nativeTools)
             && Str(ToJsonNode(nativeTools)) is { Length: > 0 } nativeCsv)
         {
-            var toolsArray = payload[ToolsKey] as JsonArray ?? new JsonArray();
-            foreach (var tool in nativeCsv.Split(
-                         [',', ';'],
-                         StringSplitOptions.RemoveEmptyEntries
-                         | StringSplitOptions.TrimEntries))
-            {
-                switch (tool.ToLowerInvariant())
-                {
-                    case "google_search":
-                        toolsArray.Add(new JsonObject
-                        {
-                            ["google_search"] = new JsonObject(),
-                        });
-                        break;
-                    case "code_execution":
-                        toolsArray.Add(new JsonObject
-                        {
-                            ["code_execution"] = new JsonObject(),
-                        });
-                        break;
-                    case "url_context":
-                        toolsArray.Add(new JsonObject
-                        {
-                            ["url_context"] = new JsonObject(),
-                        });
-                        break;
-                }
-            }
-            if (toolsArray.Count > 0)
-            {
-                payload[ToolsKey] = toolsArray;
-            }
+            ApplyGoogleNativeTools(payload, nativeCsv);
         }
 
         if (request.Params is { Count: > 0 })
@@ -3145,6 +3126,33 @@ public class ProviderService(
         }
 
         return payload;
+    }
+
+    /// <summary>Acrescenta as tools nativas do Gemini (csv) ao tools[].</summary>
+    private static void ApplyGoogleNativeTools(JsonObject payload, string nativeCsv)
+    {
+        var toolsArray = payload[ToolsKey] as JsonArray ?? new JsonArray();
+        foreach (var tool in nativeCsv.Split(
+                     [',', ';'],
+                     StringSplitOptions.RemoveEmptyEntries
+                     | StringSplitOptions.TrimEntries))
+        {
+            var key = tool.ToLowerInvariant() switch
+            {
+                "google_search" => "google_search",
+                "code_execution" => "code_execution",
+                "url_context" => "url_context",
+                _ => null,
+            };
+            if (key is not null)
+            {
+                toolsArray.Add(new JsonObject { [key] = new JsonObject() });
+            }
+        }
+        if (toolsArray.Count > 0)
+        {
+            payload[ToolsKey] = toolsArray;
+        }
     }
 
     /// <summary>
@@ -3268,7 +3276,7 @@ public class ProviderService(
                     : m.ToolCallId ?? "tool",
                 ["response"] = new JsonObject
                 {
-                    ["result"] = m.Content,
+                    [ResultKey] = m.Content,
                 },
             },
         };
@@ -3319,17 +3327,21 @@ public class ProviderService(
     private static JsonObject? BuildGoogleFunctionCallPart(
         JsonNode? call, Dictionary<string, string> toolNames)
     {
-        var name = call?[FunctionKey]?["name"]?.GetValue<string>();
+        if (call is null)
+        {
+            return null;
+        }
+        var name = call[FunctionKey]?["name"]?.GetValue<string>();
         if (name is null)
         {
             return null;
         }
-        var id = call!["id"]?.GetValue<string>();
+        var id = call["id"]?.GetValue<string>();
         if (id is not null)
         {
             toolNames[id] = name;
         }
-        var argsRaw = call![FunctionKey]![ArgumentsKey];
+        var argsRaw = call[FunctionKey]![ArgumentsKey];
         JsonNode? args;
         try
         {
@@ -3367,7 +3379,7 @@ public class ProviderService(
             {
                 ["name"] = name,
                 [DescriptionKey] = fn![DescriptionKey]?.GetValue<string>(),
-                ["parameters"] = fn["parameters"]?.DeepClone()
+                [ParametersKey] = fn[ParametersKey]?.DeepClone()
                     ?? new JsonObject { ["type"] = ObjectKey },
             });
         }
@@ -3403,7 +3415,7 @@ public class ProviderService(
                     break;
                 // SPEC-20261103-gemini-native-tools RF-004: thinking_budget
                 // → thinkingConfig (0=off, -1=dynamic — pass-through da API).
-                case "thinking_budget":
+                case ThinkingBudgetKey:
                     if (IntNum(ToJsonNode(value)) is { } tb)
                     {
                         config["thinkingConfig"] = new JsonObject
@@ -3443,7 +3455,7 @@ public class ProviderService(
             if (Str(Prop(part, TextKey)) is { } text)
             {
                 // part.thought=true é raciocínio — não vai para o Content.
-                var isThought = Prop(part, "thought") is JsonValue flag
+                var isThought = Prop(part, ThoughtKey) is JsonValue flag
                     && flag.TryGetValue<bool>(out var b) && b;
                 if (isThought)
                 {
@@ -3493,7 +3505,7 @@ public class ProviderService(
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
         // SPEC-20261103-gemini-interactions-api RF-005: flag por conexão —
         // Interactions API quando on, generateContent (legacy) quando off.
-        if (GoogleSettingFlag(connection, "interactions_api"))
+        if (GoogleSettingFlag(connection, InteractionsApiKey))
         {
             return await CompleteGoogleInteractionsAsync(request, connection, ct);
         }
@@ -3510,7 +3522,7 @@ public class ProviderService(
         ChatCompletionRequest request, ConnectionsConfig connections, CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
-        if (GoogleSettingFlag(connection, "interactions_api"))
+        if (GoogleSettingFlag(connection, InteractionsApiKey))
         {
             return await CompleteGoogleInteractionsWithToolsAsync(request, connection, ct);
         }
@@ -3530,7 +3542,7 @@ public class ProviderService(
         [EnumeratorCancellation] CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
-        if (GoogleSettingFlag(connection, "interactions_api"))
+        if (GoogleSettingFlag(connection, InteractionsApiKey))
         {
             await foreach (var line in StreamGoogleInteractionsAsync(
                 request, connection, ct))
@@ -3594,7 +3606,7 @@ public class ProviderService(
         {
             return null;
         }
-        var isThought = Prop(part, "thought") is JsonValue flag
+        var isThought = Prop(part, ThoughtKey) is JsonValue flag
             && flag.TryGetValue<bool>(out var b) && b;
         var filtered = isThought
             ? markupReasoning.Feed(text)
@@ -3612,7 +3624,7 @@ public class ProviderService(
         {
             if (filtered.Length > 0)
             {
-                delta["content"] = filtered;
+                delta[ContentKey] = filtered;
             }
             if (reasoning.Length > 0)
             {
@@ -3631,7 +3643,7 @@ public class ProviderService(
         var delta = new JsonObject();
         if (tail.Length > 0)
         {
-            delta["content"] = tail;
+            delta[ContentKey] = tail;
         }
         if (reasoning.Length > 0)
         {
@@ -3662,7 +3674,7 @@ public class ProviderService(
         CancellationToken ct)
     {
         var connection = FindTypedConnection(connections, ProviderTypes.Google);
-        if (GoogleSettingFlag(connection, "interactions_api"))
+        if (GoogleSettingFlag(connection, InteractionsApiKey))
         {
             return await StreamGoogleInteractionsToolsAsync(
                 request, connection, onDelta, onReasoning, ct);
@@ -3882,7 +3894,7 @@ public class ProviderService(
         {
             return;
         }
-        var isThought = Prop(part, "thought") is JsonValue flag
+        var isThought = Prop(part, ThoughtKey) is JsonValue flag
             && flag.TryGetValue<bool>(out var b) && b;
         if (isThought)
         {
@@ -4027,7 +4039,7 @@ public class ProviderService(
                         ? n
                         : m.ToolCallId ?? "tool",
                     ["call_id"] = m.ToolCallId,
-                    ["result"] = new JsonArray(new JsonObject
+                    [ResultKey] = new JsonArray(new JsonObject
                     {
                         ["type"] = TextKey, [TextKey] = m.Content,
                     }),
@@ -4127,7 +4139,7 @@ public class ProviderService(
                     ["type"] = FunctionKey,
                     ["name"] = name,
                     [DescriptionKey] = Str(Prop(fn, DescriptionKey)),
-                    ["parameters"] = Prop(fn, "parameters")?.DeepClone()
+                    [ParametersKey] = Prop(fn, ParametersKey)?.DeepClone()
                         ?? new JsonObject { ["type"] = ObjectKey },
                 });
             }
@@ -4187,10 +4199,10 @@ public class ProviderService(
                     break;
                 // thinking_budget numérico passa direto (budget de tokens);
                 // thinking_level (string low/high/…) é o campo novo da API.
-                case "thinking_budget":
+                case ThinkingBudgetKey:
                     if (IntNum(ToJsonNode(value)) is { } tb)
                     {
-                        config["thinking_budget"] = tb;
+                        config[ThinkingBudgetKey] = tb;
                     }
                     break;
                 case "thinking_level":
@@ -4235,7 +4247,7 @@ public class ProviderService(
                         sources.AddRange(GoogleInteractionsCitations(part));
                     }
                     break;
-                case "thought":
+                case ThoughtKey:
                     reasoning.Append(GoogleInteractionsThoughtText(step));
                     break;
                 case "function_call":
@@ -4322,7 +4334,7 @@ public class ProviderService(
         {
             yield break;
         }
-        foreach (var item in Prop(step, "result") as JsonArray ?? [])
+        foreach (var item in Prop(step, ResultKey) as JsonArray ?? [])
         {
             var uri = Str(Prop(item, "url")) ?? Str(Prop(item, "uri"));
             if (uri is { Length: > 0 })
@@ -4350,9 +4362,9 @@ public class ProviderService(
             case "code_execution_result":
                 var outcome = Str(Prop(step, "outcome")) ?? "OUTCOME_OK";
                 var output = Str(Prop(step, "output"))
-                    ?? Str(Prop(Prop(step, "result") is JsonArray { Count: > 0 } r
+                    ?? Str(Prop(Prop(step, ResultKey) is JsonArray { Count: > 0 } r
                         ? r[0] : null, TextKey))
-                    ?? Prop(step, "result")?.ToJsonString();
+                    ?? Prop(step, ResultKey)?.ToJsonString();
                 return $"\n\n> execução: {outcome}\n```\n{output}\n```\n";
             default:
                 return null;
@@ -4364,7 +4376,7 @@ public class ProviderService(
     /// <c>interaction.completed</c> (<c>interaction.usage</c>).</summary>
     private static ProviderUsage? ParseGoogleInteractionsUsage(JsonNode? root)
     {
-        var u = Prop(root, "usage") ?? Prop(Prop(root, "interaction"), "usage");
+        var u = Prop(root, UsageKey) ?? Prop(Prop(root, "interaction"), UsageKey);
         var input = IntNum(Prop(u, "total_input_tokens"));
         var output = IntNum(Prop(u, "total_output_tokens"));
         var thought = IntNum(Prop(u, "total_thought_tokens"));
@@ -4468,7 +4480,7 @@ public class ProviderService(
                 var chunk = new JsonObject();
                 if (filtered.Length > 0)
                 {
-                    chunk["content"] = filtered;
+                    chunk[ContentKey] = filtered;
                 }
                 if (reasoning.Length > 0)
                 {
@@ -4543,29 +4555,8 @@ public class ProviderService(
             switch (eventName)
             {
                 case "step.start":
-                    var step = Prop(data, "step");
-                    if (Str(Prop(step, "type")) == "function_call")
-                    {
-                        var open = new OpenInteractionCall(
-                            Str(Prop(step, "id"))
-                                ?? Guid.NewGuid().ToString("N"),
-                            Str(Prop(step, "name")) ?? string.Empty);
-                        if (Prop(step, ArgumentsKey) is JsonObject
-                            { Count: > 0 } presetArgs)
-                        {
-                            open.Args.Append(presetArgs.ToJsonString());
-                        }
-                        openSteps[index] = open;
-                    }
-                    else if (GoogleInteractionsExecBlock(step) is { } startExec)
-                    {
-                        content.Append(startExec);
-                        if (onDelta is not null)
-                        {
-                            await onDelta(startExec, ct);
-                        }
-                    }
-                    sources.AddRange(GoogleInteractionsSources(step));
+                    await HandleStepStartAsync(
+                        data, index, openSteps, content, onDelta, sources, ct);
                     break;
                 case "step.delta":
                     await ProcessGoogleInteractionsDeltaAsync(
@@ -4621,6 +4612,42 @@ public class ProviderService(
             FinishReason: finishReason);
     }
 
+    /// <summary>Processa um <c>step.start</c>: abre function_call por index,
+    /// emite bloco de execução server-side e coleta fontes.</summary>
+    private static async Task HandleStepStartAsync(
+        JsonNode? data,
+        int index,
+        Dictionary<int, OpenInteractionCall> openSteps,
+        StringBuilder content,
+        Func<string, CancellationToken, Task>? onDelta,
+        List<(string Uri, string Title)> sources,
+        CancellationToken ct)
+    {
+        var step = Prop(data, "step");
+        if (Str(Prop(step, "type")) == "function_call")
+        {
+            var open = new OpenInteractionCall(
+                Str(Prop(step, "id"))
+                    ?? Guid.NewGuid().ToString("N"),
+                Str(Prop(step, "name")) ?? string.Empty);
+            if (Prop(step, ArgumentsKey) is JsonObject
+                { Count: > 0 } presetArgs)
+            {
+                open.Args.Append(presetArgs.ToJsonString());
+            }
+            openSteps[index] = open;
+        }
+        else if (GoogleInteractionsExecBlock(step) is { } startExec)
+        {
+            content.Append(startExec);
+            if (onDelta is not null)
+            {
+                await onDelta(startExec, ct);
+            }
+        }
+        sources.AddRange(GoogleInteractionsSources(step));
+    }
+
     /// <summary>Estado mutável de um step function_call aberto no stream.</summary>
     private sealed class OpenInteractionCall(string id, string name)
     {
@@ -4647,42 +4674,15 @@ public class ProviderService(
         GoogleInteractionsStreamSink sink,
         CancellationToken ct)
     {
-        var (content, markupContent, markupReasoning, onDelta, onReasoning) = sink;
         var delta = Prop(data, DeltaKey);
         switch (Str(Prop(delta, "type")))
         {
             case TextKey:
-                if (Str(Prop(delta, TextKey)) is { Length: > 0 } text)
-                {
-                    var filtered = markupContent.Feed(text);
-                    if (filtered.Length > 0)
-                    {
-                        content.Append(filtered);
-                        if (onDelta is not null)
-                        {
-                            await onDelta(filtered, ct);
-                        }
-                    }
-                    if (onReasoning is not null
-                        && markupContent.TakeReasoning() is { Length: > 0 } lifted)
-                    {
-                        await onReasoning(lifted, ct);
-                    }
-                }
+                await ApplyTextDeltaAsync(delta, sink, ct);
                 break;
             case "thought_summary":
             case "thought_signature":
-                var rtext = Str(Prop(Prop(delta, ContentKey), TextKey))
-                    ?? Str(Prop(delta, TextKey))
-                    ?? Str(Prop(delta, "signature"));
-                if (!string.IsNullOrEmpty(rtext))
-                {
-                    var filteredR = markupReasoning.Feed(rtext);
-                    if (filteredR.Length > 0 && onReasoning is not null)
-                    {
-                        await onReasoning(filteredR, ct);
-                    }
-                }
+                await ApplyThoughtDeltaAsync(delta, sink, ct);
                 break;
             case "arguments_delta":
                 if (openSteps.TryGetValue(index, out var fc)
@@ -4691,6 +4691,50 @@ public class ProviderService(
                     fc.Args.Append(argChunk);
                 }
                 break;
+        }
+    }
+
+    /// <summary>Delta <c>text</c>: filtra markup → content/onDelta e
+    /// reemite reasoning levantado pelo filtro.</summary>
+    private static async Task ApplyTextDeltaAsync(
+        JsonNode? delta, GoogleInteractionsStreamSink sink, CancellationToken ct)
+    {
+        if (Str(Prop(delta, TextKey)) is not { Length: > 0 } text)
+        {
+            return;
+        }
+        var filtered = sink.MarkupContent.Feed(text);
+        if (filtered.Length > 0)
+        {
+            sink.Content.Append(filtered);
+            if (sink.OnDelta is not null)
+            {
+                await sink.OnDelta(filtered, ct);
+            }
+        }
+        if (sink.OnReasoning is not null
+            && sink.MarkupContent.TakeReasoning() is { Length: > 0 } lifted)
+        {
+            await sink.OnReasoning(lifted, ct);
+        }
+    }
+
+    /// <summary>Delta <c>thought_*</c>: extrai o texto do pensamento e
+    /// emite em reasoning após o filtro de markup.</summary>
+    private static async Task ApplyThoughtDeltaAsync(
+        JsonNode? delta, GoogleInteractionsStreamSink sink, CancellationToken ct)
+    {
+        var rtext = Str(Prop(Prop(delta, ContentKey), TextKey))
+            ?? Str(Prop(delta, TextKey))
+            ?? Str(Prop(delta, "signature"));
+        if (string.IsNullOrEmpty(rtext))
+        {
+            return;
+        }
+        var filteredR = sink.MarkupReasoning.Feed(rtext);
+        if (filteredR.Length > 0 && sink.OnReasoning is not null)
+        {
+            await sink.OnReasoning(filteredR, ct);
         }
     }
 

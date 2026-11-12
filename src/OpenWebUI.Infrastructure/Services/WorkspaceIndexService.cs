@@ -164,7 +164,8 @@ public sealed class WorkspaceIndexService
 
     /// <summary>Tokeniza a query em termos únicos ≥2 chars.</summary>
     public static string[] QueryTerms(string query) =>
-        Regex.Split(query.ToLowerInvariant(), @"[^a-z0-9_]+")
+        Regex.Split(query.ToLowerInvariant(), @"[^a-z0-9_]+",
+                RegexOptions.None, TimeSpan.FromSeconds(1))
             .Where(t => t.Length >= 2)
             .Distinct()
             .ToArray();

@@ -143,7 +143,7 @@ public class ClientServiceEdgeTests
     {
         var auth = NewAuthService();
         using var req = auth.CreateRequest(HttpMethod.Get, "/api/v1/files?x=1#f");
-        Assert.That(req.RequestUri!.OriginalString, Is.EqualTo("/api/v1/files?x=1#f"));
+        Assert.That(req.RequestUri!.OriginalString, Is.EqualTo("http://localhost/api/v1/files?x=1#f"));
     }
 
     // CS9113 cleanup (fix/client-warnings): GenContextClientService deixou
