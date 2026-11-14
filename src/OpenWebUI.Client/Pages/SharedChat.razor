@@ -41,14 +41,7 @@
                                 @(message.Role == "assistant" ? message.Model ?? L["chat.assistant"] : _chat.User?.Name ?? L["chat.you"])
                             </div>
                             <div class="message-content">
-                                @if (message.Role == "assistant")
-                                {
-                                    @((MarkupString)MarkdownService.ToHtml(message.Content))
-                                }
-                                else
-                                {
-                                    <span class="user-text">@message.Content</span>
-                                }
+                                @((MarkupString)MarkdownService.ToHtml(message.Content))
                             </div>
                         </div>
                     </div>
