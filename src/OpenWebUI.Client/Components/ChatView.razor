@@ -636,7 +636,7 @@
                             }
                         </div>
                     }
-                    <textarea
+                    <textarea id="chat-composer-textarea"
                         class="scrollbar-hidden bg-transparent dark:text-gray-100 outline-none w-full py-3 px-1 resize-none h-fit max-h-96 overflow-auto placeholder:text-gray-400 dark:placeholder:text-gray-600 text-[0.9375rem]"
                         aria-label="@L["chat.input_placeholder"]"
                         placeholder="@(_uploading ? L["chat.uploading"] : L["chat.input_placeholder"])"
@@ -649,12 +649,12 @@
                         disabled="@_loading"></textarea>
                 </div>
 
-                <div class="flex justify-between mt-0.5 mb-2 mx-0.5 max-w-full" dir="ltr">
-                    <div class="ml-1 self-end flex items-center flex-1 min-w-0">
+                <div id="chat-composer-toolbar" class="flex justify-between mt-0.5 mb-2 mx-0.5 max-w-full" dir="ltr">
+                    <div id="chat-composer-toolbar-left" class="ml-1 self-end flex items-center flex-1 min-w-0">
                         @if (_tools.Count > 0 || _webSearchAvailable)
                         {
                             <div class="relative">
-                                <button class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40
+                                <button id="composer-btn-tools-trigger" class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40
                                                @(_toolIds.Count > 0 || _webSearch ? "text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800")"
                                         title="@L["chat.tools"]" aria-label="@L["chat.tools"]" aria-expanded="@_showToolsMenu" aria-haspopup="dialog" disabled="@_loading"
                                         @ref="_toolsTrigger" @onclick="ToggleToolsMenu">
@@ -662,8 +662,8 @@
                                 </button>
                                 @if (_showToolsMenu)
                                 {
-                                    <div class="fixed inset-0 z-30" @onclick="() => _showToolsMenu = false"></div>
-                                    <div class="absolute bottom-10 left-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-lg max-h-[60vh] overflow-y-auto overflow-x-hidden"
+                                    <div id="composer-tools-backdrop" class="fixed inset-0 z-30" @onclick="() => _showToolsMenu = false"></div>
+                                    <div id="composer-tools-menu" class="absolute bottom-10 left-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-lg max-h-[60vh] overflow-y-auto overflow-x-hidden"
                                          role="group" aria-label="@L["chat.tools"]" @ref="_toolsMenu" @onkeydown="OnToolsMenuKeyDown">
                                         @if (_webSearchAvailable)
                                         {
@@ -746,73 +746,144 @@
                                 }
                             </div>
                         }
-                        @if (CategoryHasTools("image"))
-                        {
-                            <button class="relative size-8 flex items-center justify-center rounded-full transition disabled:opacity-40
-                                           @(CategoryIconClass("image"))"
-                                    title="@(CategoryConfigured("image") ? L["chat.generate_image"] : L["chat.tool_not_configured"])"
-                                    aria-label="@L["chat.generate_image"]"
-                                    disabled="@(_loading || !CategoryConfigured("image"))"
-                                    @onclick='() => ToggleCategoryAsync("image")'>
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
-                                @if (!CategoryConfigured("image"))
-                                {
-                                    <span class="absolute left-1.5 right-1.5 top-1/2 h-0.5 -translate-y-1/2 -rotate-45 bg-red-500 rounded-full pointer-events-none"></span>
-                                }
+                        
+                        <!-- Botão Sliders-Up e Popover de Capacidades -->
+                        <div class="relative">
+                            <button id="composer-btn-sliders-trigger" class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40
+                                           @(_webSearch || _toolIds.Count > 0 ? "text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800")"
+                                    title="@L["chat.sliders_settings"]" aria-label="@L["chat.sliders_settings"]" aria-expanded="@_showSlidersMenu" aria-haspopup="menu" disabled="@_loading"
+                                    @onclick="ToggleSlidersMenu">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 13.5V3.75m0 9.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 3.75V16.5m12-3V3.75m0 9.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 3.75V16.5m-6-9V3.75m0 3.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 9.75V10.5" /></svg>
                             </button>
-                        }
-                        @if (CategoryHasTools("video"))
-                        {
-                            <button class="relative size-8 flex items-center justify-center rounded-full transition disabled:opacity-40
-                                           @(CategoryIconClass("video"))"
-                                    title="@(CategoryConfigured("video") ? L["chat.generate_video"] : L["chat.tool_not_configured"])"
-                                    aria-label="@L["chat.generate_video"]"
-                                    disabled="@(_loading || !CategoryConfigured("video"))"
-                                    @onclick='() => ToggleCategoryAsync("video")'>
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
-                                @if (!CategoryConfigured("video"))
-                                {
-                                    <span class="absolute left-1.5 right-1.5 top-1/2 h-0.5 -translate-y-1/2 -rotate-45 bg-red-500 rounded-full pointer-events-none"></span>
-                                }
-                            </button>
-                        }
-                        @if (CategoryHasTools("web") || _webSearchAvailable)
-                        {
-                            <button class="relative size-8 flex items-center justify-center rounded-full transition disabled:opacity-40
-                                           @(CategoryIconClass("web"))"
-                                    title="@(CategoryConfigured("web") ? L["chat.web_search"] : L["chat.tool_not_configured"])"
-                                    aria-label="@L["chat.web_search"]"
-                                    disabled="@(_loading || !CategoryConfigured("web"))"
-                                    @onclick='() => ToggleCategoryAsync("web")'>
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0c2.5 0 4.5-4 4.5-9S14.5 3 12 3m0 18c-2.5 0-4.5-4-4.5-9S9.5 3 12 3m-8.7 6h17.4M3.3 15h17.4" /></svg>
-                                @if (!CategoryConfigured("web"))
-                                {
-                                    <span class="absolute left-1.5 right-1.5 top-1/2 h-0.5 -translate-y-1/2 -rotate-45 bg-red-500 rounded-full pointer-events-none"></span>
-                                }
-                            </button>
-                        }
-                        <button class="size-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition cursor-pointer disabled:opacity-40"
+                            @if (_showSlidersMenu)
+                            {
+                                <div id="composer-sliders-backdrop" class="fixed inset-0 z-30" @onclick="ToggleSlidersMenu"></div>
+                                <div id="composer-sliders-popover" class="absolute bottom-10 left-0 z-40 w-72 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-xl p-2 text-sm text-gray-700 dark:text-gray-200">
+                                    <div class="px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">@L["chat.sliders_settings"]</div>
+                                    
+                                    @if (_webSearchAvailable)
+                                    {
+                                        <label id="composer-sliders-websearch-item" class="flex items-center justify-between px-3 py-2 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer">
+                                            <div class="flex items-center gap-2.5">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 text-blue-500"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0c2.5 0 4.5-4 4.5-9S14.5 3 12 3m0 18c-2.5 0-4.5-4-4.5-9S9.5 3 12 3m-8.7 6h17.4M3.3 15h17.4" /></svg>
+                                                <span>@L["chat.web_search"]</span>
+                                            </div>
+                                            <input id="composer-sliders-toggle-websearch" type="checkbox" checked="@_webSearch" @onchange="e => SetWebSearchAsync(e.Value is true)" class="rounded text-blue-600 focus:ring-blue-500 size-4" />
+                                        </label>
+                                    }
+
+                                    <div class="border-t border-gray-100 dark:border-gray-800 my-1 pt-1">
+                                        <div class="px-3 py-1.5 text-xs font-medium text-gray-400">@L["chat.media_generation"]</div>
+                                        @if (CategoryHasTools("image"))
+                                        {
+                                            <label id="composer-sliders-image-item" class="flex items-center justify-between px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer">
+                                                <div class="flex items-center gap-2.5">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 text-purple-500"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
+                                                    <span>@L["chat.tools_cat_image"]</span>
+                                                </div>
+                                                <input id="composer-sliders-toggle-image" type="checkbox" checked="@IsCategoryEnabled("image")" @onchange='() => ToggleCategoryAsync("image")' class="rounded text-blue-600 focus:ring-blue-500 size-4" />
+                                            </label>
+                                        }
+                                        @if (CategoryHasTools("video"))
+                                        {
+                                            <label id="composer-sliders-video-item" class="flex items-center justify-between px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer">
+                                                <div class="flex items-center gap-2.5">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 text-pink-500"><path stroke-linecap="round" stroke-linejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" /></svg>
+                                                    <span>@L["chat.tools_cat_video"]</span>
+                                                </div>
+                                                <input id="composer-sliders-toggle-video" type="checkbox" checked="@IsCategoryEnabled("video")" @onchange='() => ToggleCategoryAsync("video")' class="rounded text-blue-600 focus:ring-blue-500 size-4" />
+                                            </label>
+                                        }
+                                    </div>
+
+                                    <div id="composer-sliders-mcp-section" class="border-t border-gray-100 dark:border-gray-800 my-1 pt-1 relative">
+                                        <div class="px-3 py-1.5 text-xs font-medium text-gray-400">@L["chat.mcp_servers_menu"]</div>
+                                        @if (_mcps.Count == 0)
+                                        {
+                                            <div id="composer-sliders-mcp-empty" class="px-3 py-2 text-xs text-gray-400 italic">@L["chat.no_mcp_servers"]</div>
+                                        }
+                                        else
+                                        {
+                                            @foreach (var server in _mcps)
+                                            {
+                                                <div class="relative group" @onmouseenter="() => LoadMcpToolsForServerAsync(server.Id)" @onmouseleave="() => { if (_activeMcpHoverServerId == server.Id) _activeMcpHoverServerId = null; }">
+                                                    <div id="composer-sliders-mcp-server-@server.Id"
+                                                         class="flex items-center justify-between px-3 py-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                                                         @onclick="() => { _activeMcpHoverServerId = _activeMcpHoverServerId == server.Id ? null : server.Id; }">
+                                                        <div class="flex items-center gap-2.5 truncate">
+                                                            <span class="size-2 rounded-full @(server.Enabled ? "bg-green-500" : "bg-gray-400")"></span>
+                                                            <span class="truncate">@server.Name</span>
+                                                        </div>
+                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 text-gray-400"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                                                    </div>
+
+                                                    @if (_activeMcpHoverServerId == server.Id)
+                                                    {
+                                                        <div id="composer-sliders-mcp-tools-flyout-@server.Id"
+                                                             class="absolute left-full top-0 ml-2 w-72 max-h-80 overflow-y-auto rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl p-2 z-50">
+                                                            <div class="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-gray-800 mb-1">
+                                                                <span class="text-xs font-semibold text-gray-500">@server.Name Tools</span>
+                                                                <div class="flex items-center gap-2 text-[11px]">
+                                                                    <button class="text-blue-600 hover:underline" @onclick="() => ToggleServerTools(server.Id, true)">@L["chat.enable_all"]</button>
+                                                                    <span>/</span>
+                                                                    <button class="text-gray-500 hover:underline" @onclick="() => ToggleServerTools(server.Id, false)">@L["chat.disable_all"]</button>
+                                                                </div>
+                                                            </div>
+                                                            @if (_mcpToolsLoading.TryGetValue(server.Id, out var loading) && loading)
+                                                            {
+                                                                <div class="px-3 py-4 text-center text-xs text-gray-400">@L["insights.loading"]</div>
+                                                            }
+                                                            else if (_mcpToolsCache.TryGetValue(server.Id, out var tools) && tools.Count > 0)
+                                                            {
+                                                                @foreach (var tool in tools)
+                                                                {
+                                                                    <label id="composer-sliders-mcp-tool-@tool.Id" class="flex items-start gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer">
+                                                                        <input type="checkbox" checked="@_toolIds.Contains(tool.Id)" @onchange="() => ToggleToolAsync(tool.Id)" class="mt-0.5 rounded text-blue-600 focus:ring-blue-500 size-4" />
+                                                                        <div class="truncate">
+                                                                            <div class="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">@tool.Name</div>
+                                                                            @if (!string.IsNullOrEmpty(tool.Description))
+                                                                            {
+                                                                                <div class="text-[11px] text-gray-400 truncate">@tool.Description</div>
+                                                                            }
+                                                                        </div>
+                                                                    </label>
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                <div class="px-3 py-4 text-center text-xs text-gray-400">@L["workspace.no_tools"]</div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+<button id="composer-btn-attach-file" class="size-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition cursor-pointer disabled:opacity-40"
                                 title="@L["chat.attach"]" aria-label="@L["chat.attach"]" disabled="@(_loading || _uploading)"
                                 @onclick="TriggerFilePicker">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                         </button>
-                        <button class="size-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition cursor-pointer disabled:opacity-40"
+                        <button id="composer-btn-attach-dir" class="size-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition cursor-pointer disabled:opacity-40"
                                 title="@L["chat.attach_dir"]" aria-label="@L["chat.attach_dir"]" disabled="@(_loading || _uploading)"
                                 @onclick="TriggerDirPicker">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
                         </button>
-                        <InputFile @ref="_fileInput" OnChange="OnFileSelected" class="hidden" />
+                        <InputFile id="composer-input-file-picker" @ref="_fileInput" OnChange="OnFileSelected" class="hidden" />
                         @* attachments-v2 RF-002: seletor de pasta — o atributo
                            webkitdirectory pede ao browser todos os arquivos da
                            árvore; os paths relativos são lidos via JS. *@
-                        <InputFile @ref="_dirInput" OnChange="OnDirectorySelected" class="hidden" webkitdirectory="" />
+                        <InputFile id="composer-input-dir-picker" @ref="_dirInput" OnChange="OnDirectorySelected" class="hidden" webkitdirectory="" />
                         <VoiceButton Disabled="@(_loading || _streaming)" Lang="@SttLang"
                                      OnDictationStarted="() => _sttBase = _input"
                                      OnTranscript="OnSttTranscript"
                                      OnDictationEnded="OnSttDoneAsync"
                                      OnError="OnSttErr" />
                         <div class="relative">
-                            <button class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40 @(ModeButtonClass)"
+                            <button id="composer-btn-mode-trigger" class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40 @(ModeButtonClass)"
                                     title="@ModeTitle" aria-label="@ModeTitle" aria-expanded="@_showModeMenu" aria-haspopup="menu" disabled="@_loading"
                                     @ref="_modeTrigger" @onclick="ToggleModeMenu">
                                 @ModeIcon(_approvalPreset)
@@ -849,32 +920,32 @@
                         </div>
                     </div>
 
-                    <div class="self-end flex items-center gap-1 mr-1">
+                    <div id="chat-composer-toolbar-right" class="self-end flex items-center gap-1 mr-1">
                         <AgentModeToggle Mode="@EffectiveAgentMode" HasRepo="@(_repo?.Repo is not null)"
                                          Disabled="@_loading" OnSelect="SetAgentModeAsync" />
                         @if (_streaming)
                         {
                             <button class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40
                                            @(SendDisabled ? "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-600" : "bg-gray-900 text-white dark:bg-white dark:text-gray-900")"
-                                    title="@L["chat.queue_add"]" aria-label="@L["chat.queue_add"]" disabled="@SendDisabled" @onclick="EnqueueMessage">
+                                    id="chat-composer-queue-btn" title="@L["chat.queue_add"]" aria-label="@L["chat.queue_add"]" disabled="@SendDisabled" @onclick="EnqueueMessage">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" /></svg>
                             </button>
                             if (_paused)
                             {
                                 <button class="size-8 flex items-center justify-center rounded-full bg-blue-600 text-white transition cursor-pointer"
-                                        title="@L["chat.resume"]" aria-label="@L["chat.resume"]" @onclick="ResumeStreaming">
+                                        id="chat-composer-resume-btn" title="@L["chat.resume"]" aria-label="@L["chat.resume"]" @onclick="ResumeStreaming">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-4"><path fill-rule="evenodd" d="M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z" clip-rule="evenodd" /></svg>
                                 </button>
                             }
                             else
                             {
                                 <button class="size-8 flex items-center justify-center rounded-full bg-gray-900 text-white dark:bg-white dark:text-gray-900 transition cursor-pointer"
-                                        title="@L["chat.pause"]" aria-label="@L["chat.pause"]" @onclick="PauseStreaming">
+                                        id="chat-composer-pause-btn" title="@L["chat.pause"]" aria-label="@L["chat.pause"]" @onclick="PauseStreaming">
                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-4"><path fill-rule="evenodd" d="M6.75 5.25a.75.75 0 0 1 .75-.75H9a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75H7.5a.75.75 0 0 1-.75-.75V5.25Zm7.5 0a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75H15a.75.75 0 0 1-.75-.75V5.25Z" clip-rule="evenodd" /></svg>
                                 </button>
                             }
                             <button class="size-8 flex items-center justify-center rounded-full bg-gray-900 text-white dark:bg-white dark:text-gray-900 transition cursor-pointer"
-                                    title="@L["chat.stop"]" aria-label="@L["chat.stop"]" @onclick="StopStreaming">
+                                    id="chat-composer-stop-btn" title="@L["chat.stop"]" aria-label="@L["chat.stop"]" @onclick="StopStreaming">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-4"><path fill-rule="evenodd" d="M4.5 7.5a3 3 0 0 1 3-3h9a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-9Z" clip-rule="evenodd" /></svg>
                             </button>
                         }
@@ -882,7 +953,7 @@
                         {
                             <button class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40
                                            @(SendDisabled ? "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-600" : "bg-gray-900 text-white dark:bg-white dark:text-gray-900")"
-                                    title="@L["chat.send"]" aria-label="@L["chat.send"]" disabled="@SendDisabled" @onclick="SendAsync">
+                                    id="chat-composer-send-btn" title="@L["chat.send"]" aria-label="@L["chat.send"]" disabled="@SendDisabled" @onclick="SendAsync">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" /></svg>
                             </button>
                         }
@@ -1240,9 +1311,9 @@
             _webSearchAvailable = features?.EnableWebSearch ?? false;
             _imageGenEnabled = features?.EnableImageGeneration ?? false;
             _videoGenEnabled = features?.EnableVideoGeneration ?? false;
-            // Busca web desligada por padrão (o usuário habilita no ícone);
-            // a escolha explícita do usuário (localStorage) tem precedência.
-            _webSearch = await storedTask == "true" && _webSearchAvailable;
+            var storedWebSearch = await storedTask;
+            // Busca web habilitada por default em novos chats, respeitando preferência salva explicitamente.
+            _webSearch = (storedWebSearch is null || storedWebSearch == "true") && _webSearchAvailable;
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
@@ -4955,6 +5026,62 @@
         catch (JSException ex)
         {
             Console.WriteLine($"scrollToEndIfPinned falhou: {ex.Message}");
+        }
+    }
+
+    private bool _showSlidersMenu;
+    private string? _activeMcpHoverServerId;
+    private readonly Dictionary<string, List<McpToolResponse>> _mcpToolsCache = new();
+    private readonly Dictionary<string, bool> _mcpToolsLoading = new();
+
+    private void ToggleSlidersMenu()
+    {
+        _showSlidersMenu = !_showSlidersMenu;
+        if (!_showSlidersMenu)
+        {
+            _activeMcpHoverServerId = null;
+        }
+    }
+
+    private async Task LoadMcpToolsForServerAsync(string serverId)
+    {
+        _activeMcpHoverServerId = serverId;
+        if (_mcpToolsCache.ContainsKey(serverId))
+        {
+            return;
+        }
+        _mcpToolsLoading[serverId] = true;
+        StateHasChanged();
+        try
+        {
+            var tools = await Api.GetMcpToolsAsync(serverId);
+            _mcpToolsCache[serverId] = tools ?? [];
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ChatView] falha ao carregar tools do mcp {serverId}: {ex.Message}");
+            _mcpToolsCache[serverId] = [];
+        }
+        finally
+        {
+            _mcpToolsLoading[serverId] = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleServerTools(string serverId, bool enable)
+    {
+        if (!_mcpToolsCache.TryGetValue(serverId, out var tools))
+        {
+            return;
+        }
+        if (enable)
+        {
+            _toolIds.UnionWith(tools.Select(t => t.Id));
+        }
+        else
+        {
+            _toolIds.ExceptWith(tools.Select(t => t.Id));
         }
     }
 }

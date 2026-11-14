@@ -1406,5 +1406,11 @@
   "customize.field_allowed_tools": "Outils autorisés (csv, optionnel)",
   "customize.allowed_tools_hint": "Restreint les outils tant que la skill est active. Vide = sans restriction.",
   "customize.restricted_tools": "outils restreints",
-  "chat.bang_restricted": "restreinte"
+  "chat.bang_restricted": "restreinte",
+  "chat.sliders_settings": "Paramètres des capacités et outils",
+  "chat.media_generation": "Génération de médias",
+  "chat.mcp_servers_menu": "Serveurs MCP",
+  "chat.enable_all": "Activer tout",
+  "chat.disable_all": "Désactiver tout",
+  "chat.no_mcp_servers": "Aucun serveur MCP configuré"
 }

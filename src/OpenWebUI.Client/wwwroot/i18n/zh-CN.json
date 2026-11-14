@@ -1406,5 +1406,11 @@
   "customize.field_allowed_tools": "允许的工具 (csv, 可选)",
   "customize.allowed_tools_hint": "技能激活时限制可用的工具。留空 = 不限制。",
   "customize.restricted_tools": "工具受限制",
-  "chat.bang_restricted": "受限"
+  "chat.bang_restricted": "受限",
+  "chat.sliders_settings": "功能与工具设置",
+  "chat.media_generation": "媒体生成",
+  "chat.mcp_servers_menu": "MCP服务器",
+  "chat.enable_all": "启用全部",
+  "chat.disable_all": "禁用全部",
+  "chat.no_mcp_servers": "未配置MCP服务器"
 }

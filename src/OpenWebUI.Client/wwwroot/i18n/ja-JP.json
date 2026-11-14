@@ -1406,5 +1406,11 @@
   "customize.field_allowed_tools": "許可ツール (csv, 任意)",
   "customize.allowed_tools_hint": "スキル有効中に使用できるツールを制限します。空 = 無制限。",
   "customize.restricted_tools": "ツール制限あり",
-  "chat.bang_restricted": "制限あり"
+  "chat.bang_restricted": "制限あり",
+  "chat.sliders_settings": "機能とツールの設定",
+  "chat.media_generation": "メディア生成",
+  "chat.mcp_servers_menu": "MCPサーバー",
+  "chat.enable_all": "すべて有効化",
+  "chat.disable_all": "すべて無効化",
+  "chat.no_mcp_servers": "MCPサーバーが設定されていません"
 }

@@ -1406,5 +1406,11 @@
   "customize.field_allowed_tools": "Allowed tools (csv, optional)",
   "customize.allowed_tools_hint": "Restricts which tools run while this skill is active. Empty = unrestricted.",
   "customize.restricted_tools": "restricted tools",
-  "chat.bang_restricted": "restricted"
+  "chat.bang_restricted": "restricted",
+  "chat.sliders_settings": "Capabilities & Tools Settings",
+  "chat.media_generation": "Media Generation",
+  "chat.mcp_servers_menu": "MCP Servers",
+  "chat.enable_all": "Enable all",
+  "chat.disable_all": "Disable all",
+  "chat.no_mcp_servers": "No MCP servers configured"
 }
