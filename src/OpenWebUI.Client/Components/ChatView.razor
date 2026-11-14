@@ -663,28 +663,96 @@
                                 @if (_showToolsMenu)
                                 {
                                     <div id="composer-tools-backdrop" class="fixed inset-0 z-30" @onclick="() => _showToolsMenu = false"></div>
-                                    <div id="composer-tools-menu" @ref="_toolsMenu" class="absolute bottom-10 left-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-xl p-3 text-sm text-gray-700 dark:text-gray-200">
-                                        <div class="font-medium text-xs text-gray-400 mb-2">@L["chat.tools_in_chat"]</div>
-                                        <div class="space-y-1.5 max-h-64 overflow-y-auto scrollbar-hidden">
-                                            @foreach (var tool in _tools)
+                                    <div id="composer-tools-menu" class="absolute bottom-10 left-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-lg max-h-[60vh] overflow-y-auto overflow-x-hidden"
+                                         role="group" aria-label="@L["chat.tools"]" @ref="_toolsMenu" @onkeydown="OnToolsMenuKeyDown">
+                                        @if (_webSearchAvailable)
+                                        {
+                                            <div class="px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400">@L["chat.tools_features"]</div>
+                                            <label class="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer">
+                                                <input type="checkbox" checked="@_webSearch"
+                                                       @onchange="ToggleWebSearchAsync" />
+                                                @CategoryIcon("web")
+                                                <span class="truncate">@L["chat.web_search"]</span>
+                                            </label>
+                                        }
+                                        @if (_tools.Count > 0)
+                                        {
+                                            <div class="px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400">@L["chat.tools_in_chat"]</div>
+                                            @foreach (var cat in ToolCategoryOrder)
                                             {
-                                                <label id="composer-tool-item-@tool.Id" class="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer">
-                                                    <input id="composer-tool-checkbox-@tool.Id" type="checkbox" checked="@_toolIds.Contains(tool.Id)" @onchange="() => ToggleToolAsync(tool.Id)" class="rounded text-blue-600 focus:ring-blue-500 size-4" />
-                                                    <span class="truncate">@tool.Name</span>
+                                                var catTools = _tools.Where(t => ToolCategory(t) == cat).ToList();
+                                                if (catTools.Count == 0)
+                                                {
+                                                    continue;
+                                                }
+                                                var catConfigured = CategoryConfigured(cat);
+                                                <label class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-850 border-t border-gray-50 dark:border-gray-850/60 first:border-t-0
+                                                            @(catConfigured ? "cursor-pointer" : "opacity-50 cursor-not-allowed")"
+                                                       title="@(catConfigured ? null : L["chat.tool_not_configured"])">
+                                                    <input type="checkbox" checked="@IsCategoryEnabled(cat)"
+                                                           disabled="@(!catConfigured)"
+                                                           @onchange="() => ToggleCategoryAsync(cat)" />
+                                                    @CategoryIcon(cat)
+                                                    <span class="truncate flex-1">@L[$"chat.tools_cat_{cat}"]</span>
+                                                    @if (!catConfigured)
+                                                    {
+                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5 flex-none text-red-500"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                                                    }
+                                                </label>
+                                                @foreach (var tool in catTools)
+                                                {
+                                                    <label class="flex items-center gap-2 pl-7 pr-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850
+                                                                  @(catConfigured ? "cursor-pointer" : "opacity-50 cursor-not-allowed")">
+                                                        <input type="checkbox" checked="@_toolIds.Contains(tool.Id)"
+                                                               disabled="@(!catConfigured)"
+                                                               @onchange="() => ToggleToolAsync(tool.Id)" />
+                                                        <span class="truncate">@tool.Name</span>
+                                                        @if (tool.RequiresApproval)
+                                                        {
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
+                                                                 class="size-3 flex-none text-amber-500" title="@L["chat.tool_approval_title"]">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                                                            </svg>
+                                                        }
+                                                    </label>
+                                                }
+                                            }
+                                        }
+                                        @if (_loadedChatId is not null && !Playground)
+                                        {
+                                            <div class="border-t border-gray-100 dark:border-gray-800 px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                                                @L["chat.approval_preset"]
+                                            </div>
+                                            @foreach (var preset in ApprovalPresets)
+                                            {
+                                                <label class="flex items-center gap-2 px-3 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer">
+                                                    <input type="radio" name="approvalPreset"
+                                                           checked="@(_approvalPreset == preset)"
+                                                           @onchange="() => SetApprovalPresetAsync(preset)" />
+                                                    <span class="truncate">@L["chat.preset_" + preset]</span>
                                                 </label>
                                             }
-                                        </div>
+                                            <div class="border-t border-gray-100 dark:border-gray-800 px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                                                @L["chat.advisor_section"]
+                                            </div>
+                                            <label class="flex items-center gap-2 px-3 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-850 cursor-pointer"
+                                                   title="@L["chat.advisor_hint"]">
+                                                <input type="checkbox" checked="@_advisorEnabled"
+                                                       @onchange="e => SetAdvisorEnabledAsync(e.Value is true)" />
+                                                <span class="truncate">@L["chat.advisor_toggle"]</span>
+                                            </label>
+                                        }
                                     </div>
                                 }
                             </div>
                         }
-
+                        
                         <!-- Botão Sliders-Up e Popover de Capacidades -->
                         <div class="relative">
                             <button id="composer-btn-sliders-trigger" class="size-8 flex items-center justify-center rounded-full transition cursor-pointer disabled:opacity-40
                                            @(_webSearch || _toolIds.Count > 0 ? "text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40" : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800")"
                                     title="@L["chat.sliders_settings"]" aria-label="@L["chat.sliders_settings"]" aria-expanded="@_showSlidersMenu" aria-haspopup="menu" disabled="@_loading"
-                                    @ref="_slidersTrigger" @onclick="ToggleSlidersMenu">
+                                    @onclick="ToggleSlidersMenu">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 13.5V3.75m0 9.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 3.75V16.5m12-3V3.75m0 9.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 3.75V16.5m-6-9V3.75m0 3.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 9.75V10.5" /></svg>
                             </button>
                             @if (_showSlidersMenu)
@@ -700,7 +768,7 @@
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 text-blue-500"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0c2.5 0 4.5-4 4.5-9S14.5 3 12 3m0 18c-2.5 0-4.5-4-4.5-9S9.5 3 12 3m-8.7 6h17.4M3.3 15h17.4" /></svg>
                                                 <span>@L["chat.web_search"]</span>
                                             </div>
-                                            <input id="composer-sliders-toggle-websearch" type="checkbox" checked="@_webSearch" @onchange="async e => await ToggleWebSearchAsync(e)" class="rounded text-blue-600 focus:ring-blue-500 size-4" />
+                                            <input id="composer-sliders-toggle-websearch" type="checkbox" checked="@_webSearch" @onchange="e => SetWebSearchAsync(e.Value is true)" class="rounded text-blue-600 focus:ring-blue-500 size-4" />
                                         </label>
                                     }
 
@@ -794,8 +862,7 @@
                                 </div>
                             }
                         </div>
-
-                        <button id="composer-btn-attach-file" class="size-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition cursor-pointer disabled:opacity-40"
+<button id="composer-btn-attach-file" class="size-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 transition cursor-pointer disabled:opacity-40"
                                 title="@L["chat.attach"]" aria-label="@L["chat.attach"]" disabled="@(_loading || _uploading)"
                                 @onclick="TriggerFilePicker">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -4963,7 +5030,6 @@
     }
 
     private bool _showSlidersMenu;
-    private ElementReference _slidersTrigger;
     private string? _activeMcpHoverServerId;
     private readonly Dictionary<string, List<McpToolResponse>> _mcpToolsCache = new();
     private readonly Dictionary<string, bool> _mcpToolsLoading = new();
@@ -4975,12 +5041,6 @@
         {
             _activeMcpHoverServerId = null;
         }
-    }
-
-    private async Task ToggleWebSearchAsync(ChangeEventArgs e)
-    {
-        _webSearch = e.Value is true;
-        await Storage.SetAsync("web_search", _webSearch ? "true" : "false");
     }
 
     private async Task LoadMcpToolsForServerAsync(string serverId)
@@ -5015,16 +5075,13 @@
         {
             return;
         }
-        foreach (var t in tools)
+        if (enable)
         {
-            if (enable)
-            {
-                _toolIds.Add(t.Id);
-            }
-            else
-            {
-                _toolIds.Remove(t.Id);
-            }
+            _toolIds.UnionWith(tools.Select(t => t.Id));
+        }
+        else
+        {
+            _toolIds.ExceptWith(tools.Select(t => t.Id));
         }
     }
 }
