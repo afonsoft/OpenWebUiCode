@@ -66,6 +66,9 @@ public sealed class MessageBubbleSourceViewTests
     private static ChatMessageModel Assistant(string content) =>
         new("m1", "assistant", content, "model", 0);
 
+    private static ChatMessageModel User(string content) =>
+        new("m2", "user", content, null, 0);
+
     private static IRenderedComponent<MessageBubble> Render(
         BunitContext ctx, ChatMessageModel msg) =>
         ctx.Render<MessageBubble>(p => p
@@ -150,6 +153,93 @@ public sealed class MessageBubbleSourceViewTests
         Assert.That(
             ctx.JSInterop.Invocations.Where(
                 i => i.Identifier == "openwebui.codeBlocks.enhance"),
-            Is.Empty, "bolha de usuário não renderiza markdown — sem toolbar");
+            Is.Empty, "bolha de usuário não executa enhance JS da toolbar de código");
+    }
+
+    // ---- SPEC-20261114-user-message-markdown ----
+
+    [Test]
+    public void UserMessage_RenderizaMarkdownComProseESanitizacao()
+    {
+        // # Covers RF-001, RF-002, RF-006, AC-01, AC-05, AC-06
+        using var ctx = Setup();
+        var cut = Render(ctx, User("**negrito** e *italico* <script>alert('xss')</script>"));
+
+        var content = cut.Find("div.prose");
+        Assert.That(content.InnerHtml, Does.Contain("<strong>negrito</strong>"));
+        Assert.That(content.InnerHtml, Does.Contain("<em>italico</em>"));
+        Assert.That(content.InnerHtml, Does.Not.Contain("<script"));
+        Assert.That(content.GetAttribute("class"), Does.Contain("rounded-3xl"));
+        Assert.That(content.GetAttribute("class"), Does.Contain("bg-gray-100"));
+    }
+
+    [Test]
+    public void UserMessage_RenderizaBlocoDeCodigoEListas()
+    {
+        // # Covers RF-001, AC-02, AC-04
+        using var ctx = Setup();
+        var cut = Render(ctx, User("```python\nprint('ola')\n```\n\n- item A\n- item B"));
+
+        var content = cut.Find("div.prose");
+        Assert.That(content.InnerHtml, Does.Contain("<code"));
+        Assert.That(content.InnerHtml, Does.Contain("language-python"));
+        Assert.That(content.InnerHtml, Does.Contain("<ul>"));
+        Assert.That(content.InnerHtml, Does.Contain("<li>item A</li>"));
+    }
+
+    [Test]
+    public void UserMessage_RenderizaLinkSeguro()
+    {
+        // # Covers RF-001, RF-006, AC-03
+        using var ctx = Setup();
+        var cut = Render(ctx, User("[Link](https://example.com)"));
+
+        var link = cut.Find("a");
+        Assert.That(link.GetAttribute("href"), Is.EqualTo("https://example.com"));
+        Assert.That(link.GetAttribute("target"), Is.EqualTo("_blank"));
+        Assert.That(link.GetAttribute("rel"), Does.Contain("noopener"));
+    }
+
+    [Test]
+    public void UserMessage_ToggleViewSource_AlternaEntreRawEMarkdown()
+    {
+        // # Covers RF-004, AC-07
+        using var ctx = Setup();
+        var cut = Render(ctx, User("**mensagem do usuario**"));
+
+        // Inicialmente renderizado
+        Assert.That(cut.FindAll("strong"), Has.Count.EqualTo(1));
+        Assert.That(cut.FindAll("pre"), Is.Empty);
+
+        // Clica no toggle ViewSource
+        var toggle = cut.Find("button[aria-pressed]");
+        toggle.Click();
+
+        // Agora exibe o fonte cru
+        Assert.That(cut.FindAll("strong"), Is.Empty);
+        var pre = cut.Find("pre");
+        Assert.That(pre.TextContent, Does.Contain("**mensagem do usuario**"));
+
+        // Clica novamente para restaurar
+        toggle = cut.Find("button[aria-pressed]");
+        toggle.Click();
+        Assert.That(cut.FindAll("strong"), Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public void UserMessage_Copy_EnviaMarkdownCruParaClipboard()
+    {
+        // # Covers RF-001, AC-07
+        using var ctx = Setup();
+        const string md = "**texto do usuario** com `codigo`";
+        var cut = Render(ctx, User(md));
+
+        // Botão copiar (primeiro botão sem aria-pressed)
+        cut.FindAll("button")
+            .First(b => b.GetAttribute("aria-pressed") is null)
+            .Click();
+
+        var invoke = ctx.JSInterop.VerifyInvoke("openwebui.copyText");
+        Assert.That(invoke.Arguments[0], Is.EqualTo(md));
     }
 }
