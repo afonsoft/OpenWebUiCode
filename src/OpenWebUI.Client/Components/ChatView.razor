@@ -556,7 +556,7 @@
                 </div>
             }
 
-            <div class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border border-gray-100/30 dark:border-gray-850/30 hover:border-gray-200 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition px-0.5 bg-white/5 dark:bg-gray-500/5 backdrop-blur-sm dark:text-gray-100">
+            <div id="chat-composer-container" class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border border-gray-100/30 dark:border-gray-850/30 hover:border-gray-200 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition px-0.5 bg-white/5 dark:bg-gray-500/5 backdrop-blur-sm dark:text-gray-100">
                 <div class="px-2 relative">
                     @if (_promptSuggestions.Count > 0)
                     {
@@ -5041,6 +5041,30 @@
         {
             _activeMcpHoverServerId = null;
         }
+        else if (_mcps.Count == 0)
+        {
+            _ = LoadMcpServersForSlidersAsync();
+        }
+    }
+
+    /// <summary>
+    /// Carrega os servidores MCP sob demanda ao abrir o popover de sliders:
+    /// admin vê o catálogo global; demais usuários veem o catálogo efetivo
+    /// (globais + próprios) de <c>/users/user/mcp-servers</c>.
+    /// </summary>
+    private async Task LoadMcpServersForSlidersAsync()
+    {
+        try
+        {
+            _mcps = Auth.CurrentUser?.Role == UserRoles.Admin
+                ? await Api.GetMcpServersAsync()
+                : (await Api.GetUserMcpServersAsync()).Select(e => e.Server).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ChatView] falha ao carregar servidores mcp: {ex.Message}");
+        }
+        StateHasChanged();
     }
 
     private async Task LoadMcpToolsForServerAsync(string serverId)
@@ -5054,7 +5078,9 @@
         StateHasChanged();
         try
         {
-            var tools = await Api.GetMcpToolsAsync(serverId);
+            var tools = Auth.CurrentUser?.Role == UserRoles.Admin
+                ? await Api.GetMcpToolsAsync(serverId)
+                : await Api.GetUserMcpToolsAsync(serverId);
             _mcpToolsCache[serverId] = tools ?? [];
         }
         catch (Exception ex)

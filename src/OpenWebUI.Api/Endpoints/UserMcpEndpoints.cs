@@ -33,6 +33,7 @@ public static class UserMcpEndpoints
         group.MapDelete("/{id}", DeleteAsync);
         group.MapPost("/{id}/refresh", RefreshAsync);
         group.MapPut("/{id}/enabled", SetEnabledAsync);
+        group.MapGet("/{id}/tools", ListToolsAsync);
         group.MapGet("/prompts", ListPromptsAsync);
         group.MapPost("/prompts/resolve", ResolvePromptAsync);
     }
@@ -95,6 +96,37 @@ public static class UserMcpEndpoints
         return result is null
             ? Results.NotFound(new { detail = "Prompt MCP não encontrado." })
             : Results.Ok(new McpPromptResolveResponse(result.Prompt));
+    }
+
+    /// <summary>
+    /// Tools virtuais de um servidor do catálogo efetivo do usuário —
+    /// espelha <c>GET /api/v1/mcp/servers/{id}/tools</c> (admin) para o
+    /// popover de sliders do composer abrir para não-admins.
+    /// </summary>
+    private static async Task<IResult> ListToolsAsync(
+        string id, HttpContext http, AppDbContext db,
+        UserConfigOverlayService overlay, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var effective = await overlay.EffectiveMcpServersAsync(user.Id, ct);
+        if (effective.All(e => e.Server.Id != id))
+        {
+            return Results.NotFound(new { detail = McpNotFoundMessage });
+        }
+
+        var prefix = $"{McpClientService.VirtualUrlPrefix}{id}/";
+        var tools = await db.Tools.AsNoTracking()
+            .Where(t => t.Url.StartsWith(prefix))
+            .OrderBy(t => t.Name)
+            .Select(t => new McpToolResponse(
+                t.Id, t.Name, ToolExecutor.FunctionName(t) ?? t.Name, t.Description, t.Enabled))
+            .ToListAsync(ct);
+        return Results.Ok(tools);
     }
 
     /// <summary>Catálogo efetivo: globais + próprios, com provenance e toggle por usuário.</summary>
