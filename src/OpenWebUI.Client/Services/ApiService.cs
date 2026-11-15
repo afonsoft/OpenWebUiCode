@@ -327,6 +327,10 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<List<McpToolResponse>> GetMcpToolsAsync(string serverId) =>
         await SendAsync<List<McpToolResponse>>(HttpMethod.Get, $"/api/v1/mcp/servers/{serverId}/tools") ?? [];
 
+    /// <summary>Lista as tools de um servidor MCP visível ao usuário (catálogo efetivo).</summary>
+    public async Task<List<McpToolResponse>> GetUserMcpToolsAsync(string serverId) =>
+        await SendAsync<List<McpToolResponse>>(HttpMethod.Get, $"/api/v1/users/user/mcp-servers/{serverId}/tools") ?? [];
+
     // ---------------- Camadas de config (SPEC-20261014-config-layers) ----------------
 
     /// <summary>Papéis do usuário + cadeias globais do admin (provenance, RF-004).</summary>
