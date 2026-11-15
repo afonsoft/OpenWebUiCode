@@ -27,6 +27,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Eventos duráveis append-only por run (SPEC-20261016-run-recovery).</summary>
     public DbSet<ChatRunEvent> ChatRunEvents => Set<ChatRunEvent>();
 
+    /// <summary>Registro de ciclo de vida do chat (SPEC-20261115).</summary>
+    public DbSet<ChatArchiveMeta> ChatArchiveMetas => Set<ChatArchiveMeta>();
+
     /// <summary>Jobs de background spawnados pelo chat (SPEC-20261007-chat-agent-tools).</summary>
     public DbSet<ChatJob> ChatJobs => Set<ChatJob>();
 
@@ -291,6 +294,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasKey(s => s.Id);
             entity.HasIndex(s => new { s.RunId, s.Status });
             entity.HasIndex(s => s.ChatId);
+        });
+
+        modelBuilder.Entity<ChatArchiveMeta>(entity =>
+        {
+            entity.HasKey(m => m.Id);
+            entity.HasIndex(m => m.ChatId).IsUnique();
+            entity.HasIndex(m => new { m.UserId, m.Status });
         });
 
         modelBuilder.Entity<ChatJob>(entity =>

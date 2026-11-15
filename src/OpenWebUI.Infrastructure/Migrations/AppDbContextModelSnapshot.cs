@@ -823,6 +823,49 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.ToTable("Chats");
                 });
 
+            modelBuilder.Entity("OpenWebUI.Domain.ChatArchiveMeta", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ArchivedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ChatId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("DeletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Summary")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChatId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "Status");
+
+                    b.ToTable("ChatArchiveMetas");
+                });
+
             modelBuilder.Entity("OpenWebUI.Domain.ChatInsight", b =>
                 {
                     b.Property<string>("ChatId")

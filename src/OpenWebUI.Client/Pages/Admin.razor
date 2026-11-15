@@ -441,7 +441,16 @@
                             @foreach (var c in _usage.TopChats)
                             {
                                 <div class="grid grid-cols-[1fr_1fr_80px_80px] gap-2 text-sm py-1 border-b border-gray-100 dark:border-gray-800/50 last:border-0 min-w-[440px]">
-                                    <a class="truncate hover:underline" href="/c/@c.ChatId" target="_blank">@(c.Title ?? L["admin.untitled"])</a>
+                                    @if (c.Status == "deleted")
+                                    {
+                                        @* Chat deletado: sem link — abre o
+                                           popup com resumo + métricas. *@
+                                        <button type="button" class="truncate text-left hover:underline" @onclick="() => OpenChatLifecycleAsync(c.ChatId)">@(c.Title ?? L["admin.untitled"])</button>
+                                    }
+                                    else
+                                    {
+                                        <a class="truncate hover:underline" href="/c/@c.ChatId" target="_blank">@(c.Title ?? L["admin.untitled"])</a>
+                                    }
                                     <span class="truncate text-gray-500">@(c.Email ?? c.UserId)</span>
                                     <span class="text-gray-500">@FmtTokens(c.Tokens)</span>
                                     <span class="text-gray-500">@FmtUsd(c.CostUsd)</span>
@@ -1833,6 +1842,34 @@
         </div>
         </div>
     }
+
+    @* Popup de resumo do chat (analytics top chats, SPEC-20261115):
+       aberto para chats deletados, que não têm mais link navegável. *@
+    @if (_chatLifecycle is not null)
+    {
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"
+             aria-label="@L["admin.chat_summary_title"]" @onclick="() => _chatLifecycle = null">
+            <div class="w-full max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 shadow-xl"
+                 @onclick:stopPropagation="true">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-semibold text-gray-900 dark:text-white">@(_chatLifecycle.Title ?? L["admin.untitled"])</h3>
+                    <button type="button" class="msg-action" aria-label="@L["common.close"]" @onclick="() => _chatLifecycle = null">✕</button>
+                </div>
+                <div class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    @(_chatLifecycle.Email ?? "") · @L[$"admin.status_{_chatLifecycle.Status}"]
+                    · @_chatLifecycle.Runs @L["admin.col_runs"] · @FmtTokens(_chatLifecycle.Tokens) · @FmtUsd(_chatLifecycle.CostUsd)
+                </div>
+                @if (string.IsNullOrWhiteSpace(_chatLifecycle.Summary))
+                {
+                    <div class="text-sm text-gray-500">@L["admin.summary_none"]</div>
+                }
+                else
+                {
+                    <div class="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap max-h-80 overflow-y-auto">@_chatLifecycle.Summary</div>
+                }
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -2105,7 +2142,12 @@
     // ---------------- Analytics v2 (SPEC-20261102) ----------------
 
     private AdminUsageResponse? _usage;
+    private ChatLifecycleResponse? _chatLifecycle;
     private int _usageDays = 30;
+
+    /// <summary>Abre o popup de resumo de um chat deletado (SPEC-20261115).</summary>
+    private async Task OpenChatLifecycleAsync(string chatId) =>
+        _chatLifecycle = await Api.GetChatLifecycleAsync(chatId);
     private static readonly int[] UsagePresets = [7, 30, 90];
 
     /// <summary>Séries prompt/completion/reasoning por dia, com lacunas zeradas.</summary>

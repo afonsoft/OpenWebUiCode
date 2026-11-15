@@ -2019,6 +2019,14 @@ public class ApiService(HttpClient http, AuthService auth)
         SendAsync<AdminUsageResponse>(HttpMethod.Get,
             $"/api/v1/admin/usage?days={days}");
 
+    /// <summary>
+    /// Ciclo de vida do chat para o popup do analytics (SPEC-20261115):
+    /// status, título, resumo e métricas — inclusive de chats deletados.
+    /// </summary>
+    public Task<ChatLifecycleResponse?> GetChatLifecycleAsync(string chatId) =>
+        SendAsync<ChatLifecycleResponse>(HttpMethod.Get,
+            $"/api/v1/admin/chats/{chatId}/lifecycle");
+
     // ---------------- Policies admin (SPEC-20261018-policies-admin) ----------------
 
     /// <summary>Lista statements de policy administrativa.</summary>

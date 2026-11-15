@@ -848,6 +848,11 @@ public static class ChatEndpoints
             return Results.NotFound();
         }
 
+        // SPEC-20261115 RF-004: meta com título/resumo sobrevive à
+        // exclusão — analytics mostra o chat deletado sem link e o
+        // popup lê o resumo daqui. RunUsageRecords ficam (métricas).
+        await RecordDeletedMetaAsync(deps, chat, ct);
+
         // Libera TODOS os artefatos do chat (sessões PTY bindadas, worktree
         // do binding, worktrees isolados por run e snapshots de checkpoint)
         // — liberação de espaço imediata, sem esperar sweeper de retenção.
@@ -870,14 +875,14 @@ public static class ChatEndpoints
             return Results.Unauthorized();
         }
 
-        var chatIds = await db.Chats.AsNoTracking()
+        var chats = await db.Chats.AsNoTracking()
             .Where(c => c.UserId == user.Id)
-            .Select(c => c.Id)
             .ToListAsync(ct);
-        foreach (var chatId in chatIds)
+        foreach (var chat in chats)
         {
-            await ReleaseChatDiskAsync(deps, user.Id, chatId, ct);
-            await AttentionService.RemoveForChatAsync(db, chatId, ct);
+            await RecordDeletedMetaAsync(deps, chat, ct);
+            await ReleaseChatDiskAsync(deps, user.Id, chat.Id, ct);
+            await AttentionService.RemoveForChatAsync(db, chat.Id, ct);
         }
 
         await db.Chats.Where(c => c.UserId == user.Id).ExecuteDeleteAsync(ct);
@@ -922,6 +927,22 @@ public static class ChatEndpoints
         await repos.ReleaseChatWorkspaceAsync(userId, chatId, keepBinding: false, ct);
     }
 
+    /// <summary>
+    /// Grava o meta <c>deleted</c> do chat (SPEC-20261115 RF-004): reusa
+    /// o resumo do archive quando existe; senão resume agora (LLM com
+    /// fallback determinístico) antes do histórico sair por cascade.
+    /// </summary>
+    private static async Task RecordDeletedMetaAsync(
+        DeleteChatDeps deps, Chat chat, CancellationToken ct)
+    {
+        var meta = await deps.Db.ChatArchiveMetas.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.ChatId == chat.Id, ct);
+        var summary = meta?.Summary
+            ?? await deps.Lifecycle.SummarizeAsync(chat, ct);
+        await deps.Lifecycle.RecordMetaAsync(
+            chat, ChatLifecycleService.StatusDeleted, summary, ct);
+    }
+
     private static async Task<IResult> TogglePinAsync(
         string id, HttpContext http, AppDbContext db, CancellationToken ct)
     {
@@ -950,7 +971,9 @@ public static class ChatEndpoints
 
     private static async Task<IResult> ToggleArchiveAsync(
         string id, HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, CancellationToken ct)
+        WorkspaceRepoService repos, ChatLifecycleService lifecycle,
+        Infrastructure.Terminal.TerminalSessionManager terminals,
+        CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         var chat = await LoadChatAsync(id, user?.Id, db, ct, tracking: true);
@@ -968,7 +991,49 @@ public static class ChatEndpoints
         // libera também o binding/base.
         if (chat.Archived)
         {
+            // SPEC-20261115 RF-002: resumo + meta, histórico pesado purgado
+            // (mensagens/runs/events/steers) — RunUsageRecords ficam.
+            var summary = await lifecycle.SummarizeAsync(chat, ct);
+            await lifecycle.RecordMetaAsync(
+                chat, ChatLifecycleService.StatusArchived, summary, ct);
+            await terminals.KillForChatAsync(user!.Id, id);
+            await lifecycle.PurgeHistoryAsync(id, ct);
             await repos.ReleaseChatWorkspaceAsync(user!.Id, id, keepBinding: true, ct);
+            // As linhas já saíram via ExecuteDelete — só desanexa para a
+            // resposta não devolver mensagens fantasmas (e o SaveChanges
+            // não tentar deletá-las de novo → DbUpdateConcurrency).
+            foreach (var m in chat.Messages)
+            {
+                db.Entry(m).State = Microsoft.EntityFrameworkCore
+                    .EntityState.Detached;
+            }
+            chat.Messages.Clear();
+            chat.LeafMessageId = null;
+        }
+        else
+        {
+            // SPEC-20261115 RF-003: desarquivar re-injeta o resumo como
+            // marcador compaction — aparece na tela e vira contexto do
+            // LLM (providers colapsam o papel para "user"). O worktree
+            // é recriado sob demanda no primeiro uso.
+            var summary = await db.ChatArchiveMetas.AsNoTracking()
+                .Where(m => m.ChatId == id)
+                .Select(m => m.Summary)
+                .FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrWhiteSpace(summary))
+            {
+                var marker = new ChatMessage
+                {
+                    ChatId = chat.Id,
+                    Role = "compaction",
+                    Content = summary,
+                    Position = 0,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                };
+                db.ChatMessages.Add(marker);
+                chat.Messages.Add(marker);
+                chat.LeafMessageId = marker.Id;
+            }
         }
 
         await db.SaveChangesAsync(ct);
@@ -977,7 +1042,9 @@ public static class ChatEndpoints
 
     private static async Task<IResult> ArchiveAllAsync(
         HttpContext http, AppDbContext db,
-        WorkspaceRepoService repos, CancellationToken ct)
+        WorkspaceRepoService repos, ChatLifecycleService lifecycle,
+        Infrastructure.Terminal.TerminalSessionManager terminals,
+        CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
         if (user is null)
@@ -985,13 +1052,19 @@ public static class ChatEndpoints
             return Results.Unauthorized();
         }
 
-        var chatIds = await db.Chats.AsNoTracking()
+        // Mesmo fluxo do archive individual (SPEC-20261115 RF-002):
+        // resumo + meta, purge do histórico, worktree liberado.
+        var chats = await db.Chats.AsNoTracking()
             .Where(c => c.UserId == user.Id && !c.Archived)
-            .Select(c => c.Id)
             .ToListAsync(ct);
-        foreach (var chatId in chatIds)
+        foreach (var chat in chats)
         {
-            await repos.ReleaseChatWorkspaceAsync(user.Id, chatId, keepBinding: true, ct);
+            var summary = await lifecycle.SummarizeAsync(chat, ct);
+            await lifecycle.RecordMetaAsync(
+                chat, ChatLifecycleService.StatusArchived, summary, ct);
+            await terminals.KillForChatAsync(user.Id, chat.Id);
+            await lifecycle.PurgeHistoryAsync(chat.Id, ct);
+            await repos.ReleaseChatWorkspaceAsync(user.Id, chat.Id, keepBinding: true, ct);
         }
 
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -1598,5 +1671,6 @@ public static class ChatEndpoints
     internal sealed record DeleteChatDeps(
         AppDbContext Db, WorkspaceRepoService Repos,
         WorktreeService Worktrees, CheckpointService Checkpoints,
-        Infrastructure.Terminal.TerminalSessionManager Terminals);
+        Infrastructure.Terminal.TerminalSessionManager Terminals,
+        ChatLifecycleService Lifecycle);
 }
