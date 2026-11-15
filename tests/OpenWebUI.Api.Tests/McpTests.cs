@@ -371,6 +371,23 @@ public class McpTests
     }
 
     [Test]
+    public async Task UserMcpTools_ListaToolsDoCatalogoEfetivo()
+    {
+        UseToken(_adminToken);
+        var serverId = await CreateUserServerAsync("fake-user-tools");
+
+        // GET /{id}/tools — tools virtuais materializadas do server fake.
+        var tools = await _client.GetFromJsonAsync<List<McpToolResponse>>(
+            $"/api/v1/users/user/mcp-servers/{serverId}/tools");
+        Assert.That(tools, Is.Not.Null.And.Not.Empty);
+        Assert.That(tools!.Any(t => t.Name.Contains("echo")), Is.True);
+
+        // 404 — server fora do catálogo efetivo do usuário.
+        var missing = await _client.GetAsync("/api/v1/users/user/mcp-servers/ghost/tools");
+        Assert.That(missing.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
     public async Task Prompts_EndpointResolve_Erros()
     {
         UseToken(_adminToken);
