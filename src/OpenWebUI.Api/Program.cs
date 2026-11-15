@@ -63,6 +63,7 @@ builder.Services.AddScoped<PolicyService>();
 // Budgets de custo (SPEC-20261023-run-cost-budgets): ledger consultável
 // por run + resolução de políticas por sujeito (user/grupo/global).
 builder.Services.AddScoped<RunUsageLedgerService>();
+builder.Services.AddScoped<ChatLifecycleService>();
 builder.Services.AddScoped<BudgetPolicyService>();
 builder.Services.AddScoped<EvalGraderFactory>();
 builder.Services.AddScoped<EvalGraderService>();

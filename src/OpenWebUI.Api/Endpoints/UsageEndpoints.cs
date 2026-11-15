@@ -23,6 +23,7 @@ public static class UsageEndpoints
 
         var admin = app.MapGroup("/api/v1/admin").RequireAuthorization();
         admin.MapGet("/usage", AdminUsageAsync);
+        admin.MapGet("/chats/{chatId}/lifecycle", ChatLifecycleAsync);
         admin.MapGet("/budget-policies", ListPoliciesAsync);
         admin.MapPost("/budget-policies", CreatePolicyAsync);
         admin.MapPut("/budget-policies/{id}", UpdatePolicyAsync);
@@ -155,9 +156,15 @@ public static class UsageEndpoints
             .Where(u => users.Select(x => x.UserId).Contains(u.Id)
                 || topChats.Select(c => c.UserId).Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.Email, ct);
-        var titles = await db.Chats.AsNoTracking()
+        var chatStates = await db.Chats.AsNoTracking()
             .Where(c => topChats.Select(x => x.ChatId).Contains(c.Id))
-            .ToDictionaryAsync(c => c.Id, c => (string?)c.Title, ct);
+            .Select(c => new { c.Id, c.Title, c.Archived })
+            .ToDictionaryAsync(c => c.Id, ct);
+        // SPEC-20261115: título/status de chats arquivados/deletados
+        // vivem no meta — chats deletados antes do meta ficam sem título.
+        var metas = await db.ChatArchiveMetas.AsNoTracking()
+            .Where(m => topChats.Select(x => x.ChatId).Contains(m.ChatId))
+            .ToDictionaryAsync(m => m.ChatId, ct);
 
         var rows = new List<AdminUsageUser>(users.Count);
         foreach (var u in users)
@@ -189,9 +196,73 @@ public static class UsageEndpoints
                 Math.Round(m.CostUsd, 6))).ToList(),
             rows,
             topChats.Select(c => new AdminUsageTopChat(
-                c.ChatId, titles.GetValueOrDefault(c.ChatId), c.UserId,
+                c.ChatId,
+                chatStates.TryGetValue(c.ChatId, out var st)
+                    ? st.Title
+                    : metas.GetValueOrDefault(c.ChatId)?.Title,
+                c.UserId,
                 emails.GetValueOrDefault(c.UserId), c.Tokens,
-                Math.Round(c.CostUsd, 6))).ToList()));
+                Math.Round(c.CostUsd, 6),
+                st is not null
+                    ? (st.Archived
+                        ? ChatLifecycleService.StatusArchived : "active")
+                    : ChatLifecycleService.StatusDeleted)).ToList()));
+    }
+
+    /// <summary>
+    /// Popup do analytics (SPEC-20261115 RF-005): status/título/resumo do
+    /// chat (vivo ou do meta) + métricas agregadas de RunUsageRecords.
+    /// 404 apenas quando não há chat, meta nem uso registrado.
+    /// </summary>
+    private static async Task<IResult> ChatLifecycleAsync(
+        string chatId, HttpContext http, AppDbContext db, CancellationToken ct)
+    {
+        if (await Admin(http, db, ct) is not { })
+        {
+            return Forbid();
+        }
+
+        var chat = await db.Chats.AsNoTracking()
+            .Where(c => c.Id == chatId)
+            .Select(c => new { c.Title, c.Archived, c.UserId })
+            .FirstOrDefaultAsync(ct);
+        var meta = await db.ChatArchiveMetas.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.ChatId == chatId, ct);
+
+        var usage = await db.RunUsageRecords.AsNoTracking()
+            .Where(r => r.ChatId == chatId)
+            .GroupBy(r => r.ChatId)
+            .Select(g => new
+            {
+                Runs = g.Count(),
+                Tokens = g.Sum(r => r.PromptTokens + r.CompletionTokens
+                    + r.ReasoningTokens),
+                Cost = g.Sum(r => r.CostUsd ?? 0),
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (chat is null && meta is null && usage is null)
+        {
+            return Results.NotFound(new { detail = "Chat não encontrado." });
+        }
+
+        var userId = chat?.UserId ?? meta!.UserId;
+        var email = await db.Users.AsNoTracking()
+            .Where(u => u.Id == userId)
+            .Select(u => u.Email)
+            .FirstOrDefaultAsync(ct);
+
+        return Results.Ok(new ChatLifecycleResponse(
+            chatId,
+            chat is not null
+                ? (chat.Archived
+                    ? ChatLifecycleService.StatusArchived : "active")
+                : ChatLifecycleService.StatusDeleted,
+            chat?.Title ?? meta?.Title,
+            chat is null ? meta?.Summary : null,
+            email,
+            usage?.Runs ?? 0, usage?.Tokens ?? 0,
+            Math.Round(usage?.Cost ?? 0, 6)));
     }
 
     private static async Task<IResult> ListPoliciesAsync(

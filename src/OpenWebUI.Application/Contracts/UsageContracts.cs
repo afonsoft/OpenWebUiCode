@@ -75,10 +75,26 @@ public sealed record AdminUsageUser(
     long Tokens, double CostUsd,
     long? CapTokensPerMonth, double? CapUsdPerMonth, double? UsedPct);
 
-/// <summary>Chat de destaque por custo na janela (título nulo se deletado).</summary>
+/// <summary>
+/// Chat de destaque por custo na janela. <paramref name="Title"/> vem do
+/// chat vivo ou do <c>ChatArchiveMeta</c> (SPEC-20261115) quando o chat
+/// foi arquivado/deletado — null só para chats deletados antes do meta
+/// existir. <paramref name="Status"/>: <c>active</c>, <c>archived</c>
+/// ou <c>deleted</c> (deleted = sem link navegável).
+/// </summary>
 public sealed record AdminUsageTopChat(
     string ChatId, string? Title, string UserId, string? Email,
-    long Tokens, double CostUsd);
+    long Tokens, double CostUsd, string Status);
+
+/// <summary>
+/// Ciclo de vida de um chat para o popup do analytics (SPEC-20261115):
+/// status, título, resumo e métricas agregadas de
+/// <c>RunUsageRecords</c>. <paramref name="Summary"/> é null em chats
+/// ativos e em deletados sem meta.
+/// </summary>
+public sealed record ChatLifecycleResponse(
+    string ChatId, string Status, string? Title, string? Summary,
+    string? Email, int Runs, long Tokens, double CostUsd);
 
 /// <summary>Resposta enriquecida de <c>GET /api/v1/admin/usage</c>.</summary>
 /// <param name="From">Início da janela (yyyy-MM-dd UTC).</param>

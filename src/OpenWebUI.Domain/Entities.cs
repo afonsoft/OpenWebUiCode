@@ -2027,6 +2027,48 @@ public class UserAttention
 }
 
 /// <summary>
+/// Registro de ciclo de vida do chat (SPEC-20261115-chat-lifecycle-meta):
+/// sobrevive à exclusão da entidade <see cref="Chat"/> para o analytics
+/// exibir título/status/resumo e alimentar o popup de chats deletados.
+/// No archive, guarda o resumo que o unarchive injeta de volta como
+/// contexto; <see cref="RunUsageRecord"/>s do chat seguem intocados
+/// (métricas de relatório).
+/// </summary>
+public class ChatArchiveMeta
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Chat dono do registro (único — upsert por chat).</summary>
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Dono do chat (mesmo da entidade — isolamento/consulta).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Título do chat no momento do archive/delete.</summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Resumo do histórico (LLM com fallback determinístico): exibido no
+    /// popup do analytics e re-injetado como marcador
+    /// <c>Role="compaction"</c> no unarchive.
+    /// </summary>
+    public string? Summary { get; set; }
+
+    /// <summary>Estado do ciclo de vida: <c>archived</c> ou <c>deleted</c>.</summary>
+    public string Status { get; set; } = "archived";
+
+    /// <summary>Quando o chat foi arquivado (epoch seconds).</summary>
+    public long ArchivedAt { get; set; }
+
+    /// <summary>Quando o chat foi deletado (epoch seconds); null enquanto arquivado.</summary>
+    public long? DeletedAt { get; set; }
+
+    /// <summary>Criação do registro (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
+/// <summary>
 /// Linha do ledger de uso por run finalizada
 /// (SPEC-20261023-run-cost-budgets RF-001): uma por <see cref="RunId"/>,
 /// com os tokens reportados pelo provider e o custo calculado pela tabela
