@@ -26,6 +26,7 @@ public static class AutomationEndpoints
         group.MapPut("/{id}", UpdateAsync);
         group.MapDelete("/{id}", DeleteAsync);
         group.MapGet("/{id}/runs", ListRunsAsync);
+        group.MapGet("/{id}/stats", StatsAsync);
         group.MapPost("/{id}/run-now", RunNowAsync);
 
         return group;
@@ -235,6 +236,51 @@ public static class AutomationEndpoints
             .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
         return Results.Ok(runs.Select(r =>
             ToRunResponse(r, names.GetValueOrDefault(r.AutomationId, ""))));
+    }
+
+    /// <summary>
+    /// Estatísticas da automação (SPEC-20261115-automation-observability
+    /// RF-001): agregados em 2 queries — totais/falhas consecutivas e as
+    /// últimas 20 runs (das quais as 10 mais novas vão ao cliente).
+    /// </summary>
+    private static async Task<IResult> StatsAsync(
+        string id, HttpContext http, AppDbContext db, CancellationToken ct)
+    {
+        var (user, automation) = await FindOwnedAsync(id, http, db, ct);
+        if (user is null) return Results.Unauthorized();
+        if (automation is null) return Results.NotFound();
+
+        var recent = await db.AutomationRuns.AsNoTracking()
+            .Where(r => r.AutomationId == id)
+            .OrderByDescending(r => r.StartedAt)
+            .Take(20)
+            .ToListAsync(ct);
+        var totals = await db.AutomationRuns.AsNoTracking()
+            .Where(r => r.AutomationId == id)
+            .GroupBy(r => r.AutomationId)
+            .Select(g => new
+            {
+                Total = g.Count(),
+                Ok = g.Count(r => r.Status == "ok"),
+                Failed = g.Count(r => r.Status == "failed"),
+            })
+            .SingleOrDefaultAsync(ct);
+
+        var lastError = recent.FirstOrDefault(r => r.Status == "failed")?.Error;
+        var rate = recent.Count == 0
+            ? 0d
+            : Math.Round(100d * recent.Count(r => r.Status == "ok") / recent.Count, 1);
+
+        return Results.Ok(new AutomationStatsResponse(
+            Total: totals?.Total ?? 0,
+            Ok: totals?.Ok ?? 0,
+            Failed: totals?.Failed ?? 0,
+            SuccessRate: rate,
+            LastRunAt: recent.FirstOrDefault()?.StartedAt,
+            LastError: lastError,
+            ConsecutiveFailures: automation.ConsecutiveFailures,
+            Runs: recent.Take(10)
+                .Select(r => ToRunResponse(r, automation.Name)).ToList()));
     }
 
     private static async Task<IResult> RunNowAsync(

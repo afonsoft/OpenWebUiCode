@@ -1317,6 +1317,13 @@ public class AutomationHookDelivery
     /// <summary>Tipo de evento (<c>X-GitHub-Event</c>/<c>X-Event-Type</c>).</summary>
     public string? EventType { get; set; }
 
+    /// <summary>
+    /// Chave de dedup genérica (SPEC-20261115-automation-observability
+    /// RF-003): header <c>Idempotency-Key</c> do remetente ou SHA-256 do
+    /// corpo cru; re-entregas iguais em 24h não criam run nova.
+    /// </summary>
+    public string? IdempotencyKey { get; set; }
+
     /// <summary>Recebimento (epoch seconds).</summary>
     public long ReceivedAt { get; set; }
 

@@ -142,6 +142,7 @@
                         <div class="card-main">
                             <div class="card-title">
                                 <a class="hover:underline" href="/automations/@a.Id">@a.Name</a>
+                                <span class="@HealthClass(HealthOf(a))" title="@HealthTitle(a)">●</span>
                                 @if (!a.Enabled)
                                 {
                                     <span class="text-xs text-gray-500">(@L["automations.disabled"])</span>
@@ -202,6 +203,7 @@
 
 @code {
     private List<AutomationResponse>? _items;
+    private Dictionary<string, AutomationStatsResponse> _stats = new();
     private List<ModelInfo> _models = [];
     private List<AutomationRunResponse>? _runs;
     private string? _expandedId;
@@ -233,6 +235,7 @@
         {
             _models = await Api.GetModelsAsync();
             _items = await Api.GetAutomationsAsync();
+            await LoadStatsAsync();
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex))
         {
@@ -341,6 +344,48 @@
         {
             _items?.RemoveAll(x => x.Id == a.Id);
         }
+    }
+
+    /// <summary>Carrega stats de cada automação em paralelo (RF-002).</summary>
+    private async Task LoadStatsAsync()
+    {
+        if (_items is null)
+        {
+            return;
+        }
+        var results = await Task.WhenAll(
+            _items.Select(a => Api.GetAutomationStatsAsync(a.Id)));
+        _stats = _items
+            .Zip(results, (a, s) => (a.Id, s))
+            .Where(x => x.s is not null)
+            .ToDictionary(x => x.Id, x => x.s!);
+    }
+
+    /// <summary>Saúde da automação: vermelho <70% ok ou ≥3 falhas seguidas
+    /// ou desabilitada pelo circuit breaker; amarelo 70-90% ou 1-2 falhas;</summary>
+    private string HealthOf(AutomationResponse a)
+    {
+        _stats.TryGetValue(a.Id, out var s);
+        return AutomationHealth.Level(a.Enabled, a.ConsecutiveFailures, s);
+    }
+
+    private static string HealthClass(string health) => health switch
+    {
+        "bad" => "text-red-500",
+        "warn" => "text-yellow-500",
+        _ => "text-green-500",
+    };
+
+    /// <summary>Tooltip do badge: rótulo + taxa de sucesso + último erro.</summary>
+    private string HealthTitle(AutomationResponse a)
+    {
+        var label = L[$"automations.health_{HealthOf(a)}"];
+        if (!_stats.TryGetValue(a.Id, out var s) || s.Total == 0)
+        {
+            return label;
+        }
+        var tip = $"{label} — {s.SuccessRate}% {L["automations.health_ok_runs"]}";
+        return s.LastError is { Length: > 0 } err ? $"{tip} — {err}" : tip;
     }
 
     private string ScheduleLabel(AutomationResponse a) => a.ScheduleKind switch

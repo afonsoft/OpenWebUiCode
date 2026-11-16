@@ -243,6 +243,64 @@ public class HarnessSeamsTests
         Assert.That(r3.Action, Is.EqualTo(ToolCallAction.Pass));
     }
 
+    [Test]
+    public async Task RepeatGuard_MesmaTool_ArgsDiferentes_Veta_No_Limite()
+    {
+        // Loop por assinatura: args variam a cada chamada, então o streak
+        // de args idênticos nunca dispara — o limite de mesma tool seguida
+        // (default 6) é quem veta.
+        var guard = new RepeatToolGuard(
+            new ConfigurationBuilder().Build());
+        ToolCallDecision? decisao = null;
+        for (var i = 1; i <= 6; i++)
+        {
+            decisao = await guard.OnToolCallAsync(
+                Ctx(args: $"{{\"n\":{i}}}"), CancellationToken.None);
+        }
+        Assert.That(decisao!.Action, Is.EqualTo(ToolCallAction.Veto));
+        Assert.That(decisao.Reason, Does.Contain("shell"));
+    }
+
+    [Test]
+    public async Task RepeatGuard_ToolDiferente_Reseta_StreakDeTool()
+    {
+        var guard = new RepeatToolGuard(
+            new ConfigurationBuilder().Build());
+        for (var i = 1; i <= 5; i++)
+        {
+            await guard.OnToolCallAsync(
+                Ctx(tool: "shell", args: $"{{\"n\":{i}}}"), CancellationToken.None);
+        }
+        // Intercalar outra tool zera a sequência — a chamada de "read"
+        // já conta como 1; mais 4 seguidas ficam abaixo do limite (6).
+        await guard.OnToolCallAsync(
+            Ctx(tool: "read", args: "{}"), CancellationToken.None);
+        ToolCallDecision? decisao = null;
+        for (var i = 6; i <= 9; i++)
+        {
+            decisao = await guard.OnToolCallAsync(
+                Ctx(tool: "read", args: $"{{\"n\":{i}}}"), CancellationToken.None);
+        }
+        Assert.That(decisao!.Action, Is.EqualTo(ToolCallAction.Pass));
+    }
+
+    [Test]
+    public async Task RepeatGuard_MaxSameTool_Configuravel()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["interceptors.repeat_tool_guard.max_same_tool"] = "3",
+            })
+            .Build();
+        var guard = new RepeatToolGuard(config);
+        await guard.OnToolCallAsync(Ctx(args: "{\"n\":1}"), CancellationToken.None);
+        await guard.OnToolCallAsync(Ctx(args: "{\"n\":2}"), CancellationToken.None);
+        var r3 = await guard.OnToolCallAsync(
+            Ctx(args: "{\"n\":3}"), CancellationToken.None);
+        Assert.That(r3.Action, Is.EqualTo(ToolCallAction.Veto));
+    }
+
     // ---------- RF-E1/E2: TeamService ----------
 
     private static Chat NewChat(string userId, string? parent = null) =>

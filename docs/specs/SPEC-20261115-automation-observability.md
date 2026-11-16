@@ -10,7 +10,7 @@
 | Repository | `afonsoft/OpenWebUiCode` |
 | Branch | `feature/Devin-20261115-automation-observability` |
 | Depends on | SPEC-20261115-scheduler-robustness |
-| Status | `Approved` |
+| Status | Completed |
 
 ---
 

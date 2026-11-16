@@ -12,9 +12,9 @@ using OpenWebUI.Infrastructure.Services;
 namespace OpenWebUI.Api.Tests;
 
 /// <summary>
-/// Testes da SPEC-20261115-scheduler-advanced: TimeZoneId (IANA) для
-/// daily/weekly, ScheduleKind cron через Cronos и ActionKind run — реальная
-/// ChatRun в очереди с ApprovalPreset на чате.
+/// Testes da SPEC-20261115-scheduler-advanced: TimeZoneId (IANA) para
+/// daily/weekly, ScheduleKind cron via Cronos e ActionKind run — ChatRun
+/// real enfileirada com ApprovalPreset no chat.
 /// </summary>
 [TestFixture]
 public class AutomationScheduleAdvancedTests
@@ -49,7 +49,7 @@ public class AutomationScheduleAdvancedTests
         {
             UserId = "u1",
             Name = "auto-adv",
-            Prompt = "сделай что-нибудь",
+            Prompt = "faça algo",
             ModelId = "fake:1",
             ScheduleKind = "interval",
             IntervalMinutes = 5,
@@ -72,8 +72,8 @@ public class AutomationScheduleAdvancedTests
     [Test]
     public void Daily_SaoPaulo_ConvertsToUtc()
     {
-        // Пн 2026-11-16 00:00 UTC = вс 21:00 в Сан-Паулу (UTC-3, без DST).
-        // Ближайшая daily 09:00 по местному = 12:00 UTC того же дня.
+        // Seg 2026-11-16 00:00 UTC = dom 21:00 em São Paulo (UTC-3, sem DST).
+        // Próxima daily 09:00 local = 12:00 UTC do mesmo dia.
         var automation = NewAutomation();
         automation.ScheduleKind = "daily";
         automation.TimeOfDay = "09:00";
@@ -136,7 +136,7 @@ public class AutomationScheduleAdvancedTests
     {
         var automation = NewAutomation();
         automation.ScheduleKind = "cron";
-        automation.CronExpression = "не крон";
+        automation.CronExpression = "not-a-cron";
 
         Assert.That(AutomationSchedule.ComputeNextRun(automation, DateTimeOffset.UtcNow),
             Is.Null);
@@ -206,7 +206,7 @@ public class AutomationScheduleAdvancedTests
         Assert.That(run.Status, Is.EqualTo("failed"));
     }
 
-    // ---------- RF-002: валидация на эндпоинте ----------
+    // ---------- RF-002: validação no endpoint ----------
 
     private static AutomationUpsertRequest NewRequest(string kind, string? cron = null,
         string? tz = null, string? preset = null) =>
@@ -218,7 +218,7 @@ public class AutomationScheduleAdvancedTests
     public void Validate_Cron_Invalid_Rejected()
     {
         Assert.That(OpenWebUI.Api.Endpoints.AutomationEndpoints.Validate(
-            NewRequest("cron", "не крон")), Is.Not.Null);
+            NewRequest("cron", "not-a-cron")), Is.Not.Null);
     }
 
     [Test]

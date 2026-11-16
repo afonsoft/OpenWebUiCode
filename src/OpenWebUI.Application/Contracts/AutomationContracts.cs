@@ -83,6 +83,47 @@ public sealed record AutomationRunResponse(
     bool Missed = false,
     string? RunId = null);
 
+/// <summary>Estatísticas de execução de uma automação (RF-001 observability).</summary>
+/// <param name="SuccessRate">% de runs ok nas últimas 20 (0-100).</param>
+/// <param name="Runs">Últimas 10 runs, mais novas primeiro.</param>
+public sealed record AutomationStatsResponse(
+    int Total,
+    int Ok,
+    int Failed,
+    double SuccessRate,
+    long? LastRunAt,
+    string? LastError,
+    int ConsecutiveFailures,
+    List<AutomationRunResponse> Runs);
+
+/// <summary>
+/// Nível de saúde da automação no badge da UI (RF-002): vermelho quando
+/// a taxa de sucesso das últimas 20 runs &lt;70%, ≥3 falhas consecutivas
+/// ou desabilitada pelo circuit breaker; amarelo entre 70-90% ou 1-2
+/// falhas seguidas; verde no restante.
+/// </summary>
+public static class AutomationHealth
+{
+    /// <summary>Devolve <c>ok</c> | <c>warn</c> | <c>bad</c>.</summary>
+    public static string Level(
+        bool enabled, int consecutiveFailures, AutomationStatsResponse? stats)
+    {
+        if ((!enabled && consecutiveFailures >= 5) || consecutiveFailures >= 3)
+        {
+            return "bad";
+        }
+        if (consecutiveFailures >= 1)
+        {
+            return "warn";
+        }
+        if (stats is null || stats.Total == 0 || stats.SuccessRate >= 90)
+        {
+            return "ok";
+        }
+        return stats.SuccessRate >= 70 ? "warn" : "bad";
+    }
+}
+
 /// <summary>Webhook de automação vinculado a um chat (RF-021).</summary>
 public sealed record AutomationHookResponse(
     string Id,
