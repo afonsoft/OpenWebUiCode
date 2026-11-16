@@ -556,7 +556,10 @@
                 </div>
             }
 
-            <div id="chat-composer-container" class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border border-gray-100/30 dark:border-gray-850/30 hover:border-gray-200 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition px-0.5 bg-white/5 dark:bg-gray-500/5 backdrop-blur-sm dark:text-gray-100">
+            @* max-sm:backdrop-blur-none — backdrop-filter cria containing block para
+               position:fixed; sem ele no mobile os popovers (sliders/tools/mcp) ancoram
+               no viewport e centralizam. *@
+            <div id="chat-composer-container" class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border border-gray-100/30 dark:border-gray-850/30 hover:border-gray-200 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800 transition px-0.5 bg-white/5 dark:bg-gray-500/5 backdrop-blur-sm max-sm:backdrop-blur-none dark:text-gray-100">
                 <div class="px-2 relative">
                     @if (_promptSuggestions.Count > 0)
                     {
@@ -662,8 +665,9 @@
                                 </button>
                                 @if (_showToolsMenu)
                                 {
-                                    <div id="composer-tools-backdrop" class="fixed inset-0 z-30" @onclick="() => _showToolsMenu = false"></div>
-                                    <div id="composer-tools-menu" class="absolute bottom-10 left-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-lg max-h-[60vh] overflow-y-auto overflow-x-hidden"
+                                    <div id="composer-tools-backdrop" class="fixed inset-0 z-30 max-sm:bg-black/40" @onclick="() => _showToolsMenu = false"></div>
+                                    <div id="composer-tools-menu" class="absolute bottom-10 left-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-lg max-h-[60vh] overflow-y-auto overflow-x-hidden
+                                                max-sm:fixed max-sm:top-[12vh] max-sm:bottom-auto max-sm:left-0 max-sm:right-0 max-sm:mx-auto max-sm:w-auto max-sm:max-w-sm max-sm:max-h-[70vh] max-sm:text-[0.8125rem]"
                                          role="group" aria-label="@L["chat.tools"]" @ref="_toolsMenu" @onkeydown="OnToolsMenuKeyDown">
                                         @if (_webSearchAvailable)
                                         {
@@ -757,8 +761,9 @@
                             </button>
                             @if (_showSlidersMenu)
                             {
-                                <div id="composer-sliders-backdrop" class="fixed inset-0 z-30" @onclick="ToggleSlidersMenu"></div>
-                                <div id="composer-sliders-popover" class="absolute bottom-10 left-0 z-40 w-72 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-xl p-2 text-sm text-gray-700 dark:text-gray-200">
+                                <div id="composer-sliders-backdrop" class="fixed inset-0 z-30 max-sm:bg-black/40" @onclick="ToggleSlidersMenu"></div>
+                                <div id="composer-sliders-popover" class="absolute bottom-10 left-0 z-40 w-72 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-xl p-2 text-sm text-gray-700 dark:text-gray-200
+                                            max-sm:fixed max-sm:top-[12vh] max-sm:bottom-auto max-sm:left-0 max-sm:right-0 max-sm:mx-auto max-sm:w-auto max-sm:max-w-sm max-sm:max-h-[70vh] max-sm:overflow-y-auto max-sm:text-[0.8125rem]">
                                     <div class="px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">@L["chat.sliders_settings"]</div>
                                     
                                     @if (_webSearchAvailable)
@@ -820,7 +825,8 @@
                                                     @if (_activeMcpHoverServerId == server.Id)
                                                     {
                                                         <div id="composer-sliders-mcp-tools-flyout-@server.Id"
-                                                             class="absolute left-full top-0 ml-2 w-72 max-h-80 overflow-y-auto rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl p-2 z-50">
+                                                             class="absolute left-full top-0 sm:ml-2 w-72 max-h-80 overflow-y-auto rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-2xl p-2 z-50
+                                                                    max-sm:fixed max-sm:top-[18vh] max-sm:left-0 max-sm:right-0 max-sm:mx-auto max-sm:w-auto max-sm:max-w-sm max-sm:max-h-[60vh]">
                                                             <div class="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-gray-800 mb-1">
                                                                 <span class="text-xs font-semibold text-gray-500">@server.Name Tools</span>
                                                                 <div class="flex items-center gap-2 text-[11px]">
@@ -890,8 +896,9 @@
                             </button>
                             @if (_showModeMenu)
                             {
-                                <div class="fixed inset-0 z-30" @onclick="() => _showModeMenu = false"></div>
-                                <div class="absolute bottom-10 right-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-lg overflow-hidden"
+                                <div class="fixed inset-0 z-30 max-sm:bg-black/40" @onclick="() => _showModeMenu = false"></div>
+                                <div class="absolute bottom-10 right-0 z-40 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800/50 shadow-lg overflow-hidden
+                                            max-sm:fixed max-sm:top-[12vh] max-sm:bottom-auto max-sm:left-0 max-sm:mx-auto max-sm:w-auto max-sm:max-w-sm"
                                      role="menu" aria-label="@L["chat.mode_title"]" @ref="_modeMenu" @onkeydown="OnModeMenuKeyDown">
                                     <div class="px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400">
                                         @L["chat.mode_title"]
