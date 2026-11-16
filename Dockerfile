@@ -58,7 +58,7 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
 # no runtime-deps roda sobre o runtime compartilhado de /opt/dotnet.
 RUN dotnet tool install --tool-path /tools csharp-ls
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0 AS runtime
 
 # curl para o HEALTHCHECK; git para o workspace IDE; sudo para o agente
 # (shell_exec roda com permissão total dentro do container — single-tenant);
