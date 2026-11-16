@@ -1427,5 +1427,9 @@
   "chat.mcp_servers_menu": "MCP-Server",
   "chat.enable_all": "Alle aktivieren",
   "chat.disable_all": "Alle deaktivieren",
-  "chat.no_mcp_servers": "Keine MCP-Server konfiguriert"
+  "chat.no_mcp_servers": "Keine MCP-Server konfiguriert",
+  "automations.health_ok": "Fehlerfrei",
+  "automations.health_warn": "Warnung",
+  "automations.health_bad": "Fehlerhaft",
+  "automations.health_ok_runs": "Erfolg bei letzten Läufen"
 }

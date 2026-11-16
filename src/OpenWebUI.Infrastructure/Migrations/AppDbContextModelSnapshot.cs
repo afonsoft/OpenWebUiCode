@@ -436,6 +436,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("ReceivedAt")
                         .HasColumnType("INTEGER");
 
@@ -452,6 +455,8 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("HookId", "DeliveryKey");
+
+                    b.HasIndex("HookId", "IdempotencyKey");
 
                     b.HasIndex("HookId", "ReceivedAt");
 

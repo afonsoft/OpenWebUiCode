@@ -431,6 +431,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             // Auditoria por hook + dedup por chave do remetente.
             entity.HasIndex(d => new { d.HookId, d.ReceivedAt });
             entity.HasIndex(d => new { d.HookId, d.DeliveryKey });
+            // Dedup por Idempotency-Key/hash do payload (SPEC-C RF-003).
+            entity.HasIndex(d => new { d.HookId, d.IdempotencyKey });
         });
 
         modelBuilder.Entity<TeamTask>(entity =>
