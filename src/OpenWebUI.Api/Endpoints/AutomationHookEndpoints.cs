@@ -261,12 +261,24 @@ public static class AutomationHookEndpoints
         }
 
         // Assinatura: hook com secret exige X-Hub-Signature-256 válida;
-        // sem secret aceita (legado) com warning de auditoria.
+        // sem secret aceita (legado) com warning de auditoria. A dedup
+        // genérica vem DEPOIS — um replay com assinatura inválida deve
+        // ser rejeitado, não deduplicado.
         var (sigError, securityWarning) = await VerifySignatureAsync(
             db, hook, http.Request, raw, deliveryKey, eventType, ct);
         if (sigError is not null)
         {
             return sigError;
+        }
+
+        // Dedup genérica (SPEC-20261115-automation-observability RF-003):
+        // Idempotency-Key do remetente ou SHA-256 do corpo — re-entrega
+        // idêntica dentro de 24h não cria run.
+        var idempotencyKey = OrNull(http.Request.Headers["Idempotency-Key"].ToString())
+            ?? PayloadHash(raw);
+        if (await IdempotentDuplicateAsync(db, hook, idempotencyKey, ct) is { } dup2)
+        {
+            return dup2;
         }
 
         // Filtro de eventos (RF-D1): lista vazia/ausente aceita tudo;
@@ -275,7 +287,7 @@ public static class AutomationHookEndpoints
         if (filter.Count > 0 && eventType is not null
             && !filter.Contains(eventType, StringComparer.OrdinalIgnoreCase))
         {
-            await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "filtered", null, null, securityWarning), ct);
+            await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "filtered", null, null, securityWarning, idempotencyKey), ct);
             return Results.Ok(new { status = "filtered", eventType });
         }
 
@@ -312,14 +324,15 @@ public static class AutomationHookEndpoints
         return await EnqueueHookRunAsync(
             deps, db,
             new HookRunRequest(hook, content, model, deliveryKey, eventType,
-                securityWarning),
+                securityWarning, idempotencyKey),
             ct);
     }
 
     /// <summary>Pacote da entrega aceita (S107).</summary>
     private sealed record HookRunRequest(
         AutomationHook Hook, string Content, string Model,
-        string? DeliveryKey, string? EventType, string? SecurityWarning);
+        string? DeliveryKey, string? EventType, string? SecurityWarning,
+        string? IdempotencyKey = null);
 
     /// <summary>Monta a mensagem + a run do hook (persona vira system),
     /// persiste tudo, grava a delivery "accepted" e enfileira.</summary>
@@ -327,7 +340,7 @@ public static class AutomationHookEndpoints
         HookFireDeps deps, AppDbContext db, HookRunRequest req,
         CancellationToken ct)
     {
-        var (hook, content, model, deliveryKey, eventType, securityWarning) = req;
+        var (hook, content, model, deliveryKey, eventType, securityWarning, idempotencyKey) = req;
         if (hook.AgentMode is { Length: > 0 } mode)
         {
             hook.Chat!.Mode = mode;
@@ -373,7 +386,7 @@ public static class AutomationHookEndpoints
         hook.Chat.UpdatedAt = now;
         hook.LastFiredAt = now;
         await db.SaveChangesAsync(ct);
-        await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "accepted", run.Id, null, securityWarning), ct);
+        await RecordDeliveryAsync(db, new DeliveryInfo(hook, deliveryKey, eventType, "accepted", run.Id, null, securityWarning, idempotencyKey), ct);
 
         deps.Dispatcher.Enqueue(run.Id);
         return Results.Accepted(value: new AutomationHookFireResponse(
@@ -399,6 +412,30 @@ public static class AutomationHookEndpoints
         http.Response.Headers.RetryAfter = retry.ToString();
         return Results.Json(
             new { detail = "Limite de disparos excedido." }, statusCode: 429);
+    }
+
+    /// <summary>SHA-256 do corpo cru em hex — dedup quando o remetente
+    /// não envia Idempotency-Key (SPEC-C RF-003).</summary>
+    internal static string PayloadHash(string raw) =>
+        Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(raw)));
+
+    /// <summary>Re-entrega idêntica (mesmo Idempotency-Key ou payload)
+    /// aceita nas últimas 24h → 200 deduplicated, sem run nova.</summary>
+    private static async Task<IResult?> IdempotentDuplicateAsync(
+        AppDbContext db, AutomationHook hook, string idempotencyKey,
+        CancellationToken ct)
+    {
+        var since = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 24 * 3600;
+        var prev = await db.AutomationHookDeliveries.AsNoTracking()
+            .Where(d => d.HookId == hook.Id && d.IdempotencyKey == idempotencyKey
+                && d.Status == "accepted" && d.ReceivedAt >= since)
+            .Select(d => d.RunId)
+            .FirstOrDefaultAsync(ct);
+        return prev is null
+            ? null
+            : Results.Ok(new { deduplicated = true, runId = prev, hook.ChatId });
     }
 
     /// <summary>Entrega duplicada devolve a run original já aceita.</summary>
@@ -550,7 +587,8 @@ public static class AutomationHookEndpoints
     /// <summary>Persiste a linha de auditoria da entrega (RF-D2).</summary>
     private sealed record DeliveryInfo(
         AutomationHook Hook, string? DeliveryKey, string? EventType,
-        string Status, string? RunId, string? Error, string? SecurityWarning);
+        string Status, string? RunId, string? Error, string? SecurityWarning,
+        string? IdempotencyKey = null);
 
     private static async Task RecordDeliveryAsync(
         AppDbContext db, DeliveryInfo d, CancellationToken ct)
@@ -560,6 +598,7 @@ public static class AutomationHookEndpoints
             HookId = d.Hook.Id,
             DeliveryKey = d.DeliveryKey,
             EventType = d.EventType,
+            IdempotencyKey = d.IdempotencyKey,
             ReceivedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Status = d.Status,
             RunId = d.RunId,

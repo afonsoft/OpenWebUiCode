@@ -1134,8 +1134,39 @@ public class Automation
     /// <summary>Chat reutilizado pelas execuções, quando configurado.</summary>
     public string? ChatId { get; set; }
 
+    /// <summary>
+    /// Fuso IANA usado por daily/weekly/cron
+    /// (SPEC-20261115-scheduler-advanced RF-001); <c>interval</c> ignora.
+    /// Valor inválido resolve para UTC.
+    /// </summary>
+    public string TimeZoneId { get; set; } = "UTC";
+
+    /// <summary>Expressão cron (ScheduleKind = <c>cron</c>) parseada via Cronos.</summary>
+    public string? CronExpression { get; set; }
+
+    /// <summary>
+    /// Preset de aprovação aplicado ao chat quando ActionKind = <c>run</c>
+    /// (<c>allow-readonly</c> default; <c>approve-mutations</c>/<c>always-allow</c>
+    /// opcionais).
+    /// </summary>
+    public string ApprovalPreset { get; set; } = "allow-readonly";
+
     /// <summary>Próxima execução agendada (epoch seconds, UTC).</summary>
     public long? NextRunAt { get; set; }
+
+    /// <summary>
+    /// Política de execução perdida (SPEC-20261115-scheduler-robustness):
+    /// <c>skip</c> (default) executa uma única vez em atraso e marca
+    /// <see cref="AutomationRun.Missed"/>; <c>run-once</c> idem — explícito.
+    /// </summary>
+    public string MisfirePolicy { get; set; } = "skip";
+
+    /// <summary>
+    /// Falhas consecutivas do circuit breaker (SPEC-20261115): reseta em
+    /// sucesso; ao atingir o treshold configurado a automação é
+    /// desabilitada e o dono notificado.
+    /// </summary>
+    public int ConsecutiveFailures { get; set; }
 
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
@@ -1173,6 +1204,18 @@ public class AutomationRun
 
     /// <summary>Chat criado com o prompt e a resposta, quando a execução completa.</summary>
     public string? ChatId { get; set; }
+
+    /// <summary>
+    /// <see cref="ChatRun"/> enfileirada quando ActionKind = <c>run</c>
+    /// (SPEC-20261115-scheduler-advanced RF-003).
+    /// </summary>
+    public string? RunId { get; set; }
+
+    /// <summary>
+    /// Execução atrasada (SPEC-20261115): o disparo aconteceu muito além
+    /// do <see cref="Automation.NextRunAt"/> planejado (pós-downtime).
+    /// </summary>
+    public bool Missed { get; set; }
 
     /// <summary>Início da execução (epoch seconds).</summary>
     public long StartedAt { get; set; }
@@ -1273,6 +1316,13 @@ public class AutomationHookDelivery
 
     /// <summary>Tipo de evento (<c>X-GitHub-Event</c>/<c>X-Event-Type</c>).</summary>
     public string? EventType { get; set; }
+
+    /// <summary>
+    /// Chave de dedup genérica (SPEC-20261115-automation-observability
+    /// RF-003): header <c>Idempotency-Key</c> do remetente ou SHA-256 do
+    /// corpo cru; re-entregas iguais em 24h não criam run nova.
+    /// </summary>
+    public string? IdempotencyKey { get; set; }
 
     /// <summary>Recebimento (epoch seconds).</summary>
     public long ReceivedAt { get; set; }
