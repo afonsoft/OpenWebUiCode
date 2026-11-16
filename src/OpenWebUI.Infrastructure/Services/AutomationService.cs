@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.Data;
@@ -79,9 +81,20 @@ public class AutomationService(
     SkillDiscoveryService? skills = null,
     McpClientService? mcp = null,
     IHttpClientFactory? httpFactory = null,
-    ComboService? combos = null)
+    ComboService? combos = null,
+    IConfiguration? config = null)
 {
     private const string SkillKey = "skill";
+
+    /// <summary>Máximo de tentativas para falhas transitórias (RF-003).</summary>
+    internal const int MaxTransientAttempts = 3;
+
+    /// <summary>Delay entre tentativas de retry — injetável em testes.</summary>
+    internal Func<int, CancellationToken, Task> RetryDelayAsync { get; set; }
+        = (ms, ct) => Task.Delay(TimeSpan.FromMilliseconds(ms), ct);
+
+    private int CircuitBreakerThreshold =>
+        Math.Max(1, config?.GetValue("Automation:CircuitBreakerThreshold", 5) ?? 5);
 
     /// <summary>Cap do resumo de output gravado no <see cref="AutomationRun"/>.</summary>
     private const int MaxOutputChars = 4096;
@@ -179,6 +192,25 @@ public class AutomationService(
 
         run.FinishedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         db.AutomationRuns.Add(run);
+
+        // Circuit breaker (SPEC-20261115 RF-003): sucesso zera o contador;
+        // N falhas consecutivas desabilitam a automação e avisam o dono.
+        var disabled = false;
+        if (run.Status == "ok")
+        {
+            automation.ConsecutiveFailures = 0;
+        }
+        else
+        {
+            automation.ConsecutiveFailures++;
+            if (automation.ConsecutiveFailures >= CircuitBreakerThreshold
+                && automation.Enabled)
+            {
+                automation.Enabled = false;
+                automation.NextRunAt = null;
+                disabled = true;
+            }
+        }
         await db.SaveChangesAsync(ct);
 
         // Lembrete (once) precisa aparecer pro usuário — o chat criado
@@ -192,6 +224,13 @@ public class AutomationService(
         {
             await notifications.DispatchAsync("automation.failed",
                 new { automation.Id, automation.Name, error = run.Error }, automation.UserId, ct);
+        }
+        if (disabled)
+        {
+            await notifications.DispatchAsync("automation.disabled",
+                new { automation.Id, automation.Name,
+                    error = $"Desabilitada após {automation.ConsecutiveFailures} falhas consecutivas." },
+                automation.UserId, ct);
         }
         return run;
     }
@@ -251,10 +290,31 @@ public class AutomationService(
 
         var srv = await mcp.GetServerAsync(server, ct)
             ?? await mcp.GetServerAsync(McpClientService.EnvServerIdPrefix + server, ct);
-        return srv is null
-            ? new(Error: $"Servidor MCP '{server}' não encontrado.")
-            : new(Output: await mcp.CallToolAsync(srv, tool, argsJson, ct));
+        if (srv is null)
+        {
+            return new(Error: $"Servidor MCP '{server}' não encontrado.");
+        }
+
+        // Retry de falhas transitórias (RF-003): exceções de transporte
+        // retentam com backoff exponencial 1s→4s + jitter.
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return new(Output: await mcp.CallToolAsync(srv, tool, argsJson, ct));
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                && attempt < MaxTransientAttempts)
+            {
+                await RetryDelayAsync(BackoffMs(attempt), ct);
+            }
+        }
     }
+
+    /// <summary>Backoff exponencial 1s→2s→4s com jitter ±25% (RF-003).</summary>
+    internal static int BackoffMs(int attempt) =>
+        (int)((1000 << (attempt - 1))
+            * (1.0 + (Random.Shared.NextDouble() * 0.5 - 0.25)));
 
     /// <summary>Caller <c>reminder</c>: notificação sem LLM (RF-004).</summary>
     private async Task<ActionOutcome> RunReminderAsync(Automation automation, CancellationToken ct)
@@ -286,21 +346,45 @@ public class AutomationService(
 
         var method = doc.RootElement.TryGetProperty("method", out var me) && me.ValueKind == JsonValueKind.String
             ? me.GetString()!.ToUpperInvariant() : "POST";
-        using var req = BuildWebhookRequest(doc, automation, uri, method);
 
+        // Retry de falhas transitórias (RF-003): 5xx/408/429, timeout e
+        // erro de transporte retentam até MaxTransientAttempts — cada
+        // tentativa recria o HttpRequestMessage (não é re-enviável).
         using var http = httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(15);
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            using var resp = await http.SendAsync(req, ct);
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            return resp.IsSuccessStatusCode
-                ? new(Output: $"HTTP {(int)resp.StatusCode}: {body}")
-                : new(Error: $"Webhook respondeu {(int)resp.StatusCode}: {body[..Math.Min(500, body.Length)]}");
-        }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-        {
-            return new(Error: "Webhook timeout (15s).");
+            try
+            {
+                using var req = BuildWebhookRequest(doc, automation, uri, method);
+                using var resp = await http.SendAsync(req, ct);
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                if (resp.IsSuccessStatusCode)
+                {
+                    return new(Output: $"HTTP {(int)resp.StatusCode}: {body}");
+                }
+                var transient = (int)resp.StatusCode is >= 500 or 408 or 429;
+                if (!transient || attempt == MaxTransientAttempts)
+                {
+                    return new(Error:
+                        $"Webhook respondeu {(int)resp.StatusCode}: {body[..Math.Min(500, body.Length)]}");
+                }
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+            {
+                if (attempt == MaxTransientAttempts)
+                {
+                    return new(Error: "Webhook timeout (15s).");
+                }
+            }
+            catch (HttpRequestException ex)
+            {
+                if (attempt == MaxTransientAttempts)
+                {
+                    return new(Error: $"Webhook falhou: {ex.Message}");
+                }
+            }
+            await RetryDelayAsync(BackoffMs(attempt), ct);
         }
     }
 
@@ -471,70 +555,146 @@ public class AutomationService(
         }
     }
 
-    /// <summary>Reagenda a próxima execução de uma automação.</summary>
+    /// <summary>
+    /// Jitter ±5% aplicado sobre o instante calculado (SPEC-20261115
+    /// RF-005): automações criadas juntas não disparam todas no mesmo
+    /// tick. Não se aplica a <c>once</c>.
+    /// </summary>
+    public static long? ApplyJitter(long? next, DateTimeOffset now,
+        string scheduleKind)
+    {
+        if (next is not { } at || scheduleKind == "once")
+        {
+            return next;
+        }
+        var delta = at - now.ToUniversalTime().ToUnixTimeSeconds();
+        if (delta <= 0)
+        {
+            return next;
+        }
+        var jitter = 1.0 + ((Random.Shared.NextDouble() * 2 - 1) * 0.05);
+        return now.ToUniversalTime().ToUnixTimeSeconds()
+            + (long)Math.Max(1, delta * jitter);
+    }
+
+    /// <summary>Reagenda a próxima execução de uma automação (com jitter).</summary>
     public static void Reschedule(Automation automation)
     {
+        var now = DateTimeOffset.UtcNow;
         automation.NextRunAt = automation.Enabled
-            ? AutomationSchedule.ComputeNextRun(automation, DateTimeOffset.UtcNow)
+            ? ApplyJitter(
+                AutomationSchedule.ComputeNextRun(automation, now),
+                now, automation.ScheduleKind)
             : null;
     }
 }
 
-/// <summary>BackgroundService que dispara runs de automações no horário.</summary>
-public class AutomationScheduler(IServiceScopeFactory scopeFactory) : BackgroundService
+/// <summary>
+/// Scheduler de automações (SPEC-20261115-scheduler-robustness): tick de
+/// 15s, dispatch PARALELO das due (cap <c>Automation:MaxConcurrent</c>,
+/// default 4) com overlap guard por automação em voo, reschedule com
+/// jitter e flag <see cref="AutomationRun.Missed"/> em atraso grande.
+/// </summary>
+public class AutomationScheduler(
+    IServiceScopeFactory scopeFactory,
+    IConfiguration configuration,
+    ILogger<AutomationScheduler> logger)
+    : PeriodicBackgroundService(logger)
 {
-    private static readonly TimeSpan Tick = TimeSpan.FromSeconds(15);
+    /// <summary>Automações com run em andamento nesta instância (overlap guard RF-001).</summary>
+    private readonly ConcurrentDictionary<string, byte> _inFlight = new();
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await TickOnceAsync(stoppingToken);
-            }
-            catch (Exception) when (!stoppingToken.IsCancellationRequested)
-            {
-                // Um tick com falha não derruba o scheduler.
-            }
+    /// <inheritdoc />
+    protected override TimeSpan Tick => TimeSpan.FromSeconds(15);
 
-            try
-            {
-                await Task.Delay(Tick, stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                // Shutdown gracioso — não é falha do scheduler.
-                break;
-            }
-        }
-    }
-
-    private async Task TickOnceAsync(CancellationToken ct)
+    /// <inheritdoc />
+    protected override async Task ExecuteTickAsync(CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        using var scope = scopeFactory.CreateScope();
+        List<string> dueIds;
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dueIds = await db.Automations
+                .Where(a => a.Enabled && a.NextRunAt != null && a.NextRunAt <= now)
+                .Select(a => a.Id)
+                .ToListAsync(ct);
+        }
+        if (dueIds.Count == 0)
+        {
+            return;
+        }
+
+        var maxParallel = Math.Max(1,
+            configuration.GetValue("Automation:MaxConcurrent", 4));
+        await Parallel.ForEachAsync(
+            dueIds,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = maxParallel,
+                CancellationToken = ct,
+            },
+            async (automationId, itemCt) =>
+            {
+                // Overlap guard: run anterior ainda em voo → pula este
+                // tick (NextRunAt já passou; o próximo tick re-avalia).
+                if (!_inFlight.TryAdd(automationId, 0))
+                {
+                    logger.LogDebug(
+                        "Automação {Id} já tem run em andamento — tick pulado.",
+                        automationId);
+                    return;
+                }
+                try
+                {
+                    await RunOneAsync(automationId, itemCt);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex,
+                        "Execução agendada da automação {Id} falhou.", automationId);
+                }
+                finally
+                {
+                    _inFlight.TryRemove(automationId, out _);
+                }
+            });
+    }
+
+    /// <summary>Executa uma automação em escopo próprio e reagenda sempre
+    /// (falha num run não bloqueia as próximas execuções).</summary>
+    private async Task RunOneAsync(string automationId, CancellationToken ct)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var service = scope.ServiceProvider.GetRequiredService<AutomationService>();
-
-        var due = await db.Automations
-            .Where(a => a.Enabled && a.NextRunAt != null && a.NextRunAt <= now)
-            .ToListAsync(ct);
-
-        foreach (var automation in due)
+        var automation = await db.Automations
+            .FirstOrDefaultAsync(a => a.Id == automationId, ct);
+        if (automation is null || !automation.Enabled)
         {
-            try
-            {
-                await service.RunNowAsync(automation, ct);
-            }
-            finally
-            {
-                // Reagenda sempre — falha num run não bloqueia as próximas execuções.
-                var freshNow = DateTimeOffset.UtcNow;
-                automation.NextRunAt =
-                    AutomationSchedule.ComputeNextRun(automation, freshNow);
-                await db.SaveChangesAsync(ct);
-            }
+            return;
+        }
+
+        var overdue = automation.NextRunAt is { } due
+            ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() - due
+            : 0;
+        try
+        {
+            var run = await service.RunNowAsync(automation, ct);
+            run.Missed = overdue > MissedThresholdSeconds(automation);
+            await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            AutomationService.Reschedule(automation);
+            await db.SaveChangesAsync(ct);
         }
     }
+
+    /// <summary>Atraso a partir do qual o run conta como "missed":
+    /// 2× o intervalo (kind interval) ou 1 dia (daily/weekly/once).</summary>
+    internal static long MissedThresholdSeconds(Automation a) =>
+        a.ScheduleKind == "interval"
+            ? Math.Max(1, a.IntervalMinutes) * 60L * 2
+            : 24L * 3600;
 }

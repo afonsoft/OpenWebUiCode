@@ -309,6 +309,6 @@ public class GatewayReplyTests
 
     private sealed class NullDispatcher : IChatRunDispatcher
     {
-        public void Enqueue(string runId) { }
+        public bool Enqueue(string runId) { return true; }
     }
 }

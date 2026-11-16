@@ -30,6 +30,12 @@ public sealed class ChatRunDispatcher(
     /// <summary>Máximo padrão de runs executando em paralelo (override via ChatRuns:MaxConcurrent).</summary>
     public const int MaxConcurrent = 4;
 
+    /// <summary>Capacidade padrão da fila (override via ChatRuns:QueueCapacity).</summary>
+    public const int QueueCapacity = 256;
+
+    /// <summary>Máximo de runs simultâneas por usuário (override via ChatRuns:MaxConcurrentPerUser).</summary>
+    public const int MaxConcurrentPerUser = 2;
+
     /// <summary>
     /// Identidade do processo (SPEC-20261016-run-recovery RF-005): cada
     /// instância gera um guid no boot — uma run com heartbeat fresco de
@@ -37,13 +43,64 @@ public sealed class ChatRunDispatcher(
     /// </summary>
     private static readonly string InstanceId = Guid.NewGuid().ToString("N");
 
-    private readonly System.Threading.Channels.Channel<string> _queue =
-        System.Threading.Channels.Channel.CreateUnbounded<string>();
+    private readonly System.Threading.Channels.Channel<string> _queue = CreateQueueStatic(configuration);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _chatLocks = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runCancels = new();
+    // Fairness (SPEC-20261115): runs em voo por usuário — um usuário
+    // faminto não consome todos os workers.
+    private readonly ConcurrentDictionary<string, int> _userInFlight = new();
 
-    /// <summary>Enfileira uma run recém-criada (idempotente).</summary>
-    public void Enqueue(string runId) => _queue.Writer.TryWrite(runId);
+    private static System.Threading.Channels.Channel<string> CreateQueueStatic(IConfiguration config) =>
+        System.Threading.Channels.Channel.CreateBounded<string>(new BoundedChannelOptions(
+            config.GetValue("ChatRuns:QueueCapacity", QueueCapacity))
+        {
+            FullMode = BoundedChannelFullMode.DropWrite,
+            SingleReader = false,
+            SingleWriter = false,
+        });
+
+    /// <summary>
+    /// Enfileira uma run recém-criada (idempotente). Retorna false quando
+    /// a fila está cheia — a run é marcada failed best-effort em escopo
+    /// próprio (o caller recebe o bool para responder 429 quando couber).
+    /// </summary>
+    public bool Enqueue(string runId)
+    {
+        if (_queue.Writer.TryWrite(runId))
+        {
+            return true;
+        }
+        _ = MarkEnqueueRejectedAsync(runId);
+        return false;
+    }
+
+    /// <summary>Fila cheia → run queued marcada failed (SPEC-20261115 RF-004).</summary>
+    private async Task MarkEnqueueRejectedAsync(string runId)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var run = await db.ChatRuns.FirstOrDefaultAsync(
+                r => r.Id == runId, CancellationToken.None);
+            if (run is null || run.Status != ChatRunStatus.Queued)
+            {
+                return;
+            }
+            run.Status = ChatRunStatus.Failed;
+            run.Error = "Fila de runs cheia — tente novamente em instantes.";
+            run.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await db.SaveChangesAsync(CancellationToken.None);
+            broadcaster.Publish(runId,
+                $"data: {JsonSerializer.Serialize(new { error = run.Error })}");
+            broadcaster.Publish(runId, "data: [DONE]");
+            broadcaster.Complete(runId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Falha ao marcar run {RunId} rejeitada por fila cheia.", runId);
+        }
+    }
 
     /// <summary>
     /// Pede a interrupção de uma run em execução. Retorna false quando a run
@@ -234,6 +291,17 @@ public sealed class ChatRunDispatcher(
             return;
         }
 
+        // Fairness por usuário (RF-004): cap de runs simultâneas por
+        // dono — sem slot livre, a run volta ao fim da fila com atraso.
+        var userCap = Math.Max(1,
+            configuration.GetValue("ChatRuns:MaxConcurrentPerUser", MaxConcurrentPerUser));
+        if (_userInFlight.AddOrUpdate(run.UserId, 1, (_, n) => n + 1) > userCap)
+        {
+            _userInFlight.AddOrUpdate(run.UserId, 0, (_, n) => Math.Max(0, n - 1));
+            await RequeueWithBackoffAsync(runId, stoppingToken);
+            return;
+        }
+
         // FIFO por chat: runs do mesmo chat executam em sequência.
         var chatLock = _chatLocks.GetOrAdd(run.ChatId, _ => new SemaphoreSlim(1, 1));
         await chatLock.WaitAsync(stoppingToken);
@@ -285,7 +353,32 @@ public sealed class ChatRunDispatcher(
         finally
         {
             chatLock.Release();
+            _userInFlight.AddOrUpdate(run.UserId, 0, (_, n) => Math.Max(0, n - 1));
         }
+    }
+
+    /// <summary>Devolve a run à fila após atraso curto quando o usuário
+    /// está no cap de concorrência (fila cheia persistente → falha a run
+    /// em vez de girar para sempre).</summary>
+    private async Task RequeueWithBackoffAsync(string runId, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(150), ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            if (_queue.Writer.TryWrite(runId))
+            {
+                return;
+            }
+        }
+        await FailRunBestEffortAsync(runId,
+            new InvalidOperationException("Fila de runs cheia ao re-enfileirar."));
     }
 
     /// <summary>
