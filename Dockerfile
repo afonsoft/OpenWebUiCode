@@ -14,7 +14,7 @@
 # restaura Microsoft.NETCore.App.Runtime.Mono.<rid>, que não é publicado para
 # musl. bookworm-slim é a menor base glibc que mantém shell para o HEALTHCHECK.
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 
 # Restore primeiro (cache de camadas) — só os projetos que a Api referencia.
