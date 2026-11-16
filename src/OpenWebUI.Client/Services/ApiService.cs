@@ -2215,6 +2215,11 @@ public class ApiService(HttpClient http, AuthService auth)
     public Task<AutomationRunResponse?> RunAutomationNowAsync(string id) =>
         SendAsync<AutomationRunResponse>(HttpMethod.Post, $"/api/v1/automations/{id}/run-now");
 
+    /// <summary>Estatísticas de execução (RF-001 observability).</summary>
+    public async Task<AutomationStatsResponse?> GetAutomationStatsAsync(string id) =>
+        await SendAsync<AutomationStatsResponse>(
+            HttpMethod.Get, $"/api/v1/automations/{id}/stats");
+
     // ---------------- Rotas dedicadas (detalhe por id) ----------------
 
     /// <summary>Obtém um prompt pelo id.</summary>

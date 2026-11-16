@@ -1427,5 +1427,9 @@
   "chat.mcp_servers_menu": "MCP服务器",
   "chat.enable_all": "启用全部",
   "chat.disable_all": "禁用全部",
-  "chat.no_mcp_servers": "未配置MCP服务器"
+  "chat.no_mcp_servers": "未配置MCP服务器",
+  "automations.health_ok": "",
+  "automations.health_warn": "",
+  "automations.health_bad": "",
+  "automations.health_ok_runs": ""
 }
