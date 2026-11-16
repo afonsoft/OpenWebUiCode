@@ -286,6 +286,10 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ApprovalPreset")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ChatId")
                         .HasColumnType("TEXT");
 
@@ -294,6 +298,9 @@ namespace OpenWebUI.Infrastructure.Migrations
 
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("CronExpression")
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("Enabled")
                         .HasColumnType("INTEGER");
@@ -329,6 +336,10 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TimeOfDay")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<long>("UpdatedAt")
@@ -473,6 +484,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Output")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RunId")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("StartedAt")

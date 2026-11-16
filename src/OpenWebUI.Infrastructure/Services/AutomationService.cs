@@ -18,11 +18,14 @@ public static class AutomationSchedule
     public static long? ComputeNextRun(Automation automation, DateTimeOffset now)
     {
         var utc = now.ToUniversalTime();
+        var tz = ResolveTimeZone(automation.TimeZoneId);
         return automation.ScheduleKind switch
         {
+            // interval ignora fuso (RF-001): é delta relativo a agora.
             "interval" => utc.AddMinutes(Math.Max(1, automation.IntervalMinutes)).ToUnixTimeSeconds(),
-            "daily" => NextDaily(utc, automation.TimeOfDay),
-            "weekly" => NextWeekly(utc, automation.Weekday ?? 0, automation.TimeOfDay),
+            "daily" => NextDaily(utc, automation.TimeOfDay, tz),
+            "weekly" => NextWeekly(utc, automation.Weekday ?? 0, automation.TimeOfDay, tz),
+            "cron" => NextCron(utc, automation.CronExpression, tz),
             // Execução única (reminder): mantém o horário já armazenado enquanto
             // futuro; depois de disparar, devolve null e nunca reagenda.
             "once" => automation.NextRunAt is long at && at > utc.ToUnixTimeSeconds()
@@ -32,42 +35,82 @@ public static class AutomationSchedule
         };
     }
 
-    private static long? NextDaily(DateTimeOffset now, string? timeOfDay)
+    /// <summary>Fuso IANA da automação; valor ausente/inválido resolve UTC (RF-001).</summary>
+    internal static TimeZoneInfo ResolveTimeZone(string? timeZoneId)
     {
-        if (!TryParseTime(timeOfDay, out var time))
+        if (string.IsNullOrWhiteSpace(timeZoneId))
         {
-            return null;
+            return TimeZoneInfo.Utc;
         }
-
-        var candidate = new DateTimeOffset(now.Year, now.Month, now.Day,
-            time.Hour, time.Minute, 0, TimeSpan.Zero);
-        if (candidate <= now)
+        try
         {
-            candidate = candidate.AddDays(1);
+            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
         }
-
-        return candidate.ToUnixTimeSeconds();
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Utc;
+        }
     }
 
-    private static long? NextWeekly(DateTimeOffset now, int weekday, string? timeOfDay)
+    private static long? NextDaily(DateTimeOffset nowUtc, string? timeOfDay, TimeZoneInfo tz)
     {
         if (!TryParseTime(timeOfDay, out var time))
         {
             return null;
         }
 
+        var local = TimeZoneInfo.ConvertTime(nowUtc, tz).DateTime;
+        var candidateLocal = local.Date.Add(time.ToTimeSpan());
+        if (candidateLocal <= local)
+        {
+            candidateLocal = candidateLocal.AddDays(1);
+        }
+        return ToUtcEpoch(candidateLocal, tz);
+    }
+
+    private static long? NextWeekly(DateTimeOffset nowUtc, int weekday, string? timeOfDay, TimeZoneInfo tz)
+    {
+        if (!TryParseTime(timeOfDay, out var time))
+        {
+            return null;
+        }
+
+        var local = TimeZoneInfo.ConvertTime(nowUtc, tz).DateTime;
         var day = ((DayOfWeek)Math.Clamp(weekday, 0, 6));
-        var candidate = new DateTimeOffset(now.Year, now.Month, now.Day,
-            time.Hour, time.Minute, 0, TimeSpan.Zero);
-        var daysUntil = ((int)day - (int)now.DayOfWeek + 7) % 7;
-        candidate = candidate.AddDays(daysUntil);
-        if (candidate <= now)
+        var daysUntil = ((int)day - (int)local.DayOfWeek + 7) % 7;
+        var candidateLocal = local.Date.AddDays(daysUntil).Add(time.ToTimeSpan());
+        if (candidateLocal <= local)
         {
-            candidate = candidate.AddDays(7);
+            candidateLocal = candidateLocal.AddDays(7);
         }
-
-        return candidate.ToUnixTimeSeconds();
+        return ToUtcEpoch(candidateLocal, tz);
     }
+
+    /// <summary>Próxima ocorrência cron no fuso da automação (RF-002).</summary>
+    private static long? NextCron(DateTimeOffset nowUtc, string? expression, TimeZoneInfo tz)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return null;
+        }
+        try
+        {
+            var next = Cronos.CronExpression.Parse(expression)
+                .GetNextOccurrence(nowUtc.UtcDateTime, tz);
+            return next is { } n
+                ? new DateTimeOffset(DateTime.SpecifyKind(n, DateTimeKind.Utc)).ToUnixTimeSeconds()
+                : null;
+        }
+        catch (Cronos.CronFormatException)
+        {
+            return null;
+        }
+    }
+
+    private static long ToUtcEpoch(DateTime localUnspecified, TimeZoneInfo tz) =>
+        new DateTimeOffset(
+            TimeZoneInfo.ConvertTimeToUtc(localUnspecified, tz),
+            TimeSpan.Zero).ToUnixTimeSeconds();
 
     private static bool TryParseTime(string? value, out TimeOnly time) =>
         TimeOnly.TryParseExact(value, "HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out time);
@@ -82,7 +125,8 @@ public class AutomationService(
     McpClientService? mcp = null,
     IHttpClientFactory? httpFactory = null,
     ComboService? combos = null,
-    IConfiguration? config = null)
+    IConfiguration? config = null,
+    OpenWebUI.Application.Interfaces.IChatRunDispatcher? dispatcher = null)
 {
     private const string SkillKey = "skill";
 
@@ -101,7 +145,7 @@ public class AutomationService(
 
     /// <summary>Tipos de ação suportados (RF-001).</summary>
     public static readonly HashSet<string> ActionKinds =
-        ["prompt", SkillKey, "mcp", "reminder", "webhook"];
+        ["prompt", SkillKey, "mcp", "reminder", "webhook", "run"];
 
     /// <summary>Valida o payload <see cref="Automation.ActionJson"/> por kind (RF-008).</summary>
     public static string? ValidateAction(string actionKind, string? actionJson)
@@ -111,7 +155,8 @@ public class AutomationService(
             return $"ActionKind deve ser um de: {string.Join(", ", ActionKinds)}.";
         }
 
-        if (actionKind is "prompt")
+        // prompt/run usam o Prompt da automação como payload — sem ActionJson.
+        if (actionKind is "prompt" or "run")
         {
             return null;
         }
@@ -172,9 +217,11 @@ public class AutomationService(
                 "mcp" => await RunMcpAsync(automation, ct),
                 "reminder" => await RunReminderAsync(automation, ct),
                 "webhook" => await RunWebhookAsync(automation, ct),
+                "run" => await RunChatRunAsync(automation, ct),
                 _ => await RunPromptAsync(automation, ct),
             };
             run.ChatId = outcome.ChatId;
+            run.RunId = outcome.RunId;
             run.Output = outcome.Output is { Length: > MaxOutputChars }
                 ? outcome.Output[..MaxOutputChars]
                 : outcome.Output;
@@ -237,7 +284,8 @@ public class AutomationService(
 
     /// <summary>Resultado interno de um caller de ação.</summary>
     private sealed record ActionOutcome(
-        string? ChatId = null, string? Output = null, string? Error = null);
+        string? ChatId = null, string? Output = null, string? Error = null,
+        string? RunId = null);
 
     /// <summary>Caller <c>prompt</c>: completa o prompt e grava no chat (cria ou reusa).</summary>
     private async Task<ActionOutcome> RunPromptAsync(Automation automation, CancellationToken ct) =>
@@ -554,6 +602,83 @@ public class AutomationService(
             attempt++;
         }
     }
+
+    /// <summary>
+    /// Caller <c>run</c> (SPEC-20261115-scheduler-advanced RF-003): cria uma
+    /// <see cref="ChatRun"/> queued real no chat da automação — herda tools,
+    /// worktree, budget gate, recovery e advisor. O prompt vira mensagem
+    /// user persistida para compor o histórico da run.
+    /// </summary>
+    private async Task<ActionOutcome> RunChatRunAsync(Automation automation, CancellationToken ct)
+    {
+        if (dispatcher is null)
+        {
+            return new(Error: "ChatRunDispatcher indisponível.");
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var chat = automation.ChatId is { } cid
+            ? await db.Chats.Include(c => c.Messages)
+                .FirstOrDefaultAsync(c => c.Id == cid && c.UserId == automation.UserId, ct)
+            : null;
+        var isNew = chat is null;
+        chat ??= new Chat
+        {
+            UserId = automation.UserId,
+            Title = automation.Name,
+            ModelsJson = $"[\"{automation.ModelId}\"]",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        // Preset configurável: allow-readonly (autônomo) ou approve-mutations.
+        chat.ApprovalPreset = automation.ApprovalPreset;
+        if (isNew)
+        {
+            db.Chats.Add(chat);
+        }
+
+        var position = chat.Messages.Count == 0 ? 0 : chat.Messages.Max(m => m.Position) + 1;
+        var userMsg = new ChatMessage
+        {
+            ChatId = chat.Id,
+            Role = "user",
+            Content = automation.Prompt,
+            Position = position,
+            Timestamp = now,
+        };
+        db.ChatMessages.Add(userMsg);
+        chat.LeafMessageId = userMsg.Id;
+
+        var history = chat.Messages
+            .Where(m => m.Id != userMsg.Id)
+            .OrderBy(m => m.Position)
+            .Select(m => new ChatCompletionMessage(
+                m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
+            .Append(new ChatCompletionMessage("user", automation.Prompt))
+            .ToList();
+        var request = new ChatCompletionRequest(
+            automation.ModelId, history, Stream: true);
+        var chatRun = new ChatRun
+        {
+            ChatId = chat.Id,
+            UserId = automation.UserId,
+            Model = automation.ModelId,
+            RequestJson = JsonSerializer.Serialize(request, JsonOptions),
+            CreatedAt = now,
+        };
+        db.ChatRuns.Add(chatRun);
+        await db.SaveChangesAsync(ct);
+
+        if (!dispatcher.Enqueue(chatRun.Id))
+        {
+            return new(ChatId: chat.Id, RunId: chatRun.Id,
+                Error: "Fila de runs cheia — run não despachada.");
+        }
+        return new(ChatId: chat.Id, RunId: chatRun.Id,
+            Output: $"ChatRun {chatRun.Id} enfileirada.");
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>
     /// Jitter ±5% aplicado sobre o instante calculado (SPEC-20261115

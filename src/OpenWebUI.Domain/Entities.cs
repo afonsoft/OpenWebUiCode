@@ -1134,6 +1134,23 @@ public class Automation
     /// <summary>Chat reutilizado pelas execuções, quando configurado.</summary>
     public string? ChatId { get; set; }
 
+    /// <summary>
+    /// Fuso IANA usado por daily/weekly/cron
+    /// (SPEC-20261115-scheduler-advanced RF-001); <c>interval</c> ignora.
+    /// Valor inválido resolve para UTC.
+    /// </summary>
+    public string TimeZoneId { get; set; } = "UTC";
+
+    /// <summary>Expressão cron (ScheduleKind = <c>cron</c>) parseada via Cronos.</summary>
+    public string? CronExpression { get; set; }
+
+    /// <summary>
+    /// Preset de aprovação aplicado ao chat quando ActionKind = <c>run</c>
+    /// (<c>allow-readonly</c> default; <c>approve-mutations</c>/<c>always-allow</c>
+    /// opcionais).
+    /// </summary>
+    public string ApprovalPreset { get; set; } = "allow-readonly";
+
     /// <summary>Próxima execução agendada (epoch seconds, UTC).</summary>
     public long? NextRunAt { get; set; }
 
@@ -1187,6 +1204,12 @@ public class AutomationRun
 
     /// <summary>Chat criado com o prompt e a resposta, quando a execução completa.</summary>
     public string? ChatId { get; set; }
+
+    /// <summary>
+    /// <see cref="ChatRun"/> enfileirada quando ActionKind = <c>run</c>
+    /// (SPEC-20261115-scheduler-advanced RF-003).
+    /// </summary>
+    public string? RunId { get; set; }
 
     /// <summary>
     /// Execução atrasada (SPEC-20261115): o disparo aconteceu muito além
