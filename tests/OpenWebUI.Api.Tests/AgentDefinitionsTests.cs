@@ -801,7 +801,7 @@ public class AgentDefinitionsTests
     private sealed class RecordingDispatcher : IChatRunDispatcher
     {
         public List<string> Enqueued { get; } = [];
-        public void Enqueue(string runId) => Enqueued.Add(runId);
+        public bool Enqueue(string runId) { Enqueued.Add(runId); return true; }
     }
 
     private sealed class StubHttpClientFactory : IHttpClientFactory

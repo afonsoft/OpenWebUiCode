@@ -486,6 +486,49 @@ public class RunRecoveryTests
         Assert.That(final.Error, Does.Contain("corrompido"));
     }
 
+    // ---- P2: ciclo completo pause → resume → restart ----
+
+    [Test]
+    public async Task PauseResume_EntaoRestart_SweepRetomaAteCompletar()
+    {
+        var chat = await CriarChatAsync();
+        var run = await SemearRunMortaAsync(chat.Id, null);
+        await SemearEventosAsync(run.Id,
+            (1, RunEventWriter.Types.Snapshot, SnapshotJson(0,
+                [new ChatCompletionMessage("user", "oi")], [], 0)));
+
+        // Pausa via endpoint enquanto a run está running.
+        var pause = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{run.Id}/pause", null);
+        Assert.That(pause.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await pause.Content.ReadAsStringAsync());
+
+        // Restart 1: sweep não toca run pausada.
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        await dispatcher.SweepOrphansAsync(default);
+        Assert.That((await CarregarRunAsync(run.Id)).Status,
+            Is.EqualTo(ChatRunStatus.Paused));
+
+        // Resume via endpoint: run já iniciada volta a running (o gate de
+        // pausa em memória não existe neste "processo", então nada executa).
+        var resume = await _client.PostAsync(
+            $"/api/v1/chats/{chat.Id}/runs/{run.Id}/resume", null);
+        Assert.That(resume.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+            await resume.Content.ReadAsStringAsync());
+        Assert.That((await CarregarRunAsync(run.Id)).Status,
+            Is.EqualTo(ChatRunStatus.Running));
+
+        // Restart 2: dono morto + heartbeat velho → sweep reivindica,
+        // faz replay do snapshot e conclui com o mock.
+        await dispatcher.SweepOrphansAsync(default);
+        var final = await AguardarFinalAsync(chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"),
+            $"run pausada→resumida→restarting não concluiu: {final.Status}");
+        Assert.That(final.Meta?.TryGetProperty("resumedCount", out var rc) == true
+            && rc.GetInt32() == 1, Is.True,
+            $"resumedCount deveria ser 1, meta={final.Meta}");
+    }
+
     // ---- RunRecoveryPlanner (unitário) ----
 
     [Test]

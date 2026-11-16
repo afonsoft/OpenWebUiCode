@@ -10,5 +10,8 @@ public interface IChatRunDispatcher
 {
     /// <summary>Enfileira uma run recém-criada (idempotente).</summary>
     /// <param name="runId">Id da run queued persistida.</param>
-    void Enqueue(string runId);
+    /// <returns>false quando a fila está cheia — a implementação já marca
+    /// a run failed best-effort; callers voltados ao usuário devem
+    /// responder 429.</returns>
+    bool Enqueue(string runId);
 }
