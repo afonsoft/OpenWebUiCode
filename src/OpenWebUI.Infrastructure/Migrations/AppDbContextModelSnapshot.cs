@@ -286,17 +286,31 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ApprovalPreset")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ChatId")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("CronExpression")
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("Enabled")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("IntervalMinutes")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("MisfirePolicy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ModelId")
                         .IsRequired()
@@ -322,6 +336,10 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TimeOfDay")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<long>("UpdatedAt")
@@ -418,6 +436,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("IdempotencyKey")
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("ReceivedAt")
                         .HasColumnType("INTEGER");
 
@@ -434,6 +455,8 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("HookId", "DeliveryKey");
+
+                    b.HasIndex("HookId", "IdempotencyKey");
 
                     b.HasIndex("HookId", "ReceivedAt");
 
@@ -462,7 +485,13 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<long>("FinishedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("Missed")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Output")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RunId")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("StartedAt")

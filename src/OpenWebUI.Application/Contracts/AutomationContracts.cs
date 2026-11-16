@@ -1,7 +1,10 @@
 namespace OpenWebUI.Application.Contracts;
 
 /// <summary>Automação exibida na lista do usuário.</summary>
-/// <param name="ActionKind">prompt | skill | mcp | reminder | webhook (RF-001).</param>
+/// <param name="ActionKind">prompt | skill | mcp | reminder | webhook | run (RF-001).</param>
+/// <param name="TimeZoneId">Fuso IANA de daily/weekly/cron (SPEC-20261115-scheduler-advanced).</param>
+/// <param name="CronExpression">Expressão cron quando ScheduleKind = cron.</param>
+/// <param name="ApprovalPreset">Preset de aprovação do chat em ActionKind = run.</param>
 /// <param name="ActionJson">Payload da ação (skill/mcp/reminder/webhook).</param>
 /// <param name="PermissionMode">default | auto | bypass — futuro gate de tools.</param>
 /// <param name="ChatId">Chat reutilizado nas execuções; nulo cria chat novo.</param>
@@ -21,13 +24,21 @@ public sealed record AutomationResponse(
     string ActionKind = "prompt",
     string? ActionJson = null,
     string PermissionMode = "default",
-    string? ChatId = null);
+    string? ChatId = null,
+    string? MisfirePolicy = null,
+    int ConsecutiveFailures = 0,
+    string? TimeZoneId = null,
+    string? CronExpression = null,
+    string? ApprovalPreset = null);
 
 /// <summary>Criação/atualização de automação.</summary>
-/// <param name="ScheduleKind">interval | daily | weekly | once.</param>
+/// <param name="ScheduleKind">interval | daily | weekly | once | cron.</param>
 /// <param name="IntervalMinutes">Minutos entre execuções (kind=interval, mín. 1).</param>
-/// <param name="TimeOfDay">"HH:mm" em UTC (kind=daily/weekly).</param>
-/// <param name="Weekday">0-6 domingo..sábado em UTC (kind=weekly).</param>
+/// <param name="TimeOfDay">"HH:mm" no fuso de <paramref name="TimeZoneId"/> (kind=daily/weekly).</param>
+/// <param name="Weekday">0-6 domingo..sábado (kind=weekly).</param>
+/// <param name="TimeZoneId">Fuso IANA (daily/weekly/cron); default "UTC".</param>
+/// <param name="CronExpression">Expressão cron (kind=cron, validada via Cronos).</param>
+/// <param name="ApprovalPreset">allow-readonly | approve-mutations | always-allow (kind=run).</param>
 /// <param name="RunAt">Execução única em epoch seconds UTC (kind=once).</param>
 /// <param name="InMinutes">Execução única daqui a N minutos (kind=once, alternativa a RunAt).</param>
 /// <param name="ActionKind">prompt | skill | mcp | reminder | webhook; default "prompt".</param>
@@ -48,11 +59,16 @@ public sealed record AutomationUpsertRequest(
     string? ActionKind = null,
     string? ActionJson = null,
     string? PermissionMode = null,
-    string? ChatId = null);
+    string? ChatId = null,
+    string? MisfirePolicy = null,
+    string? TimeZoneId = null,
+    string? CronExpression = null,
+    string? ApprovalPreset = null);
 
 /// <summary>Execução registrada de uma automação.</summary>
 /// <param name="ActionKind">Tipo de ação executada.</param>
 /// <param name="Output">Saída capada (4 KiB) do caller (mcp/webhook/reminder).</param>
+/// <param name="RunId">ChatRun enfileirada quando ActionKind = run.</param>
 public sealed record AutomationRunResponse(
     string Id,
     string AutomationId,
@@ -63,7 +79,50 @@ public sealed record AutomationRunResponse(
     long StartedAt,
     long FinishedAt,
     string ActionKind = "prompt",
-    string? Output = null);
+    string? Output = null,
+    bool Missed = false,
+    string? RunId = null);
+
+/// <summary>Estatísticas de execução de uma automação (RF-001 observability).</summary>
+/// <param name="SuccessRate">% de runs ok nas últimas 20 (0-100).</param>
+/// <param name="Runs">Últimas 10 runs, mais novas primeiro.</param>
+public sealed record AutomationStatsResponse(
+    int Total,
+    int Ok,
+    int Failed,
+    double SuccessRate,
+    long? LastRunAt,
+    string? LastError,
+    int ConsecutiveFailures,
+    List<AutomationRunResponse> Runs);
+
+/// <summary>
+/// Nível de saúde da automação no badge da UI (RF-002): vermelho quando
+/// a taxa de sucesso das últimas 20 runs &lt;70%, ≥3 falhas consecutivas
+/// ou desabilitada pelo circuit breaker; amarelo entre 70-90% ou 1-2
+/// falhas seguidas; verde no restante.
+/// </summary>
+public static class AutomationHealth
+{
+    /// <summary>Devolve <c>ok</c> | <c>warn</c> | <c>bad</c>.</summary>
+    public static string Level(
+        bool enabled, int consecutiveFailures, AutomationStatsResponse? stats)
+    {
+        if ((!enabled && consecutiveFailures >= 5) || consecutiveFailures >= 3)
+        {
+            return "bad";
+        }
+        if (consecutiveFailures >= 1)
+        {
+            return "warn";
+        }
+        if (stats is null || stats.Total == 0 || stats.SuccessRate >= 90)
+        {
+            return "ok";
+        }
+        return stats.SuccessRate >= 70 ? "warn" : "bad";
+    }
+}
 
 /// <summary>Webhook de automação vinculado a um chat (RF-021).</summary>
 public sealed record AutomationHookResponse(

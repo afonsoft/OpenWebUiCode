@@ -4,7 +4,9 @@
 initialize: |
   # Tailwind CSS standalone CLI para regenerar src/OpenWebUI.Client/wwwroot/css/tailwind.css
   mkdir -p "$HOME/.local/bin"
-  curl -sSL -o "$HOME/.local/bin/tailwindcss" https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
+  # Versão fixada em v4.3.3 — a mesma que o CI usa no job "Tailwind CSS em dia"
+  # (.github/workflows/ci-build-test.yml); senão a saída diverge e o check falha.
+  curl -sSL -o "$HOME/.local/bin/tailwindcss" https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-linux-x64
   chmod +x "$HOME/.local/bin/tailwindcss"
   # dotnet-ef para criar/aplicar EF Core Migrations
   dotnet tool install -g dotnet-ef || dotnet tool update -g dotnet-ef
