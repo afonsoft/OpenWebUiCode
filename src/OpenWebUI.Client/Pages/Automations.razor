@@ -46,11 +46,30 @@
                                 <textarea class="input" rows="3" @bind="_fPrompt" id="fld-57"></textarea>
                             </div>
                             <div class="field">
+                                <label for="fld-62">@L["automations.action_kind"]</label>
+                                <select class="input" @bind="_fAction" id="fld-62">
+                                    <option value="prompt">@L["automations.action_prompt"]</option>
+                                    <option value="run">@L["automations.action_run"]</option>
+                                </select>
+                            </div>
+                            @if (_fAction == "run")
+                            {
+                                <div class="field">
+                                    <label for="fld-63">@L["automations.approval_preset"]</label>
+                                    <select class="input" @bind="_fPreset" id="fld-63">
+                                        <option value="allow-readonly">@L["automations.preset_readonly"]</option>
+                                        <option value="approve-mutations">@L["automations.preset_mutations"]</option>
+                                        <option value="always-allow">@L["automations.preset_always"]</option>
+                                    </select>
+                                </div>
+                            }
+                            <div class="field">
                                 <label for="fld-58">@L["automations.schedule"]</label>
                                 <select class="input" @bind="_fKind" id="fld-58">
                                     <option value="interval">@L["automations.kind_interval"]</option>
                                     <option value="daily">@L["automations.kind_daily"]</option>
                                     <option value="weekly">@L["automations.kind_weekly"]</option>
+                                    <option value="cron">@L["automations.kind_cron"]</option>
                                 </select>
                             </div>
                             @if (_fKind == "interval")
@@ -62,10 +81,20 @@
                             }
                             else
                             {
-                                <div class="field">
-                                    <label for="fld-60">@L["automations.time_utc"]</label>
-                                    <input class="input" placeholder="HH:mm" @bind="_fTime" id="fld-60" />
-                                </div>
+                                @if (_fKind == "cron")
+                                {
+                                    <div class="field">
+                                        <label for="fld-64">@L["automations.cron_expression"]</label>
+                                        <input class="input" placeholder="*/15 * * * *" @bind="_fCron" id="fld-64" />
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="field">
+                                        <label for="fld-60">@L["automations.time_utc"]</label>
+                                        <input class="input" placeholder="HH:mm" @bind="_fTime" id="fld-60" />
+                                    </div>
+                                }
                                 @if (_fKind == "weekly")
                                 {
                                     <div class="field">
@@ -78,6 +107,10 @@
                                         </select>
                                     </div>
                                 }
+                                <div class="field">
+                                    <label for="fld-65">@L["automations.timezone"]</label>
+                                    <input class="input" placeholder="America/Sao_Paulo" @bind="_fTz" id="fld-65" />
+                                </div>
                             }
                             <div class="field flex items-end">
                                 <label class="check"><input type="checkbox" @bind="_fEnabled" /> @L["automations.enabled"]</label>
@@ -182,6 +215,10 @@
     private int _fInterval = 60;
     private string _fTime = "09:00";
     private int _fWeekday = 1;
+    private string _fCron = "*/15 * * * *";
+    private string _fTz = "UTC";
+    private string _fAction = "prompt";
+    private string _fPreset = "allow-readonly";
     private bool _fEnabled = true;
     private string? _formError;
 
@@ -220,6 +257,10 @@
         _fInterval = 60;
         _fTime = "09:00";
         _fWeekday = 1;
+        _fCron = "*/15 * * * *";
+        _fTz = "UTC";
+        _fAction = "prompt";
+        _fPreset = "allow-readonly";
         _fEnabled = true;
         _formError = null;
     }
@@ -235,6 +276,10 @@
         _fInterval = a.IntervalMinutes;
         _fTime = a.TimeOfDay ?? "09:00";
         _fWeekday = a.Weekday ?? 1;
+        _fCron = a.CronExpression ?? "*/15 * * * *";
+        _fTz = a.TimeZoneId ?? "UTC";
+        _fAction = a.ActionKind is "run" ? "run" : "prompt";
+        _fPreset = a.ApprovalPreset ?? "allow-readonly";
         _fEnabled = a.Enabled;
         _formError = null;
     }
@@ -245,8 +290,12 @@
     {
         var request = new AutomationUpsertRequest(
             _fName, _fPrompt, _fModel, _fKind,
-            _fInterval, _fKind == "interval" ? null : _fTime,
-            _fKind == "weekly" ? _fWeekday : null, _fEnabled);
+            _fInterval, _fKind is "daily" or "weekly" ? _fTime : null,
+            _fKind == "weekly" ? _fWeekday : null, _fEnabled,
+            ActionKind: _fAction,
+            TimeZoneId: _fKind == "interval" ? "UTC" : _fTz,
+            CronExpression: _fKind == "cron" ? _fCron : null,
+            ApprovalPreset: _fAction == "run" ? _fPreset : null);
         var saved = _editingId is null
             ? await Api.CreateAutomationAsync(request)
             : await Api.UpdateAutomationAsync(_editingId, request);
@@ -297,8 +346,9 @@
     private string ScheduleLabel(AutomationResponse a) => a.ScheduleKind switch
     {
         "interval" => L["automations.every_minutes"] + $" {a.IntervalMinutes}",
-        "daily" => $"{L["automations.kind_daily"]} {a.TimeOfDay} UTC",
-        "weekly" => $"{WeekdayName(a.Weekday ?? 0)} {a.TimeOfDay} UTC",
+        "daily" => $"{L["automations.kind_daily"]} {a.TimeOfDay} {a.TimeZoneId}",
+        "weekly" => $"{WeekdayName(a.Weekday ?? 0)} {a.TimeOfDay} {a.TimeZoneId}",
+        "cron" => $"cron: {a.CronExpression} {a.TimeZoneId}",
         _ => a.ScheduleKind,
     };
 

@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="..\OpenWebUI.Infrastructure\OpenWebUI.Infrastructure.csproj" />
     <ProjectReference Include="..\OpenWebUI.Client\OpenWebUI.Client.csproj" />
+    <InternalsVisibleTo Include="OpenWebUI.Api.Tests" />
   </ItemGroup>
 
   <!-- O diretório data/ abriga o clone do workspace do usuário (IDE): nunca compilar. -->

@@ -10,7 +10,9 @@ namespace OpenWebUI.Api.Endpoints;
 public static class AutomationEndpoints
 {
     private const string PromptKey = "prompt";
-    private static readonly HashSet<string> Kinds = ["interval", "daily", "weekly", "once"];
+    private static readonly HashSet<string> Kinds = ["interval", "daily", "weekly", "once", "cron"];
+    private static readonly HashSet<string> ApprovalPresets =
+        ["allow-readonly", "approve-mutations", "always-allow"];
 
     /// <summary>Mapeia as rotas de automações.</summary>
     public static RouteGroupBuilder MapAutomationEndpoints(this IEndpointRouteBuilder app)
@@ -34,15 +36,16 @@ public static class AutomationEndpoints
         a.IntervalMinutes, a.TimeOfDay, a.Weekday, a.Enabled,
         a.NextRunAt, a.CreatedAt, a.UpdatedAt,
         a.ActionKind, a.ActionJson, a.PermissionMode, a.ChatId,
-        a.MisfirePolicy, a.ConsecutiveFailures);
+        a.MisfirePolicy, a.ConsecutiveFailures,
+        a.TimeZoneId, a.CronExpression, a.ApprovalPreset);
 
-    private static string? Validate(AutomationUpsertRequest r)
+    internal static string? Validate(AutomationUpsertRequest r)
     {
         if (string.IsNullOrWhiteSpace(r.Name)) return "Nome obrigatório.";
         var kind = r.ActionKind ?? PromptKey;
-        if (kind == PromptKey && string.IsNullOrWhiteSpace(r.Prompt))
+        if (kind is PromptKey or "run" && string.IsNullOrWhiteSpace(r.Prompt))
             return "Prompt obrigatório.";
-        if (kind is PromptKey or "skill" && string.IsNullOrWhiteSpace(r.ModelId))
+        if (kind is PromptKey or "skill" or "run" && string.IsNullOrWhiteSpace(r.ModelId))
             return "Modelo obrigatório.";
         var actionError = AutomationService.ValidateAction(kind, r.ActionJson);
         if (actionError is not null) return actionError;
@@ -50,13 +53,44 @@ public static class AutomationEndpoints
             return "PermissionMode deve ser default, auto ou bypass.";
         if (r.MisfirePolicy is not (null or "skip" or "run-once"))
             return "MisfirePolicy deve ser skip ou run-once.";
+        if (r.ApprovalPreset is not null && !ApprovalPresets.Contains(r.ApprovalPreset))
+            return "ApprovalPreset deve ser allow-readonly, approve-mutations ou always-allow.";
+        if (r.TimeZoneId is not null && !IsValidTimeZone(r.TimeZoneId))
+            return "TimeZoneId deve ser um fuso IANA válido (ex.: America/Sao_Paulo).";
+        if (r.ScheduleKind == "cron")
+        {
+            if (string.IsNullOrWhiteSpace(r.CronExpression))
+                return "CronExpression obrigatória para ScheduleKind cron.";
+            try
+            {
+                Cronos.CronExpression.Parse(r.CronExpression);
+            }
+            catch (Cronos.CronFormatException)
+            {
+                return "CronExpression inválida (formato: min hora dia mês semana).";
+            }
+        }
         return ValidateSchedule(r);
+    }
+
+    /// <summary>Fuso IANA existe no SO (SPEC-20261115-scheduler-advanced RF-001).</summary>
+    private static bool IsValidTimeZone(string id)
+    {
+        try
+        {
+            TimeZoneInfo.FindSystemTimeZoneById(id);
+            return true;
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Checks do agendamento por kind (interval/once/daily/weekly).</summary>
     private static string? ValidateSchedule(AutomationUpsertRequest r)
     {
-        if (!Kinds.Contains(r.ScheduleKind)) return "ScheduleKind deve ser interval, daily, weekly ou once.";
+        if (!Kinds.Contains(r.ScheduleKind)) return "ScheduleKind deve ser interval, daily, weekly, once ou cron.";
         if (r.ScheduleKind == "interval" && (r.IntervalMinutes ?? 0) < 1)
             return "Intervalo mínimo é 1 minuto.";
         if (r.ScheduleKind == "once" &&
@@ -80,6 +114,9 @@ public static class AutomationEndpoints
         a.PermissionMode = r.PermissionMode ?? "default";
         a.ChatId = r.ChatId;
         a.MisfirePolicy = r.MisfirePolicy ?? a.MisfirePolicy;
+        a.TimeZoneId = r.TimeZoneId ?? a.TimeZoneId;
+        a.CronExpression = r.ScheduleKind == "cron" ? r.CronExpression : r.CronExpression ?? a.CronExpression;
+        a.ApprovalPreset = r.ApprovalPreset ?? a.ApprovalPreset;
         a.ScheduleKind = r.ScheduleKind;
         a.IntervalMinutes = Math.Max(1, r.IntervalMinutes ?? 60);
         a.TimeOfDay = r.TimeOfDay;
@@ -216,7 +253,7 @@ public static class AutomationEndpoints
 
     private static AutomationRunResponse ToRunResponse(AutomationRun r, string name) => new(
         r.Id, r.AutomationId, name, r.Status, r.Error, r.ChatId, r.StartedAt, r.FinishedAt,
-        r.ActionKind, r.Output, r.Missed);
+        r.ActionKind, r.Output, r.Missed, r.RunId);
 
     private static async Task<(User?, Automation?)> FindOwnedAsync(
         string id, HttpContext http, AppDbContext db, CancellationToken ct)
