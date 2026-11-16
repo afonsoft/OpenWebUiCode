@@ -2679,7 +2679,7 @@ public class BuiltinToolsTests
     private sealed class FakeRunDispatcher : IChatRunDispatcher
     {
         public List<string> Enqueued { get; } = [];
-        public void Enqueue(string runId) => Enqueued.Add(runId);
+        public bool Enqueue(string runId) { Enqueued.Add(runId); return true; }
     }
 
     private sealed class StubEnvLocal(string contentRoot) : IHostEnvironment

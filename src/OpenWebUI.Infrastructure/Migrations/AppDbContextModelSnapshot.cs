@@ -289,6 +289,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.Property<string>("ChatId")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
@@ -297,6 +300,10 @@ namespace OpenWebUI.Infrastructure.Migrations
 
                     b.Property<int>("IntervalMinutes")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("MisfirePolicy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ModelId")
                         .IsRequired()
@@ -460,6 +467,9 @@ namespace OpenWebUI.Infrastructure.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<long>("FinishedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Missed")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Output")

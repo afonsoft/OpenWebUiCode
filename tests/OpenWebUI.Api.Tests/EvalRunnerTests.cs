@@ -44,7 +44,7 @@ public class EvalRunnerTests
     private sealed class NoopDispatcher : IChatRunDispatcher
     {
         public int Enqueued;
-        public void Enqueue(string runId) => Enqueued++;
+        public bool Enqueue(string runId) { Enqueued++; return true; }
     }
 
     private async Task<(IServiceProvider sp, NoopDispatcher dispatcher,
@@ -202,13 +202,14 @@ public class EvalRunnerTests
     private sealed class CompletingDispatcher(AppDbContext db)
         : IChatRunDispatcher
     {
-        public void Enqueue(string runId)
+        public bool Enqueue(string runId)
         {
             var run = db.ChatRuns.Find(runId)!;
             run.Status = ChatRunStatus.Completed;
             run.PartialContent = "e0";
             run.CompletedAt = 1;
             db.SaveChanges();
+            return true;
         }
     }
 

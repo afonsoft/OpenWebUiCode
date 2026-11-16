@@ -1137,6 +1137,20 @@ public class Automation
     /// <summary>Próxima execução agendada (epoch seconds, UTC).</summary>
     public long? NextRunAt { get; set; }
 
+    /// <summary>
+    /// Política de execução perdida (SPEC-20261115-scheduler-robustness):
+    /// <c>skip</c> (default) executa uma única vez em atraso e marca
+    /// <see cref="AutomationRun.Missed"/>; <c>run-once</c> idem — explícito.
+    /// </summary>
+    public string MisfirePolicy { get; set; } = "skip";
+
+    /// <summary>
+    /// Falhas consecutivas do circuit breaker (SPEC-20261115): reseta em
+    /// sucesso; ao atingir o treshold configurado a automação é
+    /// desabilitada e o dono notificado.
+    /// </summary>
+    public int ConsecutiveFailures { get; set; }
+
     /// <summary>Criação (epoch seconds).</summary>
     public long CreatedAt { get; set; }
 
@@ -1173,6 +1187,12 @@ public class AutomationRun
 
     /// <summary>Chat criado com o prompt e a resposta, quando a execução completa.</summary>
     public string? ChatId { get; set; }
+
+    /// <summary>
+    /// Execução atrasada (SPEC-20261115): o disparo aconteceu muito além
+    /// do <see cref="Automation.NextRunAt"/> planejado (pós-downtime).
+    /// </summary>
+    public bool Missed { get; set; }
 
     /// <summary>Início da execução (epoch seconds).</summary>
     public long StartedAt { get; set; }

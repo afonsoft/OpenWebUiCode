@@ -287,46 +287,23 @@ public sealed record MaintenanceStatus(
     long? NextRunAt,
     long DbSizeBytes);
 
-/// <summary>BackgroundService que roda a retenção uma vez por dia.</summary>
+/// <summary>Scheduler que roda a retenção uma vez por dia
+/// (SPEC-20261115 — migrado para <see cref="PeriodicBackgroundService"/>).</summary>
 public class RetentionScheduler(
     IServiceScopeFactory scopeFactory, ILogger<RetentionScheduler> logger)
-    : BackgroundService
+    : PeriodicBackgroundService(logger)
 {
-    private static readonly TimeSpan Tick = TimeSpan.FromHours(24);
-    private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(5);
+    /// <inheritdoc />
+    protected override TimeSpan Tick => TimeSpan.FromHours(24);
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    /// <inheritdoc />
+    protected override TimeSpan InitialDelay => TimeSpan.FromMinutes(5);
+
+    /// <inheritdoc />
+    protected override async Task ExecuteTickAsync(CancellationToken ct)
     {
-        try
-        {
-            await Task.Delay(InitialDelay, stoppingToken);
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            return;
-        }
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                var service = scope.ServiceProvider.GetRequiredService<RetentionService>();
-                await service.RunOnceAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogWarning(ex, "Tick da retenção falhou.");
-            }
-
-            try
-            {
-                await Task.Delay(Tick, stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-        }
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<RetentionService>();
+        await service.RunOnceAsync(ct);
     }
 }

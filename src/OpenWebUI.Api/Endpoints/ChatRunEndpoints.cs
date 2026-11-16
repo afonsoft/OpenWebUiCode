@@ -189,7 +189,14 @@ public static class ChatRunEndpoints
             }
         }
 
-        deps.Dispatcher.Enqueue(run.Id);
+        if (!deps.Dispatcher.Enqueue(run.Id))
+        {
+            // Fila cheia: o dispatcher já marcou a run failed — devolve
+            // 429 para o cliente poder tentar de novo depois.
+            return Results.Json(
+                new { detail = "Fila de runs cheia — tente novamente em instantes." },
+                statusCode: 429);
+        }
         return Results.Accepted(value: ToResponse(run));
     }
 

@@ -33,7 +33,8 @@ public static class AutomationEndpoints
         a.Id, a.Name, a.Prompt, a.ModelId, a.ScheduleKind,
         a.IntervalMinutes, a.TimeOfDay, a.Weekday, a.Enabled,
         a.NextRunAt, a.CreatedAt, a.UpdatedAt,
-        a.ActionKind, a.ActionJson, a.PermissionMode, a.ChatId);
+        a.ActionKind, a.ActionJson, a.PermissionMode, a.ChatId,
+        a.MisfirePolicy, a.ConsecutiveFailures);
 
     private static string? Validate(AutomationUpsertRequest r)
     {
@@ -47,6 +48,8 @@ public static class AutomationEndpoints
         if (actionError is not null) return actionError;
         if (r.PermissionMode is not (null or "default" or "auto" or "bypass"))
             return "PermissionMode deve ser default, auto ou bypass.";
+        if (r.MisfirePolicy is not (null or "skip" or "run-once"))
+            return "MisfirePolicy deve ser skip ou run-once.";
         return ValidateSchedule(r);
     }
 
@@ -76,6 +79,7 @@ public static class AutomationEndpoints
         a.ActionJson = r.ActionJson;
         a.PermissionMode = r.PermissionMode ?? "default";
         a.ChatId = r.ChatId;
+        a.MisfirePolicy = r.MisfirePolicy ?? a.MisfirePolicy;
         a.ScheduleKind = r.ScheduleKind;
         a.IntervalMinutes = Math.Max(1, r.IntervalMinutes ?? 60);
         a.TimeOfDay = r.TimeOfDay;
@@ -212,7 +216,7 @@ public static class AutomationEndpoints
 
     private static AutomationRunResponse ToRunResponse(AutomationRun r, string name) => new(
         r.Id, r.AutomationId, name, r.Status, r.Error, r.ChatId, r.StartedAt, r.FinishedAt,
-        r.ActionKind, r.Output);
+        r.ActionKind, r.Output, r.Missed);
 
     private static async Task<(User?, Automation?)> FindOwnedAsync(
         string id, HttpContext http, AppDbContext db, CancellationToken ct)

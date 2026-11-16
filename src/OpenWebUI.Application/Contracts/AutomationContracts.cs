@@ -21,7 +21,9 @@ public sealed record AutomationResponse(
     string ActionKind = "prompt",
     string? ActionJson = null,
     string PermissionMode = "default",
-    string? ChatId = null);
+    string? ChatId = null,
+    string? MisfirePolicy = null,
+    int ConsecutiveFailures = 0);
 
 /// <summary>Criação/atualização de automação.</summary>
 /// <param name="ScheduleKind">interval | daily | weekly | once.</param>
@@ -48,7 +50,8 @@ public sealed record AutomationUpsertRequest(
     string? ActionKind = null,
     string? ActionJson = null,
     string? PermissionMode = null,
-    string? ChatId = null);
+    string? ChatId = null,
+    string? MisfirePolicy = null);
 
 /// <summary>Execução registrada de uma automação.</summary>
 /// <param name="ActionKind">Tipo de ação executada.</param>
@@ -63,7 +66,8 @@ public sealed record AutomationRunResponse(
     long StartedAt,
     long FinishedAt,
     string ActionKind = "prompt",
-    string? Output = null);
+    string? Output = null,
+    bool Missed = false);
 
 /// <summary>Webhook de automação vinculado a um chat (RF-021).</summary>
 public sealed record AutomationHookResponse(
