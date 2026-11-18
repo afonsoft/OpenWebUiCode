@@ -56,7 +56,9 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
 # csharp-ls — language server de C# do LSP do agente
 # (SPEC-20261009-lsp-diagnostics): instalado como dotnet tool no stage SDK;
 # no runtime-deps roda sobre o runtime compartilhado de /opt/dotnet.
-RUN dotnet tool install --tool-path /tools csharp-ls
+# Pin: o 0.29.0+ só tem assets net11.0 (incompatível com SDK .NET 10
+# do stage de build — dotnet tool falha sem DotnetToolSettings.xml).
+RUN dotnet tool install --tool-path /tools csharp-ls --version 0.28.0
 
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS runtime
 
