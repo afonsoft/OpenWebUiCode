@@ -434,6 +434,24 @@ public class RunCoverageTests
             Is.EqualTo(string.Empty));
     }
 
+    // RF-004: context-overflow exaure a compactação → a cadeia fusion/
+    // adaptive avança para o próximo candidato (janela maior pode caber)
+    // em vez de encerrar a run no primeiro modelo do pool.
+    [Test]
+    public void IsProviderFailure_ContextOverflow_ElegivelParaFallback()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(OpenWebUI.Api.Runs.ChatRunExecutor.IsProviderFailure(
+                new InvalidOperationException(
+                    "context-overflow: o provedor rejeitou o contexto")),
+                Is.True);
+            Assert.That(OpenWebUI.Api.Runs.ChatRunExecutor.IsProviderFailure(
+                new InvalidOperationException("bug interno qualquer")),
+                Is.False);
+        });
+    }
+
     [Test]
     public void UpstreamErrorDetail_SemCorpo_SoStatus()
     {

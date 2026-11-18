@@ -889,6 +889,99 @@ public class ContextCompactionV2Tests
         });
     }
 
+    // RF-004: o bug real da run 77d6441f — modelo devolveu itens de
+    // array como objetos JSON; GetString() lançava InvalidOperationException
+    // que escapava do catch(JsonException) e matava a compactação.
+    [Test]
+    public void Summarizer_Parse_ItensObjeto_NaoQuebra()
+    {
+        var parsed = LlmContextSummarizer.Parse(
+            """{"summary":"ok","files":[{"path":"src/a.cs","why":"core"}],"decisions":[{"d":"usar sqlite"}],"pending":["falta teste"]}""");
+        Assert.Multiple(() =>
+        {
+            Assert.That(parsed.Text, Is.EqualTo("ok"));
+            Assert.That(parsed.Files, Has.Count.EqualTo(1));
+            Assert.That(parsed.Files[0], Does.Contain("src/a.cs"));
+            Assert.That(parsed.Decisions, Has.Count.EqualTo(1));
+            Assert.That(parsed.Pending, Has.Count.EqualTo(1));
+        });
+    }
+
+    // RF-004: `summary` como objeto (não-string) degradava para crash —
+    // agora cai na prosa e nunca lança.
+    [Test]
+    public void Summarizer_Parse_SummaryObjeto_DegradaParaProsa()
+    {
+        const string raw = """{"summary":{"nested":1},"files":[]}""";
+        var parsed = LlmContextSummarizer.Parse(raw);
+        Assert.That(parsed.Text, Is.EqualTo(raw));
+    }
+
+    // RF-004: summarizer lançando na compactação forçada → fallback
+    // mecânico persiste (janela reduz + records verbatim sobrevivem).
+    [Test]
+    public async Task Compact_Force_SummarizerFalha_FallbackMecanico()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var svc = NewService(db, new ThrowingSummarizer(), config);
+        var history = Msgs(16, 5).ToList();
+        history[2] = new ChatCompletionMessage("user", "PEDIDO-GAMMA crítico");
+
+        var compacted = await svc.MaybeCompactAsync(
+            "c1", history, "m", CancellationToken.None, force: true);
+        Assert.That(compacted, Is.True);
+
+        var window = await svc.ApplyAsync("c1", history, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(window[0].Content, Does.Contain("mecanicamente"));
+            Assert.That(window[0].Content, Does.Contain("PEDIDO-GAMMA crítico"));
+            Assert.That(window, Has.Count.LessThan(history.Count));
+        });
+    }
+
+    // RF-004: summarizer devolvendo null (resposta vazia/whitespace)
+    // também ativa o fallback — compacta em vez de abortar a run.
+    [Test]
+    public async Task Compact_Force_SummarizerNull_FallbackMecanico()
+    {
+        await using var db = NewDb();
+        db.Users.Add(new User { Id = "u1", Name = "U1", Email = "u1@t.local", Role = "user" });
+        db.Chats.Add(new Chat { Id = "c1", UserId = "u1", Title = "t" });
+        await db.SaveChangesAsync();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var svc = NewService(db, new FakeSummarizer((string?)null), config);
+
+        var compacted = await svc.MaybeCompactAsync(
+            "c1", Msgs(16, 5), "m", CancellationToken.None, force: true);
+        Assert.That(compacted, Is.True);
+        var window = await svc.ApplyAsync(
+            "c1", Msgs(16, 5), CancellationToken.None);
+        Assert.That(window[0].Content, Does.Contain("mecanicamente"));
+    }
+
+    // RF-004: sem force (caminho normal) a falha do summarizer continua
+    // conservadora — retorna false para não perder contexto sem resumo.
+    [Test]
+    public async Task Compact_SemForce_SummarizerFalha_RetornaFalse()
+    {
+        await using var db = NewDb();
+        var config = new ConfigService(db, TestCache.Create());
+        await config.SetAsync("compaction:threshold", 100);
+        await config.SetAsync("compaction:tail_messages", 2);
+        var svc = NewService(db, new ThrowingSummarizer(), config);
+        Assert.That(await svc.MaybeCompactAsync(
+            "c1", Msgs(40, 5), "m", CancellationToken.None), Is.False);
+    }
+
     private ContextCompactionService NewService(
         AppDbContext db, IContextSummarizer summarizer,
         ConfigService? config = null, bool withScopes = true)
@@ -952,6 +1045,18 @@ public class ContextCompactionV2Tests
         {
             Calls++;
             return Task.FromResult(_result);
+        }
+    }
+
+    private sealed class ThrowingSummarizer : IContextSummarizer
+    {
+        public int Calls { get; private set; }
+
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
+        {
+            Calls++;
+            throw new InvalidOperationException(
+                "The requested operation requires an element of type 'String', but the target element has type 'Object'.");
         }
     }
 

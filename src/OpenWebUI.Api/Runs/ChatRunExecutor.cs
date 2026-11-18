@@ -1668,6 +1668,10 @@ public sealed class ChatRunExecutor(
             force: true, tailScale: tailScale);
         if (!didCompact)
         {
+            // Observabilidade (RF-004): falha de compactação no overflow
+            // ficava só no log — a nota deixa visível no stream do chat.
+            await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
+                new { status = "compaction_failed", stage = "overflow" }, t);
             return null;
         }
         await PublishPhaseAsync(run, "compacting", null);
@@ -1995,9 +1999,9 @@ public sealed class ChatRunExecutor(
     /// (capturado como <see cref="OperationCanceledException"/> antes).
     /// </summary>
     private static readonly string[] ProviderFailurePrefixes =
-        ["server-error:", "rate-limit:", "provider-timeout:"];
+        ["server-error:", "rate-limit:", "provider-timeout:", "context-overflow:"];
 
-    private static bool IsProviderFailure(Exception ex) =>
+    internal static bool IsProviderFailure(Exception ex) =>
         ex is HttpRequestException or TaskCanceledException or TimeoutException
             or ProviderHttpException
         || (ex is InvalidOperationException ioe
