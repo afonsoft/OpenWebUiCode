@@ -6,9 +6,10 @@
 @implements IDisposable
 
 @* Painel de workspace da run (SPEC-20261007-chat-agent-parity RF-015):
-   tabs Tasks | Changes | Jobs | MCPs | Info — o "canvas" do agente ao
-   lado do chat, no padrão Devin/OpenHands/opencode. Renderizado como
-   coluna ≥lg e como drawer no mobile pelo ChatView. *@
+   tabs Tasks | Info | Memories | Skills | MCPs | Jobs | Tests | Changes |
+   Pulls | Terminal — o "canvas" do agente ao lado do chat, no padrão
+   Devin/OpenHands/opencode. Renderizado como coluna ≥lg e como drawer
+   no mobile pelo ChatView. *@
 
 <div class="flex h-full w-full flex-col bg-white dark:bg-gray-900 border-l border-gray-100 dark:border-gray-800">
     <div class="flex items-center justify-between px-3 py-2 border-b border-gray-100 dark:border-gray-800">
@@ -791,8 +792,8 @@
     }
 
     private IEnumerable<string> Tabs => IsAdmin
-        ? ["tasks", "changes", "pulls", "tests", "jobs", "terminal", "mcps", "skills", "memories", "info"]
-        : ["tasks", "changes", "pulls", "tests", "jobs", "terminal", "skills", "memories", "info"];
+        ? ["tasks", "info", "memories", "skills", "mcps", "jobs", "tests", "changes", "pulls", "terminal"]
+        : ["tasks", "info", "memories", "skills", "jobs", "tests", "changes", "pulls", "terminal"];
 
     /// <summary>Troca de aba — dispara a carga lazy dos dados dela.</summary>
     private void SelectTab(string tab)
