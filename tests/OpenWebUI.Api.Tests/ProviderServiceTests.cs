@@ -645,6 +645,153 @@ public class ProviderServiceTests
         });
     }
 
+    // ---- Fake-200 (SPEC-20261118-masked-provider-failure, OmniRoute-style) ----
+
+    // Camada-2 buffered: o aviso de billing É o content do assistant com
+    // usage zerado → 402 não-retentável (a cadeia adaptive avança).
+    [Test]
+    public async Task Complete_Fake200_BillingContent_Lanca402()
+    {
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":" +
+            "\"The account behind this API key doesn't have enough credits. " +
+            "Please top up or complete a quest, then try again.\"}," +
+            "\"finish_reason\":\"stop\"}]," +
+            "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":0}}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var ex = await Assert.ThrowsAsync<ProviderHttpException>(async () =>
+            await NewService().CompleteAsync(Req("g", connection: "openai")));
+        Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.PaymentRequired));
+    }
+
+    // Camada-1 buffered: envelope sem `error` mas com `message`/`detail`
+    // top-level carregando marcador de esgotamento → 402.
+    [Test]
+    public async Task Complete_Fake200_EnvelopeMarker_Lanca402()
+    {
+        _routes["/chat/completions"] = (200,
+            "{\"message\":\"insufficient balance on this account\"," +
+            "\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\"}}]}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var ex = await Assert.ThrowsAsync<ProviderHttpException>(async () =>
+            await NewService().CompleteAsync(Req("g", connection: "openai")));
+        Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.PaymentRequired));
+    }
+
+    // Anti-falso-positivo: prosa que menciona créditos com usage real
+    // (completion_tokens>0) nunca é classificada como falha upstream.
+    [Test]
+    public async Task Complete_ProsaSobreCredits_ComUsage_Passa()
+    {
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":" +
+            "\"Você pode comprar pacotes; basta top up to continue no painel.\"}," +
+            "\"finish_reason\":\"stop\"}]," +
+            "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":24}}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var text = await NewService().CompleteAsync(Req("g", connection: "openai"));
+        Assert.That(text, Does.Contain("top up"));
+    }
+
+    // Streaming: o aviso de billing chega em deltas → 402 e NENHUM delta
+    // é entregue ao cliente (o buffer retido descarta tudo).
+    [Test]
+    public async Task Stream_Fake200_BillingNotice_Lanca402SemDeltas()
+    {
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"The account behind \"}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"this API key doesn't have enough credits. Please top up.\"}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n" +
+            "data: [DONE]\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var ex = await Assert.ThrowsAsync<ProviderHttpException>(async () =>
+            await NewService().CompleteWithToolsStreamingAsync(
+                Req("g", connection: "openai"),
+                (d, _) => { deltas.Add(d); return Task.CompletedTask; }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.PaymentRequired));
+            Assert.That(deltas, Is.Empty);
+        });
+    }
+
+    // Resposta curta real (<512 chars) sem marcador: segura até o fim,
+    // mas libera tudo intacto no veredito.
+    [Test]
+    public async Task Stream_ConteudoCurtoReal_DeltasLiberadosIntactos()
+    {
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Olá, \"}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"mundo!\"}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n" +
+            "data: [DONE]\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("g", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo("Olá, mundo!"));
+            Assert.That(deltas, Is.EqualTo(new[] { "Olá, ", "mundo!" }));
+        });
+    }
+
+    // Prosa longa: ao passar do teto de 512 chars o portão libera na
+    // hora — o stream não fica retido até o final.
+    [Test]
+    public async Task Stream_RespostaLonga_LiberaAposTeto()
+    {
+        var longText = new string('a', 600);
+        _routes["/chat/completions"] = (200,
+            $"data: {{\"choices\":[{{\"delta\":{{\"content\":\"{longText}\"}}}}]}}\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"fim\"}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n" +
+            "data: [DONE]\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("g", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo(longText + "fim"));
+            Assert.That(deltas, Is.EqualTo(new[] { longText, "fim" }));
+        });
+    }
+
+    // Usage>0 reportado pelo upstream: mesmo com a frase no conteúdo,
+    // tokens reais significam geração genuína → libera (parity OmniRoute).
+    [Test]
+    public async Task Stream_Fake200Frase_ComUsagePositivo_Libera()
+    {
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"You don't have enough credits on trial.\"}}]}\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":12}}\n" +
+            "data: [DONE]\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("g", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Does.Contain("enough credits"));
+            Assert.That(deltas, Has.Count.EqualTo(1));
+        });
+    }
+
     // ---------------- Conexões tipadas (anthropic / google) ----------------
 
     private Task SetProvidersAsync(params ProviderConnection[] providers) =>
