@@ -192,9 +192,13 @@ public sealed class LlmContextSummarizer(
                 }
             }
         }
-        catch (JsonException)
+        catch (Exception)
         {
-            // Degrada para prosa abaixo.
+            // Degrada para prosa abaixo — qualquer forma inesperada do
+            // JSON do modelo (tipo errado, elemento objeto, etc.) nunca
+            // deve derrubar a compactação: InvalidOperationException do
+            // GetString() escapava do catch(JsonException) e matava a
+            // run por context-overflow sem chance de retry.
         }
         return new ContextSummary(raw, [], [], []);
     }
@@ -202,7 +206,9 @@ public sealed class LlmContextSummarizer(
     private static List<string> List(JsonElement doc, string prop) =>
         doc.TryGetProperty(prop, out var arr) && arr.ValueKind == JsonValueKind.Array
             ? arr.EnumerateArray()
-                .Select(e => e.GetString())
+                .Select(e => e.ValueKind == JsonValueKind.String
+                    ? e.GetString()
+                    : e.GetRawText())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Select(s => s!.Trim()).ToList()
             : [];
@@ -465,7 +471,8 @@ public sealed class ContextCompactionService(
 
             var head = await ComputeHeadSummaryAsync(
                 new HeadSummaryArgs(config, roles, summarizer,
-                    chatId, history, model, userId), t, ct);
+                    chatId, history, model, userId), t, ct,
+                tolerateSummaryFailure: force);
             if (head.HeadEnd <= 0 || head.Summary is null)
             {
                 return false;
@@ -499,7 +506,8 @@ public sealed class ContextCompactionService(
     /// turno partido e o resumo (null = summarizer indisponível).
     /// </summary>
     private static async Task<HeadSummary>
-        ComputeHeadSummaryAsync(HeadSummaryArgs a, Thresholds t, CancellationToken ct)
+        ComputeHeadSummaryAsync(HeadSummaryArgs a, Thresholds t,
+            CancellationToken ct, bool tolerateSummaryFailure = false)
     {
         var headEnd = SplitIndex(a.History, t);
         if (headEnd <= 0)
@@ -521,7 +529,23 @@ public sealed class ContextCompactionService(
         var summaryModel = a.UserId is null
             ? a.Model
             : await a.Roles.ResolveAsync("memory", a.UserId, a.Model, ct);
-        var summary = await a.Sum.SummarizeAsync(summaryModel, transcript, a.UserId, ct);
+        ContextSummary? summary = null;
+        try
+        {
+            summary = await a.Sum.SummarizeAsync(
+                summaryModel, transcript, a.UserId, ct);
+        }
+        catch (Exception) when (tolerateSummaryFailure)
+        {
+            // Resumo LLM indisponível na compactação de emergência —
+            // o fallback mecânico abaixo ainda reduz a janela.
+        }
+        // RF-004: no retry de overflow o summarizer pode estar fora —
+        // degradar para resumo mecânico garante que a janela sempre
+        // encolhe antes do próximo request ao LLM.
+        summary ??= tolerateSummaryFailure
+            ? MechanicalSummary(records)
+            : null;
         // Sanity (RF-005): breadcrumbs "[pos]" fora do range do transcript
         // são âncoras alucinadas — descarta best-effort.
         if (summary?.Breadcrumbs is { Count: > 0 })
@@ -568,6 +592,23 @@ public sealed class ContextCompactionService(
     private sealed record HeadSummary(
         int HeadEnd, string? TurnPrefix, ContextSummary? Summary,
         IReadOnlyList<string> UserRecords, string? TodosJson);
+
+    /// <summary>
+    /// Resumo determinístico de emergência (RF-004): usado quando o
+    /// summarizer falha ou devolve null numa compactação forçada — a
+    /// janela reduz mesmo com o LLM indisponível, e as seções verbatim
+    /// (records/todos) persistidas no estado carregam a informação.
+    /// </summary>
+    private static ContextSummary MechanicalSummary(
+        IReadOnlyList<string> records)
+    {
+        var last = records.LastOrDefault(
+            r => !r.StartsWith("[…", StringComparison.Ordinal));
+        var text = last is null
+            ? "Contexto anterior compactado mecanicamente (resumo automático indisponível)."
+            : $"Contexto anterior compactado mecanicamente (resumo automático indisponível). Último pedido: {last}";
+        return new ContextSummary(text, [], [], []);
+    }
 
     /// <summary>
     /// RF-006: últimas <paramref name="maxRecords"/> mensagens
