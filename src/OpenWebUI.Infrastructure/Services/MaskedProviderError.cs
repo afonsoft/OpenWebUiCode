@@ -56,39 +56,28 @@ internal static class MaskedProviderError
         {
             return null;
         }
-        var parts = new List<string>(3);
-        if (obj[ErrorKey] is { } err)
-        {
-            if (err is JsonObject errObj)
-            {
-                foreach (var prop in new[] { MessageKey, "code", "type" })
-                {
-                    if (errObj[prop] is JsonValue v
-                        && v.TryGetValue<string>(out var s)
-                        && s.Length > 0)
-                    {
-                        parts.Add(s);
-                    }
-                }
-            }
-            else if (err is JsonValue sv
-                && sv.TryGetValue<string>(out var es)
-                && es.Length > 0)
-            {
-                parts.Add(es);
-            }
-        }
-        foreach (var prop in new[] { MessageKey, "detail" })
-        {
-            if (obj[prop] is JsonValue v
-                && v.TryGetValue<string>(out var s)
-                && s.Length > 0)
-            {
-                parts.Add(s);
-            }
-        }
+        var parts = ErrorFieldTexts(obj[ErrorKey])
+            .Concat(StringProps(obj, MessageKey, "detail"))
+            .ToList();
         return parts.Count > 0 ? string.Join(' ', parts) : null;
     }
+
+    /// <summary>Textos do campo <c>error</c>: objeto
+    /// <c>{message,code,type}</c> ou string solta.</summary>
+    private static IEnumerable<string> ErrorFieldTexts(JsonNode? error) =>
+        error switch
+        {
+            JsonObject errObj => StringProps(errObj, MessageKey, "code", "type"),
+            JsonValue v when v.TryGetValue<string>(out var s) && s.Length > 0 => [s],
+            _ => [],
+        };
+
+    /// <summary>Valor textual não-vazio de cada propriedade nomeada.</summary>
+    private static IEnumerable<string> StringProps(JsonObject obj, params string[] names) =>
+        names.Select(n => obj[n])
+            .OfType<JsonValue>()
+            .Select(v => v.TryGetValue<string>(out var s) && s.Length > 0 ? s : null)
+            .OfType<string>();
 
     /// <summary>O texto do envelope carrega marcador de esgotamento?</summary>
     public static bool MatchesEnvelope(string text) =>
