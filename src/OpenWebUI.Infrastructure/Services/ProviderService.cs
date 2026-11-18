@@ -1023,6 +1023,14 @@ public class ProviderService(
         {
             throw MidStreamProviderError(bufferedError);
         }
+        // Fake-200 camada-1 (SPEC-20261118-masked-provider-failure):
+        // envelope sem `error` próprio mas com message/detail top-level
+        // carregando marcador de esgotamento de créditos.
+        if (MaskedProviderError.EnvelopeText(json) is { } envText
+            && MaskedProviderError.MatchesEnvelope(envText))
+        {
+            throw MaskedProviderError.As402(envText, midStream: false);
+        }
         var firstChoice = Prop(json, ChoicesKey) is JsonArray { Count: > 0 } arr ? arr[0] : null;
         var message = openAi ? Prop(firstChoice, MessageKey) : Prop(json, MessageKey);
         var (content, reasoning, dsmlCalls) = ExtractDsmlFields(message, openAi);
@@ -1054,8 +1062,20 @@ public class ProviderService(
             callsJson = SerializeToolCallsEcho(calls);
         }
 
+        var usage = ParseUsage(json, openAi);
+        // Fake-200 camada-2: o aviso de billing É o content do assistant
+        // (Pollinations/OmniRoute-style). O gate em completion_tokens
+        // ausente/≤0 mantém o contrato anti-falso-positivo — prosa real
+        // sempre carrega uso.
+        if ((usage?.CompletionTokens ?? 0) <= 0
+            && content.Length > 0
+            && MaskedProviderError.MatchesContent(content))
+        {
+            throw MaskedProviderError.As402(content, midStream: false);
+        }
+
         return new ProviderCompletion(content, calls, callsJson, reasoning,
-            ParseUsage(json, openAi),
+            usage,
             FinishReason: Str(Prop(firstChoice, "finish_reason")));
     }
 
@@ -1247,52 +1267,78 @@ public class ProviderService(
         var dsmlContent = new DeltaFilterChain();
         var dsmlReasoning = new DeltaFilterChain(forReasoning: true);
         var diag = new OpenAiStreamDiag();
+        // Fake-200 streaming (SPEC-20261118-masked-provider-failure,
+        // OmniRoute #20528): o aviso de billing chega como content do
+        // assistant — deltas ficam retidos até o prefixo passar de
+        // 512 chars ou sinal de conteúdo real aparecer (usage>0,
+        // tool_calls, reasoning). No fim, pattern + sem usage → 402.
+        var maskedGate = new MaskedNoticeGate();
+        Func<string, CancellationToken, Task>? gatedDelta = onDelta is null
+            ? null
+            : (piece, t) => maskedGate.EmitAsync(piece, onDelta, t);
 
-        while (await ReadLineWithIdleAsync(reader, ct) is { } line)
+        try
         {
-            if (!line.StartsWith(SseDataPrefix, StringComparison.Ordinal))
+            while (await ReadLineWithIdleAsync(reader, ct) is { } line)
             {
-                continue;
-            }
+                if (!line.StartsWith(SseDataPrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            var data = line[SseDataPrefix.Length..].Trim();
-            if (data == "[DONE]")
-            {
-                break;
-            }
+                var data = line[SseDataPrefix.Length..].Trim();
+                if (data == "[DONE]")
+                {
+                    break;
+                }
 
-            JsonNode? node;
-            try
-            {
-                node = JsonNode.Parse(data);
-            }
-            catch (JsonException)
-            {
-                continue;
-            }
-            diag.Chunks++;
-            diag.SawDsmlMarker |= data.Contains("DSML", StringComparison.Ordinal);
-            // Chunk fora de objeto — heartbeat serializado como escalar
-            // ("keepalive", 42, true): nada a extrair, e o indexer cru era
-            // o que derrubava a run com 'Object' esperado vs 'String'
-            // (SPEC-20261019-gemini-response-shape RF-002).
-            if (node is not JsonObject obj)
-            {
-                diag.NonObjectChunks++;
-                continue;
-            }
+                JsonNode? node;
+                try
+                {
+                    node = JsonNode.Parse(data);
+                }
+                catch (JsonException)
+                {
+                    continue;
+                }
+                diag.Chunks++;
+                diag.SawDsmlMarker |= data.Contains("DSML", StringComparison.Ordinal);
+                // Chunk fora de objeto — heartbeat serializado como escalar
+                // ("keepalive", 42, true): nada a extrair, e o indexer cru era
+                // o que derrubava a run com 'Object' esperado vs 'String'
+                // (SPEC-20261019-gemini-response-shape RF-002).
+                if (node is not JsonObject obj)
+                {
+                    diag.NonObjectChunks++;
+                    continue;
+                }
 
-            await ProcessOpenAiChunkAsync(
-                obj,
-                new OpenAiStreamCtx(diag, content, callBuffers,
-                    dsmlContent, dsmlReasoning, onDelta, onReasoning),
-                ct);
+                await ProcessOpenAiChunkAsync(
+                    obj,
+                    new OpenAiStreamCtx(diag, content, callBuffers,
+                        dsmlContent, dsmlReasoning, gatedDelta, onReasoning),
+                    ct);
+                await maskedGate.ReleaseIfRealAsync(diag, callBuffers.Count, onDelta, ct);
+            }
+        }
+        catch
+        {
+            // Stream morreu no meio (transporte/chunk de erro): o que o
+            // portão reteve é conteúdo parcial REAL — o aviso mascarado
+            // só é julgado num fim de stream limpo. Entrega o buffer
+            // antes de propagar, senão os deltas emitidos se perdem.
+            await maskedGate.FlushAsync(onDelta, CancellationToken.None);
+            throw;
         }
 
-        return await FinalizeOpenAiStreamAsync(
+        var streamed = await FinalizeOpenAiStreamAsync(
             new OpenAiStreamCtx(diag, content, callBuffers,
-                dsmlContent, dsmlReasoning, onDelta, onReasoning),
+                dsmlContent, dsmlReasoning, gatedDelta, onReasoning),
             ct);
+        // Veredito final: aviso de billing sem usage reportado → 402 antes
+        // de qualquer delta sair; caso contrário libera o buffer retido.
+        await maskedGate.FinalizeAsync(diag, content.ToString(), onDelta, ct);
+        return streamed;
     }
 
     private HttpRequestMessage BuildOpenAiRequest(
@@ -1585,6 +1631,104 @@ public class ProviderService(
         return new ProviderCompletion(
             content.ToString(), calls, callsJson, Usage: diag.StreamUsage,
             FinishReason: diag.FinishReason);
+    }
+
+    /// <summary>
+    /// Portão de "fake 200" no stream (SPEC-20261118-masked-provider-
+    /// failure, espelhando o peek #20528 do OmniRoute): segura os deltas
+    /// de content até o prefixo passar de
+    /// <see cref="MaskedProviderError.StreamNoticeMaxChars"/> ou sinal de
+    /// geração real aparecer (completion_tokens>0, tool_call, reasoning).
+    /// Se o stream termina dentro da janela com o aviso de billing e sem
+    /// usage, lança 402 antes de liberar qualquer delta — a cadeia
+    /// adaptive/pool avança para o próximo modelo.
+    /// </summary>
+    private sealed class MaskedNoticeGate
+    {
+        private readonly StringBuilder _prefix = new();
+        private readonly List<string> _held = [];
+        private bool _released;
+
+        /// <summary>Delta de content: retido enquanto o veredito está
+        /// pendente, encaminhado direto depois da liberação.</summary>
+        public async Task EmitAsync(string piece,
+            Func<string, CancellationToken, Task> onDelta, CancellationToken ct)
+        {
+            if (_released)
+            {
+                await onDelta(piece, ct);
+                return;
+            }
+            _held.Add(piece);
+            if (_prefix.Length < MaskedProviderError.StreamNoticeMaxChars)
+            {
+                _prefix.Append(piece);
+            }
+        }
+
+        /// <summary>Fim de chunk: libera o buffer assim que conteúdo real
+        /// é certo — o aviso mascarado nunca carrega usage, tool_calls
+        /// nem reasoning, e prosa genuína passa do teto do prefixo.</summary>
+        public async Task ReleaseIfRealAsync(
+            OpenAiStreamDiag diag, int toolCallBuffers,
+            Func<string, CancellationToken, Task>? onDelta,
+            CancellationToken ct)
+        {
+            if (_released)
+            {
+                return;
+            }
+            if (diag.StreamUsage?.CompletionTokens > 0
+                || toolCallBuffers > 0
+                || diag.ReasoningChars > 0
+                || _prefix.Length >= MaskedProviderError.StreamNoticeMaxChars)
+            {
+                await FlushAsync(onDelta, ct);
+            }
+        }
+
+        /// <summary>Veredito de fim de stream: marcador de billing sem
+        /// uso reportado = falha mascarada — 402 antes de liberar nada;
+        /// qualquer outro conteúdo libera o buffer como estava. O
+        /// <paramref name="accumulatedContent"/> cobre o caso sem
+        /// callback de delta (o content do StringBuilder acumula igual).</summary>
+        public async Task FinalizeAsync(
+            OpenAiStreamDiag diag, string accumulatedContent,
+            Func<string, CancellationToken, Task>? onDelta,
+            CancellationToken ct)
+        {
+            if (_released)
+            {
+                return;
+            }
+            var prefix = accumulatedContent.Length <= MaskedProviderError.StreamNoticeMaxChars
+                ? accumulatedContent
+                : accumulatedContent[..MaskedProviderError.StreamNoticeMaxChars];
+            if (prefix.Length > 0
+                && diag.StreamUsage?.CompletionTokens is not > 0
+                && MaskedProviderError.MatchesContent(prefix))
+            {
+                throw MaskedProviderError.As402(prefix, midStream: true);
+            }
+            await FlushAsync(onDelta, ct);
+        }
+
+        /// <summary>Entrega o buffer retido como estava — usado no
+        /// veredito limpo e na falha mid-stream (conteúdo parcial real
+        /// não pode se perder com a exceção).</summary>
+        public async Task FlushAsync(
+            Func<string, CancellationToken, Task>? onDelta, CancellationToken ct)
+        {
+            _released = true;
+            if (onDelta is not null)
+            {
+                foreach (var piece in _held)
+                {
+                    await onDelta(piece, ct);
+                }
+            }
+            _held.Clear();
+        }
     }
 
     /// <summary>Diagnóstico acumulado do round streamed OpenAI.</summary>
@@ -5016,7 +5160,23 @@ public class ProviderService(
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
-        return Str(Prop(Prop(json, MessageKey), ContentKey)) ?? string.Empty;
+        if (Prop(json, ErrorKey) is { } errorNode)
+        {
+            throw MidStreamProviderError(errorNode);
+        }
+        if (MaskedProviderError.EnvelopeText(json) is { } envText
+            && MaskedProviderError.MatchesEnvelope(envText))
+        {
+            throw MaskedProviderError.As402(envText, midStream: false);
+        }
+        var content = Str(Prop(Prop(json, MessageKey), ContentKey)) ?? string.Empty;
+        if ((ParseUsage(json, openAi: false)?.CompletionTokens ?? 0) <= 0
+            && content.Length > 0
+            && MaskedProviderError.MatchesContent(content))
+        {
+            throw MaskedProviderError.As402(content, midStream: false);
+        }
+        return content;
     }
 
     private async Task<string> CompleteOpenAiAsync(
@@ -5041,9 +5201,28 @@ public class ProviderService(
         await EnsureSuccessOrProviderErrorAsync(response, ct);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
-        return Prop(json, ChoicesKey) is JsonArray { Count: > 0 } arr
+        // Fake-200 (SPEC-20261118-masked-provider-failure): mesmas
+        // camadas do ParseCompletionMessage — envelope de erro e aviso
+        // de billing no content com usage zerado viram 402.
+        if (Prop(json, ErrorKey) is { } errorNode)
+        {
+            throw MidStreamProviderError(errorNode);
+        }
+        if (MaskedProviderError.EnvelopeText(json) is { } envText
+            && MaskedProviderError.MatchesEnvelope(envText))
+        {
+            throw MaskedProviderError.As402(envText, midStream: false);
+        }
+        var content = Prop(json, ChoicesKey) is JsonArray { Count: > 0 } arr
             ? Str(Prop(Prop(arr[0], MessageKey), ContentKey)) ?? string.Empty
             : string.Empty;
+        if ((ParseUsage(json, openAi: true)?.CompletionTokens ?? 0) <= 0
+            && content.Length > 0
+            && MaskedProviderError.MatchesContent(content))
+        {
+            throw MaskedProviderError.As402(content, midStream: false);
+        }
+        return content;
     }
 
     private async IAsyncEnumerable<string> StreamOllamaAsync(
