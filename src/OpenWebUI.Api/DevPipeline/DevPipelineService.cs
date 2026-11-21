@@ -756,6 +756,41 @@ public sealed class DevPipelineService(
         return state.ParentRunId;
     }
 
+    /// <summary>Run efetiva de uma key: a última sucessora
+    /// <c>-stallN</c> quando existe (mesma convenção da telemetria).</summary>
+    internal static string? EffectiveRunId(State state, string key)
+    {
+        if (!state.Runs.TryGetValue(key, out var runId))
+        {
+            return null;
+        }
+        for (var n = 1;
+            state.Runs.TryGetValue($"{key}-stall{n}", out var s); n++)
+        {
+            runId = s;
+        }
+        return runId;
+    }
+
+    /// <summary>Registra uma run nova de <paramref name="key"/>: a
+    /// primeira ocupa a key base; retentativas (run anterior não
+    /// completou) usam o próximo sufixo <c>-stallN</c> — o histórico
+    /// de tentativas se preserva p/ telemetria e merge.</summary>
+    internal static void RecordRun(State state, string key, string runId)
+    {
+        if (!state.Runs.ContainsKey(key))
+        {
+            state.Runs[key] = runId;
+            return;
+        }
+        var n = 1;
+        while (state.Runs.ContainsKey($"{key}-stall{n}"))
+        {
+            n++;
+        }
+        state.Runs[$"{key}-stall{n}"] = runId;
+    }
+
     /// <summary>Condição <c>when</c> do step (v2): <c>passed:key</c> se o
     /// veredito de key é 'pass'; <c>failed:key</c> se qualquer não-pass.
     /// Key sem resultado (step pulado/a rodar) → não satisfeita → skip.
@@ -992,7 +1027,7 @@ public sealed class DevPipelineService(
                             : string.Empty)
                         + ResultTrailer;
                 state.FanoutItemChats.TryGetValue(key, out var chatId);
-                var runId = state.Runs.GetValueOrDefault(key);
+                var runId = EffectiveRunId(state, key);
                 if (runId is not null
                     && await RunStatusAsync(runId, ct)
                         is { Status: ChatRunStatus.Completed })
@@ -1010,11 +1045,13 @@ public sealed class DevPipelineService(
                         $"parallel '{key}': sem chat irmão (sem binding?)");
                 }
                 state.FanoutItemChats[key] = chatId;
-                runId ??= await EnqueuePhaseRunAsync(
+                // Retry por item: run anterior não completou → nova
+                // tentativa em sufixo -stallN; completas seguem reusadas.
+                var fresh = await EnqueuePhaseRunAsync(
                     state, step.Key, prompt, ct,
                     chatId: chatId, parentRunId: anchor);
-                state.Runs[key] = runId;
-                workers.Add((key, chatId, runId, prompt));
+                RecordRun(state, key, fresh);
+                workers.Add((key, chatId, fresh, prompt));
             }
             await SaveAsync(null, state, ct);
             var results = await Task.WhenAll(workers.Select(w =>
@@ -1061,7 +1098,7 @@ public sealed class DevPipelineService(
             var key = $"implement:{ItemKey(item, idx)}";
             var prompt = ItemPrompt(state, item, key);
             state.FanoutItemChats.TryGetValue(key, out var chatId);
-            var runId = state.Runs.GetValueOrDefault(key);
+            var runId = EffectiveRunId(state, key);
             if (runId is not null
                 && await RunStatusAsync(runId, ct)
                     is { Status: ChatRunStatus.Completed })
@@ -1081,11 +1118,13 @@ public sealed class DevPipelineService(
                 return false;
             }
             state.FanoutItemChats[key] = chatId;
-            runId ??= await EnqueuePhaseRunAsync(
+            // Worker que não completou ganha retentativa em sufixo
+            // -stallN — a run morta não é reusada (resume cirúrgico).
+            var fresh = await EnqueuePhaseRunAsync(
                 state, "implement", prompt, ct,
                 chatId: chatId, parentRunId: PlanRunId(state));
-            state.Runs[key] = runId;
-            workers.Add((key, chatId, runId, prompt));
+            RecordRun(state, key, fresh);
+            workers.Add((key, chatId, fresh, prompt));
         }
         state.Phase = "implement";
         await SaveAsync(null, state, ct);

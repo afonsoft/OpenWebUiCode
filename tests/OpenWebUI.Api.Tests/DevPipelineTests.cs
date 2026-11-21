@@ -742,6 +742,31 @@ public class DevPipelineUnitTests
         });
     }
 
+    [Test]
+    public void EffectiveRunId_CadeiaStall_ERetrySuffix()
+    {
+        var state = NewState();
+        Assert.That(DevPipelineService.EffectiveRunId(state, "w"),
+            Is.Null, "sem run → null");
+
+        DevPipelineService.RecordRun(state, "w", "r1");
+        Assert.That(DevPipelineService.EffectiveRunId(state, "w"),
+            Is.EqualTo("r1"), "primeira tentativa na key base");
+
+        DevPipelineService.RecordRun(state, "w", "r2");
+        DevPipelineService.RecordRun(state, "w", "r3");
+        Assert.Multiple(() =>
+        {
+            Assert.That(state.Runs["w"], Is.EqualTo("r1"),
+                "key base preserva a 1ª tentativa");
+            Assert.That(state.Runs["w-stall1"], Is.EqualTo("r2"));
+            Assert.That(state.Runs["w-stall2"], Is.EqualTo("r3"));
+            Assert.That(DevPipelineService.EffectiveRunId(state, "w"),
+                Is.EqualTo("r3"),
+                "run efetiva = última sucessora -stallN");
+        });
+    }
+
     // ---------- workflows nomeados (SPEC-20261124-named-workflows) ----------
 
     [Test]
