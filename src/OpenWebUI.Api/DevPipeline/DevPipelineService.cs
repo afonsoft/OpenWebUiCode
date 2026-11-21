@@ -575,14 +575,12 @@ public sealed class DevPipelineService(
         // Merge sequencial item a item no workdir do filho; depois os
         // itens dependentes/overflow numa run sequencial no chat filho.
         var conflicts = await MergeFanoutAsync(state, workers, ct);
-        if (rest.Count > 0)
+        if (rest.Count > 0
+            && !await RunLlmPhaseAsync(
+                state, "implement", RestPrompt(state, rest), ct,
+                runKey: "implement-rest"))
         {
-            if (!await RunLlmPhaseAsync(
-                    state, "implement", RestPrompt(state, rest), ct,
-                    runKey: "implement-rest"))
-            {
-                return false;
-            }
+            return false;
         }
         if (conflicts.Count > 0 && state.FixAttempts < state.MaxFixAttempts)
         {
