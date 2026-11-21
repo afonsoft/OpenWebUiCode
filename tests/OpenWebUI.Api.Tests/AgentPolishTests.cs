@@ -753,6 +753,34 @@ public class AgentPolishTests
     }
 
     [Test]
+    public async Task BuildMode_EmiteDiretivaDoLoopDeEntrega()
+    {
+        // Modo build não tinha bloco próprio — o agente parava a cada etapa
+        // pedindo permissão para commit/push/PR (o usuário cobrava a mão).
+        var contributor = new Completions.Contributors.AgentModeContributor();
+        var ctx = new OpenWebUI.Infrastructure.SystemPrompt.PromptContext
+        {
+            Request = new ChatCompletionRequest(
+                "m", [new ChatCompletionMessage("user", "oi")], Stream: true),
+            User = new User { Id = "u1", Name = "U", Email = "u@t.local" },
+            LastUserText = "oi", Model = "m", Ct = CancellationToken.None,
+            AgentMode = "build",
+            WorkdirFactory = _ => Task.FromResult("/tmp"),
+        };
+
+        var sections = await contributor.ContributeAsync(ctx);
+        Assert.Multiple(() =>
+        {
+            Assert.That(sections, Has.Count.EqualTo(1));
+            Assert.That(sections[0], Does.Contain("Modo BUILD ativo"));
+            Assert.That(sections[0], Does.Contain("commit"));
+            Assert.That(sections[0], Does.Contain("push"));
+            Assert.That(sections[0], Does.Contain("PR"));
+            Assert.That(sections[0], Does.Contain("revalide"));
+        });
+    }
+
+    [Test]
     public async Task NativeCompactor_EnviaContextManagementEDevolveTexto()
     {
         var db = Db();
