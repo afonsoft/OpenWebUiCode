@@ -763,8 +763,9 @@ public sealed class MentionsContributor(ReferenceService? refs = null)
 
 /// <summary>
 /// Bloco 3.6: diretiva do modo do agente — plan (leitura livre, execução
-/// via preset, escrita só de planos/SPECs + plan_exit, com template SDD)
-/// ou chat (workspace scratch da conversa); build não emite bloco.
+/// via preset, escrita só de planos/SPECs + plan_exit, com template SDD),
+/// chat (workspace scratch da conversa) ou build (loop de entrega
+/// implementar → testar → revalidar → commit+push+PR).
 /// </summary>
 public sealed class AgentModeContributor : ISystemPromptContributor
 {
@@ -818,7 +819,23 @@ public sealed class AgentModeContributor : ISystemPromptContributor
             ]);
         }
 
-        return Task.FromResult<IReadOnlyList<string>>([]);
+        // Modo BUILD: sem o bloco o agente parava a cada etapa pedindo
+        // permissão para commit/push/PR (incidente: usuário precisou pedir
+        // 3× e o agente devolveu um link "crie o PR" em vez de abri-lo).
+        // A diretiva fecha o loop de entrega que ele sempre cobra a mão.
+        return Task.FromResult<IReadOnlyList<string>>(
+        [
+            "Modo BUILD ativo: execute o trabalho de ponta a ponta, um item "
+                + "de cada vez — para cada tarefa: implemente, escreva ou "
+                + "ajuste os testes do que implementou e revalide (build + "
+                + "testes) antes de seguir para o próximo item; nunca avance "
+                + "com validação quebrada nem pule a etapa de testes. Ao "
+                + "terminar a entrega, feche o ciclo sozinho: commit das "
+                + "alterações, push da branch de trabalho e abertura do PR "
+                + "para o usuário revisar — faça você mesmo, nunca entregue "
+                + "apenas um link 'crie o PR' nem delegue a etapa final. "
+                + "Merge na branch protegida segue exigindo aprovação humana.",
+        ]);
     }
 }
 
