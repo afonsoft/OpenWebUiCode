@@ -626,7 +626,7 @@ public class RunRecoveryTests
             owner: ChatRunDispatcher.CurrentInstanceId);
 
         var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
-        var cts = dispatcher.RegisterRunCancelForTest(run.Id);
+        using var cts = dispatcher.RegisterRunCancelForTest(run.Id);
         try
         {
             await dispatcher.SweepOrphansAsync(default, includeQueued: false);
@@ -642,7 +642,6 @@ public class RunRecoveryTests
         finally
         {
             dispatcher.UnregisterRunCancelForTest(run.Id);
-            cts.Dispose();
         }
     }
 
@@ -654,7 +653,7 @@ public class RunRecoveryTests
             owner: ChatRunDispatcher.CurrentInstanceId);
 
         var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
-        var cts = dispatcher.RegisterRunCancelForTest(run.Id);
+        using var cts = dispatcher.RegisterRunCancelForTest(run.Id);
         try
         {
             // Default WatchdogInterruptAfter=3: dois stops, no 3º tick
@@ -672,7 +671,6 @@ public class RunRecoveryTests
         finally
         {
             dispatcher.UnregisterRunCancelForTest(run.Id);
-            cts.Dispose();
         }
     }
 
@@ -748,17 +746,16 @@ public class RunRecoveryTests
         var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
         Assert.That(dispatcher.TryStop("run-inexistente"), Is.False);
 
-        var cts = dispatcher.RegisterRunCancelForTest("run-descartada");
+        using var cts = dispatcher.RegisterRunCancelForTest("run-descartada");
         cts.Dispose();
         Assert.That(dispatcher.TryStop("run-descartada"), Is.True,
             "cts já descartado = run saindo — stop conta como entregue");
         dispatcher.UnregisterRunCancelForTest("run-descartada");
 
-        var cts2 = dispatcher.RegisterRunCancelForTest("run-ativa2");
+        using var cts2 = dispatcher.RegisterRunCancelForTest("run-ativa2");
         dispatcher.UnregisterRunCancelForTest("run-ativa2");
         Assert.That(dispatcher.TryStop("run-ativa2"), Is.False,
             "unregister remove o cancel — TryStop volta a false");
-        cts2.Dispose();
     }
 
     [Test]
@@ -799,7 +796,7 @@ public class RunRecoveryTests
         var run = await SemearRunMortaAsync(chat.Id, null,
             owner: ChatRunDispatcher.CurrentInstanceId);
         var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
-        var cts = dispatcher.RegisterRunCancelForTest(run.Id);
+        using var cts = dispatcher.RegisterRunCancelForTest(run.Id);
         try
         {
             await dispatcher.SweepOrphansAsync(default, includeQueued: false);
@@ -820,7 +817,6 @@ public class RunRecoveryTests
         finally
         {
             dispatcher.UnregisterRunCancelForTest(run.Id);
-            cts.Dispose();
         }
     }
 }
