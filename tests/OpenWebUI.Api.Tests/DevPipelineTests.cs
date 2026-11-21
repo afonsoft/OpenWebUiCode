@@ -478,6 +478,49 @@ public class DevPipelineUnitTests
             "dependentes primeiro, depois overflow independente");
     }
 
+    // ---------- WaitStreamClosedAsync (wake event-driven) ----------
+
+    [Test]
+    public async Task WaitStreamClosed_StreamFecha_CompletaNaHora()
+    {
+        var broadcaster = new ChatRunBroadcaster();
+        var wait = DevPipelineService.WaitStreamClosedAsync(
+            broadcaster, "run-x", CancellationToken.None);
+
+        Assert.That(wait.IsCompleted, Is.False, "stream aberto segura o wait");
+        broadcaster.Complete("run-x");
+        var done = await Task.WhenAny(wait, Task.Delay(2000));
+        Assert.That(done, Is.SameAs(wait), "Complete devia acordar o wait");
+    }
+
+    [Test]
+    public async Task WaitStreamClosed_RunJaFechada_CompletaImediato()
+    {
+        var broadcaster = new ChatRunBroadcaster();
+        broadcaster.Publish("run-y", "data: {}");
+        broadcaster.Complete("run-y");
+
+        var wait = DevPipelineService.WaitStreamClosedAsync(
+            broadcaster, "run-y", CancellationToken.None);
+        var done = await Task.WhenAny(wait, Task.Delay(2000));
+        Assert.That(done, Is.SameAs(wait),
+            "run já fechada → o wait sai na hora (sem poll)");
+    }
+
+    [Test]
+    public async Task WaitStreamClosed_Cancelamento_EncerraSemVazar()
+    {
+        var broadcaster = new ChatRunBroadcaster();
+        using var cts = new CancellationTokenSource();
+        var wait = DevPipelineService.WaitStreamClosedAsync(
+            broadcaster, "run-z", cts.Token);
+
+        cts.Cancel();
+        var done = await Task.WhenAny(wait, Task.Delay(2000));
+        Assert.That(done, Is.SameAs(wait),
+            "cancelamento externo encerra a assinatura (degrada p/ poll)");
+    }
+
     // ---------- TryModeSlash (RF-004) ----------
 
     [Test]
