@@ -171,11 +171,29 @@ pode desviar; o nosso não pode "esquecer" validate/commit).
 ### RF-010: Structured output + handoff
 
 - Toda fase LLM termina com `<pipeline_result>{…}</pipeline_result>`
-  (`files`, `summary`, `verdict`, `issues`, `plan`) — parseado para
-  `state.PhaseResults[phase]` e exibido no relatório.
+  (`files`, `summary`, `verdict`, `issues`, `plan`, `items`) — parseado
+  para `state.PhaseResults[phase]` e exibido no relatório.
 - Prompt do `fix` exige `summary` no formato handoff: Observação; Causa
   raiz; Correção; **Método de verificação (comando e saída real)** —
   herdado do handoff.md do Antigravity Teamwork.
+
+### RF-011: Fan-out — implement paralelo por item (SPEC-20261123)
+
+- `plan` emite `items[{id,title,files[],independent}]`; ≥2
+  `independent` + binding de repo → cada item vira um **worker**: chat
+  irmão (`pipeline: {title}`) com `InheritChatBinding` (worktree próprio)
+  + run `implement:{id}` no modelo worker — paralelo real, cap
+  `Agent:DevPipeline:MaxFanout` (default 4).
+- Wait-all em paralelo; stall/replace **por runKey**
+  (`StallRetriesByKey`) — um worker travado não consome o budget das
+  irmãs. Resume idempotente: run completed salta, ativa é aguardada.
+- Merge sequencial `MergeAsync` por worker no workdir do filho;
+  conflitos → `fix` recria no workdir principal (nunca forçados);
+  dependentes/overflow → `implement-rest` sequencial no filho.
+- `CommitAsync` generalizou o merge: última run de cada base key
+  (sucessora `-stallN` representa o estado final); `plan` não mergeia.
+- Arg `fanout` (default true); sem items / <2 independentes / sem
+  binding → sequencial inalterado.
 
 ### Acceptance Criteria (incremento)
 
@@ -190,3 +208,9 @@ pode desviar; o nosso não pode "esquecer" validate/commit).
   as issues; sem tentativas → pipeline `failed`.
 - AC-12: `ParsePhaseResult` extrai `files/verdict/issues/plan` do bloco;
   bloco ausente/malformado → null sem quebrar a fase.
+- AC-13: `FanoutPlan` seleciona só `independent` (cap `MaxFanout`) e
+  devolve dependentes+overflow em `Remainder`; <2 independentes,
+  `fanout:false` ou sem items → vazio.
+- AC-14: fan-out despacha run por item em chat irmão com binding
+  herdado; `Runs["implement:{id}"]` e `FanoutItemChats` registrados;
+  merge aplica diffs no workdir do filho e conflitos viram issues do fix.

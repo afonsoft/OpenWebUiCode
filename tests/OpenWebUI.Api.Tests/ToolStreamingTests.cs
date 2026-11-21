@@ -211,8 +211,13 @@ public class ToolStreamingTests
             $"chat:{chat.Id}:workspace.repo",
             new WorkspaceRepoBinding("a/b", "main", "repos/a__b", null, null),
             default);
+        // SPEC-20261122 RF-005: entrar em build sobe preset conservador
+        // para smart — e em smart o ask_user auto-responde (SPEC-15
+        // RF-003). Estes testes exercitam o gate humano, então o preset
+        // vai pinado junto: o PATCH aplica o preset ANTES do modo.
         var patch = await _client.PatchAsJsonAsync(
-            $"/api/v1/chats/{chat.Id}", new ChatPatchRequest(null, Mode: "build"));
+            $"/api/v1/chats/{chat.Id}",
+            new ChatPatchRequest("approve-mutations", Mode: "build"));
         Assert.That(patch.StatusCode, Is.EqualTo(HttpStatusCode.OK),
             await patch.Content.ReadAsStringAsync());
         return chat;
