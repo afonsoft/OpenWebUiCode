@@ -5,10 +5,13 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using OpenWebUI.Api.Runs;
 using OpenWebUI.Application.Contracts;
 using OpenWebUI.Domain;
+using OpenWebUI.Infrastructure.ChatTools;
 using OpenWebUI.Infrastructure.Data;
 using OpenWebUI.Infrastructure.Services;
 
@@ -269,6 +272,15 @@ public class RunRecoveryTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return (await db.ChatRuns.AsNoTracking()
             .FirstAsync(r => r.Id == runId));
+    }
+
+    private async Task AtualizarRunAsync(string runId, Action<ChatRun> mutate)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var run = await db.ChatRuns.FirstAsync(r => r.Id == runId);
+        mutate(run);
+        await db.SaveChangesAsync();
     }
 
     private async Task<ChatRunResponse> AguardarFinalAsync(string chatId, string runId)
@@ -682,5 +694,133 @@ public class RunRecoveryTests
         var final = await AguardarFinalAsync(chat.Id, run.Id);
         Assert.That(final.Status, Is.EqualTo("completed"),
             $"run stale de dono morto não retomou via watchdog: {final.Status}");
+    }
+
+    [Test]
+    public async Task Watchdog_LoopReal_TickPeriodicoMarcaZumbi()
+    {
+        // Loop de verdade (não o sweep manual): dispatcher próprio com
+        // intervalo de 1s e interrupt no 1º tick — cobre WatchdogLoopAsync
+        // (delay → sweep → repete) end-to-end.
+        var chat = await CriarChatAsync();
+        var run = await SemearRunMortaAsync(chat.Id, null,
+            owner: ChatRunDispatcher.CurrentInstanceId);
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ChatRuns:WatchdogSeconds"] = "1",
+                ["ChatRuns:WatchdogInterruptAfter"] = "1",
+                ["ChatRuns:ResumeStaleSeconds"] = "1",
+            })
+            .Build();
+        var services = _factory.Services;
+        var dispatcher = new ChatRunDispatcher(
+            services.GetRequiredService<IServiceScopeFactory>(),
+            services.GetRequiredService<ChatRunBroadcaster>(),
+            services.GetRequiredService<ChatJobService>(),
+            services.GetRequiredService<ChatRunPauses>(),
+            services.GetRequiredService<WorktreeService>(),
+            config,
+            services.GetRequiredService<ILogger<ChatRunDispatcher>>());
+        dispatcher.RegisterRunCancelForTest(run.Id);
+        await dispatcher.StartAsync(CancellationToken.None);
+        try
+        {
+            var atual = run;
+            for (var i = 0; i < 25
+                && atual.Status == ChatRunStatus.Running; i++)
+            {
+                await Task.Delay(400);
+                atual = await CarregarRunAsync(run.Id);
+            }
+            Assert.That(atual.Status, Is.EqualTo(ChatRunStatus.Interrupted),
+                "watchdog a 1s devia marcar a run zumbi no 1º tick");
+        }
+        finally
+        {
+            await dispatcher.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Test]
+    public void TryStop_SemRegistro_OuDisposed_Comporta()
+    {
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        Assert.That(dispatcher.TryStop("run-inexistente"), Is.False);
+
+        var cts = dispatcher.RegisterRunCancelForTest("run-descartada");
+        cts.Dispose();
+        Assert.That(dispatcher.TryStop("run-descartada"), Is.True,
+            "cts já descartado = run saindo — stop conta como entregue");
+        dispatcher.UnregisterRunCancelForTest("run-descartada");
+
+        var cts2 = dispatcher.RegisterRunCancelForTest("run-ativa2");
+        dispatcher.UnregisterRunCancelForTest("run-ativa2");
+        Assert.That(dispatcher.TryStop("run-ativa2"), Is.False,
+            "unregister remove o cancel — TryStop volta a false");
+        cts2.Dispose();
+    }
+
+    [Test]
+    public async Task Watchdog_PausadaENaoStale_SkippedSemTocar()
+    {
+        var chat = await CriarChatAsync();
+        var pausada = await SemearRunMortaAsync(chat.Id, null,
+            status: ChatRunStatus.Paused);
+        var viva = await SemearRunMortaAsync(chat.Id, null);
+        // Heartbeat fresco: viva de verdade — não pode ser tocada.
+        await AtualizarRunAsync(viva.Id, r =>
+        {
+            r.HeartbeatAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            r.OwnerInstance = "outra-instancia";
+        });
+
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        await dispatcher.SweepOrphansAsync(default, includeQueued: false);
+
+        Assert.Multiple(async () =>
+        {
+            Assert.That((await CarregarRunAsync(pausada.Id)).Status,
+                Is.EqualTo(ChatRunStatus.Paused));
+            Assert.That((await CarregarRunAsync(viva.Id)).Status,
+                Is.EqualTo(ChatRunStatus.Running));
+        });
+    }
+
+    [Test]
+    public async Task Watchdog_HeartbeatVolta_SightingsZeram()
+    {
+        // interruptAfter=3 via env? Não — o fixture usa os defaults.
+        // Cenário: tick1 stale (stop, seen=1) → heartbeat fresco →
+        // tick2 stale de novo (seen volta a 1, não a 2) — o contador
+        // reseta quando a run sai do radar, então 2 ticks stale NÃO
+        // consecutivos não escalam.
+        var chat = await CriarChatAsync();
+        var run = await SemearRunMortaAsync(chat.Id, null,
+            owner: ChatRunDispatcher.CurrentInstanceId);
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        var cts = dispatcher.RegisterRunCancelForTest(run.Id);
+        try
+        {
+            await dispatcher.SweepOrphansAsync(default, includeQueued: false);
+            Assert.That(cts.IsCancellationRequested, Is.True);
+
+            await AtualizarRunAsync(run.Id, r =>
+                r.HeartbeatAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            await dispatcher.SweepOrphansAsync(default, includeQueued: false);
+
+            await AtualizarRunAsync(run.Id, r => r.HeartbeatAt = 1);
+            await dispatcher.SweepOrphansAsync(default, includeQueued: false);
+
+            // seen resetou no tick do meio → só 1 sighting consecutivo
+            // (default interruptAfter=3) → ainda Running, não interrupted.
+            Assert.That((await CarregarRunAsync(run.Id)).Status,
+                Is.EqualTo(ChatRunStatus.Running));
+        }
+        finally
+        {
+            dispatcher.UnregisterRunCancelForTest(run.Id);
+            cts.Dispose();
+        }
     }
 }
