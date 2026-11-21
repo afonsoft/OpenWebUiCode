@@ -914,14 +914,12 @@ public sealed class DevPipelineService(
         // Merge sequencial item a item no workdir do filho; depois os
         // itens dependentes/overflow numa run sequencial no chat filho.
         var conflicts = await MergeFanoutAsync(state, workers, ct);
-        if (rest.Count > 0)
+        if (rest.Count > 0
+            && !await RunLlmPhaseAsync(
+                state, "implement", RestPrompt(state, rest), ct,
+                runKey: "implement-rest"))
         {
-            if (!await RunLlmPhaseAsync(
-                    state, "implement", RestPrompt(state, rest), ct,
-                    runKey: "implement-rest"))
-            {
-                return false;
-            }
+            return false;
         }
         if (conflicts.Count > 0 && state.FixAttempts < state.MaxFixAttempts)
         {
@@ -1514,7 +1512,8 @@ public sealed class DevPipelineService(
     /// padrão do drain de steers queue).</summary>
     private async Task ReportAsync(State state, CancellationToken ct)
     {
-        var report = BuildReport(state);
+        var telemetry = await CollectTelemetryAsync(state, ct);
+        var report = BuildReport(state, telemetry);
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var boundaries = scope.ServiceProvider.GetRequiredService<ContextBoundaryService>();
@@ -1574,8 +1573,53 @@ public sealed class DevPipelineService(
             .Enqueue(run.Id);
     }
 
+    /// <summary>Telemetria por key de run (RF fan-out hardening): status
+    /// da run efetiva (sucessora -stallN), duração em segundos e stalls
+    /// acumulados na key base.</summary>
+    internal sealed record RunTelemetry(string Status, long? DurationSec, int Stalls);
+
+    /// <summary>Coleta status/duração das runs do estado numa query só —
+    /// a run efetiva de cada key base é a última <c>-stallN</c> quando há.</summary>
+    private async Task<Dictionary<string, RunTelemetry>> CollectTelemetryAsync(
+        State state, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var runIds = state.Runs.Values.ToList();
+        var rows = await db.ChatRuns.AsNoTracking()
+            .Where(r => runIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.Status, r.StartedAt, r.CompletedAt })
+            .ToListAsync(ct);
+        var byId = rows.ToDictionary(r => r.Id);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var map = new Dictionary<string, RunTelemetry>();
+        foreach (var (key, runId) in state.Runs)
+        {
+            if (key.Contains("-stall"))
+            {
+                continue; // agregada na key base via cadeia abaixo
+            }
+            var effective = runId;
+            for (var n = 1;
+                state.Runs.TryGetValue($"{key}-stall{n}", out var s);
+                n++)
+            {
+                effective = s;
+            }
+            byId.TryGetValue(effective, out var row);
+            long? dur = row?.StartedAt is { } st
+                ? (row.CompletedAt ?? now) - st
+                : null;
+            map[key] = new RunTelemetry(
+                row?.Status ?? "missing", dur,
+                state.StallRetriesByKey.GetValueOrDefault(key));
+        }
+        return map;
+    }
+
     /// <summary>Texto do relatório visto pelo agente pai e pelo usuário.</summary>
-    private static string BuildReport(State state)
+    internal static string BuildReport(
+        State state, IReadOnlyDictionary<string, RunTelemetry>? telemetry = null)
     {
         var icon = state.Status == "done" ? "✅" : "❌";
         var phases = string.Join(" → ", state.Runs.Keys.Concat(
@@ -1591,6 +1635,10 @@ public sealed class DevPipelineService(
                 ? "Resultados: " + string.Join("; ", state.PhaseResults.Select(
                     kv => $"{kv.Key}={kv.Value.Verdict ?? kv.Value.Summary ?? "ok"}")) + "\n"
                 : string.Empty)
+            + (telemetry is { Count: > 0 }
+                ? "Runs: " + string.Join(" · ", telemetry.Select(
+                    kv => FormatRunTelemetry(kv.Key, kv.Value))) + "\n"
+                : string.Empty)
             + (state.StallRetries > 0
                 ? $"Stalls recuperados: {state.StallRetries}\n" : string.Empty)
             + $"Entrega: {commit}"
@@ -1600,10 +1648,25 @@ public sealed class DevPipelineService(
             + (state.FanoutItemChats.Count > 0
                 ? "Workers do fan-out: "
                     + string.Join(", ", state.FanoutItemChats.Select(
-                        kv => $"{kv.Key}→/c/{kv.Value}")) + "\n"
+                        kv => $"{kv.Key}→/c/{kv.Value}"
+                            + (telemetry is not null
+                                && telemetry.TryGetValue(kv.Key, out var t)
+                                    ? $" ({FormatTelemetryValue(t)})"
+                                    : string.Empty))) + "\n"
                 : string.Empty)
             + "Apresente este resultado ao usuário de forma resumida.";
     }
+
+    private static string FormatRunTelemetry(string key, RunTelemetry t) =>
+        $"{key}={FormatTelemetryValue(t)}";
+
+    private static string FormatTelemetryValue(RunTelemetry t) =>
+        t.Status
+            + (t.DurationSec is { } d ? $" {FormatDuration(d)}" : string.Empty)
+            + (t.Stalls > 0 ? $" ({t.Stalls} stall{(t.Stalls > 1 ? "s" : "")})" : string.Empty);
+
+    private static string FormatDuration(long sec) =>
+        sec < 60 ? $"{sec}s" : $"{sec / 60}m{sec % 60:D2}s";
 
     /// <summary>Marca a pipeline failed e dispara o relatório.</summary>
     private async Task MarkFailedAsync(State state, string error)

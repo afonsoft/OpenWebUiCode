@@ -615,6 +615,46 @@ public class DevPipelineUnitTests
         });
     }
 
+    // ---------- BuildReport telemetria (hardening fan-out) ----------
+
+    [Test]
+    public void BuildReport_TelemetriaPorRun_StatusDuracaoStalls()
+    {
+        var state = NewState();
+        state.Status = "done";
+        state.ChildChatId = "filho";
+        state.CommitSha = "abc123";
+        state.Runs["plan"] = "r-plan";
+        state.Runs["implement:api"] = "r-api";
+        state.Runs["implement:api-stall1"] = "r-api2";
+        state.Runs["implement:ui"] = "r-ui";
+        state.FanoutItemChats["implement:api"] = "chat-a";
+        state.FanoutItemChats["implement:ui"] = "chat-u";
+        state.StallRetriesByKey["implement:api"] = 1;
+        state.StallRetries = 1;
+
+        var telemetry = new Dictionary<string, DevPipelineService.RunTelemetry>
+        {
+            ["plan"] = new("completed", 40, 0),
+            ["implement:api"] = new("completed", 88, 1),
+            ["implement:ui"] = new("failed", 15, 0),
+        };
+
+        var report = DevPipelineService.BuildReport(state, telemetry);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(report, Does.Contain("plan=completed 40s"));
+            Assert.That(report,
+                Does.Contain("implement:api=completed 1m28s (1 stall)"));
+            Assert.That(report, Does.Contain("implement:ui=failed 15s"));
+            Assert.That(report,
+                Does.Contain("implement:api→/c/chat-a (completed 1m28s (1 stall))"));
+            Assert.That(report,
+                Does.Contain("implement:ui→/c/chat-u (failed 15s)"));
+        });
+    }
+
     [Test]
     public void WorkflowStep_DesserializaDoJson()
     {
@@ -630,6 +670,19 @@ public class DevPipelineUnitTests
                 Is.EqualTo(new[] { "x.cs" }));
             Assert.That(steps[1].Push, Is.True);
         });
+    }
+
+    [Test]
+    public void BuildReport_SemTelemetria_SemSecaoRuns()
+    {
+        var state = NewState();
+        state.Status = "done";
+        state.ChildChatId = "filho";
+        state.Runs["plan"] = "r-plan";
+
+        var report = DevPipelineService.BuildReport(state);
+
+        Assert.That(report, Does.Not.Contain("Runs:"));
     }
 
     // ---------- TryModeSlash (RF-004) ----------
