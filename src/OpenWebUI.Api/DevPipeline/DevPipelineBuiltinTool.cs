@@ -59,6 +59,11 @@ public sealed class DevPipelineBuiltinTool(
               "description": "true (default): a plan phase decomposes the task before implement — planner→worker split.",
               "default": true
             },
+            "fanout": {
+              "type": "boolean",
+              "description": "true (default): items the plan marks independent run in parallel — one worker chat + isolated worktree each, merged into the child workspace before test/validate/commit. Requires a repo binding; scratch chats implement sequentially.",
+              "default": true
+            },
             "worker_model": {
               "type": "string",
               "description": "Optional model ref for the plan/implement/test/verify phases — typically the cheaper worker model. chain:/fusion: refs are accepted. When omitted and this run is fusion:{leader}>{sidekick}, workers default to the sidekick chain and plan to the leader."
@@ -110,6 +115,8 @@ public sealed class DevPipelineBuiltinTool(
             && m.TryGetInt32(out var n) ? n : 1;
         var plan = !args.TryGetProperty("plan", out var pl)
             || pl.ValueKind != JsonValueKind.False;
+        var fanout = !args.TryGetProperty("fanout", out var fo)
+            || fo.ValueKind != JsonValueKind.False;
 
         DevPipelineService.State state;
         using (var scope = scopes.CreateScope())
@@ -120,7 +127,8 @@ public sealed class DevPipelineBuiltinTool(
                 context, task, ReadString(args, "context"), push, maxFix, ct,
                 enablePlan: plan,
                 workerModel: ReadString(args, "worker_model"),
-                fixModel: ReadString(args, "fix_model"));
+                fixModel: ReadString(args, "fix_model"),
+                enableFanout: fanout);
         }
 
         // Runner em background: escopos próprios por fase — seguro para

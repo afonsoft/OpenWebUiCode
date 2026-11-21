@@ -296,12 +296,14 @@ public class DevPipelineUnitTests
 
     // ---------- ParsePhaseResult / LlmPhases (RF-006/010) ----------
 
-    private static DevPipelineService.State NewState(bool enablePlan = true) =>
+    private static DevPipelineService.State NewState(
+        bool enablePlan = true, bool enableFanout = true, int maxFanout = 4) =>
         new()
         {
             Id = "dp-test", UserId = "u1", ParentChatId = "c1",
             ParentRunId = "r1", Task = "tarefa",
-            EnablePlan = enablePlan, CreatedAt = 1, UpdatedAt = 1,
+            EnablePlan = enablePlan, EnableFanout = enableFanout,
+            MaxFanout = maxFanout, CreatedAt = 1, UpdatedAt = 1,
         };
 
     [Test]
@@ -372,6 +374,108 @@ public class DevPipelineUnitTests
             Assert.That(DevPipelineService.RotateChain("chain:a,b", 0),
                 Is.EqualTo("chain:a,b"), "índice 0 não muda");
         });
+    }
+
+    // ---------- Fan-out (SPEC-20261123) ----------
+
+    [Test]
+    public void ParsePhaseResult_Items_ExtraiItensDoPlano()
+    {
+        var text = "ok.\n<pipeline_result>"
+            + """{"plan":"1+2","items":[{"id":"i1","title":"t1","files":["a.cs"],"independent":true},{"id":"i2","files":["b.cs"],"independent":false},{"id":"i3","independent":true}]}"""
+            + "</pipeline_result>";
+        var r = DevPipelineService.ParsePhaseResult(text);
+        Assert.That(r, Is.Not.Null);
+        Assert.That(r!.Items, Has.Count.EqualTo(3));
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Items[0].Id, Is.EqualTo("i1"));
+            Assert.That(r.Items[0].Independent, Is.True);
+            Assert.That(r.Items[0].Files, Is.EqualTo(new[] { "a.cs" }));
+            Assert.That(r.Items[1].Independent, Is.False,
+                "ausente/false → false");
+            Assert.That(r.Items[2].Independent, Is.True);
+        });
+    }
+
+    [Test]
+    public void LlmPhases_PlanPedeItemsComIndependent()
+    {
+        var prompt = DevPipelineService.LlmPhases(NewState())
+            .First(p => p.Phase == "plan").Prompt;
+        Assert.That(prompt, Does.Contain("\"items\""));
+        Assert.That(prompt, Does.Contain("independent=true"));
+    }
+
+    [Test]
+    public void FanoutPlan_DoisIndependentes_SelecionaEDependentesNoRest()
+    {
+        var state = NewState();
+        state.PhaseResults["plan"] = new DevPipelineService.PhaseResult(
+            null, null, null, null, "p",
+            [
+                new DevPipelineService.PlanItem("i1", "t1", null, true),
+                new DevPipelineService.PlanItem("dep", "td", null, false),
+                new DevPipelineService.PlanItem("i2", "t2", null, true),
+            ]);
+        var (fanned, rest) = DevPipelineService.FanoutPlan(state);
+        Assert.That(fanned.Select(i => i.Id),
+            Is.EqualTo(new[] { "i1", "i2" }));
+        Assert.That(rest.Select(i => i.Id), Is.EqualTo(new[] { "dep" }));
+    }
+
+    [Test]
+    public void FanoutPlan_MenosDeDoisIndependentes_Vazio()
+    {
+        var state = NewState();
+        state.PhaseResults["plan"] = new DevPipelineService.PhaseResult(
+            null, null, null, null, "p",
+            [
+                new DevPipelineService.PlanItem("i1", null, null, true),
+                new DevPipelineService.PlanItem("dep", null, null, false),
+            ]);
+        var (fanned, _) = DevPipelineService.FanoutPlan(state);
+        Assert.That(fanned, Is.Empty, "1 independente só não compensa fan-out");
+    }
+
+    [Test]
+    public void FanoutPlan_SemItemsOuDesligado_Vazio()
+    {
+        var semItems = NewState();
+        semItems.PhaseResults["plan"] = new DevPipelineService.PhaseResult(
+            null, null, null, null, "p", null);
+        var desligado = NewState(enableFanout: false);
+        desligado.PhaseResults["plan"] = new DevPipelineService.PhaseResult(
+            null, null, null, null, "p",
+            [
+                new DevPipelineService.PlanItem("i1", null, null, true),
+                new DevPipelineService.PlanItem("i2", null, null, true),
+            ]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.FanoutPlan(semItems).Fanned, Is.Empty);
+            Assert.That(DevPipelineService.FanoutPlan(desligado).Fanned, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void FanoutPlan_CapMaxFanout_OverflowVaiProRest()
+    {
+        var state = NewState(maxFanout: 2);
+        state.PhaseResults["plan"] = new DevPipelineService.PhaseResult(
+            null, null, null, null, "p",
+            [
+                new DevPipelineService.PlanItem("i1", null, null, true),
+                new DevPipelineService.PlanItem("i2", null, null, true),
+                new DevPipelineService.PlanItem("i3", null, null, true),
+                new DevPipelineService.PlanItem("dep", null, null, false),
+            ]);
+        var (fanned, rest) = DevPipelineService.FanoutPlan(state);
+        Assert.That(fanned.Select(i => i.Id),
+            Is.EqualTo(new[] { "i1", "i2" }), "cap=2");
+        Assert.That(rest.Select(i => i.Id),
+            Is.EqualTo(new[] { "dep", "i3" }),
+            "dependentes primeiro, depois overflow independente");
     }
 
     // ---------- TryModeSlash (RF-004) ----------
