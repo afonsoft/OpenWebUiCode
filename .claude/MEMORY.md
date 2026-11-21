@@ -57,3 +57,20 @@
 - **Lição**: `Rest` é nome reservado de elemento de tupla em C# (CS8126); usar `Remainder`. Build sem repo não downgradeia mais — `ResolveEffectiveMode` é literal e scratch cobre workdir.
 - **dev_pipeline fan-out** (SPEC-20261123): `plan` emite `items[{id,title,files[],independent}]`; ≥2 independentes + binding → um chat irmão por item (`InheritChatBinding` → worktree próprio) + run `implement:{id}` em paralelo (`Task.WhenAll` de `WaitRunAsync`), merge `MergeAsync` sequencial no workdir do filho; dependentes/overflow → run `implement-rest`. Stall retry passou a ser **por runKey** (`StallRetriesByKey`) — worker travado não consome budget das irmãs; `CommitAsync` generalizou o merge p/ última run de cada base key (`-stallN` cobre substitutas; `plan` nunca mergeia). Cap `Agent:DevPipeline:MaxFanout` default 4 (clamp 1-8); arg `fanout` default true; sem binding/items → sequencial.
 - **Lição**: chat irmão do worker precisa de `ParentRunId` de OUTRO chat (`PlanRunId`) → `sameChatParent` falso → `force:true` → worktree isolado por run; runs encadeadas no MESMO chat dividem o worktree do pai (é assim que test/fix do sequencial aterrissam no worktree do implement).
+
+## 2026-11-24 — Watchdog global de runs
+
+- `ChatRunDispatcher.SweepOrphansAsync` rodava só no boot — runs que ficam
+  stale com o servidor no ar nunca eram reavaliadas. `WatchdogLoopAsync`
+  (`ChatRuns:WatchdogSeconds`, default 60) repete o sweep em modo
+  periódico: não re-enfileira `queued` (a fila em memória está viva —
+  duplicar entradas no bounded channel derrubaria enqueues legítimos).
+- Run stale + `OwnerInstance` local + ainda em `_runCancels` → `TryStop`,
+  NUNCA requeue (segundo worker executaria em dobro). Após
+  `ChatRuns:WatchdogInterruptAfter` (default 3) ticks → `interrupted`.
+- `TryStop` blindado contra `ObjectDisposedException`: janela entre o
+  lookup no dicionário e o dispose pelo worker — cancel sobre cts morto
+  propagava exceção que abortava o sweep inteiro.
+- Hooks internos p/ teste no dispatcher: `CurrentInstanceId`,
+  `RegisterRunCancelForTest`/`Unregister...`; fixture desliga o loop real
+  com `ChatRuns__WatchdogSeconds=0` e chama o sweep explicitamente.
