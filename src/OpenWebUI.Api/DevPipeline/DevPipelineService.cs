@@ -808,8 +808,12 @@ public sealed class DevPipelineService(
         return run.Id;
     }
 
-    /// <summary>Poll do término da run (padrão WaitForChildAsync) —
-    /// deadline configurável <c>Agent:DevPipeline:PhaseTimeoutSec</c>
+    /// <summary>Espera do término da run — wake event-driven + poll de
+    /// staleness (padrão WaitForChildAsync). O stream do broadcaster
+    /// fecha quando o worker conclui a run → o join acorda na hora em vez
+    /// de esperar o próximo tick; o poll segue porque run travada não
+    /// emite evento (staleness de heartbeat só se detecta olhando).
+    /// Deadline configurável <c>Agent:DevPipeline:PhaseTimeoutSec</c>
     /// (default 1200s). RF-008: <c>Running</c> com <c>HeartbeatAt</c> velho
     /// (&gt;<c>Agent:DevPipeline:StallSec</c>, default 240s, por 2 polls) é
     /// considerada travada → substituída com prompt de retomada, até
@@ -827,13 +831,27 @@ public sealed class DevPipelineService(
                 ? Math.Max(30, ss) : 240;
         var deadline = DateTimeOffset.UtcNow.AddSeconds(timeout);
         var stallTicks = 0;
+        using var scope = scopes.CreateScope();
+        var broadcaster = scope.ServiceProvider
+            .GetRequiredService<ChatRunBroadcaster>();
+        using var wake = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var streamClosed = WaitStreamClosedAsync(
+            broadcaster, runId, wake.Token, logger);
         for (;;)
         {
             if (DateTimeOffset.UtcNow >= deadline)
             {
                 return ("timeout", $"run {runId} excedeu {timeout}s");
             }
-            await Task.Delay(PollInterval, ct);
+            var delay = Task.Delay(PollInterval, ct);
+            if (streamClosed is null)
+            {
+                await delay;
+            }
+            else if (await Task.WhenAny(streamClosed, delay) == streamClosed)
+            {
+                streamClosed = null; // stream fechou — poll assume daqui
+            }
             var (status, error, heartbeatAt) = await RunStatusAsync(runId, ct);
             if (status is not (null or ChatRunStatus.Queued
                 or ChatRunStatus.Running or ChatRunStatus.Paused))
@@ -862,7 +880,38 @@ public sealed class DevPipelineService(
             state.StallRetries++;
             runId = await ReplaceStalledRunAsync(
                 state, phase, runId, prompt, ct, key, used + 1, chatId);
+            streamClosed = WaitStreamClosedAsync(
+                broadcaster, runId, wake.Token, logger);
             stallTicks = 0;
+        }
+    }
+
+    /// <summary>Completa quando o stream da run fecha (o dispatcher chama
+    /// <c>Complete</c> no fim da execução). Falhas de assinatura degradam
+    /// para "fechado" — o poll regular continua sendo a fonte da verdade.</summary>
+    internal static async Task WaitStreamClosedAsync(
+        ChatRunBroadcaster broadcaster, string runId, CancellationToken ct,
+        ILogger? logger = null)
+    {
+        try
+        {
+            await foreach (var _ in broadcaster.SubscribeAsync(runId, 0, ct))
+            {
+                // Drena eventos até o stream fechar — o fechamento é o
+                // sinal de wake; o conteúdo já foi visto pelo publisher.
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelamento externo — o wait degrada para o poll de status.
+        }
+        catch (Exception ex)
+        {
+            // Assinatura quebrada não pode derrubar o wait — o poll de
+            // status segue cobrindo o ciclo da run.
+            logger?.LogDebug(ex,
+                "Assinatura do stream da run {RunId} falhou — wait segue no poll.",
+                runId);
         }
     }
 
