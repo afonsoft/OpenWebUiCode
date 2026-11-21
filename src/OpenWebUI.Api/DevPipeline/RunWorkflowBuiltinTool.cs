@@ -32,13 +32,19 @@ public sealed class RunWorkflowBuiltinTool(
             + "worktree per item, merged after each wave), 'tool' "
             + "{key, tool, args} (any builtin, e.g. agent_validate), "
             + "'validate' {key} (deterministic ProjectValidation), "
-            + "'commit' {key, push?} (deterministic git commit). Steps "
-            + "run in order; each result is stored under its key and "
-            + "prompts may interpolate {task}, {plan} and {results:key}. "
-            + "A failed step stops the workflow — chain an 'llm' fix step "
-            + "that reads {results:validate-key} if you want retries. "
-            + "Track/resume with dev_pipeline op=status|resume on the "
-            + "returned pipeline_id.";
+            + "'commit' {key, push?} (deterministic git commit), 'gate' "
+            + "{key, prompt} (parks for human approval — resolved via "
+            + "dev_pipeline op=answer). Steps run in order; each result "
+            + "is stored under its key and prompts may interpolate "
+            + "{task}, {plan} and {results:key}. Optional per step: "
+            + "'when': 'passed:key'/'failed:key' runs the step only if "
+            + "an earlier step's verdict matches (skipped steps cascade "
+            + "as unmet), and 'optional':true records a failing verdict "
+            + "as 'issues' and continues instead of killing the "
+            + "workflow — e.g. validate {optional:true} then an llm fix "
+            + "step {when:'failed:lint'}. Track/resume/answer with "
+            + "dev_pipeline op=status|resume|answer on the returned "
+            + "pipeline_id.";
 
     /// <inheritdoc />
     public string ParametersJson => """
@@ -52,14 +58,16 @@ public sealed class RunWorkflowBuiltinTool(
             },
             "steps": {
               "type": "array",
-              "description": "Ordered workflow steps. Kinds: llm | parallel | tool | validate | commit.",
+              "description": "Ordered workflow steps. Kinds: llm | parallel | tool | validate | commit | gate.",
               "items": {
                 "type": "object",
                 "required": ["kind", "key"],
                 "properties": {
-                  "kind": { "type": "string", "enum": ["llm", "parallel", "tool", "validate", "commit"] },
+                  "kind": { "type": "string", "enum": ["llm", "parallel", "tool", "validate", "commit", "gate"] },
                   "key": { "type": "string", "description": "Unique step id — results are stored under this key." },
-                  "prompt": { "type": "string", "description": "llm: the step prompt (placeholders {task}, {plan}, {results:key} allowed)." },
+                  "prompt": { "type": "string", "description": "llm/gate: the step prompt (placeholders {task}, {plan}, {results:key} allowed); gate uses it as the approval question." },
+                  "when": { "type": "string", "description": "Run only if an earlier step's verdict matches: 'passed:<key>' or 'failed:<key>'." },
+                  "optional": { "type": "boolean", "description": "true: a failing step records verdict 'issues' and the workflow continues.", "default": false },
                   "items": {
                     "type": "array",
                     "description": "parallel: one worker chat + isolated worktree per item.",
@@ -197,6 +205,21 @@ public sealed class RunWorkflowBuiltinTool(
             {
                 return "todo step exige 'key' não-vazia.";
             }
+            if (s.When is { Length: > 0 } when && when != "always")
+            {
+                var colon = when.IndexOf(':', StringComparison.Ordinal);
+                if (colon <= 0
+                    || when[..colon] is not ("passed" or "failed"))
+                {
+                    return $"when inválido '{when}' no step '{s.Key}' — "
+                        + "use 'passed:<key>' ou 'failed:<key>'.";
+                }
+                if (!keys.Contains(when[(colon + 1)..]))
+                {
+                    return $"when '{when}' no step '{s.Key}' referencia "
+                        + "key que não é de um step anterior.";
+                }
+            }
             if (!keys.Add(s.Key))
             {
                 return $"key duplicada '{s.Key}' — keys são únicas.";
@@ -223,10 +246,12 @@ public sealed class RunWorkflowBuiltinTool(
                     break;
                 case "validate":
                 case "commit":
+                case "gate":
                     break;
                 default:
                     return $"kind desconhecido '{s.Kind}' no step '{s.Key}' "
-                        + "— use llm, parallel, tool, validate ou commit.";
+                        + "— use llm, parallel, tool, validate, commit "
+                        + "ou gate.";
             }
         }
         return null;

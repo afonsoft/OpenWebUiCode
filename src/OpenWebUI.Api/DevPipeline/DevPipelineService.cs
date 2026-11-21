@@ -79,13 +79,22 @@ public sealed class DevPipelineService(
         public List<WorkflowStep>? Steps { get; init; }
         /// <summary>Índice do próximo step do workflow (resume por kv).</summary>
         public int StepIndex { get; set; }
+        /// <summary>Respostas registradas de steps <c>gate</c> via
+        /// <c>dev_pipeline op=answer</c> (SPEC-20261124-workflow-v2).</summary>
+        public Dictionary<string, string> GateAnswers { get; init; } = new();
+        /// <summary>Key do gate que estacionou o workflow — persistida
+        /// para status/resume saberem o que está pendente.</summary>
+        public string? AwaitingGate { get; set; }
+        /// <summary>Steps pulados por <c>when</c> não satisfeito —
+        /// auditoria no relatório final.</summary>
+        public List<string> SkippedSteps { get; init; } = new();
         public long CreatedAt { get; init; }
         public long UpdatedAt { get; set; }
     }
 
     /// <summary>Passo declarativo do <c>run_workflow</c> (SPEC-20261124).
     /// <c>Kind</c>: <c>llm</c> | <c>parallel</c> | <c>tool</c> |
-    /// <c>validate</c> | <c>commit</c>.</summary>
+    /// <c>validate</c> | <c>commit</c> | <c>gate</c> (v2).</summary>
     public sealed record WorkflowStep
     {
         public required string Kind { get; init; }
@@ -103,6 +112,12 @@ public sealed class DevPipelineService(
         public string? Args { get; init; }
         /// <summary>Step <c>commit</c>: push além do commit.</summary>
         public bool? Push { get; init; }
+        /// <summary>Condição (v2): <c>passed:key</c>/<c>failed:key</c>
+        /// sobre o veredito de um step anterior — não satisfeita → skip.</summary>
+        public string? When { get; init; }
+        /// <summary><c>true</c> → falha do step registra verdict
+        /// <c>issues</c> e o workflow continua (v2).</summary>
+        public bool? Optional { get; init; }
     }
 
     /// <summary>Item de um step <c>parallel</c> do workflow — um worker
@@ -261,6 +276,30 @@ public sealed class DevPipelineService(
         return json is null
             ? null
             : JsonSerializer.Deserialize<State>(json, JsonOptions);
+    }
+
+    /// <summary>Registra a resposta de um gate estacionado
+    /// (SPEC-20261124-workflow-v2): devolve a key respondida, <c>null</c>
+    /// se a pipeline não existe ou <c>""</c> se não há gate pendente.</summary>
+    public async Task<string?> AnswerGateAsync(
+        string pipelineId, string verdict, string? answer,
+        CancellationToken ct)
+    {
+        var state = await GetAsync(pipelineId, ct);
+        if (state is null)
+        {
+            return null;
+        }
+        if (state.AwaitingGate is not { } gate)
+        {
+            return "";
+        }
+        state.GateAnswers[gate] = answer is { } a
+            ? $"{verdict}: {a}"
+            : verdict;
+        state.AwaitingGate = null;
+        await SaveAsync(null, state, ct);
+        return gate;
     }
 
     /// <summary>Ponto de entrada do runner em background — idempotente por
@@ -576,6 +615,18 @@ public sealed class DevPipelineService(
         {
             var step = state.Steps[i];
             state.Phase = step.Key;
+            if (!EvaluateWhen(step.When, state, out var whenError))
+            {
+                if (whenError is not null)
+                {
+                    await MarkFailedAsync(state, $"workflow: {whenError}");
+                    return;
+                }
+                state.SkippedSteps.Add($"{step.Key}({step.When})");
+                state.StepIndex = i + 1;
+                await SaveAsync(null, state, ct);
+                continue;
+            }
             var anchor = AnchorRunId(state, i);
             var ok = step.Kind switch
             {
@@ -589,12 +640,26 @@ public sealed class DevPipelineService(
                 "tool" => await RunToolStepAsync(state, step, ct),
                 "validate" => await RunValidateStepAsync(state, step, ct),
                 "commit" => await RunCommitStepAsync(state, step, ct),
-                _ => await FailStepAsync(state,
+                "gate" => await GateStepAsync(state, step, ct),
+                _ => await IssueAsync(state, step,
                     $"kind desconhecido '{step.Kind}' no step '{step.Key}'"),
             };
             if (!ok)
             {
-                return;
+                // Runner LLM já marcou failed; gate parqueou AwaitingGate —
+                // ambos retornam sem nova marcação.
+                if (state.Status == "failed" || state.AwaitingGate is not null)
+                {
+                    return;
+                }
+                if (step.Optional != true)
+                {
+                    var issue = state.PhaseResults.GetValueOrDefault(step.Key)
+                        ?.Summary ?? $"step '{step.Key}' falhou";
+                    await MarkFailedAsync(state, $"workflow: {issue}");
+                    return;
+                }
+                // optional: verdict 'issues' já registrado — o workflow segue.
             }
             state.StepIndex = i + 1;
             await SaveAsync(null, state, ct);
@@ -631,10 +696,83 @@ public sealed class DevPipelineService(
         return state.ParentRunId;
     }
 
-    private async Task<bool> FailStepAsync(State state, string error)
+    /// <summary>Condição <c>when</c> do step (v2): <c>passed:key</c> se o
+    /// veredito de key é 'pass'; <c>failed:key</c> se qualquer não-pass.
+    /// Key sem resultado (step pulado/a rodar) → não satisfeita → skip.
+    /// Formato inválido → <paramref name="error"/> (autor corrige; nunca
+    /// skip silencioso de condição malformada).</summary>
+    internal static bool EvaluateWhen(
+        string? when, State state, out string? error)
     {
-        await MarkFailedAsync(state, $"workflow: {error}");
-        return false;
+        error = null;
+        if (string.IsNullOrWhiteSpace(when) || when == "always")
+        {
+            return true;
+        }
+        var colon = when.IndexOf(':', StringComparison.Ordinal);
+        var cond = colon > 0 ? when[..colon] : null;
+        var refKey = colon > 0 ? when[(colon + 1)..] : null;
+        if (cond is not ("passed" or "failed") || string.IsNullOrEmpty(refKey))
+        {
+            error = $"when inválido '{when}' — use 'passed:<key>' "
+                + "ou 'failed:<key>'.";
+            return false;
+        }
+        var has = state.PhaseResults.TryGetValue(refKey, out var r);
+        return cond == "passed"
+            ? has && r!.Verdict == "pass"
+            : has && r!.Verdict != "pass";
+    }
+
+    /// <summary>Step <c>gate</c> (v2): sem resposta em
+    /// <see cref="State.GateAnswers"/> estaciona a pipeline —
+    /// <c>AwaitingGate</c> persistido, status segue running e a pergunta
+    /// é postada no chat pai; <c>dev_pipeline op=answer</c> resolve e
+    /// re-dispara. Resolvido: approved→verdict 'pass'; rejected→'issues',
+    /// fatal salvo <c>optional:true</c>.</summary>
+    private async Task<bool> GateStepAsync(
+        State state, WorkflowStep step, CancellationToken ct)
+    {
+        if (!state.GateAnswers.TryGetValue(step.Key, out var answer))
+        {
+            state.AwaitingGate = step.Key;
+            await SaveAsync(null, state, ct);
+            await PostToParentAsync(state,
+                $"[dev_pipeline {state.Id}] Workflow parou no gate "
+                    + $"'{step.Key}' — aguardando decisão.\n\n"
+                    + $"{step.Prompt ?? state.Task}\n\n"
+                    + "Responda nesta conversa — eu chamo dev_pipeline "
+                    + $"op=answer pipeline_id={state.Id} "
+                    + "approved=true|false answer=\"<sua decisão>\" "
+                    + "para o workflow seguir.",
+                $"gate:{step.Key}", ct);
+            return false;
+        }
+        state.AwaitingGate = null;
+        var approved = answer.StartsWith(
+            "approved", StringComparison.Ordinal);
+        state.PhaseResults[step.Key] = new PhaseResult(
+            null, Tail(answer, 500), approved ? "pass" : "issues",
+            null, null, null);
+        if (!approved && step.Optional != true)
+        {
+            await MarkFailedAsync(state,
+                $"workflow: gate '{step.Key}' rejeitado — "
+                    + Tail(answer, 300));
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>Registra a falha do step como verdict <c>issues</c> (não
+    /// marca a pipeline — o loop decide fatal × <c>optional</c>).
+    /// Devolve false para o dispatch.</summary>
+    private Task<bool> IssueAsync(
+        State state, WorkflowStep step, string error)
+    {
+        state.PhaseResults.TryAdd(step.Key, new PhaseResult(
+            null, Tail(error, 500), "issues", null, null, null));
+        return Task.FromResult(false);
     }
 
     /// <summary>Interpolação de prompt (RF-003): <c>{task}</c>,
@@ -675,7 +813,7 @@ public sealed class DevPipelineService(
             x => string.Equals(x.Name, bare, StringComparison.OrdinalIgnoreCase));
         if (builtin is null)
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"tool '{step.Tool}' não existe ou está desabilitada");
         }
         JsonElement argsEl;
@@ -685,7 +823,7 @@ public sealed class DevPipelineService(
         }
         catch (JsonException)
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"args inválidos p/ '{bare}' — JSON malformado");
         }
         var workdir = await repos.ResolveWorkdirAsync(
@@ -702,7 +840,7 @@ public sealed class DevPipelineService(
         }
         catch (Exception ex)
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"tool '{bare}' lançou exceção: {ex.Message}");
         }
         state.PhaseResults[step.Key] = new PhaseResult(
@@ -710,7 +848,7 @@ public sealed class DevPipelineService(
             result.Refused ? "issues" : "pass", null, null, null);
         if (result.Refused)
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"tool '{bare}' recusou: {result.RefuseReason}");
         }
         return true;
@@ -730,7 +868,7 @@ public sealed class DevPipelineService(
             null, null, null);
         if (outcome is { Passed: false })
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"validate '{step.Key}' falhou — {Tail(outcome.Output, 500)}");
         }
         return true;
@@ -756,7 +894,7 @@ public sealed class DevPipelineService(
         }
         catch (Exception ex)
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"commit '{step.Key}' falhou: {ex.Message}");
         }
     }
@@ -772,12 +910,12 @@ public sealed class DevPipelineService(
         var items = step.Items ?? [];
         if (items.Count == 0)
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"parallel '{step.Key}' sem items");
         }
         if (!await HasRepoBindingAsync(state, ct))
         {
-            return await FailStepAsync(state,
+            return await IssueAsync(state, step,
                 $"parallel '{step.Key}' exige binding de repo no chat filho");
         }
         foreach (var wave in items.Chunk(Math.Max(1, state.MaxFanout)))
@@ -808,7 +946,7 @@ public sealed class DevPipelineService(
                 chatId ??= await CreateSiblingChatAsync(state, item.Id, ct);
                 if (chatId is null)
                 {
-                    return await FailStepAsync(state,
+                    return await IssueAsync(state, step,
                         $"parallel '{key}': sem chat irmão (sem binding?)");
                 }
                 state.FanoutItemChats[key] = chatId;
@@ -827,7 +965,7 @@ public sealed class DevPipelineService(
                 var w = workers[i];
                 if (results[i].Status is not ChatRunStatus.Completed)
                 {
-                    return await FailStepAsync(state,
+                    return await IssueAsync(state, step,
                         $"parallel '{w.Key}' terminou como "
                             + $"'{results[i].Status}'"
                             + (results[i].Error is { } e
@@ -839,7 +977,7 @@ public sealed class DevPipelineService(
             var conflicts = await MergeFanoutAsync(state, workers, ct);
             if (conflicts.Count > 0)
             {
-                return await FailStepAsync(state,
+                return await IssueAsync(state, step,
                     $"parallel '{step.Key}': merge não aplicou "
                         + $"{conflicts.Count} arquivo(s): "
                         + Tail(string.Join("; ", conflicts), 400));
@@ -1513,7 +1651,16 @@ public sealed class DevPipelineService(
     private async Task ReportAsync(State state, CancellationToken ct)
     {
         var telemetry = await CollectTelemetryAsync(state, ct);
-        var report = BuildReport(state, telemetry);
+        await PostToParentAsync(
+            state, BuildReport(state, telemetry), "report", ct);
+    }
+
+    /// <summary>Posta mensagem <c>user</c> <c>[dev_pipeline]</c> no chat
+    /// pai + run filha para o agente apresentar — usado pelo relatório
+    /// final e pelas perguntas de <c>gate</c> (v2).</summary>
+    private async Task PostToParentAsync(
+        State state, string content, string phase, CancellationToken ct)
+    {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var boundaries = scope.ServiceProvider.GetRequiredService<ContextBoundaryService>();
@@ -1533,7 +1680,7 @@ public sealed class DevPipelineService(
         {
             ChatId = chat.Id,
             Role = "user",
-            Content = report,
+            Content = content,
             Position = chat.Messages.Count == 0
                 ? 0
                 : chat.Messages.Max(m => m.Position) + 1,
@@ -1563,7 +1710,7 @@ public sealed class DevPipelineService(
             ParentRunId = state.ParentRunId,
             MetaJson = JsonSerializer.Serialize(new Dictionary<string, object>
             {
-                ["devPipeline"] = new { id = state.Id, phase = "report" },
+                ["devPipeline"] = new { id = state.Id, phase },
             }, JsonOptions),
             CreatedAt = now,
         };
@@ -1638,6 +1785,13 @@ public sealed class DevPipelineService(
             + (telemetry is { Count: > 0 }
                 ? "Runs: " + string.Join(" · ", telemetry.Select(
                     kv => FormatRunTelemetry(kv.Key, kv.Value))) + "\n"
+                : string.Empty)
+            + (state.AwaitingGate is { } gate
+                ? $"Gate pendente: '{gate}' — responda via dev_pipeline "
+                    + "op=answer.\n"
+                : string.Empty)
+            + (state.SkippedSteps.Count > 0
+                ? $"Pulados (when): {string.Join(", ", state.SkippedSteps)}\n"
                 : string.Empty)
             + (state.StallRetries > 0
                 ? $"Stalls recuperados: {state.StallRetries}\n" : string.Empty)

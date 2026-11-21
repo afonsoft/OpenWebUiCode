@@ -655,20 +655,110 @@ public class DevPipelineUnitTests
         });
     }
 
+    // ---------- run_workflow v2: when / optional / gate ----------
+
+    [Test]
+    public void EvaluateWhen_TruthTable()
+    {
+        var state = NewState();
+        state.PhaseResults["ok"] = new DevPipelineService.PhaseResult(
+            null, "s", "pass", null, null, null);
+        state.PhaseResults["bad"] = new DevPipelineService.PhaseResult(
+            null, "s", "issues", null, null, null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.EvaluateWhen(
+                null, state, out _), Is.True, "null roda sempre");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "always", state, out _), Is.True, "always roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:ok", state, out _), Is.True, "passed c/ pass");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:bad", state, out _), Is.False,
+                "passed c/ issues não roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "failed:bad", state, out _), Is.True,
+                "failed c/ issues roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "failed:ok", state, out _), Is.False,
+                "failed c/ pass não roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:missing", state, out _), Is.False,
+                "key ausente → não satisfeita (skip)");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "failed:missing", state, out _), Is.False,
+                "key ausente não é 'failed'");
+        });
+    }
+
+    [Test]
+    public void EvaluateWhen_FormatoInvalido_Erro()
+    {
+        var state = NewState();
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "bogus", state, out var e1), Is.False);
+            Assert.That(e1, Does.Contain("inválido"));
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "maybe:ok", state, out var e2), Is.False);
+            Assert.That(e2, Does.Contain("inválido"));
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:", state, out var e3), Is.False);
+            Assert.That(e3, Does.Contain("inválido"));
+        });
+    }
+
+    [Test]
+    public void WorkflowValidate_WhenEGate()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "gate", Key = "ok" }]), Is.Null,
+                "gate é kind válido");
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "validate", Key = "lint" },
+                 new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "fix", When = "failed:lint" }]),
+                Is.Null, "when referenciando step anterior passa");
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "a", When = "maybe:x" }]),
+                Does.Contain("when inválido"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "a", When = "failed:dep" },
+                 new DevPipelineService.WorkflowStep
+                    { Kind = "validate", Key = "dep" }]),
+                Does.Contain("anterior"),
+                "when referenciando step posterior falha");
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "a", When = "passed:a" }]),
+                Does.Contain("anterior"), "self-ref falha");
+        });
+    }
+
     [Test]
     public void WorkflowStep_DesserializaDoJson()
     {
         var steps = JsonSerializer.Deserialize<
             List<DevPipelineService.WorkflowStep>>(
-            """[{"kind":"parallel","key":"build","items":[{"id":"a","prompt":"faz a","files":["x.cs"]}]},{"kind":"commit","key":"git","push":true}]""",
+            """[{"kind":"parallel","key":"build","items":[{"id":"a","prompt":"faz a","files":["x.cs"]}]},{"kind":"commit","key":"git","push":true},{"kind":"gate","key":"ok","optional":true},{"kind":"llm","key":"dep","when":"passed:ok"}]""",
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        Assert.That(steps, Has.Count.EqualTo(2));
+        Assert.That(steps, Has.Count.EqualTo(4));
         Assert.Multiple(() =>
         {
             Assert.That(steps![0].Items![0].Id, Is.EqualTo("a"));
             Assert.That(steps[0].Items[0].Files,
                 Is.EqualTo(new[] { "x.cs" }));
             Assert.That(steps[1].Push, Is.True);
+            Assert.That(steps[2].Kind, Is.EqualTo("gate"));
+            Assert.That(steps[2].Optional, Is.True);
+            Assert.That(steps[3].When, Is.EqualTo("passed:ok"));
         });
     }
 
