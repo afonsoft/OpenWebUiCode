@@ -69,3 +69,25 @@
 - **P2 succession**: adiado — `ContextCompactionService` + `AsyncCompactionScheduler` + `ContextPruner` já fazem compactação 3-tier com spawn automático por estimativa de tokens; gatilho por contagem de spawns (agy, 32) é marginal.
 - **run_workflow v2** (SPEC-20261124-workflow-v2): `when:"passed:key"/"failed:key"` condiciona step por veredito de step anterior (key ausente → skip em cadeia; inválido falha o workflow); `optional:true` registra veredito `issues` e segue (o `FailStepAsync` virou `IssueAsync` nos runners — o loop decide fatal × optional); `kind:"gate"` estaciona a pipeline (`AwaitingGate` persistido, status running) e posta a pergunta no chat pai — `dev_pipeline op=answer approved=true|false` resolve e re-dispara. Gate é máquina de estado, não `ask_user` — preset auto-pick auto-aprovaria.
 - **Lição (watchdog)**: `TryStop` foi blindado contra `ObjectDisposedException` — janela entre o lookup no dicionário e o dispose pelo worker; cancel sobre cts morto propagava exceção que abortava o sweep inteiro. Hooks internos p/ teste no dispatcher: `CurrentInstanceId`, `RegisterRunCancelForTest`/`Unregister...`; fixture desliga o loop real com `ChatRuns__WatchdogSeconds=0` e chama o sweep explicitamente.
+
+## run_workflow v2 (branch feature/agent-20261124-workflow-v2, PR #768)
+
+- Steps: `when` (passed:/failed:key, cascata unmet), `optional`
+  (issues→continua), `gate` (AwaitingGate no kv; resposta via
+  dev_pipeline op=answer — NUNCA auto-aprova, por design não reusa
+  ask_user que é auto-pick em preset smart).
+- `timeout_sec` por step: CTS linkado; timeout → issue; run filha
+  órfã é varrida pelo watchdog global.
+- Named workflows kv `wf:{user}:{name}` (op=list/delete, save_as);
+  inline args > defaults salvos.
+- Retry por item: `EffectiveRunId` percorre `-stallN`; `RecordRun`
+  grava retentativas em sufixo. Resume reusa só run Completed.
+- `builtin:pipeline_board` (Tier.Read): board kv `board:{user}:{id}`;
+  `BoardTrailer` injeta o id no prompt dos workers; join colhe em
+  `PhaseResults[{step}:board]`.
+- `sub` workflow: expansão em parse-time com keys `{key}.{subKey}`,
+  `when` reescrito p/ keys internas, depth máx 2, ciclo por caminho.
+- Routine→pipeline é grátis: builtin:routine agenda prompt→run e o
+  run invoca run_workflow.
+- Pendente (único item restante do roadmap): provider programável no
+  fixture — destrava coverage debt do fan-out + e2e real.
