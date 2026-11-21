@@ -125,6 +125,13 @@ public sealed class DevPipelineService(
     public sealed record WorkflowItem(
         string Id, string Prompt, List<string>? Files = null);
 
+    /// <summary>Workflow nomeado persistido (SPEC-20261124-named-workflows):
+    /// steps + defaults reutilizáveis — <c>run_workflow workflow=nome</c>
+    /// executa sem redeclarar os steps.</summary>
+    public sealed record NamedWorkflow(
+        List<WorkflowStep> Steps, bool? Push, string? WorkerModel,
+        string? FixModel, int? MaxParallel);
+
     /// <summary>Bloco <c>&lt;pipeline_result&gt;</c> estruturado emitido por uma fase LLM.</summary>
     /// <param name="Files">Arquivos criados/alterados declarados pela fase.</param>
     /// <param name="Summary">Resumo da fase (fix: formato handoff).</param>
@@ -301,6 +308,59 @@ public sealed class DevPipelineService(
         await SaveAsync(null, state, ct);
         return gate;
     }
+
+    // ---------- workflows nomeados (SPEC-20261124-named-workflows) ----------
+
+    private static string WfKey(string userId, string name) =>
+        $"wf:{userId}:{name}";
+
+    /// <summary>Nome válido de workflow nomeado — vira sufixo de chave kv;
+    /// alfanumérico + <c>-_.</c>, até 64 chars.</summary>
+    internal static bool ValidWorkflowName(string? name) =>
+        name is { Length: > 0 and <= 64 }
+            && name.All(c => char.IsLetterOrDigit(c)
+                || c is '-' or '_' or '.');
+
+    /// <summary>Persiste um workflow nomeado do usuário (kv
+    /// <c>wf:{user}:{name}</c>).</summary>
+    public async Task SaveWorkflowAsync(
+        string userId, string name, NamedWorkflow wf,
+        CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<ConfigService>()
+            .SetAsync(WfKey(userId, name), wf, ct);
+    }
+
+    /// <summary>Carrega um workflow nomeado — <c>null</c> se não existe
+    /// (ou foi removido).</summary>
+    public async Task<NamedWorkflow?> GetWorkflowAsync(
+        string userId, string name, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<ConfigService>()
+            .GetAsync<NamedWorkflow?>(WfKey(userId, name), null, ct);
+    }
+
+    /// <summary>Nomes dos workflows do usuário — prefix scan no kv,
+    /// excluindo entradas removidas (null).</summary>
+    public async Task<IReadOnlyList<string>> ListWorkflowsAsync(
+        string userId, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var prefix = WfKey(userId, "");
+        var rows = await scope.ServiceProvider
+            .GetRequiredService<ConfigService>()
+            .ListByPrefixAsync<NamedWorkflow>(prefix, ct);
+        return rows.Where(r => r.Value is not null)
+            .Select(r => r.Key[prefix.Length..]).Order().ToList();
+    }
+
+    /// <summary>Remove um workflow nomeado — kv é append-only; grava
+    /// <c>null</c> (GetAsync devolve como ausente).</summary>
+    public Task DeleteWorkflowAsync(
+        string userId, string name, CancellationToken ct) =>
+        SaveWorkflowAsync(userId, name, null!, ct);
 
     /// <summary>Ponto de entrada do runner em background — idempotente por
     /// fase: re-drive salta fases cujas runs já completaram (resume).</summary>

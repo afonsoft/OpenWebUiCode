@@ -44,17 +44,33 @@ public sealed class RunWorkflowBuiltinTool(
             + "workflow — e.g. validate {optional:true} then an llm fix "
             + "step {when:'failed:lint'}. Track/resume/answer with "
             + "dev_pipeline op=status|resume|answer on the returned "
-            + "pipeline_id.";
+            + "pipeline_id. op='run' (default) executes; 'list'/'delete' "
+            + "manage named workflows — save with save_as='name', re-run "
+            + "later with workflow='name' (steps then optional; inline "
+            + "steps and other args override the stored defaults).";
 
     /// <inheritdoc />
     public string ParametersJson => """
         {
           "type": "object",
-          "required": ["task", "steps"],
           "properties": {
+            "op": {
+              "type": "string",
+              "enum": ["run", "list", "delete"],
+              "description": "'run' (default) executes a workflow; 'list' shows your saved workflows; 'delete' removes one (requires 'workflow').",
+              "default": "run"
+            },
             "task": {
               "type": "string",
-              "description": "Overall goal — available to every step prompt as {task}; also feeds prompts that omit 'prompt'."
+              "description": "Overall goal — available to every step prompt as {task}; also feeds prompts that omit 'prompt'. Required for op=run."
+            },
+            "workflow": {
+              "type": "string",
+              "description": "Name of a saved workflow — supplies steps + defaults for op=run (inline args override), and the target for op=delete."
+            },
+            "save_as": {
+              "type": "string",
+              "description": "op=run: persist this workflow under this name (steps + push/models/max_parallel) for later reuse."
             },
             "steps": {
               "type": "array",
@@ -120,38 +136,133 @@ public sealed class RunWorkflowBuiltinTool(
     public async Task<BuiltinToolResult> ExecuteAsync(
         JsonElement args, BuiltinToolContext context, CancellationToken ct)
     {
+        var op = ReadString(args, "op")?.ToLowerInvariant() ?? "run";
+        return op switch
+        {
+            "run" => await RunAsync(args, context, ct),
+            "list" => await ListAsync(context, ct),
+            "delete" => await DeleteAsync(args, context, ct),
+            _ => new BuiltinToolResult(
+                $"op '{op}' inválido — use run, list ou delete."),
+        };
+    }
+
+    /// <summary>Lista os workflows nomeados do usuário.</summary>
+    private async Task<BuiltinToolResult> ListAsync(
+        BuiltinToolContext context, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var names = await scope.ServiceProvider
+            .GetRequiredService<DevPipelineService>()
+            .ListWorkflowsAsync(context.UserId, ct);
+        return new BuiltinToolResult(names.Count == 0
+            ? "Nenhum workflow salvo — use save_as='nome' numa run para "
+                + "persistir."
+            : $"Workflows salvos ({names.Count}): "
+                + string.Join(", ", names));
+    }
+
+    /// <summary>Remove um workflow nomeado (idempotente).</summary>
+    private async Task<BuiltinToolResult> DeleteAsync(
+        JsonElement args, BuiltinToolContext context,
+        CancellationToken ct)
+    {
+        var name = ReadString(args, "workflow");
+        if (!DevPipelineService.ValidWorkflowName(name))
+        {
+            return new BuiltinToolResult(
+                "Parâmetro 'workflow' inválido — nome alfanumérico "
+                    + "+ -_. (até 64 chars).");
+        }
+        using var scope = scopes.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<DevPipelineService>()
+            .DeleteWorkflowAsync(context.UserId, name!, ct);
+        return new BuiltinToolResult($"Workflow '{name}' removido.");
+    }
+
+    /// <summary>Executa um workflow — steps inline ou de um workflow
+    /// nomeado; <c>save_as</c> persiste para reuso antes de disparar.</summary>
+    private async Task<BuiltinToolResult> RunAsync(
+        JsonElement args, BuiltinToolContext context,
+        CancellationToken ct)
+    {
         var task = ReadString(args, "task");
         if (string.IsNullOrWhiteSpace(task))
         {
             return new BuiltinToolResult(
-                "Parâmetro 'task' é obrigatório — o objetivo geral do workflow.");
+                "Parâmetro 'task' é obrigatório em op=run — o objetivo "
+                    + "geral do workflow.");
         }
-        if (!args.TryGetProperty("steps", out var stepsEl)
-            || stepsEl.ValueKind != JsonValueKind.Array)
+
+        DevPipelineService.NamedWorkflow? stored = null;
+        if (ReadString(args, "workflow") is { } wfName)
         {
-            return new BuiltinToolResult(
-                "Parâmetro 'steps' é obrigatório — array de passos "
-                    + "{kind, key, …}.");
+            if (!DevPipelineService.ValidWorkflowName(wfName))
+            {
+                return new BuiltinToolResult(
+                    $"Nome de workflow inválido '{wfName}'.");
+            }
+            using var scope = scopes.CreateScope();
+            stored = await scope.ServiceProvider
+                .GetRequiredService<DevPipelineService>()
+                .GetWorkflowAsync(context.UserId, wfName, ct);
+            if (stored is null)
+            {
+                return new BuiltinToolResult(
+                    $"Workflow '{wfName}' não encontrado — op=list mostra "
+                        + "os salvos.");
+            }
         }
-        List<DevPipelineService.WorkflowStep>? steps;
-        try
+
+        List<DevPipelineService.WorkflowStep>? steps = null;
+        if (args.TryGetProperty("steps", out var stepsEl)
+            && stepsEl.ValueKind == JsonValueKind.Array)
         {
-            steps = JsonSerializer.Deserialize<List<DevPipelineService.WorkflowStep>>(
-                stepsEl.GetRawText(), JsonOpts);
+            try
+            {
+                steps = JsonSerializer.Deserialize<
+                    List<DevPipelineService.WorkflowStep>>(
+                        stepsEl.GetRawText(), JsonOpts);
+            }
+            catch (JsonException ex)
+            {
+                return new BuiltinToolResult(
+                    $"steps malformados: {ex.Message}");
+            }
         }
-        catch (JsonException ex)
-        {
-            return new BuiltinToolResult(
-                $"steps malformados: {ex.Message}");
-        }
+        steps ??= stored?.Steps;
         var validationError = Validate(steps);
         if (validationError is { } err)
         {
             return new BuiltinToolResult(err);
         }
 
+        // Defaults: arg inline > workflow salvo > default do serviço.
         var push = args.TryGetProperty("push", out var p)
-            && p.ValueKind == JsonValueKind.True;
+            ? p.ValueKind == JsonValueKind.True
+            : stored?.Push ?? false;
+        var workerModel = ReadString(args, "worker_model")
+            ?? stored?.WorkerModel;
+        var fixModel = ReadString(args, "fix_model") ?? stored?.FixModel;
+        int? maxParallel = args.TryGetProperty("max_parallel", out var mp)
+            && mp.TryGetInt32(out var n) ? n : stored?.MaxParallel;
+
+        if (ReadString(args, "save_as") is { } saveAs)
+        {
+            if (!DevPipelineService.ValidWorkflowName(saveAs))
+            {
+                return new BuiltinToolResult(
+                    $"save_as inválido '{saveAs}' — alfanumérico + -_. "
+                        + "(até 64 chars).");
+            }
+            using var scope = scopes.CreateScope();
+            await scope.ServiceProvider
+                .GetRequiredService<DevPipelineService>()
+                .SaveWorkflowAsync(context.UserId, saveAs,
+                    new DevPipelineService.NamedWorkflow(steps!, push,
+                        workerModel, fixModel, maxParallel), ct);
+        }
+
         DevPipelineService.State state;
         using (var scope = scopes.CreateScope())
         {
@@ -160,11 +271,10 @@ public sealed class RunWorkflowBuiltinTool(
             state = await service.StartAsync(
                 context, task, ReadString(args, "context"), push,
                 maxFixAttempts: 0, ct,
-                workerModel: ReadString(args, "worker_model"),
-                fixModel: ReadString(args, "fix_model"),
+                workerModel: workerModel,
+                fixModel: fixModel,
                 steps: steps,
-                maxFanout: args.TryGetProperty("max_parallel", out var mp)
-                    && mp.TryGetInt32(out var n) ? n : null);
+                maxFanout: maxParallel);
         }
 
         _ = Task.Run(async () =>

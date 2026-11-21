@@ -742,6 +742,30 @@ public class DevPipelineUnitTests
         });
     }
 
+    // ---------- workflows nomeados (SPEC-20261124-named-workflows) ----------
+
+    [Test]
+    public void ValidWorkflowName_AlfanumericoMaisPontos()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.ValidWorkflowName("nightly"),
+                Is.True);
+            Assert.That(DevPipelineService.ValidWorkflowName("a-b_c.d"),
+                Is.True);
+            Assert.That(DevPipelineService.ValidWorkflowName(null),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName(""),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName("a b"),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName("a/b"),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName(
+                new string('x', 65)), Is.False);
+        });
+    }
+
     [Test]
     public void WorkflowStep_DesserializaDoJson()
     {
@@ -941,6 +965,48 @@ public class DevPipelineIntegrationTests
     private DevPipelineService NewService() =>
         _factory.Services.CreateScope().ServiceProvider
             .GetRequiredService<DevPipelineService>();
+
+    [Test]
+    public async Task NamedWorkflow_SalvaListaCarregaERemove()
+    {
+        var svc = NewService();
+        var wf = new DevPipelineService.NamedWorkflow(
+            [new DevPipelineService.WorkflowStep
+                { Kind = "validate", Key = "v" }],
+            Push: true, WorkerModel: "m1", FixModel: "m2", MaxParallel: 3);
+
+        await svc.SaveWorkflowAsync("u-wf", "nightly", wf,
+            CancellationToken.None);
+
+        var got = await svc.GetWorkflowAsync("u-wf", "nightly",
+            CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(got, Is.Not.Null);
+            Assert.That(got!.Steps[0].Kind, Is.EqualTo("validate"));
+            Assert.That(got.Push, Is.True);
+            Assert.That(got.WorkerModel, Is.EqualTo("m1"));
+            Assert.That(got.MaxParallel, Is.EqualTo(3));
+        });
+
+        var names = await svc.ListWorkflowsAsync("u-wf",
+            CancellationToken.None);
+        Assert.That(names, Does.Contain("nightly"));
+
+        // Isolamento por usuário — outro userId não enxerga.
+        Assert.That(await svc.GetWorkflowAsync("u-outro", "nightly",
+            CancellationToken.None), Is.Null);
+
+        await svc.DeleteWorkflowAsync("u-wf", "nightly",
+            CancellationToken.None);
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await svc.GetWorkflowAsync("u-wf", "nightly",
+                CancellationToken.None), Is.Null);
+            Assert.That(await svc.ListWorkflowsAsync("u-wf",
+                CancellationToken.None), Does.Not.Contain("nightly"));
+        });
+    }
 
     [Test]
     public async Task StartAsync_CriaChatFilhoBuildEKv()
@@ -1269,7 +1335,8 @@ public class DevPipelineIntegrationTests
         var semSteps = await tool.ExecuteAsync(
             JsonDocument.Parse("""{"task":"x"}""").RootElement,
             ctx, CancellationToken.None);
-        Assert.That(semSteps.Text, Does.Contain("'steps'"));
+        Assert.That(semSteps.Text, Does.Contain("steps vazio"),
+            "sem steps nem workflow nomeado → erro de steps ausente");
 
         var stepsInvalidos = await tool.ExecuteAsync(
             JsonDocument.Parse(
