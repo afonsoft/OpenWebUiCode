@@ -118,6 +118,10 @@ public sealed class DevPipelineService(
         /// <summary><c>true</c> → falha do step registra verdict
         /// <c>issues</c> e o workflow continua (v2).</summary>
         public bool? Optional { get; init; }
+        /// <summary>Budget de wallclock do step em segundos (v2) —
+        /// estoura → step falha com issue <c>timeout</c>; a run filha
+        /// órfã é varrida pelo watchdog global.</summary>
+        public int? TimeoutSec { get; init; }
     }
 
     /// <summary>Item de um step <c>parallel</c> do workflow — um worker
@@ -688,22 +692,49 @@ public sealed class DevPipelineService(
                 continue;
             }
             var anchor = AnchorRunId(state, i);
-            var ok = step.Kind switch
+            bool ok;
+            using (var budget = step.TimeoutSec is { } secs
+                ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+                : null)
             {
-                "llm" => await RunLlmPhaseAsync(
-                    state, step.Key,
-                    Interpolate(step.Prompt ?? state.Task, state)
-                        + ResultTrailer, ct, runKey: step.Key,
-                    parentRunId: anchor),
-                "parallel" => await RunParallelStepAsync(
-                    state, step, anchor, ct),
-                "tool" => await RunToolStepAsync(state, step, ct),
-                "validate" => await RunValidateStepAsync(state, step, ct),
-                "commit" => await RunCommitStepAsync(state, step, ct),
-                "gate" => await GateStepAsync(state, step, ct),
-                _ => await IssueAsync(state, step,
-                    $"kind desconhecido '{step.Kind}' no step '{step.Key}'"),
-            };
+                var stepCt = ct;
+                if (budget is not null)
+                {
+                    budget.CancelAfter(TimeSpan.FromSeconds(secs));
+                    stepCt = budget.Token;
+                }
+                try
+                {
+                    ok = step.Kind switch
+                    {
+                        "llm" => await RunLlmPhaseAsync(
+                            state, step.Key,
+                            Interpolate(step.Prompt ?? state.Task, state)
+                                + ResultTrailer, stepCt, runKey: step.Key,
+                            parentRunId: anchor),
+                        "parallel" => await RunParallelStepAsync(
+                            state, step, anchor, stepCt),
+                        "tool" => await RunToolStepAsync(state, step, stepCt),
+                        "validate" => await RunValidateStepAsync(
+                            state, step, stepCt),
+                        "commit" => await RunCommitStepAsync(
+                            state, step, stepCt),
+                        "gate" => await GateStepAsync(state, step, stepCt),
+                        _ => await IssueAsync(state, step,
+                            $"kind desconhecido '{step.Kind}' "
+                                + $"no step '{step.Key}'"),
+                    };
+                }
+                catch (OperationCanceledException)
+                    when (budget?.IsCancellationRequested == true
+                        && !ct.IsCancellationRequested)
+                {
+                    // Só o budget do step estourou — a run filha órfã é
+                    // varrida pelo watchdog global (SPEC-20261124-run-watchdog).
+                    ok = await IssueAsync(state, step,
+                        $"timeout após {secs}s");
+                }
+            }
             if (!ok)
             {
                 // Runner LLM já marcou failed; gate parqueou AwaitingGate —

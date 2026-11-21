@@ -88,3 +88,16 @@ o gate é **máquina de estado da pipeline**, não uma tool call.
 - UI de aprovação (question_asked/buttons) — v1 é texto+op=answer.
 - Loop `foreach`, `while`, sub-workflows — P2.
 - `when` avaliando expressões (`>`, `&&`) — só veredito por key.
+
+## Addendum — timeout_sec + named workflows + retry por item
+
+- `WorkflowStep.TimeoutSec`: budget wallclock por step; estoura → issue
+  `timeout após Ns` (optional-aware); a run filha órfã é varrida pelo
+  watchdog global em vez de morta inline.
+- `builtin:run_workflow` persiste workflows por usuário (`save_as`,
+  `workflow`, `op=list|delete` — kv `wf:{user}:{name}`).
+- Retry cirúrgico no `parallel`/fan-out: `EffectiveRunId` percorre a
+  cadeia `-stallN`; resume reusa só run Completed e grava retentativas
+  em sufixos via `RecordRun`.
+- #6 (routine→pipeline) é graça: `builtin:routine` já agenda
+  prompt→run server-side, e o run agendado invoca `run_workflow`.

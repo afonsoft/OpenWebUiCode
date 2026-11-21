@@ -796,7 +796,7 @@ public class DevPipelineUnitTests
     {
         var steps = JsonSerializer.Deserialize<
             List<DevPipelineService.WorkflowStep>>(
-            """[{"kind":"parallel","key":"build","items":[{"id":"a","prompt":"faz a","files":["x.cs"]}]},{"kind":"commit","key":"git","push":true},{"kind":"gate","key":"ok","optional":true},{"kind":"llm","key":"dep","when":"passed:ok"}]""",
+            """[{"kind":"parallel","key":"build","items":[{"id":"a","prompt":"faz a","files":["x.cs"]}]},{"kind":"commit","key":"git","push":true},{"kind":"gate","key":"ok","optional":true},{"kind":"llm","key":"dep","when":"passed:ok","timeout_sec":300}]""",
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.That(steps, Has.Count.EqualTo(4));
         Assert.Multiple(() =>
@@ -808,6 +808,7 @@ public class DevPipelineUnitTests
             Assert.That(steps[2].Kind, Is.EqualTo("gate"));
             Assert.That(steps[2].Optional, Is.True);
             Assert.That(steps[3].When, Is.EqualTo("passed:ok"));
+            Assert.That(steps[3].TimeoutSec, Is.EqualTo(300));
         });
     }
 

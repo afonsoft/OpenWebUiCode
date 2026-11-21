@@ -84,6 +84,7 @@ public sealed class RunWorkflowBuiltinTool(
                   "prompt": { "type": "string", "description": "llm/gate: the step prompt (placeholders {task}, {plan}, {results:key} allowed); gate uses it as the approval question." },
                   "when": { "type": "string", "description": "Run only if an earlier step's verdict matches: 'passed:<key>' or 'failed:<key>'." },
                   "optional": { "type": "boolean", "description": "true: a failing step records verdict 'issues' and the workflow continues.", "default": false },
+                  "timeout_sec": { "type": "integer", "description": "Wallclock budget for this step in seconds — the step fails with a timeout issue when exceeded (orphaned child runs are swept by the watchdog)." },
                   "items": {
                     "type": "array",
                     "description": "parallel: one worker chat + isolated worktree per item.",
