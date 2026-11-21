@@ -777,6 +777,13 @@ public class AgentPolishTests
             Assert.That(sections[0], Does.Contain("push"));
             Assert.That(sections[0], Does.Contain("PR"));
             Assert.That(sections[0], Does.Contain("revalide"));
+            // Falhas observadas no chat 9ead0a1f: testes nunca rodados e
+            // "validado" declarado só com build; commit parcial; turno
+            // encerrado listando próximos passos.
+            Assert.That(sections[0], Does.Contain("afirmar não é validar"));
+            Assert.That(sections[0], Does.Contain("git status"));
+            Assert.That(sections[0], Does.Contain("TODAS as alterações"));
+            Assert.That(sections[0], Does.Contain("próximos passos"));
         });
     }
 
