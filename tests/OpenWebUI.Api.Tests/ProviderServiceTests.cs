@@ -771,6 +771,8 @@ public class ProviderServiceTests
 
     // Usage>0 reportado pelo upstream: mesmo com a frase no conteúdo,
     // tokens reais significam geração genuína → libera (parity OmniRoute).
+    // Um marcador isolado (só "enough credits", sem ação de billing) não
+    // é aviso forte — segue o gate de usage.
     [Test]
     public async Task Stream_Fake200Frase_ComUsagePositivo_Libera()
     {
@@ -789,6 +791,75 @@ public class ProviderServiceTests
         {
             Assert.That(result!.Content, Does.Contain("enough credits"));
             Assert.That(deltas, Has.Count.EqualTo(1));
+        });
+    }
+
+    // Regressão (chat 9ead0a1f): Pollinations devolve o aviso de "sem
+    // créditos" COM usage reportado — aviso FORTE (crédito + ação de
+    // billing) curto vence o usage → 402 e a cadeia avança.
+    [Test]
+    public async Task Complete_Fake200_AvisoForteComUsage_Lanca402()
+    {
+        _routes["/chat/completions"] = (200,
+            "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":" +
+            "\"The account behind this API key doesn't have enough credits. " +
+            "Please top up or complete a quest, then try again.\"}," +
+            "\"finish_reason\":\"stop\"}]," +
+            "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":30}}", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var ex = await Assert.ThrowsAsync<ProviderHttpException>(async () =>
+            await NewService().CompleteAsync(Req("g", connection: "openai")));
+        Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.PaymentRequired));
+    }
+
+    // Streaming idem: aviso forte + usage>0 → 402 e nenhum delta sai —
+    // usage>0 não libera quando o prefixo já é suspeito.
+    [Test]
+    public async Task Stream_Fake200_AvisoForteComUsage_Lanca402SemDeltas()
+    {
+        _routes["/chat/completions"] = (200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"The account behind \"}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"this API key doesn't have enough credits. Please top up or complete a quest.\"}}]}\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":25}}\n" +
+            "data: [DONE]\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var ex = await Assert.ThrowsAsync<ProviderHttpException>(async () =>
+            await NewService().CompleteWithToolsStreamingAsync(
+                Req("g", connection: "openai"),
+                (d, _) => { deltas.Add(d); return Task.CompletedTask; }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex!.StatusCode, Is.EqualTo(HttpStatusCode.PaymentRequired));
+            Assert.That(deltas, Is.Empty);
+        });
+    }
+
+    // Anti-falso-positivo do aviso forte: prosa LONGA (>640) com os dois
+    // marcadores + usage segue liberando — só resposta curta perde o
+    // gate de usage.
+    [Test]
+    public async Task Stream_ProsaLongaComAmbosMarcadores_LiberaComUsage()
+    {
+        var prosa = "You don't have enough credits to run this example, "
+            + "so first top up the sandbox account. " + new string('x', 600);
+        _routes["/chat/completions"] = (200,
+            $"data: {{\"choices\":[{{\"delta\":{{\"content\":\"{prosa}\"}}}}]}}\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":80}}\n" +
+            "data: [DONE]\n", 0);
+        await SetConnectionsAsync([], [_mockUrl], ["k"]);
+
+        var deltas = new List<string>();
+        var result = await NewService().CompleteWithToolsStreamingAsync(
+            Req("g", connection: "openai"),
+            (d, _) => { deltas.Add(d); return Task.CompletedTask; });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result!.Content, Is.EqualTo(prosa));
+            Assert.That(deltas, Is.Not.Empty);
         });
     }
 

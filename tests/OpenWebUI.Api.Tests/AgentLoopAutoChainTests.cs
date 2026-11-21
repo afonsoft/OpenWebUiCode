@@ -724,4 +724,46 @@ public class AgentLoopAutoChainTests
         Assert.That(_bodies.Any(b => b.Contains("decida pela melhor")), Is.True,
             "A resposta autônoma deveria ter voltado ao modelo como tool result.");
     }
+
+    /// <summary>Regressão: override "prompt" do dono não pode estacionar
+    /// a run em always-allow — o preset é automático de verdade (só
+    /// negações duras seguem vencendo). Antes do fix a run ficava em
+    /// awaiting_approval e o AguardarRuns falhava no timeout.</summary>
+    [Test]
+    public async Task AlwaysAllow_OverridePrompt_NaoEstaciona()
+    {
+        _emit = "todo_write";
+        await SetAgentLoopAsync(maxRounds: 2, autoChain: false,
+            maxAutoChain: 0);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var overrides = scope.ServiceProvider
+                .GetRequiredService<ToolApprovalOverrideService>();
+            await overrides.MergeAsync(_userId,
+                new Dictionary<string, string?>
+                    { ["todo_write"] = "prompt" },
+                CancellationToken.None);
+        }
+        try
+        {
+            var chat = await CriarChatBuildAsync("always-allow");
+            await EnfileirarAsync(chat.Id, "builtin:todo_write");
+            var runs = await AguardarRunsDoChatAsync(chat.Id, 1);
+
+            Assert.That(runs[0].Status,
+                Is.EqualTo(ChatRunStatus.Completed),
+                "always-allow com override prompt não pode pedir "
+                    + "aprovação — o preset decide.");
+        }
+        finally
+        {
+            using var scope = _factory.Services.CreateScope();
+            var overrides = scope.ServiceProvider
+                .GetRequiredService<ToolApprovalOverrideService>();
+            await overrides.MergeAsync(_userId,
+                new Dictionary<string, string?>
+                    { ["todo_write"] = null },
+                CancellationToken.None);
+        }
+    }
 }
