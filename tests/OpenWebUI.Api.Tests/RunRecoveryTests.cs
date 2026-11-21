@@ -43,6 +43,10 @@ public class RunRecoveryTests
             $"openwebui-recovery-{Guid.NewGuid():N}.db");
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__Default", $"Data Source={_dbPath}");
+        // Watchdog em background desligado (SPEC-20261124): os testes
+        // chamam SweepOrphansAsync explicitamente — o tick real tornaria
+        // os cenários stale semeados não-determinísticos.
+        Environment.SetEnvironmentVariable("ChatRuns__WatchdogSeconds", "0");
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
         _mockBase = StartMock();
@@ -581,5 +585,102 @@ public class RunRecoveryTests
         var plan = RunRecoveryPlanner.Replay(events)!;
         Assert.That(plan.Round, Is.EqualTo(4));
         Assert.That(plan.RecoveredTools, Is.EqualTo(0));
+    }
+
+    // ---- SPEC-20261124: watchdog periódico (sweep com includeQueued:false) ----
+
+    [Test]
+    public async Task Watchdog_Periodico_NaoReenfileiraQueued()
+    {
+        var chat = await CriarChatAsync();
+        var run = await SemearRunMortaAsync(chat.Id, null,
+            status: ChatRunStatus.Queued);
+
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        await dispatcher.SweepOrphansAsync(default, includeQueued: false);
+
+        // Se o modo periódico re-enfileirasse, um worker a executaria e
+        // o status sairia de queued. Sem enqueue manual, ela fica parada.
+        await Task.Delay(800);
+        var atual = await CarregarRunAsync(run.Id);
+        Assert.That(atual.Status, Is.EqualTo(ChatRunStatus.Queued));
+    }
+
+    [Test]
+    public async Task Watchdog_RunLocalAtiva_StopEnaoReenfileira()
+    {
+        var chat = await CriarChatAsync();
+        var run = await SemearRunMortaAsync(chat.Id, null,
+            owner: ChatRunDispatcher.CurrentInstanceId);
+
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        var cts = dispatcher.RegisterRunCancelForTest(run.Id);
+        try
+        {
+            await dispatcher.SweepOrphansAsync(default, includeQueued: false);
+
+            Assert.That(cts.IsCancellationRequested, Is.True,
+                "run stale ainda ativa neste processo devia levar TryStop");
+            // Sem executor real atrás do cts, o status fica Running — o
+            // ponto é não ter sido reivindicada p/ requeue (isso faria um
+            // segundo worker rodá-la em dobro).
+            var atual = await CarregarRunAsync(run.Id);
+            Assert.That(atual.Status, Is.EqualTo(ChatRunStatus.Running));
+        }
+        finally
+        {
+            dispatcher.UnregisterRunCancelForTest(run.Id);
+            cts.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Watchdog_RunLocalZumbi_InterruptAposNTicks()
+    {
+        var chat = await CriarChatAsync();
+        var run = await SemearRunMortaAsync(chat.Id, null,
+            owner: ChatRunDispatcher.CurrentInstanceId);
+
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        var cts = dispatcher.RegisterRunCancelForTest(run.Id);
+        try
+        {
+            // Default WatchdogInterruptAfter=3: dois stops, no 3º tick
+            // com a run ainda stale → interrupted forçado.
+            for (var i = 0; i < 3; i++)
+            {
+                await dispatcher.SweepOrphansAsync(
+                    default, includeQueued: false);
+            }
+
+            var atual = await CarregarRunAsync(run.Id);
+            Assert.That(atual.Status, Is.EqualTo(ChatRunStatus.Interrupted));
+            Assert.That(atual.Error, Does.Contain("Watchdog"));
+        }
+        finally
+        {
+            dispatcher.UnregisterRunCancelForTest(run.Id);
+            cts.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task Watchdog_StaleDonoMorto_ResumivelReivindicada()
+    {
+        var chat = await CriarChatAsync();
+        var run = await SemearRunMortaAsync(chat.Id, null);
+        await SemearEventosAsync(run.Id,
+            (1, RunEventWriter.Types.Snapshot, SnapshotJson(1,
+                [new ChatCompletionMessage("system", "sys"),
+                 new ChatCompletionMessage("user", "oi")], [], 0)));
+
+        var dispatcher = _factory.Services.GetRequiredService<ChatRunDispatcher>();
+        await dispatcher.SweepOrphansAsync(default, includeQueued: false);
+
+        // Mesmo caminho do boot: reivindica + requeue + retomada conclui
+        // com o mock respondendo o final.
+        var final = await AguardarFinalAsync(chat.Id, run.Id);
+        Assert.That(final.Status, Is.EqualTo("completed"),
+            $"run stale de dono morto não retomou via watchdog: {final.Status}");
     }
 }
