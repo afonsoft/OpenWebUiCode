@@ -61,11 +61,11 @@ public sealed class DevPipelineBuiltinTool(
             },
             "worker_model": {
               "type": "string",
-              "description": "Optional model id for the plan/implement/test/verify phases — typically the cheaper worker model."
+              "description": "Optional model ref for the plan/implement/test/verify phases — typically the cheaper worker model. chain:/fusion: refs are accepted. When omitted and this run is fusion:{leader}>{sidekick}, workers default to the sidekick chain and plan to the leader."
             },
             "fix_model": {
               "type": "string",
-              "description": "Optional model id for fix phases — typically the stronger corrector model."
+              "description": "Optional model ref for the fix phase — typically the stronger diagnoser. When omitted and this run is fusion, fix defaults to the leader."
             },
             "pipeline_id": {
               "type": "string",

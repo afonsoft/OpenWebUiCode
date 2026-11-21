@@ -137,8 +137,15 @@ pode desviar; o nosso não pode "esquecer" validate/commit).
 ### RF-007: Modelo por fase
 
 - Args `worker_model` (aplica a `plan`/`implement`/`test`/`verify`) e
-  `fix_model` (aplica a `fix`) — ids literais; run da fase usa `request with
-  { Model = … }`. Permite executor barato + corretor forte sem config extra.
+  `fix_model` (aplica a `fix`) — ids literais ou refs `chain:`/`fusion:`/
+  `adaptive:`; run da fase usa `request with { Model = … }`. Permite
+  executor barato + corretor forte sem config extra.
+- **Defaults fusion (incremento 2026-11-22)**: quando o caller não passa
+  os args e a run pai é `fusion:{L}>{S}` (kv `r:{run}:fusion.{leader,
+  sidekick}`), os papéis herdam o par — `plan`/`fix` ← leader
+  (planner/diagnoser), `implement`/`test`/`verify` ← sidekick (kv já vem
+  como `chain:{S,…,L}` com leaders de fallback final). Overrides
+  explícitos sempre vencem.
 
 ### RF-008: Liveness + replace (stall recovery)
 
@@ -171,6 +178,8 @@ pode desviar; o nosso não pode "esquecer" validate/commit).
 - AC-8: `plan:true` → run `plan` executa antes de `implement` e seu
   `pipeline_result.plan` é injetado no prompt da implementação.
 - AC-9: `worker_model`/`fix_model` refletem em `ChatRun.Model` das fases.
+- AC-9b: pai fusion sem args → `Models[plan|fix]`=leader,
+  `Models[implement|test|verify]`=sidekick; args explícitos vencem.
 - AC-10: run de fase `Running` com `HeartbeatAt` stale → substituída com
   prompt de retomada; esgotado `MaxStallRetries` → `failed`/`stalled`.
 - AC-11: validação verde dispara `verify`; `verdict:"issues"` → fix com
