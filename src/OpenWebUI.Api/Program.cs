@@ -305,6 +305,11 @@ builder.Services.AddScoped<IBuiltinChatTool, WritePlanBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TeamTaskBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TeamMessageBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TeamStatusBuiltinTool>();
+// Dev pipeline (SPEC-20261121-dev-pipeline): orquestrador implement→test→
+// validate→commit + tool de validação pontual.
+builder.Services.AddScoped<OpenWebUI.Api.DevPipeline.DevPipelineService>();
+builder.Services.AddScoped<IBuiltinChatTool, AgentValidateBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, OpenWebUI.Api.DevPipeline.DevPipelineBuiltinTool>();
 // LSP (SPEC-20261009-lsp-diagnostics): singleton dono dos processos
 // filhos + tools read-only builtin:lsp_*.
 builder.Services.AddSingleton<LspService>();
