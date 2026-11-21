@@ -96,7 +96,7 @@ public static class PermissionRuleset
     /// </summary>
     private static readonly HashSet<string> PlanExecGated = new(StringComparer.OrdinalIgnoreCase)
     {
-        "shell_exec", "code_interpreter",
+        "shell_exec", "code_interpreter", "agent_validate",
     };
 
     /// <summary>
@@ -132,7 +132,7 @@ public static class PermissionRuleset
         "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
         "lsp_definition", "lsp_references", "lsp_hover",
         "notebook_read", "notebook_edit", "tool_install",
-        "code_search",
+        "code_search", "agent_validate", "dev_pipeline",
     };
 
     /// <summary>
@@ -145,6 +145,7 @@ public static class PermissionRuleset
         "worktree_diff", "worktree_merge", "specs",
         "lsp_diagnostics", "lsp_symbols", "lsp_workspace_symbols",
         "lsp_definition", "lsp_references", "lsp_hover",
+        "agent_validate", "dev_pipeline",
     };
 
     public static PermissionDecision Evaluate(

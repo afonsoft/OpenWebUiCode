@@ -841,8 +841,11 @@ public sealed class AgentModeContributor : ISystemPromptContributor
                 + "(commit parcial é entrega quebrada), faça push da "
                 + "branch de trabalho e abra o PR para o usuário revisar — "
                 + "nunca entregue apenas um link 'crie o PR' nem delegue a "
-                + "etapa final. Merge na branch protegida segue exigindo "
-                + "aprovação humana.",
+                + "etapa final. Para tarefas multi-etapa use "
+                + "builtin_dev_pipeline (orquestra implement→test→validate→"
+                + "commit no servidor); para validação pontual use "
+                + "builtin_agent_validate. Merge na branch protegida segue "
+                + "exigindo aprovação humana.",
         ]);
     }
 }

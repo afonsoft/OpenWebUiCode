@@ -300,6 +300,20 @@ public sealed class WorktreeService(
         await RunGitAsync(worktreePath, ct, "status", "--porcelain");
 
     /// <summary>
+    /// git genérico no workdir (SPEC-20261121-dev-pipeline): devolve stdout
+    /// em sucesso, <c>null</c> em falha — usado pelo commit determinístico
+    /// do orquestrador.
+    /// </summary>
+    public static async Task<string?> GitOutputAsync(
+        string workdir, CancellationToken ct, params string[] args) =>
+        await RunGitAsync(workdir, ct, args);
+
+    /// <summary>git genérico: devolve a 1ª linha do erro ou null em sucesso.</summary>
+    public static async Task<string?> GitErrorAsync(
+        string workdir, CancellationToken ct, params string[] args) =>
+        await RunGitLoggedAsync(workdir, ct, args);
+
+    /// <summary>
     /// <c>git diff HEAD</c> do worktree — <paramref name="stat"/>=true devolve
     /// só <c>--stat</c>; senão o patch completo (binário, sem renames). O
     /// intent-to-add faz o diff cobrir também arquivos untracked; o índice é
