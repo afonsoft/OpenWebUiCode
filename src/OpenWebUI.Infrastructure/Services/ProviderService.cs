@@ -1066,10 +1066,14 @@ public class ProviderService(
         // Fake-200 camada-2: o aviso de billing É o content do assistant
         // (Pollinations/OmniRoute-style). O gate em completion_tokens
         // ausente/≤0 mantém o contrato anti-falso-positivo — prosa real
-        // sempre carrega uso.
-        if ((usage?.CompletionTokens ?? 0) <= 0
-            && content.Length > 0
-            && MaskedProviderError.MatchesContent(content))
+        // sempre carrega uso. Aviso FORTE (crédito+ação de billing) numa
+        // resposta curta vence o usage: gateway reporta tokens até no
+        // "sem créditos" (chat 9ead0a1f).
+        if (content.Length > 0
+            && MaskedProviderError.MatchesContent(content)
+            && ((usage?.CompletionTokens ?? 0) <= 0
+                || (content.Length <= MaskedProviderError.NoticeSizedMaxChars
+                    && MaskedProviderError.MatchesStrongNotice(content))))
         {
             throw MaskedProviderError.As402(content, midStream: false);
         }
@@ -1678,10 +1682,15 @@ public class ProviderService(
             {
                 return;
             }
-            if (diag.StreamUsage?.CompletionTokens > 0
-                || toolCallBuffers > 0
+            // usage>0 não libera quando o prefixo já é aviso de billing
+            // FORTE — gateway como o Pollinations reporta tokens até no
+            // aviso de "sem créditos".
+            var suspect = _prefix.Length > 0
+                && MaskedProviderError.MatchesStrongNotice(_prefix.ToString());
+            if (toolCallBuffers > 0
                 || diag.ReasoningChars > 0
-                || _prefix.Length >= MaskedProviderError.StreamNoticeMaxChars)
+                || _prefix.Length >= MaskedProviderError.StreamNoticeMaxChars
+                || (diag.StreamUsage?.CompletionTokens > 0 && !suspect))
             {
                 await FlushAsync(onDelta, ct);
             }
@@ -1704,9 +1713,16 @@ public class ProviderService(
             var prefix = accumulatedContent.Length <= MaskedProviderError.StreamNoticeMaxChars
                 ? accumulatedContent
                 : accumulatedContent[..MaskedProviderError.StreamNoticeMaxChars];
+            // usage>0 não salva aviso FORTE curto — Pollinations reporta
+            // tokens até no "sem créditos"; prosa longa com os dois
+            // marcadores segue liberando (contrato anti-falso-positivo).
             if (prefix.Length > 0
-                && diag.StreamUsage?.CompletionTokens is not > 0
-                && MaskedProviderError.MatchesContent(prefix))
+                && MaskedProviderError.MatchesContent(prefix)
+                && (diag.StreamUsage?.CompletionTokens is not > 0
+                    || (accumulatedContent.Length
+                            <= MaskedProviderError.NoticeSizedMaxChars
+                        && MaskedProviderError.MatchesStrongNotice(
+                            accumulatedContent))))
             {
                 throw MaskedProviderError.As402(prefix, midStream: true);
             }
@@ -5170,9 +5186,11 @@ public class ProviderService(
             throw MaskedProviderError.As402(envText, midStream: false);
         }
         var content = Str(Prop(Prop(json, MessageKey), ContentKey)) ?? string.Empty;
-        if ((ParseUsage(json, openAi: false)?.CompletionTokens ?? 0) <= 0
-            && content.Length > 0
-            && MaskedProviderError.MatchesContent(content))
+        if (content.Length > 0
+            && MaskedProviderError.MatchesContent(content)
+            && ((ParseUsage(json, openAi: false)?.CompletionTokens ?? 0) <= 0
+                || (content.Length <= MaskedProviderError.NoticeSizedMaxChars
+                    && MaskedProviderError.MatchesStrongNotice(content))))
         {
             throw MaskedProviderError.As402(content, midStream: false);
         }
@@ -5216,9 +5234,11 @@ public class ProviderService(
         var content = Prop(json, ChoicesKey) is JsonArray { Count: > 0 } arr
             ? Str(Prop(Prop(arr[0], MessageKey), ContentKey)) ?? string.Empty
             : string.Empty;
-        if ((ParseUsage(json, openAi: true)?.CompletionTokens ?? 0) <= 0
-            && content.Length > 0
-            && MaskedProviderError.MatchesContent(content))
+        if (content.Length > 0
+            && MaskedProviderError.MatchesContent(content)
+            && ((ParseUsage(json, openAi: true)?.CompletionTokens ?? 0) <= 0
+                || (content.Length <= MaskedProviderError.NoticeSizedMaxChars
+                    && MaskedProviderError.MatchesStrongNotice(content))))
         {
             throw MaskedProviderError.As402(content, midStream: false);
         }

@@ -564,13 +564,14 @@ public class AgentModeE2ETests
     }
 
     [Test]
-    public async Task OverridePrompt_EmAlwaysAllow_PerguntaMesmoAssim()
+    public async Task OverridePrompt_EmAlwaysAllow_NaoPergunta()
     {
         _emit = "file_write";
         try
         {
-            // always-allow liberaria direto — o override prompt força a
-            // pergunta mesmo assim (RF-002: prompt vence preset).
+            // always-allow é automático de verdade: overrides de prompt
+            // (ask não-negação) não podem estacionar a run — só negações
+            // duras seguem vencendo o preset.
             var chat = await CriarChatBuildAsync("always-allow");
             await SetOverrideAsync("file_write", "prompt");
 
@@ -580,10 +581,9 @@ public class AgentModeE2ETests
 
             Assert.Multiple(() =>
             {
-                Assert.That(eventos.Any(e => e.Event == "approval_asked"
-                    && e.Data.Contains("builtin:file_write")), Is.True,
-                    "override prompt tinha de emitir approval_asked");
-                // Aprovada → executou e a run completou.
+                Assert.That(eventos.Any(e => e.Event == "approval_asked"), Is.False,
+                    "always-allow não pode pedir aprovação por override prompt");
+                Assert.That(eventos.Any(e => e.Event == "tool_result"), Is.True);
                 Assert.That(eventos.Any(e => e.Event == "status"
                     && e.Data.Contains("\"completed\"")), Is.True);
             });

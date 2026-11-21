@@ -2860,7 +2860,8 @@ public sealed class ChatRunExecutor(
         // policy/ruleset e antes do override/preset — deny de regra vence
         // inclusive aprovação salva.
         var (rulesDecision, rulesPrompt) =
-            await ApplyPermissionRulesAsync(run, tool, call, builtinContext, ct);
+            await ApplyPermissionRulesAsync(run, tool, call, builtinContext,
+                gateInfo?.ApprovalPreset, ct);
         if (rulesDecision is not null)
         {
             return rulesDecision;
@@ -2871,6 +2872,15 @@ public sealed class ChatRunExecutor(
         if (overrideDecision is not null)
         {
             return overrideDecision;
+        }
+
+        // always-allow é automático de verdade: as negações duras já
+        // foram avaliadas (ruleset/admin, regra deny, aprovação salva
+        // deny, override deny) — regra ask e override prompt não seguram
+        // nada neste preset.
+        if (gateInfo?.ApprovalPreset == "always-allow")
+        {
+            return ToolGateDecision.Allow;
         }
 
         forcePrompt |= rulesPrompt;
@@ -2997,7 +3007,8 @@ public sealed class ChatRunExecutor(
     /// </summary>
     private async Task<(ToolGateDecision? Decision, bool ForcePrompt)> ApplyPermissionRulesAsync(
         ChatRun run, Tool? tool, ProviderToolCall call,
-        BuiltinToolContext builtinContext, CancellationToken ct)
+        BuiltinToolContext builtinContext, string? approvalPreset,
+        CancellationToken ct)
     {
         var argPattern = PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson);
 
@@ -3005,7 +3016,7 @@ public sealed class ChatRunExecutor(
         var external = ExternalPathOf(call, builtinContext.WorkspacePath);
         if (external is not null
             && await GateExternalPathAsync(
-                run, tool, call, external, builtinContext, ct)
+                run, tool, call, external, builtinContext, approvalPreset, ct)
                 is { } extDecision)
         {
             return (extDecision, false);
@@ -3049,7 +3060,8 @@ public sealed class ChatRunExecutor(
     /// <c>null</c> quando o fluxo continua para as regras ordenadas.</summary>
     private async Task<ToolGateDecision?> GateExternalPathAsync(
         ChatRun run, Tool? tool, ProviderToolCall call, string external,
-        BuiltinToolContext builtinContext, CancellationToken ct)
+        BuiltinToolContext builtinContext, string? approvalPreset,
+        CancellationToken ct)
     {
         var extEffect = await rules.EvaluateAsync(
             run.UserId, "external_directory", external, ct);
@@ -3060,6 +3072,14 @@ public sealed class ChatRunExecutor(
                 + "external_directory do usuário é deny.");
         }
         if (string.Equals(extEffect, "allow", StringComparison.OrdinalIgnoreCase))
+        {
+            externalAccess.Allow(run.Id, external);
+            return null;
+        }
+        // Sem regra cadastrada o default era perguntar — em always-allow
+        // o preset decide: libera o path para a run e segue para as
+        // regras ordenadas (deny delas ainda vence).
+        if (approvalPreset == "always-allow")
         {
             externalAccess.Allow(run.Id, external);
             return null;

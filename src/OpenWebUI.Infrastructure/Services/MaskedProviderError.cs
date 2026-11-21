@@ -22,6 +22,34 @@ internal static class MaskedProviderError
     /// do limite e libera o buffer (OmniRoute <c>MASKED_STREAM_NOTICE_MAX</c>).</summary>
     public const int StreamNoticeMaxChars = 512;
 
+    /// <summary>Teto da resposta INTEIRA para o marcador de billing
+    /// vencer o usage reportado — gateways (Pollinations) emitem
+    /// completion_tokens até no aviso de crédito, então o gate de
+    /// usage sozinho deixava o fake-200 passar.</summary>
+    public const int NoticeSizedMaxChars = StreamNoticeMaxChars + 128;
+
+    /// <summary>Termo de crédito/conta esgotado — "enough credits",
+    /// "insufficient credits", "credit balance".</summary>
+    private static readonly Regex CreditTerm = new(
+        "\\b(enough\\s+credits?|insufficient\\s+credits?|out\\s+of\\s+credits?"
+        + "|credit\\s+balance|credits?\\s+exhausted)\\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(2));
+
+    /// <summary>Ação de billing pedida — "top up", "recharge",
+    /// "purchase credits", "upgrade", "quest" (Pollinations).</summary>
+    private static readonly Regex ActionTerm = new(
+        "\\b(top\\s+up|recharge|purchase\\s+(more\\s+)?credits?"
+        + "|add\\s+credits?|complete\\s+a\\s+quest|upgrade\\s+(your|the|to))\\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(2));
+
+    /// <summary>Aviso de billing FORTE — termo de crédito esgotado E
+    /// ação de billing juntos (o aviso real do Pollinations tem os dois:
+    /// "doesn't have enough credits... top up / complete a quest").
+    /// Um só marcador pode ser prosa legítima; os dois numa resposta
+    /// curta só é o aviso — vence o usage reportado pelo gateway.</summary>
+    public static bool MatchesStrongNotice(string content) =>
+        CreditTerm.IsMatch(content) && ActionTerm.IsMatch(content);
+
     /// <summary>Camada-1 (envelope, #6427): termos amplos de esgotamento —
     /// só aplicados nos campos de erro (<c>error/message/detail</c>
     /// top-level), nunca na prosa do assistant.</summary>
