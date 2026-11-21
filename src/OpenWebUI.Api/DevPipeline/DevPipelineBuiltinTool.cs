@@ -24,7 +24,9 @@ public sealed class DevPipelineBuiltinTool(
             + "(deterministic test suite) and commits (deterministic git) "
             + "for you, reporting back to this chat when done. op='start' "
             + "launches in background; 'status'/'resume' inspect or "
-            + "re-drive a pipeline by pipeline_id.";
+            + "re-drive a pipeline by pipeline_id; 'answer' resolves a "
+            + "workflow gate step parked for human approval "
+            + "(approved=true|false + answer text).";
 
     /// <inheritdoc />
     public string ParametersJson => """
@@ -33,8 +35,8 @@ public sealed class DevPipelineBuiltinTool(
           "properties": {
             "op": {
               "type": "string",
-              "enum": ["start", "status", "resume"],
-              "description": "'start' (default) launches a new pipeline; 'status' reads its state; 'resume' re-drives an interrupted one."
+              "enum": ["start", "status", "resume", "answer"],
+              "description": "'start' (default) launches a new pipeline; 'status' reads its state; 'resume' re-drives an interrupted one; 'answer' resolves a parked workflow gate."
             },
             "task": {
               "type": "string",
@@ -74,7 +76,16 @@ public sealed class DevPipelineBuiltinTool(
             },
             "pipeline_id": {
               "type": "string",
-              "description": "Pipeline id (returned by op=start) — required for status/resume."
+              "description": "Pipeline id (returned by op=start) — required for status/resume/answer."
+            },
+            "approved": {
+              "type": "boolean",
+              "description": "op=answer: true (default) approves the pending gate; false rejects it.",
+              "default": true
+            },
+            "answer": {
+              "type": "string",
+              "description": "op=answer: free-text decision/rationale recorded on the gate result."
             }
           }
         }
@@ -93,6 +104,7 @@ public sealed class DevPipelineBuiltinTool(
             "start" => await StartAsync(args, context, ct),
             "status" => await StatusAsync(args, ct),
             "resume" => await ResumeAsync(args, ct),
+            "answer" => await AnswerAsync(args, ct),
             _ => new BuiltinToolResult(
                 $"op '{op}' inválido — use start, status ou resume."),
         };
@@ -174,6 +186,8 @@ public sealed class DevPipelineBuiltinTool(
                     + $"runs=[{string.Join(", ", state.Runs.Keys)}]"
                     + (state.ValidationOutput is { } v ? $", validação={v}" : "")
                     + (state.CommitSha is { } s ? $", commit={s}" : "")
+                    + (state.AwaitingGate is { } g
+                        ? $", GATE pendente='{g}' (op=answer)" : "")
                     + (state.Error is { } e ? $", erro={e}" : "")
                     + $" — chat /c/{state.ChildChatId}",
                 new
@@ -184,6 +198,7 @@ public sealed class DevPipelineBuiltinTool(
                     runs = state.Runs,
                     validation = state.ValidationOutput,
                     commit = state.CommitSha,
+                    awaitingGate = state.AwaitingGate,
                     error = state.Error,
                 });
     }
@@ -223,6 +238,48 @@ public sealed class DevPipelineBuiltinTool(
         return new BuiltinToolResult(
             $"Pipeline {id} re-disparada a partir da fase '{state.Phase}'.",
             new { pipelineId = id, resumed = true, state.Phase });
+    }
+
+    /// <summary>Resolve um gate estacionado (SPEC-20261124-workflow-v2):
+    /// grava a resposta no estado e re-dispara o runner — o workflow
+    /// segue do step seguinte ao gate.</summary>
+    private async Task<BuiltinToolResult> AnswerAsync(
+        JsonElement args, CancellationToken ct)
+    {
+        var id = ReadString(args, "pipeline_id");
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return new BuiltinToolResult(
+                "Parâmetro 'pipeline_id' é obrigatório em op=answer.");
+        }
+        var approved = !args.TryGetProperty("approved", out var ap)
+            || ap.ValueKind != JsonValueKind.False;
+        using var scope = scopes.CreateScope();
+        var service = scope.ServiceProvider
+            .GetRequiredService<DevPipelineService>();
+        var gate = await service.AnswerGateAsync(id,
+            approved ? "approved" : "rejected",
+            ReadString(args, "answer"), ct);
+        if (gate is null)
+        {
+            return new BuiltinToolResult($"Pipeline '{id}' não encontrada.");
+        }
+        if (gate.Length == 0)
+        {
+            return new BuiltinToolResult(
+                $"Pipeline {id} não tem gate pendente — nada a responder.");
+        }
+        _ = Task.Run(async () =>
+        {
+            using var s = scopes.CreateScope();
+            await s.ServiceProvider.GetRequiredService<DevPipelineService>()
+                .RunAsync(id);
+        });
+        return new BuiltinToolResult(
+            $"Gate '{gate}' da pipeline {id} respondido "
+                + $"({(approved ? "approved" : "rejected")}) — workflow "
+                + "retomando.",
+            new { pipelineId = id, gate, approved });
     }
 
     private static string? ReadString(JsonElement args, string name) =>

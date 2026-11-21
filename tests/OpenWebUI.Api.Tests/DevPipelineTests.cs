@@ -570,6 +570,15 @@ public class DevPipelineUnitTests
             Assert.That(RunWorkflowBuiltinTool.Validate(
                 [new DevPipelineService.WorkflowStep { Kind = "tool", Key = "t" }]),
                 Does.Contain("'tool'"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep { Kind = "sub", Key = "s" }]),
+                Does.Contain("'workflow'"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                {
+                    Kind = "sub", Key = "s", Workflow = "lib",
+                }]),
+                Is.Null);
         });
     }
 
@@ -655,20 +664,174 @@ public class DevPipelineUnitTests
         });
     }
 
+    // ---------- run_workflow v2: when / optional / gate ----------
+
+    [Test]
+    public void EvaluateWhen_TruthTable()
+    {
+        var state = NewState();
+        state.PhaseResults["ok"] = new DevPipelineService.PhaseResult(
+            null, "s", "pass", null, null, null);
+        state.PhaseResults["bad"] = new DevPipelineService.PhaseResult(
+            null, "s", "issues", null, null, null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.EvaluateWhen(
+                null, state, out _), Is.True, "null roda sempre");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "always", state, out _), Is.True, "always roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:ok", state, out _), Is.True, "passed c/ pass");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:bad", state, out _), Is.False,
+                "passed c/ issues não roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "failed:bad", state, out _), Is.True,
+                "failed c/ issues roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "failed:ok", state, out _), Is.False,
+                "failed c/ pass não roda");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:missing", state, out _), Is.False,
+                "key ausente → não satisfeita (skip)");
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "failed:missing", state, out _), Is.False,
+                "key ausente não é 'failed'");
+        });
+    }
+
+    [Test]
+    public void EvaluateWhen_FormatoInvalido_Erro()
+    {
+        var state = NewState();
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "bogus", state, out var e1), Is.False);
+            Assert.That(e1, Does.Contain("inválido"));
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "maybe:ok", state, out var e2), Is.False);
+            Assert.That(e2, Does.Contain("inválido"));
+            Assert.That(DevPipelineService.EvaluateWhen(
+                "passed:", state, out var e3), Is.False);
+            Assert.That(e3, Does.Contain("inválido"));
+        });
+    }
+
+    [Test]
+    public void WorkflowValidate_WhenEGate()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "gate", Key = "ok" }]), Is.Null,
+                "gate é kind válido");
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "validate", Key = "lint" },
+                 new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "fix", When = "failed:lint" }]),
+                Is.Null, "when referenciando step anterior passa");
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "a", When = "maybe:x" }]),
+                Does.Contain("when inválido"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "a", When = "failed:dep" },
+                 new DevPipelineService.WorkflowStep
+                    { Kind = "validate", Key = "dep" }]),
+                Does.Contain("anterior"),
+                "when referenciando step posterior falha");
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "llm", Key = "a", When = "passed:a" }]),
+                Does.Contain("anterior"), "self-ref falha");
+        });
+    }
+
+    [Test]
+    public void EffectiveRunId_CadeiaStall_ERetrySuffix()
+    {
+        var state = NewState();
+        Assert.That(DevPipelineService.EffectiveRunId(state, "w"),
+            Is.Null, "sem run → null");
+
+        DevPipelineService.RecordRun(state, "w", "r1");
+        Assert.That(DevPipelineService.EffectiveRunId(state, "w"),
+            Is.EqualTo("r1"), "primeira tentativa na key base");
+
+        DevPipelineService.RecordRun(state, "w", "r2");
+        DevPipelineService.RecordRun(state, "w", "r3");
+        Assert.Multiple(() =>
+        {
+            Assert.That(state.Runs["w"], Is.EqualTo("r1"),
+                "key base preserva a 1ª tentativa");
+            Assert.That(state.Runs["w-stall1"], Is.EqualTo("r2"));
+            Assert.That(state.Runs["w-stall2"], Is.EqualTo("r3"));
+            Assert.That(DevPipelineService.EffectiveRunId(state, "w"),
+                Is.EqualTo("r3"),
+                "run efetiva = última sucessora -stallN");
+        });
+    }
+
+    // ---------- workflows nomeados (SPEC-20261124-named-workflows) ----------
+
+    [Test]
+    public void ValidWorkflowName_AlfanumericoMaisPontos()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.ValidWorkflowName("nightly"),
+                Is.True);
+            Assert.That(DevPipelineService.ValidWorkflowName("a-b_c.d"),
+                Is.True);
+            Assert.That(DevPipelineService.ValidWorkflowName(null),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName(""),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName("a b"),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName("a/b"),
+                Is.False);
+            Assert.That(DevPipelineService.ValidWorkflowName(
+                new string('x', 65)), Is.False);
+        });
+    }
+
     [Test]
     public void WorkflowStep_DesserializaDoJson()
     {
         var steps = JsonSerializer.Deserialize<
             List<DevPipelineService.WorkflowStep>>(
-            """[{"kind":"parallel","key":"build","items":[{"id":"a","prompt":"faz a","files":["x.cs"]}]},{"kind":"commit","key":"git","push":true}]""",
+            """[{"kind":"parallel","key":"build","items":[{"id":"a","prompt":"faz a","files":["x.cs"]}]},{"kind":"commit","key":"git","push":true},{"kind":"gate","key":"ok","optional":true},{"kind":"llm","key":"dep","when":"passed:ok","timeout_sec":300}]""",
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        Assert.That(steps, Has.Count.EqualTo(2));
+        Assert.That(steps, Has.Count.EqualTo(4));
         Assert.Multiple(() =>
         {
             Assert.That(steps![0].Items![0].Id, Is.EqualTo("a"));
             Assert.That(steps[0].Items[0].Files,
                 Is.EqualTo(new[] { "x.cs" }));
             Assert.That(steps[1].Push, Is.True);
+            Assert.That(steps[2].Kind, Is.EqualTo("gate"));
+            Assert.That(steps[2].Optional, Is.True);
+            Assert.That(steps[3].When, Is.EqualTo("passed:ok"));
+            Assert.That(steps[3].TimeoutSec, Is.EqualTo(300));
+        });
+    }
+
+    [Test]
+    public void WorkflowStep_SubDesserializaWorkflow()
+    {
+        var steps = JsonSerializer.Deserialize<
+            List<DevPipelineService.WorkflowStep>>(
+            """[{"kind":"sub","key":"lib","workflow":"helpers"}]""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Multiple(() =>
+        {
+            Assert.That(steps![0].Kind, Is.EqualTo("sub"));
+            Assert.That(steps[0].Workflow, Is.EqualTo("helpers"));
         });
     }
 
@@ -851,6 +1014,48 @@ public class DevPipelineIntegrationTests
     private DevPipelineService NewService() =>
         _factory.Services.CreateScope().ServiceProvider
             .GetRequiredService<DevPipelineService>();
+
+    [Test]
+    public async Task NamedWorkflow_SalvaListaCarregaERemove()
+    {
+        var svc = NewService();
+        var wf = new DevPipelineService.NamedWorkflow(
+            [new DevPipelineService.WorkflowStep
+                { Kind = "validate", Key = "v" }],
+            Push: true, WorkerModel: "m1", FixModel: "m2", MaxParallel: 3);
+
+        await svc.SaveWorkflowAsync("u-wf", "nightly", wf,
+            CancellationToken.None);
+
+        var got = await svc.GetWorkflowAsync("u-wf", "nightly",
+            CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(got, Is.Not.Null);
+            Assert.That(got!.Steps[0].Kind, Is.EqualTo("validate"));
+            Assert.That(got.Push, Is.True);
+            Assert.That(got.WorkerModel, Is.EqualTo("m1"));
+            Assert.That(got.MaxParallel, Is.EqualTo(3));
+        });
+
+        var names = await svc.ListWorkflowsAsync("u-wf",
+            CancellationToken.None);
+        Assert.That(names, Does.Contain("nightly"));
+
+        // Isolamento por usuário — outro userId não enxerga.
+        Assert.That(await svc.GetWorkflowAsync("u-outro", "nightly",
+            CancellationToken.None), Is.Null);
+
+        await svc.DeleteWorkflowAsync("u-wf", "nightly",
+            CancellationToken.None);
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await svc.GetWorkflowAsync("u-wf", "nightly",
+                CancellationToken.None), Is.Null);
+            Assert.That(await svc.ListWorkflowsAsync("u-wf",
+                CancellationToken.None), Does.Not.Contain("nightly"));
+        });
+    }
 
     [Test]
     public async Task StartAsync_CriaChatFilhoBuildEKv()
@@ -1179,7 +1384,8 @@ public class DevPipelineIntegrationTests
         var semSteps = await tool.ExecuteAsync(
             JsonDocument.Parse("""{"task":"x"}""").RootElement,
             ctx, CancellationToken.None);
-        Assert.That(semSteps.Text, Does.Contain("'steps'"));
+        Assert.That(semSteps.Text, Does.Contain("steps vazio"),
+            "sem steps nem workflow nomeado → erro de steps ausente");
 
         var stepsInvalidos = await tool.ExecuteAsync(
             JsonDocument.Parse(
@@ -1187,5 +1393,71 @@ public class DevPipelineIntegrationTests
                 .RootElement,
             ctx, CancellationToken.None);
         Assert.That(stepsInvalidos.Text, Does.Contain("kind desconhecido"));
+    }
+
+    [Test]
+    public async Task PipelineBoard_PostLERead_ComIsolamentoPorUsuario()
+    {
+        var tool = new PipelineBoardBuiltinTool(
+            _factory.Services.GetRequiredService<IServiceScopeFactory>());
+        var board = $"tst-{Guid.NewGuid():N}";
+        var ctxU1 = new BuiltinToolContext("u1", "chat1", "run1",
+            Path.GetTempPath(), Path.GetTempPath());
+        var ctxU2 = new BuiltinToolContext("u2", "chat2", "run2",
+            Path.GetTempPath(), Path.GetTempPath());
+
+        var post = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                $$"""{"op":"post","board":"{{board}}","message":"api: POST /items pronto","author":"item-a"}""")
+                .RootElement,
+            ctxU1, CancellationToken.None);
+        Assert.That(post.Text, Does.Contain("postada"));
+
+        var read = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                $$"""{"op":"read","board":"{{board}}"}""").RootElement,
+            ctxU1, CancellationToken.None);
+        Assert.That(read.Text, Does.Contain("item-a: api: POST /items"));
+
+        // Mesmo board id, outro usuário → vazio (isolamento por kv).
+        var readU2 = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                $$"""{"op":"read","board":"{{board}}"}""").RootElement,
+            ctxU2, CancellationToken.None);
+        Assert.That(readU2.Text, Does.Contain("sem mensagens novas"));
+
+        var semBoard = await tool.ExecuteAsync(
+            JsonDocument.Parse("""{"op":"read"}""").RootElement,
+            ctxU1, CancellationToken.None);
+        Assert.That(semBoard.Text, Does.Contain("'board'"));
+    }
+
+    [Test]
+    public async Task RunWorkflowTool_Sub_ErrosDeExpansao()
+    {
+        var tool = new RunWorkflowBuiltinTool(
+            _factory.Services.GetRequiredService<IServiceScopeFactory>());
+        var ctx = new BuiltinToolContext("u-sub", null, null,
+            Path.GetTempPath(), Path.GetTempPath());
+
+        var inexistente = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                """{"task":"x","steps":[{"kind":"sub","key":"s","workflow":"fantasma"}]}""")
+                .RootElement,
+            ctx, CancellationToken.None);
+        Assert.That(inexistente.Text, Does.Contain("não encontrado"));
+
+        // Workflow 'loop' contém um sub→'loop' — ciclo direto.
+        await NewService().SaveWorkflowAsync("u-sub", "loop",
+            new DevPipelineService.NamedWorkflow(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "sub", Key = "s", Workflow = "loop" }],
+                null, null, null, null),
+            CancellationToken.None);
+        var ciclo = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                """{"task":"x","workflow":"loop"}""").RootElement,
+            ctx, CancellationToken.None);
+        Assert.That(ciclo.Text, Does.Contain("ciclo"));
     }
 }

@@ -133,6 +133,7 @@ public static class PermissionRuleset
         "lsp_definition", "lsp_references", "lsp_hover",
         "notebook_read", "notebook_edit", "tool_install",
         "code_search", "agent_validate", "dev_pipeline", "run_workflow",
+        "pipeline_board",
     };
 
     /// <summary>
