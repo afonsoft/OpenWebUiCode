@@ -570,6 +570,15 @@ public class DevPipelineUnitTests
             Assert.That(RunWorkflowBuiltinTool.Validate(
                 [new DevPipelineService.WorkflowStep { Kind = "tool", Key = "t" }]),
                 Does.Contain("'tool'"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep { Kind = "sub", Key = "s" }]),
+                Does.Contain("'workflow'"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                {
+                    Kind = "sub", Key = "s", Workflow = "lib",
+                }]),
+                Is.Null);
         });
     }
 
@@ -809,6 +818,20 @@ public class DevPipelineUnitTests
             Assert.That(steps[2].Optional, Is.True);
             Assert.That(steps[3].When, Is.EqualTo("passed:ok"));
             Assert.That(steps[3].TimeoutSec, Is.EqualTo(300));
+        });
+    }
+
+    [Test]
+    public void WorkflowStep_SubDesserializaWorkflow()
+    {
+        var steps = JsonSerializer.Deserialize<
+            List<DevPipelineService.WorkflowStep>>(
+            """[{"kind":"sub","key":"lib","workflow":"helpers"}]""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Multiple(() =>
+        {
+            Assert.That(steps![0].Kind, Is.EqualTo("sub"));
+            Assert.That(steps[0].Workflow, Is.EqualTo("helpers"));
         });
     }
 
@@ -1407,5 +1430,34 @@ public class DevPipelineIntegrationTests
             JsonDocument.Parse("""{"op":"read"}""").RootElement,
             ctxU1, CancellationToken.None);
         Assert.That(semBoard.Text, Does.Contain("'board'"));
+    }
+
+    [Test]
+    public async Task RunWorkflowTool_Sub_ErrosDeExpansao()
+    {
+        var tool = new RunWorkflowBuiltinTool(
+            _factory.Services.GetRequiredService<IServiceScopeFactory>());
+        var ctx = new BuiltinToolContext("u-sub", null, null,
+            Path.GetTempPath(), Path.GetTempPath());
+
+        var inexistente = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                """{"task":"x","steps":[{"kind":"sub","key":"s","workflow":"fantasma"}]}""")
+                .RootElement,
+            ctx, CancellationToken.None);
+        Assert.That(inexistente.Text, Does.Contain("não encontrado"));
+
+        // Workflow 'loop' contém um sub→'loop' — ciclo direto.
+        await NewService().SaveWorkflowAsync("u-sub", "loop",
+            new DevPipelineService.NamedWorkflow(
+                [new DevPipelineService.WorkflowStep
+                    { Kind = "sub", Key = "s", Workflow = "loop" }],
+                null, null, null, null),
+            CancellationToken.None);
+        var ciclo = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                """{"task":"x","workflow":"loop"}""").RootElement,
+            ctx, CancellationToken.None);
+        Assert.That(ciclo.Text, Does.Contain("ciclo"));
     }
 }

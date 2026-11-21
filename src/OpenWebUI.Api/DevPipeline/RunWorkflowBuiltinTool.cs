@@ -42,7 +42,10 @@ public sealed class RunWorkflowBuiltinTool(
             + "as unmet), and 'optional':true records a failing verdict "
             + "as 'issues' and continues instead of killing the "
             + "workflow — e.g. validate {optional:true} then an llm fix "
-            + "step {when:'failed:lint'}. Track/resume/answer with "
+            + "step {when:'failed:lint'}. 'sub' {key, workflow:'name'} "
+            + "inlines a saved workflow's steps under prefixed keys "
+            + "{key}.{subKey} (max 2 levels, cycles rejected). "
+            + "Track/resume/answer with "
             + "dev_pipeline op=status|resume|answer on the returned "
             + "pipeline_id. op='run' (default) executes; 'list'/'delete' "
             + "manage named workflows — save with save_as='name', re-run "
@@ -79,7 +82,7 @@ public sealed class RunWorkflowBuiltinTool(
                 "type": "object",
                 "required": ["kind", "key"],
                 "properties": {
-                  "kind": { "type": "string", "enum": ["llm", "parallel", "tool", "validate", "commit", "gate"] },
+                  "kind": { "type": "string", "enum": ["llm", "parallel", "tool", "validate", "commit", "gate", "sub"] },
                   "key": { "type": "string", "description": "Unique step id — results are stored under this key." },
                   "prompt": { "type": "string", "description": "llm/gate: the step prompt (placeholders {task}, {plan}, {results:key} allowed); gate uses it as the approval question." },
                   "when": { "type": "string", "description": "Run only if an earlier step's verdict matches: 'passed:<key>' or 'failed:<key>'." },
@@ -100,7 +103,8 @@ public sealed class RunWorkflowBuiltinTool(
                   },
                   "tool": { "type": "string", "description": "tool: builtin name, e.g. 'agent_validate'." },
                   "args": { "description": "tool: args — JSON object or JSON-encoded string." },
-                  "push": { "type": "boolean", "description": "commit: also 'git push -u origin HEAD'." }
+                  "push": { "type": "boolean", "description": "commit: also 'git push -u origin HEAD'." },
+                  "workflow": { "type": "string", "description": "sub: name of a saved workflow — its steps inline under keys '{key}.{subKey}' (max 2 levels, cycles rejected)." }
                 }
               }
             },
@@ -232,7 +236,15 @@ public sealed class RunWorkflowBuiltinTool(
             }
         }
         steps ??= stored?.Steps;
-        var validationError = Validate(steps);
+        // Steps 'sub' são expandidos inline ({key}.{subKey}) antes da
+        // validação — o loop de execução fica plano e determinístico.
+        var (expanded, expandErr) =
+            await ExpandSubsAsync(steps ?? [], context.UserId, ct);
+        if (expandErr is { } xerr)
+        {
+            return new BuiltinToolResult(xerr);
+        }
+        var validationError = Validate(expanded);
         if (validationError is { } err)
         {
             return new BuiltinToolResult(err);
@@ -274,7 +286,7 @@ public sealed class RunWorkflowBuiltinTool(
                 maxFixAttempts: 0, ct,
                 workerModel: workerModel,
                 fixModel: fixModel,
-                steps: steps,
+                steps: expanded,
                 maxFanout: maxParallel);
         }
 
@@ -288,16 +300,103 @@ public sealed class RunWorkflowBuiltinTool(
         var link = $"/c/{state.ChildChatId}";
         return new BuiltinToolResult(
             $"Workflow {state.Id} iniciado em background — "
-                + $"{steps!.Count} passo(s) rodam no chat filho {link}; o "
+                + $"{expanded.Count} passo(s) rodam no chat filho {link}; o "
                 + "resultado volta neste chat ao concluir. Acompanhe com "
                 + $"dev_pipeline op=status pipeline_id={state.Id}.",
             new
             {
                 pipelineId = state.Id,
                 childChatId = state.ChildChatId,
-                steps = steps!.Count,
+                steps = expanded.Count,
                 status = "running",
             });
+    }
+
+    /// <summary>Sub-workflows (v2): steps <c>{kind:"sub", workflow}</c>
+    /// são expandidos inline — os steps do workflow nomeado entram com
+    /// keys <c>{key}.{subKey}</c> e <c>when</c> reescrito quando aponta
+    /// para key interna. Máx 2 níveis; ciclo detectado por nome no
+    /// caminho de expansão (diamantes permitidos).</summary>
+    private async Task<(
+        List<DevPipelineService.WorkflowStep> Steps, string? Error)>
+        ExpandSubsAsync(List<DevPipelineService.WorkflowStep> steps,
+            string userId, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var service = scope.ServiceProvider
+            .GetRequiredService<DevPipelineService>();
+        var expanded = new List<DevPipelineService.WorkflowStep>();
+        var err = await ExpandIntoAsync(steps, service, userId,
+            new HashSet<string>(StringComparer.Ordinal), expanded, 0, ct);
+        return err is null ? (expanded, null) : ([], err);
+    }
+
+    /// <summary>Expansão recursiva — <paramref name="seen"/> guarda o
+    /// caminho (nomes ainda em expansão), não o universo: a mesma
+    /// workflow pode entrar em dois slots irmãos.</summary>
+    private static async Task<string?> ExpandIntoAsync(
+        List<DevPipelineService.WorkflowStep> steps,
+        DevPipelineService service, string userId,
+        HashSet<string> seen,
+        List<DevPipelineService.WorkflowStep> expanded,
+        int depth, CancellationToken ct)
+    {
+        foreach (var s in steps)
+        {
+            if (s.Kind != "sub")
+            {
+                expanded.Add(s);
+                continue;
+            }
+            if (depth >= 2)
+            {
+                return $"sub '{s.Key}': aninhamento além de 2 níveis.";
+            }
+            if (!DevPipelineService.ValidWorkflowName(s.Workflow))
+            {
+                return $"sub '{s.Key}' exige 'workflow' — nome de "
+                    + "workflow salvo válido.";
+            }
+            if (!seen.Add(s.Workflow!))
+            {
+                return $"sub '{s.Key}': ciclo '{s.Workflow}' "
+                    + "(workflow referencia a si própria).";
+            }
+            var wf = await service.GetWorkflowAsync(
+                userId, s.Workflow!, ct);
+            if (wf is null)
+            {
+                seen.Remove(s.Workflow!);
+                return $"sub '{s.Key}': workflow '{s.Workflow}' não "
+                    + "encontrado — op=list mostra os salvos.";
+            }
+            var inner = new List<DevPipelineService.WorkflowStep>();
+            var err = await ExpandIntoAsync(wf.Steps ?? [], service,
+                userId, seen, inner, depth + 1, ct);
+            seen.Remove(s.Workflow!);
+            if (err is not null)
+            {
+                return err;
+            }
+            var innerKeys = new HashSet<string>(
+                inner.Select(x => x.Key), StringComparer.Ordinal);
+            foreach (var sub in inner)
+            {
+                var when = sub.When;
+                if (when is { Length: > 0 } w
+                    && w.IndexOf(':', StringComparison.Ordinal) is { } c
+                    && c > 0
+                    && innerKeys.Contains(w[(c + 1)..]))
+                {
+                    when = $"{w[..c]}:{s.Key}.{w[(c + 1)..]}";
+                }
+                expanded.Add(sub with
+                {
+                    Key = $"{s.Key}.{sub.Key}", When = when,
+                });
+            }
+        }
+        return null;
     }
 
     /// <summary>Validação estrutural dos steps — kind conhecido, key
@@ -359,10 +458,17 @@ public sealed class RunWorkflowBuiltinTool(
                 case "commit":
                 case "gate":
                     break;
+                case "sub":
+                    if (string.IsNullOrWhiteSpace(s.Workflow))
+                    {
+                        return $"sub '{s.Key}' exige 'workflow' "
+                            + "(nome de workflow salvo).";
+                    }
+                    break;
                 default:
                     return $"kind desconhecido '{s.Kind}' no step '{s.Key}' "
-                        + "— use llm, parallel, tool, validate, commit "
-                        + "ou gate.";
+                        + "— use llm, parallel, tool, validate, commit, "
+                        + "gate ou sub.";
             }
         }
         return null;

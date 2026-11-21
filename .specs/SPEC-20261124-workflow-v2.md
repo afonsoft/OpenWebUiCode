@@ -112,3 +112,16 @@ o gate é **máquina de estado da pipeline**, não uma tool call.
   colhe o board como `PhaseResults[{step}:board]` — acessível a steps
   seguintes via `{results:{step}:board}`.
 - Isolamento por usuário no key do kv (teste dedicado).
+
+## Addendum 3 — sub-workflow (kind "sub")
+
+- `{"kind":"sub","key":"x","workflow":"nome"}` é expandido em
+  parse-time: os steps do workflow salvo entram inline com keys
+  `{x}.{subKey}` — o loop segue plano, sem recursão de runtime
+  (StepIndex/resume/gate/timeout funcionam de graça).
+- `when` apontando para key interna é reescrito (`failed:lint` →
+  `failed:x.lint`); referência a step externo passa intacta.
+- Profundidade máx 2 níveis; ciclos detectados por nome no caminho de
+  expansão (diamantes permitidos — `seen` é por caminho, não global).
+- `save_as` guarda os steps crus (sub fica simbólico — re-resolve a
+  workflow nomeada a cada run).

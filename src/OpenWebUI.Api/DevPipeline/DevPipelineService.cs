@@ -124,6 +124,10 @@ public sealed class DevPipelineService(
         /// órfã é varrida pelo watchdog global.</summary>
         [JsonPropertyName("timeout_sec")]
         public int? TimeoutSec { get; init; }
+        /// <summary>Steps <c>sub</c> (v2): nome do workflow salvo a
+        /// expandir inline como <c>{key}.{subKey}</c> — máx 2 níveis,
+        /// ciclos detectados por nome no caminho de expansão.</summary>
+        public string? Workflow { get; init; }
     }
 
     /// <summary>Item de um step <c>parallel</c> do workflow — um worker
