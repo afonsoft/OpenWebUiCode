@@ -837,7 +837,8 @@ public sealed class DevPipelineService(
         var broadcaster = scope.ServiceProvider
             .GetRequiredService<ChatRunBroadcaster>();
         using var wake = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var streamClosed = WaitStreamClosedAsync(broadcaster, runId, wake.Token);
+        var streamClosed = WaitStreamClosedAsync(
+            broadcaster, runId, wake.Token, logger);
         for (;;)
         {
             if (DateTimeOffset.UtcNow >= deadline)
@@ -882,7 +883,7 @@ public sealed class DevPipelineService(
             runId = await ReplaceStalledRunAsync(
                 state, phase, runId, prompt, ct, key, used + 1, chatId);
             streamClosed = WaitStreamClosedAsync(
-                broadcaster, runId, wake.Token);
+                broadcaster, runId, wake.Token, logger);
             stallTicks = 0;
         }
     }
@@ -891,21 +892,28 @@ public sealed class DevPipelineService(
     /// <c>Complete</c> no fim da execução). Falhas de assinatura degradam
     /// para "fechado" — o poll regular continua sendo a fonte da verdade.</summary>
     internal static async Task WaitStreamClosedAsync(
-        ChatRunBroadcaster broadcaster, string runId, CancellationToken ct)
+        ChatRunBroadcaster broadcaster, string runId, CancellationToken ct,
+        ILogger? logger = null)
     {
         try
         {
             await foreach (var _ in broadcaster.SubscribeAsync(runId, 0, ct))
             {
+                // Drena eventos até o stream fechar — o fechamento é o
+                // sinal de wake; o conteúdo já foi visto pelo publisher.
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // Cancelamento externo — o wait degrada para o poll de status.
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Assinatura quebrada não pode derrubar o wait — o poll de
             // status segue cobrindo o ciclo da run.
+            logger?.LogDebug(ex,
+                "Assinatura do stream da run {RunId} falhou — wait segue no poll.",
+                runId);
         }
     }
 
