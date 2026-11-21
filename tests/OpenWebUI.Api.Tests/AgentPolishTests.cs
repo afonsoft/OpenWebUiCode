@@ -788,6 +788,61 @@ public class AgentPolishTests
     }
 
     [Test]
+    public async Task PlanMode_InstruiPlanExitNaAprovacao()
+    {
+        // RF-006: o bloco de plan nunca mencionava o plan_exit — o modelo
+        // não sabia que devia chamá-lo e a conversa ficava presa em plan
+        // mesmo com o usuário aprovando ("eu aprovo e ele continua plano").
+        var contributor = new Completions.Contributors.AgentModeContributor();
+        var ctx = new OpenWebUI.Infrastructure.SystemPrompt.PromptContext
+        {
+            Request = new ChatCompletionRequest(
+                "m", [new ChatCompletionMessage("user", "oi")], Stream: true),
+            User = new User { Id = "u1", Name = "U", Email = "u@t.local" },
+            LastUserText = "oi", Model = "m", Ct = CancellationToken.None,
+            AgentMode = "plan",
+            WorkdirFactory = _ => Task.FromResult("/tmp"),
+        };
+
+        var sections = await contributor.ContributeAsync(ctx);
+        Assert.Multiple(() =>
+        {
+            Assert.That(sections, Has.Count.EqualTo(1));
+            Assert.That(sections[0], Does.Contain("Modo PLAN ativo"));
+            Assert.That(sections[0], Does.Contain("builtin_plan_exit"));
+            Assert.That(sections[0], Does.Contain("DETALHADO"));
+            Assert.That(sections[0], Does.Contain("aprov"));
+        });
+    }
+
+    [Test]
+    public async Task ChatMode_InstruiModeSwitchPeloIntent()
+    {
+        // RF-003/006: chat orienta a tool mode_switch — pedido de plano →
+        // plan; implementação direta → build.
+        var contributor = new Completions.Contributors.AgentModeContributor();
+        var ctx = new OpenWebUI.Infrastructure.SystemPrompt.PromptContext
+        {
+            Request = new ChatCompletionRequest(
+                "m", [new ChatCompletionMessage("user", "oi")], Stream: true),
+            User = new User { Id = "u1", Name = "U", Email = "u@t.local" },
+            LastUserText = "oi", Model = "m", Ct = CancellationToken.None,
+            AgentMode = "chat",
+            WorkdirFactory = _ => Task.FromResult("/tmp"),
+        };
+
+        var sections = await contributor.ContributeAsync(ctx);
+        Assert.Multiple(() =>
+        {
+            Assert.That(sections, Has.Count.EqualTo(1));
+            Assert.That(sections[0], Does.Contain("Modo CHAT ativo"));
+            Assert.That(sections[0], Does.Contain("builtin_mode_switch"));
+            Assert.That(sections[0], Does.Contain("'plan'"));
+            Assert.That(sections[0], Does.Contain("'build'"));
+        });
+    }
+
+    [Test]
     public async Task NativeCompactor_EnviaContextManagementEDevolveTexto()
     {
         var db = Db();

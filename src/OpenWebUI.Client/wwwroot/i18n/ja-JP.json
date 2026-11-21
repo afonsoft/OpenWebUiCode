@@ -1073,6 +1073,8 @@
   "chat.src_command": "cmd",
   "chat.src_builtin": "builtin",
   "chat.cmd_plan": "プランモード — 要件を分析してSPEC SDDを生成",
+  "chat.cmd_build": "ビルドモード — ワークスペースツールで実行",
+  "chat.cmd_chat": "チャットモード — ワークスペースツールなしの会話",
   "sidebar.children": "サブタスク",
   "sidebar.delegated": "チャット",
   "sidebar.delegated_badge": "",

@@ -45,20 +45,48 @@ public sealed class DevPipelineService(
         /// <summary>Status: running | done | failed.</summary>
         public string Status { get; set; } = "running";
         public string? Error { get; set; }
-        /// <summary>Runs por fase (implement/test/fix/report) — runId.</summary>
+        /// <summary>Runs por fase (plan/implement/test/verify/fixN/report) — runId.</summary>
         public Dictionary<string, string> Runs { get; set; } = new();
         public string? ValidationOutput { get; set; }
         public string? CommitSha { get; set; }
+        /// <summary>Plano emitido pela fase <c>plan</c> (RF-006).</summary>
+        public string? Plan { get; set; }
+        /// <summary>Modelo por fase lógica (RF-007): worker_model→plan/
+        /// implement/test/verify; fix_model→fix.</summary>
+        public Dictionary<string, string> Models { get; init; } = new();
+        /// <summary>Resultado estruturado por fase (RF-010).</summary>
+        public Dictionary<string, PhaseResult> PhaseResults { get; init; } = new();
+        /// <summary>Substituições por stall já feitas na pipeline (RF-008).</summary>
+        public int StallRetries { get; set; }
+        /// <summary>Teto de substituições por stall (default 1).</summary>
+        public int MaxStallRetries { get; init; } = 1;
+        /// <summary>Fase <c>plan</c> habilitada (default true).</summary>
+        public bool EnablePlan { get; init; } = true;
         public long CreatedAt { get; init; }
         public long UpdatedAt { get; set; }
     }
 
+    /// <summary>Bloco <c>&lt;pipeline_result&gt;</c> estruturado emitido por uma fase LLM.</summary>
+    /// <param name="Files">Arquivos criados/alterados declarados pela fase.</param>
+    /// <param name="Summary">Resumo da fase (fix: formato handoff).</param>
+    /// <param name="Verdict">"pass"|"issues" — só a fase verify emite.</param>
+    /// <param name="Issues">Problemas apontados pela verify.</param>
+    /// <param name="Plan">Plano decomposto — só a fase plan emite.</param>
+    public sealed record PhaseResult(
+        List<string>? Files, string? Summary, string? Verdict,
+        List<string>? Issues, string? Plan);
+
     private static string Key(string id) => $"devpipeline:{id}";
 
     /// <summary>Cria o kv + chat filho (build, binding herdado) e devolve o estado inicial.</summary>
+    /// <param name="enablePlan">Fase <c>plan</c> antes de implement (RF-006).</param>
+    /// <param name="workerModel">Modelo das fases plan/implement/test/verify (RF-007).</param>
+    /// <param name="fixModel">Modelo da fase fix — tipicamente mais forte (RF-007).</param>
     public async Task<State> StartAsync(
         BuiltinToolContext context, string task, string? extraContext,
-        bool push, int maxFixAttempts, CancellationToken ct)
+        bool push, int maxFixAttempts, CancellationToken ct,
+        bool enablePlan = true, string? workerModel = null,
+        string? fixModel = null)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var state = new State
@@ -71,9 +99,24 @@ public sealed class DevPipelineService(
             ExtraContext = extraContext,
             Push = push,
             MaxFixAttempts = Math.Max(0, maxFixAttempts),
+            EnablePlan = enablePlan,
+            MaxStallRetries = int.TryParse(
+                cfg["Agent:DevPipeline:MaxStallRetries"], out var msr)
+                    ? Math.Max(0, msr) : 1,
             CreatedAt = now,
             UpdatedAt = now,
         };
+        if (!string.IsNullOrWhiteSpace(workerModel))
+        {
+            foreach (var p in new[] { "plan", "implement", "test", "verify" })
+            {
+                state.Models[p] = workerModel;
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(fixModel))
+        {
+            state.Models["fix"] = fixModel;
+        }
 
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -149,50 +192,64 @@ public sealed class DevPipelineService(
     /// <summary>Loop de fases da pipeline.</summary>
     private async Task DriveAsync(State state, CancellationToken ct)
     {
-        // implement → test: runs LLM encadeadas no chat filho. Resume:
+        // plan? → implement → test: runs LLM encadeadas no chat filho. Resume:
         // fase com run completed salta; run ainda ativa é aguardada.
         foreach (var (phase, prompt) in LlmPhases(state))
         {
-            if (state.Runs.TryGetValue(phase, out var existing)
-                && await RunStatusAsync(existing, ct) is { Status: ChatRunStatus.Completed })
+            var existing = state.Runs.TryGetValue(phase, out var e) ? e : null;
+            if (existing is not null
+                && await RunStatusAsync(existing, ct)
+                    is { Status: ChatRunStatus.Completed })
             {
                 continue;
             }
-            var runId = existing ?? await EnqueuePhaseRunAsync(
-                state, phase, prompt, ct);
-            state.Runs[phase] = runId;
-            state.Phase = phase;
-            await SaveAsync(null, state, ct);
-            var terminal = await WaitRunAsync(runId, ct);
-            if (terminal.Status is not ChatRunStatus.Completed)
+            if (!await RunLlmPhaseAsync(state, phase, prompt, ct, existing))
             {
-                await MarkFailedAsync(state,
-                    $"fase '{phase}' terminou como '{terminal.Status}'"
-                        + (terminal.Error is { } e ? $": {e}" : string.Empty));
                 return;
             }
         }
 
-        // validate: determinístico no workdir efetivo do filho — com retry
-        // fix→validate até MaxFixAttempts.
+        // validate: determinístico no workdir efetivo do filho. fix→validate
+        // até MaxFixAttempts; verify (LLM read-only, RF-009) corre quando os
+        // testes passam — issues dela também contam como falha e alimentam
+        // o fix.
         state.Phase = "validate";
         await SaveAsync(null, state, ct);
         var outcome = await ValidateAsync(state, ct);
-        while (outcome is { Passed: false } && state.FixAttempts < state.MaxFixAttempts)
+        var verifyIssues = false;
+        for (;;)
         {
-            state.FixAttempts++;
-            var fixPrompt =
-                "[dev_pipeline — CORREÇÃO]\nA validação falhou:\n"
-                + Tail(outcome!.Output, 4000)
-                + "\nCorrija a causa raiz no workdir. NÃO faça commit — o commit é orquestrado.";
-            var fixRunId = await EnqueuePhaseRunAsync(state, "fix", fixPrompt, ct);
-            state.Runs[$"fix{state.FixAttempts}"] = fixRunId;
-            await SaveAsync(null, state, ct);
-            var fixTerminal = await WaitRunAsync(fixRunId, ct);
-            if (fixTerminal.Status is not ChatRunStatus.Completed)
+            if (outcome is { Passed: false })
             {
-                await MarkFailedAsync(state,
-                    $"fase 'fix' terminou como '{fixTerminal.Status}'");
+                if (state.FixAttempts >= state.MaxFixAttempts)
+                {
+                    break;
+                }
+                state.FixAttempts++;
+                if (!await RunFixAsync(state, outcome.Output, null, ct))
+                {
+                    return;
+                }
+                outcome = await ValidateAsync(state, ct);
+                continue;
+            }
+
+            var verifyClean = await RunVerifyAsync(state, ct);
+            if (verifyClean is null)
+            {
+                return; // run de verify falhou — pipeline já marcada failed
+            }
+            verifyIssues = !verifyClean.Value;
+            if (!verifyIssues || state.FixAttempts >= state.MaxFixAttempts)
+            {
+                break;
+            }
+            state.FixAttempts++;
+            var issues = state.PhaseResults.TryGetValue("verify", out var vr)
+                ? string.Join("; ", vr.Issues ?? [])
+                : null;
+            if (!await RunFixAsync(state, null, issues, ct))
+            {
                 return;
             }
             outcome = await ValidateAsync(state, ct);
@@ -204,6 +261,16 @@ public sealed class DevPipelineService(
             await MarkFailedAsync(state,
                 $"validação falhou após {state.FixAttempts} correção(ões): "
                     + Tail(outcome.Summary, 500));
+            return;
+        }
+        if (verifyIssues)
+        {
+            var issues = state.PhaseResults.TryGetValue("verify", out var vr)
+                ? string.Join("; ", vr.Issues ?? [])
+                : "sem detalhe";
+            await MarkFailedAsync(state,
+                "verificação read-only apontou issues sem tentativas de "
+                    + $"correção restantes: {Tail(issues, 500)}");
             return;
         }
 
@@ -227,24 +294,118 @@ public sealed class DevPipelineService(
         await ReportAsync(state, ct);
     }
 
-    /// <summary>Runs LLM da pipeline com os prompts de fase.</summary>
-    private static IEnumerable<(string Phase, string Prompt)> LlmPhases(State state)
+    /// <summary>Runs LLM da pipeline com os prompts de fase (RF-006/010:
+    /// plan opcional primeiro; toda fase fecha com
+    /// <c>&lt;pipeline_result&gt;</c>).</summary>
+    internal static IEnumerable<(string Phase, string Prompt)> LlmPhases(State state)
     {
+        if (state.EnablePlan)
+        {
+            yield return ("plan",
+                "[dev_pipeline — PLANO]\n"
+                    + $"Tarefa: {state.Task}\n"
+                    + (state.ExtraContext is { } x ? $"Contexto: {x}\n" : string.Empty)
+                    + "Decomponha a tarefa em itens ordenados e independentes — "
+                    + "diga quais arquivos cada item deve tocar e o que "
+                    + "'pronto' significa. NÃO implemente nada — só planeje. "
+                    + "Termine com <pipeline_result>{\"plan\":\"itens "
+                    + "numerados\",\"summary\":\"resumo em 1 linha\"}"
+                    + "</pipeline_result>.");
+        }
         yield return ("implement",
-            "[dev_pipeline fase 1/4 — IMPLEMENTAÇÃO]\n"
+            "[dev_pipeline — IMPLEMENTAÇÃO]\n"
                 + $"Tarefa: {state.Task}\n"
-                + (state.ExtraContext is { } x ? $"Contexto: {x}\n" : string.Empty)
+                + (state.ExtraContext is { } xc ? $"Contexto: {xc}\n" : string.Empty)
+                + (state.Plan is { } p ? $"Plano aprovado:\n{p}\n" : string.Empty)
                 + "Implemente a tarefa no workdir atual. NÃO escreva testes "
                 + "ainda (fase seguinte) e NÃO faça commit — testes, "
-                + "validação e commit são orquestrados depois. Ao terminar, "
-                + "liste os arquivos criados/alterados.");
+                + "validação e commit são orquestrados depois. Termine com "
+                + "<pipeline_result>{\"files\":[\"paths criados/alterados\"],"
+                + "\"summary\":\"resumo\"}</pipeline_result>.");
         yield return ("test",
-            "[dev_pipeline fase 2/4 — TESTES]\n"
+            "[dev_pipeline — TESTES]\n"
                 + "A implementação anterior alterou o workdir. Escreva ou "
                 + "ajuste os testes do que foi implementado seguindo as "
                 + "convenções do projeto. NÃO faça commit — validação e "
-                + "commit são orquestrados. Ao terminar, liste os arquivos "
-                + "de teste.");
+                + "commit são orquestrados. Termine com "
+                + "<pipeline_result>{\"files\":[\"paths de teste\"],"
+                + "\"summary\":\"resumo\"}</pipeline_result>.");
+    }
+
+    /// <summary>Enfileira + aguarda + parseia uma fase LLM; marca failed e
+    /// devolve false quando a run não completa. <paramref name="existing"/>
+    /// reutiliza run ativa no resume.</summary>
+    private async Task<bool> RunLlmPhaseAsync(
+        State state, string phase, string prompt, CancellationToken ct,
+        string? existing = null, string? runKey = null)
+    {
+        var runId = existing ?? await EnqueuePhaseRunAsync(
+            state, phase, prompt, ct);
+        state.Runs[runKey ?? phase] = runId;
+        state.Phase = phase;
+        await SaveAsync(null, state, ct);
+        var (status, error) = await WaitRunAsync(
+            runId, state, phase, prompt, ct);
+        if (status is ChatRunStatus.Completed)
+        {
+            await ParsePhaseResultAsync(state, phase, ct);
+            return true;
+        }
+        await MarkFailedAsync(state,
+            $"fase '{phase}' terminou como '{status}'"
+                + (error is { } e ? $": {e}" : string.Empty));
+        return false;
+    }
+
+    /// <summary>Run de correção (RF-009/010): alimentada pela saída da
+    /// validação ou pelas issues da verify; proíbe adulterar testes e exige
+    /// handoff com método de verificação.</summary>
+    private async Task<bool> RunFixAsync(
+        State state, string? validationOutput, string? verifyIssues,
+        CancellationToken ct)
+    {
+        var fixPrompt =
+            "[dev_pipeline — CORREÇÃO]\n"
+            + (verifyIssues is { } vi
+                ? $"A verificação read-only encontrou problemas:\n{Tail(vi, 4000)}\n"
+                : $"A validação falhou:\n{Tail(validationOutput ?? "", 4000)}\n")
+            + "Corrija a causa raiz no workdir. NÃO faça commit — o commit "
+            + "é orquestrado. NÃO altere nem remova testes para fazê-los "
+            + "passar — ajuste o código; se um teste estiver de fato errado, "
+            + "justifique no resultado.\n"
+            + "Termine com <pipeline_result>{\"files\":[...],\"summary\":"
+            + "\"Observação; Causa raiz; Correção; Método de verificação "
+            + "(comando e saída real)\"}</pipeline_result>.";
+        return await RunLlmPhaseAsync(
+            state, "fix", fixPrompt, ct,
+            runKey: $"fix{state.FixAttempts}");
+    }
+
+    /// <summary>Run de verificação read-only (RF-009): lê o diff e emite
+    /// verdict. Devolve null quando a run falhou (pipeline já failed),
+    /// true=limpa, false=issues.</summary>
+    private async Task<bool?> RunVerifyAsync(State state, CancellationToken ct)
+    {
+        var workdir = await EffectiveWorkdirAsync(state, ct);
+        var diff = await WorktreeService.DiffAsync(workdir, ct);
+        var prompt =
+            "[dev_pipeline — VERIFICAÇÃO (somente leitura)]\n"
+            + "Leia o diff abaixo e, se precisar, os arquivos do workdir. "
+            + "Confira: (a) o código implementa de fato o pedido; (b) os "
+            + "testes cobrem o implementado sem terem sido adulterados para "
+            + "passar; (c) não há restos (TODO, debug, arquivos órfãos). "
+            + "NÃO edite, crie ou apague nada — somente leitura.\n"
+            + $"Tarefa: {state.Task}\n"
+            + $"Diff:\n{Tail(diff ?? "(sem diff)", 6000)}\n"
+            + "Termine com <pipeline_result>{\"verdict\":\"pass\"|\"issues\","
+            + "\"issues\":[\"descrições curtas\"],\"summary\":\"resumo\"}"
+            + "</pipeline_result>.";
+        if (!await RunLlmPhaseAsync(state, "verify", prompt, ct))
+        {
+            return null;
+        }
+        return state.PhaseResults.TryGetValue("verify", out var r)
+            && r.Verdict != "issues";
     }
 
     /// <summary>
@@ -292,6 +453,12 @@ public sealed class DevPipelineService(
                 parentRun.RequestJson, JsonOptions) is { } baseReq
                 ? baseReq with { Messages = history }
                 : new ChatCompletionRequest(parentRun?.Model ?? "default", history);
+        // RF-007: modelo dedicado da fase (worker/fix) sobrescreve o herdado.
+        if (state.Models.TryGetValue(phase, out var phaseModel)
+            && !string.IsNullOrWhiteSpace(phaseModel))
+        {
+            request = request with { Model = phaseModel };
+        }
         var previousRunId = state.Runs.TryGetValue("test", out var t)
             ? t
             : state.Runs.TryGetValue("implement", out var i)
@@ -319,40 +486,169 @@ public sealed class DevPipelineService(
 
     /// <summary>Poll do término da run (padrão WaitForChildAsync) —
     /// deadline configurável <c>Agent:DevPipeline:PhaseTimeoutSec</c>
-    /// (default 1200s). Devolve (status, error); "timeout"/"missing" nas
+    /// (default 1200s). RF-008: <c>Running</c> com <c>HeartbeatAt</c> velho
+    /// (&gt;<c>Agent:DevPipeline:StallSec</c>, default 240s, por 2 polls) é
+    /// considerada travada → substituída com prompt de retomada, até
+    /// <see cref="State.MaxStallRetries"/> vezes; "timeout"/"stalled" nas
     /// bordas.</summary>
     private async Task<(string Status, string? Error)> WaitRunAsync(
-        string runId, CancellationToken ct)
+        string runId, State state, string phase, string prompt,
+        CancellationToken ct)
     {
         var timeout = int.TryParse(
             cfg["Agent:DevPipeline:PhaseTimeoutSec"], out var s)
                 ? Math.Max(30, s) : 1200;
+        var stallSec = int.TryParse(
+            cfg["Agent:DevPipeline:StallSec"], out var ss)
+                ? Math.Max(30, ss) : 240;
         var deadline = DateTimeOffset.UtcNow.AddSeconds(timeout);
-        while (DateTimeOffset.UtcNow < deadline)
+        var stallTicks = 0;
+        for (;;)
         {
+            if (DateTimeOffset.UtcNow >= deadline)
+            {
+                return ("timeout", $"run {runId} excedeu {timeout}s");
+            }
             await Task.Delay(PollInterval, ct);
-            var (status, error) = await RunStatusAsync(runId, ct);
-            if (status is null or ChatRunStatus.Queued
-                or ChatRunStatus.Running or ChatRunStatus.Paused)
+            var (status, error, heartbeatAt) = await RunStatusAsync(runId, ct);
+            if (status is not (null or ChatRunStatus.Queued
+                or ChatRunStatus.Running or ChatRunStatus.Paused))
+            {
+                return (status, error);
+            }
+            var stale = status == ChatRunStatus.Running
+                && heartbeatAt is { } hb
+                && DateTimeOffset.UtcNow.ToUnixTimeSeconds() - hb > stallSec;
+            stallTicks = stale ? stallTicks + 1 : 0;
+            if (stallTicks < 2)
             {
                 continue;
             }
-            return (status, error);
+            if (state.StallRetries >= state.MaxStallRetries)
+            {
+                return ("stalled",
+                    $"run {runId} sem heartbeat há >{stallSec}s e sem "
+                        + "retries restantes");
+            }
+            state.StallRetries++;
+            runId = await ReplaceStalledRunAsync(
+                state, phase, runId, prompt, ct);
+            stallTicks = 0;
         }
-        return ("timeout", $"run {runId} excedeu {timeout}s");
     }
 
-    /// <summary>Status atual de uma run (null quando inexistente).</summary>
-    private async Task<(string? Status, string? Error)> RunStatusAsync(
+    /// <summary>Status + heartbeat de uma run (null quando inexistente).</summary>
+    private async Task<(string? Status, string? Error, long? HeartbeatAt)> RunStatusAsync(
         string runId, CancellationToken ct)
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var run = await db.ChatRuns.AsNoTracking()
             .Where(r => r.Id == runId)
-            .Select(r => new { r.Status, r.Error })
+            .Select(r => new { r.Status, r.Error, r.HeartbeatAt })
             .FirstOrDefaultAsync(ct);
-        return run is null ? (null, null) : (run.Status, run.Error);
+        return run is null ? (null, null, null) : (run.Status, run.Error, run.HeartbeatAt);
+    }
+
+    /// <summary>Para a run travada e dispara substituta com prompt de
+    /// retomada (RF-008) — registrada como <c>{phase}-stall{n}</c>.</summary>
+    private async Task<string> ReplaceStalledRunAsync(
+        State state, string phase, string runId, string prompt,
+        CancellationToken ct)
+    {
+        logger.LogWarning(
+            "Pipeline {Id}: run {RunId} da fase {Phase} travada — substituindo.",
+            state.Id, runId, phase);
+        using var scope = scopes.CreateScope();
+        _ = scope.ServiceProvider.GetRequiredService<Runs.ChatRunDispatcher>()
+            .TryStop(runId);
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stalled = await db.ChatRuns.FirstOrDefaultAsync(r => r.Id == runId, ct);
+        if (stalled is { Status: ChatRunStatus.Running or ChatRunStatus.Queued })
+        {
+            stalled.Status = ChatRunStatus.Stopped;
+            stalled.Error = "dev_pipeline: sem heartbeat — substituída.";
+            stalled.CompletedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await db.SaveChangesAsync(ct);
+        }
+        var resumePrompt = prompt + "\n\n[dev_pipeline — RETOMADA] A run "
+            + "anterior desta fase travou e foi substituída; o workdir pode "
+            + "conter trabalho parcial — continue a partir do estado atual "
+            + "sem recomeçar do zero.";
+        var newRunId = await EnqueuePhaseRunAsync(
+            state, phase, resumePrompt, ct);
+        state.Runs[$"{phase}-stall{state.StallRetries}"] = newRunId;
+        await SaveAsync(null, state, ct);
+        return newRunId;
+    }
+
+    /// <summary>Extrai o bloco <c>&lt;pipeline_result&gt;</c> da última
+    /// resposta assistant do chat filho para a fase (RF-010) — a fase plan
+    /// ainda alimenta <see cref="State.Plan"/>.</summary>
+    private async Task ParsePhaseResultAsync(
+        State state, string phase, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var lastAssistant = await db.ChatMessages.AsNoTracking()
+            .Where(m => m.ChatId == state.ChildChatId && m.Role == "assistant")
+            .OrderByDescending(m => m.Timestamp)
+            .Select(m => m.Content)
+            .FirstOrDefaultAsync(ct);
+        var parsed = ParsePhaseResult(lastAssistant);
+        if (parsed is null)
+        {
+            return;
+        }
+        state.PhaseResults[phase] = parsed;
+        if (phase == "plan" && parsed.Plan is { Length: > 0 } plan)
+        {
+            state.Plan = plan;
+        }
+        await SaveAsync(null, state, ct);
+    }
+
+    /// <summary>Parser do bloco <c>&lt;pipeline_result&gt;{…}&lt;/pipeline_result&gt;</c>
+    /// — ausente/malformado → null (nunca quebra a fase).</summary>
+    internal static PhaseResult? ParsePhaseResult(string? text)
+    {
+        const string open = "<pipeline_result>";
+        const string close = "</pipeline_result>";
+        if (text is null)
+        {
+            return null;
+        }
+        var start = text.IndexOf(open, StringComparison.Ordinal);
+        var end = text.LastIndexOf(close, StringComparison.Ordinal);
+        if (start < 0 || end <= start)
+        {
+            return null;
+        }
+        try
+        {
+            var root = JsonDocument.Parse(
+                text[(start + open.Length)..end].Trim()).RootElement;
+            static List<string>? Strings(JsonElement el, string name) =>
+                el.TryGetProperty(name, out var arr)
+                    && arr.ValueKind == JsonValueKind.Array
+                        ? arr.EnumerateArray()
+                            .Where(e => e.ValueKind == JsonValueKind.String)
+                            .Select(e => e.GetString()!).ToList()
+                        : null;
+            static string? Str(JsonElement el, string name) =>
+                el.TryGetProperty(name, out var s)
+                    && s.ValueKind == JsonValueKind.String
+                        ? s.GetString()
+                        : null;
+            return new PhaseResult(
+                Strings(root, "files"), Str(root, "summary"),
+                Str(root, "verdict"), Strings(root, "issues"),
+                Str(root, "plan"));
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Workdir efetivo: worktree isolada da run da fase 1 (runs
@@ -516,7 +812,14 @@ public sealed class DevPipelineService(
             : state.Status == "done" ? "commit skipped (nada a commitar)" : "sem commit";
         return $"[dev_pipeline {state.Id}] {icon} Pipeline {state.Status}: \"{state.Task}\"\n"
             + $"Fases: {phases}\n"
+            + (state.Plan is { } p ? $"Plano: {Tail(p, 400)}\n" : string.Empty)
             + $"Validação: {state.ValidationOutput ?? "(não executada)"}\n"
+            + (state.PhaseResults.Count > 0
+                ? "Resultados: " + string.Join("; ", state.PhaseResults.Select(
+                    kv => $"{kv.Key}={kv.Value.Verdict ?? kv.Value.Summary ?? "ok"}")) + "\n"
+                : string.Empty)
+            + (state.StallRetries > 0
+                ? $"Stalls recuperados: {state.StallRetries}\n" : string.Empty)
             + $"Entrega: {commit}"
             + (state.Push ? " + push" : string.Empty)
             + (state.Error is { } e ? $"\nErro: {e}" : string.Empty)

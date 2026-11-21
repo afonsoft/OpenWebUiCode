@@ -1073,6 +1073,8 @@
   "chat.src_command": "cmd",
   "chat.src_builtin": "builtin",
   "chat.cmd_plan": "Plan-Modus — analysiert die Anforderung und schreibt eine SPEC SDD",
+  "chat.cmd_build": "Build-Modus — führt mit Workspace-Tools aus",
+  "chat.cmd_chat": "Chat-Modus — normale Unterhaltung ohne Workspace-Tools",
   "sidebar.children": "Teilaufgaben",
   "sidebar.delegated": "Delegierter Chat",
   "sidebar.delegated_badge": "delegiert",

@@ -119,3 +119,61 @@ Fases sequenciais; cada run LLM vai para o chat filho (histórico encadeado pres
 - `DevPipeline_Commit_CommitaRepoTemp` — repo git temp com dirty file → commit aplicado, tree limpa; segunda passada → skipped.
 - `DevPipeline_StatusEResume` — leitura do kv; `running` órfã re-dispara.
 - `AgentValidate_ModoChat_NaoAnuncia` — `ShouldAnnounce` false em chat, Ask em plan.
+
+## 7. Incremento — orquestração estilo Antigravity (análise do `agy` v. jetski)
+
+Engenharia reversa do CLI Antigravity (`native_swarm`, `oneharness` invoke/manage_subagent,
+`run_workflow`, prompt "DISPATCH-ONLY", heartbeat+replace) apontou 6 melhorias
+incorporadas aqui — mantendo a orquestração **em código** (o deles é prompt e
+pode desviar; o nosso não pode "esquecer" validate/commit).
+
+### RF-006: Fase `plan` (planner→worker)
+
+- Arg `plan` (default `true`): antes de `implement`, uma run LLM decompõe a
+  tarefa em itens ordenados e emite `<pipeline_result>{"plan":"...","summary":"..."}</pipeline_result>`.
+  O plano entra no prompt da fase `implement` (Hydrogen-style: modelo maior
+  planeja, worker executa).
+
+### RF-007: Modelo por fase
+
+- Args `worker_model` (aplica a `plan`/`implement`/`test`/`verify`) e
+  `fix_model` (aplica a `fix`) — ids literais; run da fase usa `request with
+  { Model = … }`. Permite executor barato + corretor forte sem config extra.
+
+### RF-008: Liveness + replace (stall recovery)
+
+- `WaitRunAsync` observa `ChatRun.HeartbeatAt`: `Running` sem heartbeat >
+  `Agent:DevPipeline:StallSec` (default 240s) por 2 polls → run considerada
+  travada → `TryStop` + marca `stopped` + **substitui** com prompt de
+  retomada ("continue do estado do workdir") — registrada como
+  `{phase}-stall{n}`. Limitado por `Agent:DevPipeline:MaxStallRetries`
+  (default 1); esgotado → pipeline `failed` com `stalled`.
+
+### RF-009: Fase `verify` read-only + proteção de teste
+
+- Após cada validação verde, uma run LLM `verify` lê `git diff` + workdir e
+  emite `verdict: pass|issues` — **read-only por contrato** (nunca edita).
+  `issues` conta como falha e alimenta o prompt do `fix` (que proíbe
+  alterar/remover testes para passar — fecha o gap "fix vicia o próprio
+  teste").
+
+### RF-010: Structured output + handoff
+
+- Toda fase LLM termina com `<pipeline_result>{…}</pipeline_result>`
+  (`files`, `summary`, `verdict`, `issues`, `plan`) — parseado para
+  `state.PhaseResults[phase]` e exibido no relatório.
+- Prompt do `fix` exige `summary` no formato handoff: Observação; Causa
+  raiz; Correção; **Método de verificação (comando e saída real)** —
+  herdado do handoff.md do Antigravity Teamwork.
+
+### Acceptance Criteria (incremento)
+
+- AC-8: `plan:true` → run `plan` executa antes de `implement` e seu
+  `pipeline_result.plan` é injetado no prompt da implementação.
+- AC-9: `worker_model`/`fix_model` refletem em `ChatRun.Model` das fases.
+- AC-10: run de fase `Running` com `HeartbeatAt` stale → substituída com
+  prompt de retomada; esgotado `MaxStallRetries` → `failed`/`stalled`.
+- AC-11: validação verde dispara `verify`; `verdict:"issues"` → fix com
+  as issues; sem tentativas → pipeline `failed`.
+- AC-12: `ParsePhaseResult` extrai `files/verdict/issues/plan` do bloco;
+  bloco ausente/malformado → null sem quebrar a fase.

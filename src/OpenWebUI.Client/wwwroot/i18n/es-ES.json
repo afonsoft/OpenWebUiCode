@@ -1073,6 +1073,8 @@
   "chat.src_command": "cmd",
   "chat.src_builtin": "builtin",
   "chat.cmd_plan": "Modo plan — analiza el requisito y genera la SPEC SDD",
+  "chat.cmd_build": "Modo build — ejecuta con herramientas de workspace",
+  "chat.cmd_chat": "Modo chat — conversación directa, sin herramientas de workspace",
   "sidebar.children": "Subtareas",
   "sidebar.delegated": "Chat delegado",
   "sidebar.delegated_badge": "delegado",

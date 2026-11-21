@@ -91,6 +91,11 @@ public sealed class ChatRunExecutor(
     private readonly RunAdvisorService advisor = lifecycle.Advisor;
     private readonly RunEventWriter runEvents = lifecycle.RunEvents;
     private readonly OpenWebUI.Infrastructure.Runs.AgentRunEventBus runBus = lifecycle.RunBus;
+
+    /// <summary>Último modo efetivo visto no gate — mudança mid-run
+    /// (mode_switch/typed slash/PATCH) publica o evento <c>mode</c> para o
+    /// chip do cliente atualizar ao vivo (RF-003).</summary>
+    private string? _lastGateMode;
     private readonly OpenWebUI.Infrastructure.Runs.RunInterceptorRunner interceptors = lifecycle.Interceptors;
     private readonly PolicyService? policies = lifecycle.Policies;
     private readonly RunUsageLedgerService usageLedger = lifecycle.UsageLedger;
@@ -2798,7 +2803,17 @@ public sealed class ChatRunExecutor(
             .Where(c => c.Id == run.ChatId)
             .Select(c => new { c.ApprovalPreset, c.Mode })
             .FirstOrDefaultAsync(ct);
-        var mode = await ResolveEffectiveModeAsync(run, gateInfo?.Mode, ct);
+        var mode = ResolveEffectiveMode(gateInfo?.Mode);
+
+        // Transição de modo por fora do plan_exit (mode_switch, slash
+        // digitado, PATCH mid-run) — o chip do cliente só atualiza com o
+        // evento. plan_exit já publica o seu (dedupe via _lastGateMode).
+        if (_lastGateMode is { } prevMode && prevMode != mode)
+        {
+            broadcaster.Publish(run.Id,
+                $"event: mode\ndata: {JsonSerializer.Serialize(new RunModeEvent(mode), JsonOptions)}");
+        }
+        _lastGateMode = mode;
 
         // ask_user/plan_exit têm gates próprios (RF-005/RF-003).
         if (await ChatToolGateAsync(
@@ -2947,18 +2962,11 @@ public sealed class ChatRunExecutor(
         };
     }
 
-    /// <summary>SPEC-15: build sem repo vinculado não executa tools de workspace.</summary>
-    private async Task<string> ResolveEffectiveModeAsync(
-        ChatRun run, string? rawMode, CancellationToken ct)
-    {
-        var mode = PermissionRuleset.Normalize(rawMode);
-        if (mode == PermissionRuleset.BuildMode
-            && await repos.GetChatBindingAsync(run.ChatId, ct) is null)
-        {
-            mode = PermissionRuleset.ChatMode;
-        }
-        return mode;
-    }
+    /// <summary>SPEC-20261122 RF-002: o modo persistido vale literal —
+    /// build sem repo roda na pasta scratch da conversa (SPEC-20261027),
+    /// sem rebaixamento silencioso para chat.</summary>
+    private static string ResolveEffectiveMode(string? rawMode) =>
+        PermissionRuleset.Normalize(rawMode);
 
     /// <summary>
     /// Policies admin (SPEC-20261018-policies-admin): hard-deny antes de
@@ -3443,9 +3451,12 @@ public sealed class ChatRunExecutor(
         }
 
         // 2. Pergunta ao dono pelo mesmo mecanismo do ask_user — exceto
-        //    nos presets autônomos (SPEC-15 RF-003), que aprovam direto e
-        //    auditam a escolha via decision_auto.
-        if (!IsAutoPickPreset(preset))
+        //    nos presets de autonomia total (SPEC-15 RF-003), que aprovam
+        //    direto e auditam a escolha via decision_auto. smart NÃO é
+        //    autopick aqui (SPEC-20261122 RF-005): virou o preset padrão
+        //    de plan/build e a aprovação do plano é o gate humano do modo
+        //    — auto-responder esvaziaria o "aprovar → build".
+        if (preset is not ("always-allow" or "auto"))
         {
             broadcaster.Publish(run.Id,
                 $"event: status\ndata: {JsonSerializer.Serialize(new RunPhaseEvent("awaiting_approval", call.Name), JsonOptions)}");
@@ -3474,24 +3485,27 @@ public sealed class ChatRunExecutor(
 
         // 3. Promoção plan → build: persiste no chat, publica o evento
         //    (o chip do cliente atualiza ao vivo) e instrui o modelo.
-        //    SPEC-15: build exige repo vinculado — sem binding o plano
-        //    aprovado sai do plan para chat (conversa, sem workspace).
-        var target = await repos.GetChatBindingAsync(run.ChatId, ct) is not null
-            ? PermissionRuleset.BuildMode
-            : PermissionRuleset.ChatMode;
+        //    SPEC-20261122 RF-001: o alvo é sempre build — a exigência de
+        //    repo vinculado foi removida pela SPEC-20261027 (a pasta
+        //    scratch da conversa cobre workdir sem binding). O preset de
+        //    entrada (RF-005) sobe para smart quando não pinado.
+        const string target = PermissionRuleset.BuildMode;
         await db.Chats.Where(c => c.Id == run.ChatId)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.Mode, target), ct);
+        if (await db.Chats.FirstOrDefaultAsync(c => c.Id == run.ChatId, ct)
+                is { } promoted
+            && await ChatModeTransitions.ApplyEntryPresetAsync(
+                config, promoted, target, ct))
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        _lastGateMode = target;
         broadcaster.Publish(run.Id,
             $"event: mode\ndata: {JsonSerializer.Serialize(new RunModeEvent(target), JsonOptions)}");
         return new ToolGateDecision(true, Output:
-            target == PermissionRuleset.BuildMode
-                ? $"{write.Text}\n\nPlano aprovado — execute o plano agora. "
-                    + "O modo build está ativo: tools de escrita/execução liberadas "
-                    + "nesta run (o gate de aprovação do preset segue valendo)."
-                : $"{write.Text}\n\nPlano aprovado — mas a conversa não tem "
-                    + "repositório vinculado, então ela segue no modo chat "
-                    + "(sem tools de workspace). Vincule um repositório para "
-                    + "executar o plano.");
+            $"{write.Text}\n\nPlano aprovado — execute o plano agora. "
+                + "O modo build está ativo: tools de escrita/execução liberadas "
+                + "nesta run (o gate de aprovação do preset segue valendo).");
     }
 
     /// <summary>

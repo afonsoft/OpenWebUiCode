@@ -797,8 +797,14 @@ public sealed class AgentModeContributor : ISystemPromptContributor
                     + "NÃO edite código-fonte nem faça mutações fora desse "
                     + "escopo. "
                     + PlanSpecTemplate.Prompt
-                    + " O usuário decide se executa (modo build) — nunca comece a "
-                    + "implementar sem aprovação (Status = Approved).",
+                    + " Produza o plano DETALHADO — itens ordenados, "
+                    + "arquivos-alvo e critério de aceite por item. "
+                    + "Quando o usuário sinalizar aprovação do plano "
+                    + "(por texto — 'aprovado', 'pode implementar', 'ok', "
+                    + "'vai' — ou pelo botão), chame builtin_plan_exit "
+                    + "IMEDIATAMENTE: é a única transição para o modo "
+                    + "build, onde a execução acontece. Nunca comece a "
+                    + "implementar sem ela (Status = Approved).",
             ]);
         }
 
@@ -813,9 +819,12 @@ public sealed class AgentModeContributor : ISystemPromptContributor
                 "Modo CHAT ativo: responda de forma direta ao pedido. Caso "
                     + "ele exija ler ou criar arquivos, a conversa tem uma "
                     + "pasta de trabalho própria — tools de arquivo/shell "
-                    + "operam nela mediante aprovação do usuário. Trabalho "
-                    + "em repositório versionado exige vincular um repo ao "
-                    + "chat e mudar para o modo build.",
+                    + "operam nela mediante aprovação do usuário. Se o "
+                    + "pedido pedir planejamento ou uma SPEC, chame "
+                    + "builtin_mode_switch com mode='plan'; se pedir "
+                    + "implementação/codificação direta, mode='build' — a "
+                    + "troca é instantânea e você já prossegue no novo "
+                    + "modo.",
             ]);
         }
 
