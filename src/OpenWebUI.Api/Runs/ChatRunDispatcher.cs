@@ -36,6 +36,12 @@ public sealed class ChatRunDispatcher(
     /// <summary>Máximo de runs simultâneas por usuário (override via ChatRuns:MaxConcurrentPerUser).</summary>
     public const int MaxConcurrentPerUser = 2;
 
+    /// <summary>Intervalo do watchdog periódico em segundos (override via ChatRuns:WatchdogSeconds; &lt;= 0 desliga).</summary>
+    public const int WatchdogSeconds = 60;
+
+    /// <summary>Ticks consecutivos stale+ativa antes do interrupt forçado (override via ChatRuns:WatchdogInterruptAfter).</summary>
+    public const int WatchdogInterruptAfter = 3;
+
     /// <summary>
     /// Identidade do processo (SPEC-20261016-run-recovery RF-005): cada
     /// instância gera um guid no boot — uma run com heartbeat fresco de
@@ -43,12 +49,18 @@ public sealed class ChatRunDispatcher(
     /// </summary>
     private static readonly string InstanceId = Guid.NewGuid().ToString("N");
 
+    /// <summary>Identidade desta instância — interno p/ testes de watchdog/recovery.</summary>
+    internal static string CurrentInstanceId => InstanceId;
+
     private readonly System.Threading.Channels.Channel<string> _queue = CreateQueueStatic(configuration);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _chatLocks = new();
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runCancels = new();
     // Fairness (SPEC-20261115): runs em voo por usuário — um usuário
     // faminto não consome todos os workers.
     private readonly ConcurrentDictionary<string, int> _userInFlight = new();
+    // Watchdog (SPEC-20261124 RF-004): ticks consecutivos em que cada run
+    // local ativa apareceu stale — na N-ésima o sweep marca interrupted.
+    private readonly ConcurrentDictionary<string, int> _staleSightings = new();
 
     private static System.Threading.Channels.Channel<string> CreateQueueStatic(IConfiguration config) =>
         System.Threading.Channels.Channel.CreateBounded<string>(new BoundedChannelOptions(
@@ -111,8 +123,18 @@ public sealed class ChatRunDispatcher(
     {
         if (_runCancels.TryGetValue(runId, out var cts))
         {
-            cts.Cancel();
-            return true;
+            try
+            {
+                cts.Cancel();
+                return true;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Janela: o worker removeu a entrada e já descartou o cts
+                // entre o TryGetValue e o Cancel — a run está saindo de
+                // qualquer forma, então o stop é considerado entregue.
+                return true;
+            }
         }
 
         return false;
@@ -131,9 +153,53 @@ public sealed class ChatRunDispatcher(
 
         var workers = Enumerable.Range(0, configuration.GetValue("ChatRuns:MaxConcurrent", MaxConcurrent))
             .Select(_ => WorkerAsync(stoppingToken))
+            .Append(WatchdogLoopAsync(stoppingToken))
             .ToArray();
         await Task.WhenAll(workers);
     }
+
+    /// <summary>
+    /// Watchdog global de runs (SPEC-20261124-run-watchdog RF-001): o
+    /// sweep de órfãs rodava só no boot — uma run que fica stale com o
+    /// servidor no ar nunca era reavaliada. A cada
+    /// <c>ChatRuns:WatchdogSeconds</c> repete a varredura no modo
+    /// periódico: não re-enfileira <c>queued</c> e run stale ainda ativa
+    /// neste processo leva <see cref="TryStop"/> em vez de requeue.
+    /// </summary>
+    private async Task WatchdogLoopAsync(CancellationToken ct)
+    {
+        var interval = configuration.GetValue(
+            "ChatRuns:WatchdogSeconds", WatchdogSeconds);
+        if (interval <= 0)
+        {
+            return;
+        }
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(interval), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            await SweepOrphansAsync(ct, includeQueued: false);
+        }
+    }
+
+    /// <summary>Hook de teste: registra a run como ativa neste processo
+    /// (equivale a uma execução em curso num worker).</summary>
+    internal CancellationTokenSource RegisterRunCancelForTest(string runId)
+    {
+        var cts = new CancellationTokenSource();
+        _runCancels[runId] = cts;
+        return cts;
+    }
+
+    /// <summary>Hook de teste: desfaz <see cref="RegisterRunCancelForTest"/>.</summary>
+    internal void UnregisterRunCancelForTest(string runId) =>
+        _runCancels.TryRemove(runId, out _);
 
     /// <summary>
     /// Sweep de runs órfãs no boot (SPEC-20261016-run-recovery RF-003/005):
@@ -146,9 +212,22 @@ public sealed class ChatRunDispatcher(
     /// <item>running stale com snapshot de loop-state → reivindicadas
     /// (OwnerInstance + heartbeat) e re-enfileiradas para retomada;</item>
     /// <item>running stale sem eventos → interrupted (legado).</item>
+    /// <item>watchdog periódico (SPEC-20261124): run stale ainda ativa
+    /// neste processo → <see cref="TryStop"/> (nunca re-enfileira —
+    /// duplicaria a execução); após <c>WatchdogInterruptAfter</c> ticks
+    /// consecutivos → interrupted forçado.</item>
     /// </list>
     /// </summary>
-    public async Task SweepOrphansAsync(CancellationToken ct)
+    public Task SweepOrphansAsync(CancellationToken ct) =>
+        SweepOrphansAsync(ct, includeQueued: true);
+
+    /// <inheritdoc cref="SweepOrphansAsync(CancellationToken)" />
+    /// <param name="includeQueued">No boot a fila em memória morre com o
+    /// processo — <c>queued</c> volta para o canal. No tick periódico a
+    /// fila está viva: toda run <c>queued</c> no banco já tem cópia no
+    /// canal e re-enfileirar duplicaria entradas no bounded channel.
+    /// </param>
+    public async Task SweepOrphansAsync(CancellationToken ct, bool includeQueued)
     {
         try
         {
@@ -178,14 +257,21 @@ public sealed class ChatRunDispatcher(
             var resumableSet = resumable.ToHashSet();
             var staleAfter = configuration.GetValue(
                 "ChatRuns:ResumeStaleSeconds", 60);
+            var forceAfter = Math.Max(1, configuration.GetValue(
+                "ChatRuns:WatchdogInterruptAfter", WatchdogInterruptAfter));
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var requeue = new List<string>();
+            var activeLocal = _runCancels.Keys.ToHashSet();
+            var staleLocalSeen = new HashSet<string>();
             var resumed = 0;
             var interrupted = 0;
+            var stoppedLocal = 0;
 
             foreach (var run in orphans)
             {
-                switch (ClassifyOrphan(run, resumableSet, now, staleAfter, requeue))
+                switch (ClassifyOrphan(
+                    run, resumableSet, now, staleAfter, requeue,
+                    includeQueued, activeLocal))
                 {
                     case OrphanAction.Resumed:
                         resumed++;
@@ -193,7 +279,37 @@ public sealed class ChatRunDispatcher(
                     case OrphanAction.Interrupted:
                         interrupted++;
                         break;
+                    case OrphanAction.StopLocal:
+                        stoppedLocal++;
+                        staleLocalSeen.Add(run.Id);
+                        var seen = _staleSightings.AddOrUpdate(
+                            run.Id, 1, (_, n) => n + 1);
+                        if (seen >= forceAfter)
+                        {
+                            // RF-004: ignorou N stops — o executor pode
+                            // estar pendurado além do cancelamento; o
+                            // status final dele ainda prevalece se um dia
+                            // concluir, mas observadores não veem mais a
+                            // run como viva.
+                            run.Status = ChatRunStatus.Interrupted;
+                            run.CompletedAt = now;
+                            run.Error ??=
+                                "Watchdog: heartbeat morto e a run não respondeu ao stop.";
+                            interrupted++;
+                        }
+                        else
+                        {
+                            TryStop(run.Id);
+                        }
+                        break;
                 }
+            }
+
+            // Runs que saíram do radar stale-local não acumulam sightings.
+            foreach (var key in _staleSightings.Keys
+                .Where(k => !staleLocalSeen.Contains(k)).ToList())
+            {
+                _staleSightings.TryRemove(key, out _);
             }
 
             await db.SaveChangesAsync(ct);
@@ -203,11 +319,11 @@ public sealed class ChatRunDispatcher(
             {
                 _queue.Writer.TryWrite(runId);
             }
-            if (resumed > 0 || interrupted > 0)
+            if (resumed > 0 || interrupted > 0 || stoppedLocal > 0)
             {
                 logger.LogWarning(
-                    "Sweep de runs órfãs: {Resumed} retomadas, {Interrupted} interrupted, {Requeued} re-enfileiradas.",
-                    resumed, interrupted, requeue.Count);
+                    "Sweep de runs órfãs: {Resumed} retomadas, {Interrupted} interrupted, {StoppedLocal} stops locais, {Requeued} re-enfileiradas.",
+                    resumed, interrupted, stoppedLocal, requeue.Count);
             }
         }
         catch (Exception ex)
@@ -216,14 +332,15 @@ public sealed class ChatRunDispatcher(
         }
     }
 
-    private enum OrphanAction { Skipped, Resumed, Interrupted }
+    private enum OrphanAction { Skipped, Resumed, Interrupted, StopLocal }
 
     /// <summary>Decide o destino de uma run do sweep (ver doc de
-    /// <see cref="SweepOrphansAsync"/>). Devolve a ação tomada para a
-    /// contabilidade do caller.</summary>
+    /// <see cref="SweepOrphansAsync(CancellationToken)"/>). Devolve a
+    /// ação tomada para a contabilidade do caller.</summary>
     private static OrphanAction ClassifyOrphan(
         ChatRun run, HashSet<string> resumableSet, long now,
-        int staleAfter, List<string> requeue)
+        int staleAfter, List<string> requeue,
+        bool includeQueued, HashSet<string> activeLocal)
     {
         if (run.Status == ChatRunStatus.Paused)
         {
@@ -231,7 +348,10 @@ public sealed class ChatRunDispatcher(
         }
         if (run.Status == ChatRunStatus.Queued)
         {
-            requeue.Add(run.Id);
+            if (includeQueued)
+            {
+                requeue.Add(run.Id);
+            }
             return OrphanAction.Skipped;
         }
         // running: heartbeat fresco de QUALQUER dono = run viva
@@ -243,6 +363,14 @@ public sealed class ChatRunDispatcher(
         if (alive)
         {
             return OrphanAction.Skipped;
+        }
+        // SPEC-20261124 RF-003: stale mas ainda executando neste processo
+        // — reivindicar + re-enfileirar faria um segundo worker rodá-la
+        // em dobro. O caller cancela via TryStop.
+        if (string.Equals(run.OwnerInstance, InstanceId, StringComparison.Ordinal)
+            && activeLocal.Contains(run.Id))
+        {
+            return OrphanAction.StopLocal;
         }
         if (!resumableSet.Contains(run.Id))
         {
