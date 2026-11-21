@@ -106,22 +106,46 @@ public sealed class DevPipelineService(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        if (!string.IsNullOrWhiteSpace(workerModel))
-        {
-            foreach (var p in new[] { "plan", "implement", "test", "verify" })
-            {
-                state.Models[p] = workerModel;
-            }
-        }
-        if (!string.IsNullOrWhiteSpace(fixModel))
-        {
-            state.Models["fix"] = fixModel;
-        }
-
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var repos = scope.ServiceProvider.GetRequiredService<WorkspaceRepoService>();
         var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+
+        // RF-007: modelo por fase. Sem override explícito e a run pai em
+        // fusion:{L}>{S}, os papéis herdam o par — worker (implement/
+        // test/verify) ← sidekick (a kv já vem como chain:{S,…,L} com os
+        // leaders como fallback final) e fixer ← leader, o split
+        // planner/worker do orquestrador. Refs chain:/fusion: também são
+        // aceitos nos args — o executor resolve a cadeia na run filha.
+        var worker = workerModel;
+        var fixer = fixModel;
+        string? fusionLeader = null;
+        if ((worker is null || fixer is null) && context.RunId is { } parentRun)
+        {
+            fusionLeader = await config.GetAsync(
+                $"r:{parentRun}:fusion.leader", (string?)null, ct);
+            var fusionSidekick = await config.GetAsync(
+                $"r:{parentRun}:fusion.sidekick", (string?)null, ct);
+            fixer ??= fusionLeader;
+            worker ??= fusionSidekick;
+        }
+        if (!string.IsNullOrWhiteSpace(worker))
+        {
+            foreach (var p in new[] { "plan", "implement", "test", "verify" })
+            {
+                state.Models[p] = worker;
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(fixer))
+        {
+            state.Models["fix"] = fixer;
+        }
+        // plan é trabalho de planner: sem worker_model explícito, o leader
+        // do pai roteia a fase — não o sidekick dos workers.
+        if (workerModel is null && !string.IsNullOrWhiteSpace(fusionLeader))
+        {
+            state.Models["plan"] = fusionLeader;
+        }
 
         var preset = context.ChatId is { } pid
             ? await db.Chats.AsNoTracking()

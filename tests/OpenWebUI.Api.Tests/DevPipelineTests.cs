@@ -554,6 +554,83 @@ public class DevPipelineIntegrationTests
         Assert.That(reload.MaxFixAttempts, Is.EqualTo(1));
     }
 
+    // ---------- RF-007: defaults fusion (leader→plan/fix, sidekick→workers) ----------
+
+    /// <summary>Semeia as kv de par fusion da run pai (o executor grava
+    /// no boot de uma run <c>fusion:L&gt;S</c>).</summary>
+    private async Task SeedFusionKvAsync(
+        string runId, string leader, string sidekick)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+        await config.SetAsync($"r:{runId}:fusion.leader", leader, CancellationToken.None);
+        await config.SetAsync($"r:{runId}:fusion.sidekick", sidekick, CancellationToken.None);
+    }
+
+    [Test]
+    public async Task StartAsync_PaiFusion_PapeisHerdadosDoPar()
+    {
+        var (userId, chatId, runId) = await SeedParentAsync("fu1@pipeline.local");
+        await SeedFusionKvAsync(runId, "gpt-lead", "chain:sk-1,gpt-lead");
+        var ctx = new BuiltinToolContext(
+            userId, chatId, runId, Path.GetTempPath(), Path.GetTempPath(),
+            "fusion:gpt-lead>sk-1");
+
+        var state = await NewService().StartAsync(
+            ctx, "tarefa fusion", null, push: false,
+            maxFixAttempts: 1, CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(state.Models["implement"], Is.EqualTo("chain:sk-1,gpt-lead"));
+            Assert.That(state.Models["test"], Is.EqualTo("chain:sk-1,gpt-lead"));
+            Assert.That(state.Models["verify"], Is.EqualTo("chain:sk-1,gpt-lead"));
+            Assert.That(state.Models["plan"], Is.EqualTo("gpt-lead"),
+                "planner roda no leader — não no sidekick dos workers");
+            Assert.That(state.Models["fix"], Is.EqualTo("gpt-lead"),
+                "diagnoser roda no leader");
+        });
+    }
+
+    [Test]
+    public async Task StartAsync_OverridesExplicitos_VencemDefaultsFusion()
+    {
+        var (userId, chatId, runId) = await SeedParentAsync("fu2@pipeline.local");
+        await SeedFusionKvAsync(runId, "gpt-lead", "sk-1");
+        var ctx = new BuiltinToolContext(
+            userId, chatId, runId, Path.GetTempPath(), Path.GetTempPath(),
+            "fusion:gpt-lead>sk-1");
+
+        var state = await NewService().StartAsync(
+            ctx, "tarefa fusion", null, push: false,
+            maxFixAttempts: 1, CancellationToken.None,
+            workerModel: "w-custom", fixModel: "f-custom");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(state.Models["implement"], Is.EqualTo("w-custom"));
+            Assert.That(state.Models["plan"], Is.EqualTo("w-custom"),
+                "worker_model explícito cobre o plan (semântica documentada)");
+            Assert.That(state.Models["fix"], Is.EqualTo("f-custom"));
+        });
+    }
+
+    [Test]
+    public async Task StartAsync_SemFusion_ModelsVazioHerdaDoPai()
+    {
+        var (userId, chatId, runId) = await SeedParentAsync("fu3@pipeline.local");
+        var ctx = new BuiltinToolContext(
+            userId, chatId, runId, Path.GetTempPath(), Path.GetTempPath(),
+            "llama3");
+
+        var state = await NewService().StartAsync(
+            ctx, "tarefa comum", null, push: false,
+            maxFixAttempts: 1, CancellationToken.None);
+
+        Assert.That(state.Models, Is.Empty,
+            "sem fusion nem overrides as fases herdam o modelo do pai");
+    }
+
     // ---------- mode_switch + preset de entrada (SPEC-20261122) ----------
 
     /// <summary>Semeia um chat simples do usuário e devolve ids + userId.</summary>
