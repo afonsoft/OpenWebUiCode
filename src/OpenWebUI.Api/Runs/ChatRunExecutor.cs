@@ -4137,10 +4137,134 @@ public sealed class ChatRunExecutor(
         }
 
         await db.SaveChangesAsync(CancellationToken.None);
+        // Steers mode=queue ainda pendentes: o caminho "ficaria ociosa" do
+        // tool loop nem sempre roda (teto de steps, veto de budget, falha)
+        // — sem o drain elas morriam órfãs e eram expurgadas em silêncio.
+        // Roda antes do evento terminal para o reload do cliente já
+        // enxergar a run filha (mesmo padrão do auto-chain).
+        await DrainQueuedSteersAsync(run);
         broadcaster.Publish(
             run.Id,
             $"event: status\ndata: {JsonSerializer.Serialize(new { status = run.Status })}");
         await PublishRunFinishedAsync(run);
+    }
+
+    /// <summary>
+    /// SPEC-20261010-steer-queue follow-up: <c>queue</c> só era promovida
+    /// dentro do tool loop quando a run "ficaria ociosa". Runs que terminam
+    /// por outros caminhos (completed com teto/veto, failed) deixavam as
+    /// mensagens enfileiradas órfãs — o usuário pedia "enviar quando a
+    /// tarefa concluir" e a msg sumia. O drain promove as pendentes para
+    /// mensagens <c>user</c> no leaf e enfileira uma run filha que as
+    /// responde. Run <c>stopped</c> não drena — halt explícito do usuário é
+    /// absoluto (as pendentes viram <c>cancelled</c>, não ficam pending
+    /// para sempre).
+    /// </summary>
+    internal async Task DrainQueuedSteersAsync(ChatRun run)
+    {
+        List<ChatRunSteer> pending;
+        try
+        {
+            pending = await db.ChatRunSteers
+                .Where(s => s.RunId == run.Id && s.Status == "pending"
+                    && s.Mode == "queue")
+                .OrderBy(s => s.Timestamp)
+                .ToListAsync(CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            // Base antiga sem a tabela de steers — mesmo guard do PollSteerAsync.
+            return;
+        }
+        if (pending.Count == 0)
+        {
+            return;
+        }
+        if (run.Status == ChatRunStatus.Stopped)
+        {
+            foreach (var s in pending)
+            {
+                s.Status = "cancelled";
+            }
+            await db.SaveChangesAsync(CancellationToken.None);
+            return;
+        }
+
+        var chat = await db.Chats.Include(c => c.Messages)
+            .FirstOrDefaultAsync(c => c.Id == run.ChatId, CancellationToken.None);
+        if (chat is null)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var parentId = BranchService.ResolveLeaf(chat)?.Id;
+        foreach (var steer in pending)
+        {
+            steer.Status = "promoted";
+            var message = new ChatMessage
+            {
+                ChatId = chat.Id,
+                Role = "user",
+                Content = steer.Content,
+                Position = chat.Messages.Count == 0
+                    ? 0
+                    : chat.Messages.Max(m => m.Position) + 1,
+                Timestamp = now,
+                ParentId = parentId,
+            };
+            chat.Messages.Add(message);
+            parentId = message.Id;
+            chat.LeafMessageId = message.Id;
+        }
+        chat.UpdatedAt = now;
+
+        // O histórico reconstruído já inclui as mensagens queued persistidas
+        // acima — a run filha é a resposta delas (ParentRunId liga a cadeia).
+        var path = BranchService.WalkPath(chat);
+        var visible = await boundaries.FilterAsync(chat.Id, path, CancellationToken.None);
+        var history = visible.Select(m => new ChatCompletionMessage(
+            m.Role, m.Content, m.ToolCallId, m.ToolCallsJson,
+            FileIds: ParseFileIds(m.FilesJson))).ToList();
+        var request = JsonSerializer.Deserialize<ChatCompletionRequest>(
+            run.RequestJson, JsonOptions)
+            ?? new ChatCompletionRequest(run.Model, history);
+        var childRun = new ChatRun
+        {
+            ChatId = run.ChatId,
+            UserId = run.UserId,
+            Model = run.Model,
+            RequestJson = JsonSerializer.Serialize(
+                request with { Messages = history }, JsonOptions),
+            ParentRunId = run.Id,
+            MetaJson = JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["queueDrain"] = new { count = pending.Count },
+            }, JsonOptions),
+            CreatedAt = now,
+        };
+        db.ChatRuns.Add(childRun);
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        // Herda o orçamento de steps da run-mãe — mensagens queued não
+        // resetam o contador (mesma regra do auto-chain).
+        if (await config.GetAsync<int?>(
+                $"r:{run.Id}:agent.steps", null, CancellationToken.None) is { } steps)
+        {
+            await config.SetAsync(
+                $"r:{childRun.Id}:agent.steps", steps, CancellationToken.None);
+        }
+
+        await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note, new
+        {
+            note = $"queue drain: {pending.Count} mensagem(ns) enfileirada(s) → run filha {childRun.Id}",
+            childRunId = childRun.Id,
+        }, CancellationToken.None);
+        logger.LogInformation(
+            "Run {RunId}: {Count} steer(s) queue órfão(s) promovidos — run filha {Child} enfileirada.",
+            run.Id, pending.Count, childRun.Id);
+        using var scope = scopes.CreateScope();
+        scope.ServiceProvider.GetRequiredService<ChatRunDispatcher>().Enqueue(childRun.Id);
     }
 
     /// <summary>
@@ -4214,6 +4338,9 @@ public sealed class ChatRunExecutor(
                 run, failChat, $"> ⚠️ {error}", null, run.CompletedAt.Value);
         }
         await db.SaveChangesAsync(CancellationToken.None);
+        // Falha pré-execução também drena steers queue órfãos — sem isso a
+        // mensagem enfileirada sumia com a run (mesmo guard do FinishAsync).
+        await DrainQueuedSteersAsync(run);
         broadcaster.Publish(run.Id, $"data: {JsonSerializer.Serialize(new { error })}");
         broadcaster.Publish(run.Id, SseDoneLine);
         await runBus.PublishAsync(

@@ -507,6 +507,118 @@ public class ChatRunEndpointsTests
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
     }
 
+    [Test]
+    public async Task QueueSteer_RunTerminadaForaDoLoop_ViraRunFilha()
+    {
+        // Regressão: steers mode=queue pendentes quando a run termina por um
+        // caminho que não passa pelo "ficaria ociosa" do tool loop (teto de
+        // steps, veto de budget, falha) morriam órfãs e eram expurgadas —
+        // a fila prometia "enviar quando a tarefa concluir" e descartava
+        // a mensagem em silêncio.
+        var auth = await SignUpAsync("QueueDrain1", "queued1@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync(
+            [new ChatMessageModel("m1", "user", "oi", null, 100)]);
+
+        var runId = $"run-{Guid.NewGuid():N}";
+        using (var seed = _factory.Services.CreateScope())
+        {
+            var seedDb = seed.ServiceProvider.GetRequiredService<AppDbContext>();
+            seedDb.ChatRuns.Add(new ChatRun
+            {
+                Id = runId, ChatId = chat.Id, UserId = auth.User.Id,
+                Model = "llama3", Status = ChatRunStatus.Failed,
+                RequestJson = """{"model":"llama3","messages":[]}""",
+                CreatedAt = 1,
+            });
+            seedDb.ChatRunSteers.Add(new ChatRunSteer
+            {
+                RunId = runId, ChatId = chat.Id, Content = "faz Y depois",
+                Mode = "queue", Status = "pending", Timestamp = 10,
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var executor = scope.ServiceProvider
+                .GetRequiredService<Runs.ChatRunExecutor>();
+            var run = await db.ChatRuns.FindAsync(runId);
+            await executor.DrainQueuedSteersAsync(run!);
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var steer = await db.ChatRunSteers.SingleAsync(s => s.RunId == runId);
+            Assert.That(steer.Status, Is.EqualTo("promoted"));
+
+            var contents = await db.Chats.Where(c => c.Id == chat.Id)
+                .SelectMany(c => c.Messages)
+                .Select(m => new { m.Role, m.Content })
+                .ToListAsync();
+            Assert.That(
+                contents.Any(m => m.Role == "user" && m.Content == "faz Y depois"),
+                Is.True, "o conteúdo queued devia virar mensagem user no chat");
+
+            var child = await db.ChatRuns
+                .Where(r => r.ParentRunId == runId)
+                .SingleOrDefaultAsync();
+            Assert.That(child, Is.Not.Null,
+                "o drain devia enfileirar uma run filha respondendo ao queued");
+        }
+    }
+
+    [Test]
+    public async Task QueueSteer_RunStopped_ViraCancelledSemRunFilha()
+    {
+        // Halt explícito é absoluto: run stopped não dispara run nova — o
+        // steer pending é marcado cancelled em vez de ficar órfão pra sempre.
+        var auth = await SignUpAsync("QueueDrain2", "queued2@runs.local");
+        UseToken(auth.Token);
+        var chat = await CriarChatAsync(
+            [new ChatMessageModel("m1", "user", "oi", null, 100)]);
+
+        var runId = $"run-{Guid.NewGuid():N}";
+        using (var seed = _factory.Services.CreateScope())
+        {
+            var seedDb = seed.ServiceProvider.GetRequiredService<AppDbContext>();
+            seedDb.ChatRuns.Add(new ChatRun
+            {
+                Id = runId, ChatId = chat.Id, UserId = auth.User.Id,
+                Model = "llama3", Status = ChatRunStatus.Stopped,
+                RequestJson = """{"model":"llama3","messages":[]}""",
+                CreatedAt = 1,
+            });
+            seedDb.ChatRunSteers.Add(new ChatRunSteer
+            {
+                RunId = runId, ChatId = chat.Id, Content = "não roda",
+                Mode = "queue", Status = "pending", Timestamp = 10,
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var executor = scope.ServiceProvider
+                .GetRequiredService<Runs.ChatRunExecutor>();
+            var run = await db.ChatRuns.FindAsync(runId);
+            await executor.DrainQueuedSteersAsync(run!);
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var steer = await db.ChatRunSteers.SingleAsync(s => s.RunId == runId);
+            Assert.That(steer.Status, Is.EqualTo("cancelled"));
+            var childCount = await db.ChatRuns
+                .CountAsync(r => r.ParentRunId == runId);
+            Assert.That(childCount, Is.EqualTo(0));
+        }
+    }
+
     /// <summary>Seed de run num status arbitrário sem passar pelo dispatcher.</summary>
     private async Task<string> SeedRunAsync(
         string chatId, string userId, string status)
