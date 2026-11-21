@@ -355,6 +355,25 @@ public class DevPipelineUnitTests
             "<pipeline_result>{invalido}</pipeline_result>"), Is.Null);
     }
 
+    [Test]
+    public void RotateChain_SubstitutaAvancaCandidato()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.RotateChain("chain:a,b,c", 1),
+                Is.EqualTo("chain:b,c,a"),
+                "substituta nº 1 começa do 2º candidato");
+            Assert.That(DevPipelineService.RotateChain("chain:a,b,c", 2),
+                Is.EqualTo("chain:c,a,b"));
+            Assert.That(DevPipelineService.RotateChain("llama3", 1),
+                Is.EqualTo("llama3"), "id simples não roda");
+            Assert.That(DevPipelineService.RotateChain("chain:a,b", 5),
+                Is.EqualTo("chain:a,b"), "índice fora do range mantém");
+            Assert.That(DevPipelineService.RotateChain("chain:a,b", 0),
+                Is.EqualTo("chain:a,b"), "índice 0 não muda");
+        });
+    }
+
     // ---------- TryModeSlash (RF-004) ----------
 
     [Test]
