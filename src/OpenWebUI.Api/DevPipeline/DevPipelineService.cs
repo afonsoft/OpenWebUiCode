@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Domain;
 using OpenWebUI.Infrastructure.ChatTools;
@@ -121,6 +122,7 @@ public sealed class DevPipelineService(
         /// <summary>Budget de wallclock do step em segundos (v2) —
         /// estoura → step falha com issue <c>timeout</c>; a run filha
         /// órfã é varrida pelo watchdog global.</summary>
+        [JsonPropertyName("timeout_sec")]
         public int? TimeoutSec { get; init; }
     }
 
@@ -692,15 +694,16 @@ public sealed class DevPipelineService(
                 continue;
             }
             var anchor = AnchorRunId(state, i);
+            var budgetSec = step.TimeoutSec ?? 0;
             bool ok;
-            using (var budget = step.TimeoutSec is { } secs
+            using (var budget = budgetSec > 0
                 ? CancellationTokenSource.CreateLinkedTokenSource(ct)
                 : null)
             {
                 var stepCt = ct;
                 if (budget is not null)
                 {
-                    budget.CancelAfter(TimeSpan.FromSeconds(secs));
+                    budget.CancelAfter(TimeSpan.FromSeconds(budgetSec));
                     stepCt = budget.Token;
                 }
                 try
@@ -732,7 +735,7 @@ public sealed class DevPipelineService(
                     // Só o budget do step estourou — a run filha órfã é
                     // varrida pelo watchdog global (SPEC-20261124-run-watchdog).
                     ok = await IssueAsync(state, step,
-                        $"timeout após {secs}s");
+                        $"timeout após {budgetSec}s");
                 }
             }
             if (!ok)
@@ -763,6 +766,39 @@ public sealed class DevPipelineService(
     private const string ResultTrailer =
         "\nTermine com <pipeline_result>{\"files\":[\"paths\"],"
             + "\"summary\":\"resumo\"}</pipeline_result>.";
+
+    /// <summary>Aponta o board de coordenação da pipeline
+    /// (<c>builtin:pipeline_board</c>) para workers irmãos — cegos uns
+    /// aos outros sem ele (SPEC-20261124-workflow-v2).</summary>
+    private static string BoardTrailer(State state) =>
+        $"\nCoordenação: workers irmãos dividem o board "
+            + $"builtin:pipeline_board board=\"{state.Id}\" — poste "
+            + "bloqueios/decisões de interface (op=post) e leia relatos "
+            + "alheios (op=read) antes de fechar.";
+
+    /// <summary>Colhe o board da pipeline como
+    /// <c>PhaseResults[{stepKey}:board]</c> — acessível a steps seguintes
+    /// via <c>{results:{stepKey}:board}</c>.</summary>
+    private async Task HarvestBoardAsync(
+        State state, string stepKey, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var config = scope.ServiceProvider
+            .GetRequiredService<ConfigService>();
+        var list = await config.GetAsync(
+            $"board:{state.UserId}:{state.Id}",
+            new List<PipelineBoardBuiltinTool.BoardMessage>(), ct) ?? [];
+        if (list.Count == 0)
+        {
+            return;
+        }
+        var take = Math.Min(
+            PipelineBoardBuiltinTool.ReadWindow, list.Count);
+        var summary = string.Join('\n', list.TakeLast(take).Select(
+            (m, i) => $"#{list.Count - take + i + 1} {m.Author}: {m.Text}"));
+        state.PhaseResults[$"{stepKey}:board"] =
+            new(null, Tail(summary, 4000), "passed", null, null, null);
+    }
 
     /// <summary>Run âncora do step: a última run concluída de step
     /// anterior no chat filho — a run seguinte herda o worktree isolado
@@ -1056,7 +1092,8 @@ public sealed class DevPipelineService(
                         + (item.Files is { Count: > 0 } f
                             ? $"\nEscopo de arquivos: {string.Join(", ", f)}"
                             : string.Empty)
-                        + ResultTrailer;
+                        + ResultTrailer
+                        + BoardTrailer(state);
                 state.FanoutItemChats.TryGetValue(key, out var chatId);
                 var runId = EffectiveRunId(state, key);
                 if (runId is not null
@@ -1102,6 +1139,7 @@ public sealed class DevPipelineService(
                 await ParsePhaseResultAsync(
                     state, step.Key, ct, resultKey: w.Key, chatId: w.ChatId);
             }
+            await HarvestBoardAsync(state, step.Key, ct);
             var conflicts = await MergeFanoutAsync(state, workers, ct);
             if (conflicts.Count > 0)
             {
@@ -1178,6 +1216,7 @@ public sealed class DevPipelineService(
             await ParsePhaseResultAsync(
                 state, "implement", ct, resultKey: w.Key, chatId: w.ChatId);
         }
+        await HarvestBoardAsync(state, "implement", ct);
 
         // Merge sequencial item a item no workdir do filho; depois os
         // itens dependentes/overflow numa run sequencial no chat filho.
@@ -1313,7 +1352,8 @@ public sealed class DevPipelineService(
             + "paralelos e são mergeados depois. Fique no escopo, NÃO "
             + "escreva testes (fase própria após o merge) e NÃO faça "
             + "commit. Termine com <pipeline_result>{\"files\":[\"paths\"],"
-            + "\"summary\":\"resumo\"}</pipeline_result>.";
+            + "\"summary\":\"resumo\"}</pipeline_result>."
+            + BoardTrailer(state);
 
     /// <summary>Prompt do implement-rest: itens dependentes/overflow no
     /// workdir do filho, já com o merge do fan-out aplicado.</summary>

@@ -1371,4 +1371,41 @@ public class DevPipelineIntegrationTests
             ctx, CancellationToken.None);
         Assert.That(stepsInvalidos.Text, Does.Contain("kind desconhecido"));
     }
+
+    [Test]
+    public async Task PipelineBoard_PostLERead_ComIsolamentoPorUsuario()
+    {
+        var tool = new PipelineBoardBuiltinTool(
+            _factory.Services.GetRequiredService<IServiceScopeFactory>());
+        var board = $"tst-{Guid.NewGuid():N}";
+        var ctxU1 = new BuiltinToolContext("u1", "chat1", "run1",
+            Path.GetTempPath(), Path.GetTempPath());
+        var ctxU2 = new BuiltinToolContext("u2", "chat2", "run2",
+            Path.GetTempPath(), Path.GetTempPath());
+
+        var post = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                $$"""{"op":"post","board":"{{board}}","message":"api: POST /items pronto","author":"item-a"}""")
+                .RootElement,
+            ctxU1, CancellationToken.None);
+        Assert.That(post.Text, Does.Contain("postada"));
+
+        var read = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                $$"""{"op":"read","board":"{{board}}"}""").RootElement,
+            ctxU1, CancellationToken.None);
+        Assert.That(read.Text, Does.Contain("item-a: api: POST /items"));
+
+        // Mesmo board id, outro usuário → vazio (isolamento por kv).
+        var readU2 = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                $$"""{"op":"read","board":"{{board}}"}""").RootElement,
+            ctxU2, CancellationToken.None);
+        Assert.That(readU2.Text, Does.Contain("sem mensagens novas"));
+
+        var semBoard = await tool.ExecuteAsync(
+            JsonDocument.Parse("""{"op":"read"}""").RootElement,
+            ctxU1, CancellationToken.None);
+        Assert.That(semBoard.Text, Does.Contain("'board'"));
+    }
 }

@@ -101,3 +101,14 @@ o gate é **máquina de estado da pipeline**, não uma tool call.
   em sufixos via `RecordRun`.
 - #6 (routine→pipeline) é graça: `builtin:routine` já agenda
   prompt→run server-side, e o run agendado invoca `run_workflow`.
+
+## Addendum 2 — board inter-agentes
+
+- `builtin:pipeline_board` (Tier.Read): `post`/`read` em kv
+  `board:{user}:{pipelineId}` — workers irmãos do parallel/fan-out
+  deixam bloqueios, descobertas e decisões de interface. Caps:
+  200 msgs/board, 2000 chars/msg, read devolve até 50 (filtro `since`).
+- `BoardTrailer` injeta o board id no prompt de todo worker; o join
+  colhe o board como `PhaseResults[{step}:board]` — acessível a steps
+  seguintes via `{results:{step}:board}`.
+- Isolamento por usuário no key do kv (teste dedicado).
