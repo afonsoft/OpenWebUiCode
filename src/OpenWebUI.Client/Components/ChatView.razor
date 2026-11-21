@@ -2844,7 +2844,12 @@
         return (false, rest);
     }
 
-    private async Task SendAsync()
+    /// <summary>
+    /// Envia o conteúdo do composer. Retorna <c>true</c> quando a mensagem foi
+    /// despachada (run/stream iniciada ou consumida pelo modo plan) — o drain
+    /// da fila usa o retorno para devolver o item à fila em vez de perdê-lo.
+    /// </summary>
+    private async Task<bool> SendAsync()
     {
         var text = _input.Trim();
         // T6: Command/CommandArgs só viajam se o usuário não editou o texto
@@ -2860,12 +2865,12 @@
             text, fileIds, mentionPaths);
         if (planHandled)
         {
-            return;
+            return true;
         }
         text = planText;
         if ((text.Length == 0 && fileIds.Count == 0 && mentionPaths is null) || string.IsNullOrEmpty(_model))
         {
-            return;
+            return false;
         }
 
         _input = string.Empty;
@@ -2888,13 +2893,13 @@
         var isNew = _loadedChatId is null && !Playground;
         if (isNew && !await CreateChatForSendAsync(text))
         {
-            return;
+            return false;
         }
 
         // Chats persistidos usam runs desacopladas (a geração sobrevive a fechar a aba);
         // playground e demais caminhos seguem no stream direto legado.
         var detached = _loadedChatId is not null && !Playground;
-        await StreamAssistantAsync(fileIds, detached ? content : null,
+        var dispatched = await StreamAssistantAsync(fileIds, detached ? content : null,
             mentionPaths, pendingCommand);
         if (!detached)
         {
@@ -2914,6 +2919,7 @@
         }
 
         _ = LoadFollowUpsAsync();
+        return dispatched;
     }
 
     /// <summary>
@@ -3193,18 +3199,26 @@
                 _input = item.Text;
                 _attachedFiles.AddRange(item.Files);
                 _mentionPaths.AddRange(item.Mentions);
+                bool dispatched;
                 try
                 {
-                    await SendAsync();
+                    dispatched = await SendAsync();
                 }
-                catch (OperationCanceledException ex)
+                catch (Exception ex)
                 {
-                    Console.WriteLine($"fila: envio do item cancelado: {ex.Message}");
-                    return;
+                    // Qualquer falha no envio devolve o item à cabeça da fila —
+                    // perder a mensagem em silêncio era exatamente o defeito
+                    // reportado ("fila não envia após a run concluir").
+                    dispatched = false;
+                    _error ??= ex.Message;
+                    Console.WriteLine($"fila: envio do item falhou ({ex.GetType().Name}): {ex.Message}");
                 }
-                catch (HttpRequestException ex)
+                if (!dispatched)
                 {
-                    Console.WriteLine($"fila: falha de rede ao enviar item: {ex.Message}");
+                    // Enqueue recusado (429/budget, chat novo não criado, hook)
+                    // ou falha de transporte: o item volta à fila e fica
+                    // visível para retry — nunca some do queue chip.
+                    _messageQueue.Insert(0, item);
                     return;
                 }
             }
@@ -3437,16 +3451,15 @@
         }
     }
 
-    private async Task StreamAssistantAsync(
+    private async Task<bool> StreamAssistantAsync(
         IReadOnlyList<string> fileIds, string? runContent = null,
         IReadOnlyList<string>? mentionPaths = null,
         (string Name, string Args, string Prompt)? pendingCommand = null)
     {
         if (_loadedChatId is not null && !Playground)
         {
-            await StreamDetachedRunAsync(
+            return await StreamDetachedRunAsync(
                 fileIds, runContent, mentionPaths, pendingCommand);
-            return;
         }
 
         var placeholder = new ChatMessageModel(
@@ -3509,15 +3522,18 @@
             await InvokeAsync(StateHasChanged);
             await DrainMessageQueueAsync();
         }
+        // Stream legado: a mensagem do usuário já está no transcript local —
+        // mesmo em falha do provider o input foi consumido (não reenfileira).
+        return true;
     }
 
     /// <summary>
     /// Caminho desacoplado (SPEC-20261007-chat-detached-runs): enfileira a run
     /// (o servidor persiste a mensagem do usuário e reconstrói o histórico),
     /// anexa ao stream e, ao fim, recarrega o chat — o servidor é a fonte da
-    /// verdade das mensagens.
+    /// verdade das mensagens. Retorna <c>true</c> só se a run foi enfileirada.
     /// </summary>
-    private async Task StreamDetachedRunAsync(
+    private async Task<bool> StreamDetachedRunAsync(
         IReadOnlyList<string> fileIds, string? runContent,
         IReadOnlyList<string>? mentionPaths = null,
         (string Name, string Args, string Prompt)? pendingCommand = null)
@@ -3537,10 +3553,11 @@
         _arenaFeedback = null;
         _cts = new CancellationTokenSource();
         var content = new System.Text.StringBuilder();
+        ChatRunResponse? run = null;
 
         try
         {
-            var run = await ChatStream.EnqueueRunAsync(
+            run = await ChatStream.EnqueueRunAsync(
                 _loadedChatId!, runContent, _model!,
                 new ChatStreamService.EnqueueOptions(
                     fileIds.Count > 0 ? fileIds : null,
@@ -3590,6 +3607,9 @@
             }
             await DrainMessageQueueAsync();
         }
+        // Só "despachou" se a run foi criada no servidor — o drain usa isso
+        // para devolver o item à fila quando o enqueue falha (429, offline).
+        return run is not null;
     }
 
     /// <summary>Anexa a uma run em andamento ao carregar o chat (reload/aba reaberta).</summary>

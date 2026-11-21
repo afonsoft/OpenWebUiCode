@@ -14,10 +14,11 @@ Workflows são protegidos — modificação exige revisão humana.
 
 ## Workflow de feature
 
-1. Branch `feature/{Agent}-{YYYYMMDD}-{slug}` a partir de `main`.
-2. Implementar + testes proporcionais.
-3. `dotnet build` + `dotnet test` local.
-4. PR para `main`; CI verde → merge pelo usuário.
+1. SPEC primeiro: cobrir a tarefa por uma SPEC em `.specs/` (ou criar/refinar antes de codar) — a SPEC é a fonte da verdade.
+2. Branch `feature/{Agent}-{YYYYMMDD}-{slug}` ou `fix/{slug}` a partir de `main`.
+3. Implementar + **testes para tudo que for implementado** (bug fix: teste que reproduz antes da correção).
+4. `dotnet build` + `dotnet test` local verdes (drift guards do client quando aplicável).
+5. **Commit + `git push` da branch ao concluir** + PR para `main`; CI verde → merge pelo usuário. Push direto em `main` continua proibido.
 
 ## Workflow de layout (paridade upstream)
 

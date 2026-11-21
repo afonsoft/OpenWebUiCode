@@ -103,14 +103,16 @@ python3 tools/check-spec-status.py   # drift de bookkeeping .specs/ vs docs/spec
 
 ## Agent Loop
 
-Padrão: **Plan-and-Execute**.
+Padrão: **Plan-and-Execute** — sempre fechado com testes, validação e push.
 
 1. Receber tarefa → carregar `CLAUDE.md` + `.claude/rules/`.
 2. Ler `.claude/memory/orchestrator_stats.md` e `.claude/MEMORY.md`.
-3. Apresentar plano de execução quando multi-arquivo.
-4. Executar em branch dedicada.
-5. Loop de verificação: `build → test → CI`.
-6. Atualizar memória e abrir PR.
+3. Executar a SPEC: se existir SPEC em `.specs/` cobrindo a tarefa, ela é a fonte da verdade (executar via skill `execute-specs`/`tdd-spec`); se a tarefa é nova e não-trivial, criar/atualizar a SPEC antes de codar.
+4. Implementar em branch dedicada (`feature/{Agent}-{YYYYMMDD}-{slug}` ou `fix/{slug}`) — nunca em `main`.
+5. **Sempre criar testes do que for implementado** (NUnit em `tests/`); para bug fix, primeiro um teste que reproduz o defeito (red), depois a correção (green).
+6. Validar: `dotnet build` + `dotnet test` verdes localmente (e drift guards do client quando `.razor`/i18n mudar).
+7. **Ao concluir: commit (Conventional Commits) + `git push` da branch** e abrir PR para `main`. O push é da branch de trabalho — push/commit direto em `main` segue bloqueado.
+8. Atualizar `.claude/MEMORY.md` quando houver lição reutilizável.
 
 ## Response Style
 
