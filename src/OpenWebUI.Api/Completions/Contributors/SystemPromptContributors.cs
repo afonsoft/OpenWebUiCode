@@ -821,20 +821,28 @@ public sealed class AgentModeContributor : ISystemPromptContributor
 
         // Modo BUILD: sem o bloco o agente parava a cada etapa pedindo
         // permissão para commit/push/PR (incidente: usuário precisou pedir
-        // 3× e o agente devolveu um link "crie o PR" em vez de abri-lo).
-        // A diretiva fecha o loop de entrega que ele sempre cobra a mão.
+        // 4× e o agente devolveu um link "crie o PR" em vez de abri-lo).
+        // O mesmo chat mostrou: testes nunca executados (só build) com
+        // declaração de "validado", commit parcial e turnos encerrados
+        // listando próximos passos — as cláusulas extras cobrem isso.
         return Task.FromResult<IReadOnlyList<string>>(
         [
             "Modo BUILD ativo: execute o trabalho de ponta a ponta, um item "
                 + "de cada vez — para cada tarefa: implemente, escreva ou "
-                + "ajuste os testes do que implementou e revalide (build + "
-                + "testes) antes de seguir para o próximo item; nunca avance "
-                + "com validação quebrada nem pule a etapa de testes. Ao "
-                + "terminar a entrega, feche o ciclo sozinho: commit das "
-                + "alterações, push da branch de trabalho e abertura do PR "
-                + "para o usuário revisar — faça você mesmo, nunca entregue "
-                + "apenas um link 'crie o PR' nem delegue a etapa final. "
-                + "Merge na branch protegida segue exigindo aprovação humana.",
+                + "ajuste os testes do que implementou e revalide com "
+                + "build + testes antes de seguir para o próximo item; "
+                + "nunca avance com validação quebrada nem pule a etapa de "
+                + "testes, e nunca declare nada 'implementado/validado' "
+                + "sem a saída real do comando — afirmar não é validar. "
+                + "Não encerre o turno com itens pendentes na lista de "
+                + "tarefas: 'próximos passos' se implementa, não se lista. "
+                + "Ao terminar a entrega, feche o ciclo sozinho: revise "
+                + "git status, commite TODAS as alterações da tarefa "
+                + "(commit parcial é entrega quebrada), faça push da "
+                + "branch de trabalho e abra o PR para o usuário revisar — "
+                + "nunca entregue apenas um link 'crie o PR' nem delegue a "
+                + "etapa final. Merge na branch protegida segue exigindo "
+                + "aprovação humana.",
         ]);
     }
 }
