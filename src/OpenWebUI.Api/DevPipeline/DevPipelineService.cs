@@ -439,7 +439,8 @@ public sealed class DevPipelineService(
     /// reutiliza o worktree isolado da fase anterior via sameChatParent).
     /// </summary>
     private async Task<string> EnqueuePhaseRunAsync(
-        State state, string phase, string prompt, CancellationToken ct)
+        State state, string phase, string prompt, CancellationToken ct,
+        string? modelOverride = null)
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -477,9 +478,12 @@ public sealed class DevPipelineService(
                 parentRun.RequestJson, JsonOptions) is { } baseReq
                 ? baseReq with { Messages = history }
                 : new ChatCompletionRequest(parentRun?.Model ?? "default", history);
-        // RF-007: modelo dedicado da fase (worker/fix) sobrescreve o herdado.
-        if (state.Models.TryGetValue(phase, out var phaseModel)
-            && !string.IsNullOrWhiteSpace(phaseModel))
+        // RF-007: modelo dedicado da fase (worker/fix) sobrescreve o
+        // herdado; <paramref name="modelOverride"/> (substituta por stall)
+        // vence os dois.
+        var phaseModel = modelOverride
+            ?? (state.Models.TryGetValue(phase, out var pm) ? pm : null);
+        if (!string.IsNullOrWhiteSpace(phaseModel))
         {
             request = request with { Model = phaseModel };
         }
@@ -599,11 +603,32 @@ public sealed class DevPipelineService(
             + "anterior desta fase travou e foi substituída; o workdir pode "
             + "conter trabalho parcial — continue a partir do estado atual "
             + "sem recomeçar do zero.";
+        // Stall pode ser hang/quota do próprio modelo — a substituta avança
+        // a chain para o próximo candidato (o retry→replace do agy).
+        var replacementModel = state.Models.TryGetValue(phase, out var pm)
+            ? RotateChain(pm, state.StallRetries)
+            : null;
         var newRunId = await EnqueuePhaseRunAsync(
-            state, phase, resumePrompt, ct);
+            state, phase, resumePrompt, ct, replacementModel);
         state.Runs[$"{phase}-stall{state.StallRetries}"] = newRunId;
         await SaveAsync(null, state, ct);
         return newRunId;
+    }
+
+    /// <summary>Roda uma ref <c>chain:{m1,…}</c> <paramref name="index"/>
+    /// posições — a substituta de uma run travada começa do candidato
+    /// seguinte (stall pode ser hang/quota do próprio modelo). Ref que
+    /// não é chain ou índice fora do range passa intacto.</summary>
+    internal static string RotateChain(string model, int index)
+    {
+        if (index <= 0
+            || !ChainModelRef.TryParse(model, out var chain)
+            || index >= chain.Count)
+        {
+            return model;
+        }
+        return ChainModelRef.Format(
+            chain.Skip(index).Concat(chain.Take(index)).ToList());
     }
 
     /// <summary>Extrai o bloco <c>&lt;pipeline_result&gt;</c> da última

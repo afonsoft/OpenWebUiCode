@@ -155,6 +155,10 @@ pode desviar; o nosso não pode "esquecer" validate/commit).
   retomada ("continue do estado do workdir") — registrada como
   `{phase}-stall{n}`. Limitado por `Agent:DevPipeline:MaxStallRetries`
   (default 1); esgotado → pipeline `failed` com `stalled`.
+- A substituta **roda a chain de modelos** (incremento 2026-11-22):
+  stall pode ser hang/quota do próprio modelo — `RotateChain` avança a
+  ref `chain:{…}` da fase para o candidato n (n = retry); id simples
+  passa intacto.
 
 ### RF-009: Fase `verify` read-only + proteção de teste
 
