@@ -25,6 +25,7 @@
 | Boot WASM | placeholder não resolvido → app muda | smoke test deve validar boot, não só HTML 200 |
 | Tarefas LLM | fallback "New Chat" sobrescrevia título | endpoint retorna erro; cliente preserva estado |
 | Modo do agente | default "build" sem repo quebrava o gate de workspace | default "chat" + modo efetivo com downgrade quando não há binding |
+| Prompt do agente | `AutonomyPrompt` proibia push sem confirmação → agente parava e devolvia link "crie o PR" | bloco dedicado por modo efetivo (`AgentModeContributor` build) + carve-out: commit/push/PR na branch de trabalho fazem parte do loop de entrega; aprovação humana só p/ merge em branch protegida, deploy e APIs externas |
 
 ## Handoff 2026-10-27 (fila do composer + resiliência de stream)
 
@@ -40,3 +41,10 @@
 - Ciclo de CI do #548 ensinou: provider real em modo chat entra em loop de tools se o announce incluir tools de build (`worktree_*`, `lsp_*`, `specs`) ou se o prompt convidar exploração — `BuildOnlyTools` no `PermissionRuleset.ShouldAnnounce` + prompt condicional resolveram.
 - Coverage ratchet: baseline linha 92.22% / branch 79.73% — quedas >0.05pp reprovam; cobrir endpoints + services novos desde o primeiro commit.
 - `.specs/SPEC-20261027-context-gen-wizard.md` permanece deferida (não implementar).
+
+## Handoff 2026-11-20 (fila de mensagens + loop de entrega do modo build)
+
+- **#752 entrega de mensagens enfileiradas**: client (`ChatView.razor`) — item era removido de `_messageQueue` antes do envio e sumia em falha; `SendAsync`/`StreamDetachedRunAsync` agora retornam `bool` e o drain reinsere na cabeça da fila. Server (`ChatRunExecutor`) — steers `mode=queue` só eram promovidos no caminho idle do tool loop; `DrainQueuedSteersAsync` em `FinishAsync`/`FailAsync` promove pendentes a mensagens `user` + despacha run filha (cobre step-cap, veto de budget e falhas). Run `stopped` marca `cancelled` — halt explícito é absoluto.
+- **#753 topo do workspace mobile**: abas do `ChatWorkspacePanel` (Tasks…Info) e chips do header (branch/slug/Publicar) viraram ícone + `title`/`aria-label` — texto longo empurrava os ícones para fora da tela.
+- **#754 loop de entrega no build mode**: chat `9ead0a1f` mostrou o agente parando a cada etapa (usuário pediu commit/push/PR 3×) e devolvendo link "crie o PR". Causa: `AgentModeContributor` não emitia bloco para `build` (modo default quando mode é nulo/desconhecido) e `AutonomyPrompt` tratava push como ação que exige confirmação. Fix: bloco build "implemente → testes → revalide (build+testes) → próximo item; ao fim commit + push + abra o PR você mesmo" e autonomy restringe aprovação humana a merge em branch protegida/deploy/software externo/APIs de terceiros. Regressão: `AgentPolishTests.BuildMode_EmiteDiretivaDoLoopDeEntrega`.
+- Lição reutilizável: prompt de autonomia genérico pode contradizer o fluxo de entrega do projeto — comportamento esperado ("feche o ciclo sozinho") precisa estar explícito no bloco do modo efetivo injetado em runtime, não só em docs (CLAUDE.md/WORKFLOWS.md) que podem não entrar no contexto da run.
