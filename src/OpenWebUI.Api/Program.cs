@@ -311,6 +311,7 @@ builder.Services.AddScoped<OpenWebUI.Api.DevPipeline.DevPipelineService>();
 builder.Services.AddScoped<IBuiltinChatTool, AgentValidateBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ModeSwitchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, OpenWebUI.Api.DevPipeline.DevPipelineBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, OpenWebUI.Api.DevPipeline.RunWorkflowBuiltinTool>();
 // LSP (SPEC-20261009-lsp-diagnostics): singleton dono dos processos
 // filhos + tools read-only builtin:lsp_*.
 builder.Services.AddSingleton<LspService>();

@@ -521,6 +521,100 @@ public class DevPipelineUnitTests
             "cancelamento externo encerra a assinatura (degrada p/ poll)");
     }
 
+    // ---------- run_workflow (SPEC-20261124) ----------
+
+    [Test]
+    public void WorkflowValidate_StepsValidos_SemErro()
+    {
+        var steps = new List<DevPipelineService.WorkflowStep>
+        {
+            new() { Kind = "llm", Key = "impl", Prompt = "faça {task}" },
+            new()
+            {
+                Kind = "parallel", Key = "par",
+                Items = [new DevPipelineService.WorkflowItem("a", "faz a")],
+            },
+            new() { Kind = "tool", Key = "lint", Tool = "agent_validate" },
+            new() { Kind = "validate", Key = "val" },
+            new() { Kind = "commit", Key = "git", Push = true },
+        };
+        Assert.That(RunWorkflowBuiltinTool.Validate(steps), Is.Null);
+    }
+
+    [Test]
+    public void WorkflowValidate_ErrosEstruturais()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(RunWorkflowBuiltinTool.Validate(null),
+                Does.Contain("vazio"));
+            Assert.That(RunWorkflowBuiltinTool.Validate([]),
+                Does.Contain("vazio"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep { Kind = "llm", Key = "a" },
+                 new DevPipelineService.WorkflowStep { Kind = "llm", Key = "a" }]),
+                Does.Contain("duplicada"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep { Kind = "bogus", Key = "x" }]),
+                Does.Contain("kind desconhecido"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep { Kind = "parallel", Key = "p" }]),
+                Does.Contain("items"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep
+                {
+                    Kind = "parallel", Key = "p2",
+                    Items = [new DevPipelineService.WorkflowItem("", "p")],
+                }]),
+                Does.Contain("'id'"));
+            Assert.That(RunWorkflowBuiltinTool.Validate(
+                [new DevPipelineService.WorkflowStep { Kind = "tool", Key = "t" }]),
+                Does.Contain("'tool'"));
+        });
+    }
+
+    [Test]
+    public void Interpolate_SubstituiTaskPlanEResults()
+    {
+        var state = NewState();
+        state.Plan = "plano-aqui";
+        state.PhaseResults["impl"] = new DevPipelineService.PhaseResult(
+            null, "resumo-impl", null, null, null, null);
+        state.PhaseResults["val"] = new DevPipelineService.PhaseResult(
+            null, null, "issues", null, null, null);
+
+        var text = DevPipelineService.Interpolate(
+            "task={task} plan={plan} impl={results:impl} val={results:val}",
+            state);
+        Assert.That(text, Is.EqualTo(
+            "task=tarefa plan=plano-aqui impl=resumo-impl val=issues"));
+    }
+
+    [Test]
+    public void AnchorRunId_UltimoStepConcluido_OuPai()
+    {
+        var state = NewState() with
+        {
+            Steps =
+            [
+                new DevPipelineService.WorkflowStep { Kind = "llm", Key = "s1" },
+                new DevPipelineService.WorkflowStep { Kind = "parallel", Key = "s2" },
+                new DevPipelineService.WorkflowStep { Kind = "llm", Key = "s3" },
+            ],
+        };
+        Assert.Multiple(() =>
+        {
+            Assert.That(DevPipelineService.AnchorRunId(state, 0),
+                Is.EqualTo("r1"), "sem anterior → run pai");
+            state.Runs["s1"] = "run-s1";
+            Assert.That(DevPipelineService.AnchorRunId(state, 1),
+                Is.EqualTo("run-s1"), "llm ancora no step anterior");
+            state.Runs["s2:w1"] = "run-w1";
+            Assert.That(DevPipelineService.AnchorRunId(state, 2),
+                Is.EqualTo("run-w1"), "parallel ancora num worker");
+        });
+    }
+
     // ---------- BuildReport telemetria (hardening fan-out) ----------
 
     [Test]
@@ -558,6 +652,23 @@ public class DevPipelineUnitTests
                 Does.Contain("implement:api→/c/chat-a (completed 1m28s (1 stall))"));
             Assert.That(report,
                 Does.Contain("implement:ui→/c/chat-u (failed 15s)"));
+        });
+    }
+
+    [Test]
+    public void WorkflowStep_DesserializaDoJson()
+    {
+        var steps = JsonSerializer.Deserialize<
+            List<DevPipelineService.WorkflowStep>>(
+            """[{"kind":"parallel","key":"build","items":[{"id":"a","prompt":"faz a","files":["x.cs"]}]},{"kind":"commit","key":"git","push":true}]""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.That(steps, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(steps![0].Items![0].Id, Is.EqualTo("a"));
+            Assert.That(steps[0].Items[0].Files,
+                Is.EqualTo(new[] { "x.cs" }));
+            Assert.That(steps[1].Push, Is.True);
         });
     }
 
@@ -1050,5 +1161,31 @@ public class DevPipelineIntegrationTests
                 Path.GetTempPath(), Path.GetTempPath()),
             CancellationToken.None);
         Assert.That(result.Text, Does.Contain("não encontrada"));
+    }
+
+    [Test]
+    public async Task RunWorkflowTool_SemTaskOuSteps_ErroClaro()
+    {
+        var tool = new RunWorkflowBuiltinTool(
+            _factory.Services.GetRequiredService<IServiceScopeFactory>());
+        var ctx = new BuiltinToolContext("u1", null, null,
+            Path.GetTempPath(), Path.GetTempPath());
+
+        var semTask = await tool.ExecuteAsync(
+            JsonDocument.Parse("""{"steps":[]}""").RootElement,
+            ctx, CancellationToken.None);
+        Assert.That(semTask.Text, Does.Contain("'task'"));
+
+        var semSteps = await tool.ExecuteAsync(
+            JsonDocument.Parse("""{"task":"x"}""").RootElement,
+            ctx, CancellationToken.None);
+        Assert.That(semSteps.Text, Does.Contain("'steps'"));
+
+        var stepsInvalidos = await tool.ExecuteAsync(
+            JsonDocument.Parse(
+                """{"task":"x","steps":[{"kind":"bogus","key":"k"}]}""")
+                .RootElement,
+            ctx, CancellationToken.None);
+        Assert.That(stepsInvalidos.Text, Does.Contain("kind desconhecido"));
     }
 }

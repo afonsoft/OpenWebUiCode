@@ -37,7 +37,7 @@ public sealed class DevPipelineService(
         public string? ChildChatId { get; set; }
         public required string Task { get; init; }
         public string? ExtraContext { get; init; }
-        public bool Push { get; init; }
+        public bool Push { get; set; }
         public int MaxFixAttempts { get; init; }
         public int FixAttempts { get; set; }
         /// <summary>Fase atual: implement → test → validate → commit → report.</summary>
@@ -69,13 +69,46 @@ public sealed class DevPipelineService(
         /// plano (SPEC-20261123; default true, exige binding de repo).</summary>
         public bool EnableFanout { get; init; } = true;
         /// <summary>Cap de workers paralelos do fan-out (default 4).</summary>
-        public int MaxFanout { get; init; } = 4;
+        public int MaxFanout { get; set; } = 4;
         /// <summary>Item → chat irmão do fan-out (<c>implement:{id}</c>
         /// → chatId) — mapping p/ wait-all, merge e links do relatório.</summary>
         public Dictionary<string, string> FanoutItemChats { get; init; } = new();
+        /// <summary>Passos declarativos do <c>run_workflow</c>
+        /// (SPEC-20261124) — quando presentes, o drive itera esta lista
+        /// em vez das fases fixas plan→implement→test.</summary>
+        public List<WorkflowStep>? Steps { get; init; }
+        /// <summary>Índice do próximo step do workflow (resume por kv).</summary>
+        public int StepIndex { get; set; }
         public long CreatedAt { get; init; }
         public long UpdatedAt { get; set; }
     }
+
+    /// <summary>Passo declarativo do <c>run_workflow</c> (SPEC-20261124).
+    /// <c>Kind</c>: <c>llm</c> | <c>parallel</c> | <c>tool</c> |
+    /// <c>validate</c> | <c>commit</c>.</summary>
+    public sealed record WorkflowStep
+    {
+        public required string Kind { get; init; }
+        public required string Key { get; init; }
+        /// <summary>Prompt do step <c>llm</c> — aceita placeholders
+        /// <c>{task}</c>, <c>{plan}</c>, <c>{results:key}</c>.</summary>
+        public string? Prompt { get; init; }
+        /// <summary>Itens do step <c>parallel</c> (workers em ondas de
+        /// <see cref="State.MaxFanout"/>).</summary>
+        public List<WorkflowItem>? Items { get; init; }
+        /// <summary>Nome da builtin do step <c>tool</c> (ex.
+        /// <c>builtin:agent_validate</c> ou <c>agent_validate</c>).</summary>
+        public string? Tool { get; init; }
+        /// <summary>Args JSON do step <c>tool</c> (string ou objeto).</summary>
+        public string? Args { get; init; }
+        /// <summary>Step <c>commit</c>: push além do commit.</summary>
+        public bool? Push { get; init; }
+    }
+
+    /// <summary>Item de um step <c>parallel</c> do workflow — um worker
+    /// (chat irmão + worktree isolado) por item.</summary>
+    public sealed record WorkflowItem(
+        string Id, string Prompt, List<string>? Files = null);
 
     /// <summary>Bloco <c>&lt;pipeline_result&gt;</c> estruturado emitido por uma fase LLM.</summary>
     /// <param name="Files">Arquivos criados/alterados declarados pela fase.</param>
@@ -105,11 +138,13 @@ public sealed class DevPipelineService(
         BuiltinToolContext context, string task, string? extraContext,
         bool push, int maxFixAttempts, CancellationToken ct,
         bool enablePlan = true, string? workerModel = null,
-        string? fixModel = null, bool enableFanout = true)
+        string? fixModel = null, bool enableFanout = true,
+        List<WorkflowStep>? steps = null, int? maxFanout = null)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var state = new State
         {
+            Steps = steps is { Count: > 0 } ? steps : null,
             Id = $"dp-{Guid.NewGuid():N}"[..12],
             UserId = context.UserId,
             ParentChatId = context.ChatId ?? string.Empty,
@@ -120,9 +155,11 @@ public sealed class DevPipelineService(
             MaxFixAttempts = Math.Max(0, maxFixAttempts),
             EnablePlan = enablePlan,
             EnableFanout = enableFanout,
-            MaxFanout = int.TryParse(
-                cfg["Agent:DevPipeline:MaxFanout"], out var mf)
-                    ? Math.Clamp(mf, 1, 8) : 4,
+            MaxFanout = maxFanout is > 0
+                ? Math.Clamp(maxFanout.Value, 1, 8)
+                : int.TryParse(
+                    cfg["Agent:DevPipeline:MaxFanout"], out var mf)
+                        ? Math.Clamp(mf, 1, 8) : 4,
             MaxStallRetries = int.TryParse(
                 cfg["Agent:DevPipeline:MaxStallRetries"], out var msr)
                     ? Math.Max(0, msr) : 1,
@@ -168,6 +205,16 @@ public sealed class DevPipelineService(
         if (workerModel is null && !string.IsNullOrWhiteSpace(fusionLeader))
         {
             state.Models["plan"] = fusionLeader;
+        }
+        // SPEC-20261124: steps llm/parallel do workflow roteiam pelo
+        // worker model — EnqueuePhaseRunAsync resolve state.Models[step.Key].
+        if (!string.IsNullOrWhiteSpace(worker) && steps is { } declared)
+        {
+            foreach (var s in declared.Where(
+                s => s.Kind is "llm" or "parallel"))
+            {
+                state.Models[s.Key] = worker;
+            }
         }
 
         var preset = context.ChatId is { } pid
@@ -239,6 +286,14 @@ public sealed class DevPipelineService(
     /// <summary>Loop de fases da pipeline.</summary>
     private async Task DriveAsync(State state, CancellationToken ct)
     {
+        // SPEC-20261124: workflow declarativo — itera State.Steps em vez
+        // das fases fixas (resume por StepIndex persistido no kv).
+        if (state.Steps is { Count: > 0 })
+        {
+            await RunStepsAsync(state, ct);
+            return;
+        }
+
         // plan? → implement → test: runs LLM encadeadas no chat filho. Resume:
         // fase com run completed salta; run ainda ativa é aguardada.
         // SPEC-20261123: implement vira fan-out quando o plano decompôs
@@ -401,10 +456,11 @@ public sealed class DevPipelineService(
     /// reutiliza run ativa no resume.</summary>
     private async Task<bool> RunLlmPhaseAsync(
         State state, string phase, string prompt, CancellationToken ct,
-        string? existing = null, string? runKey = null)
+        string? existing = null, string? runKey = null,
+        string? parentRunId = null)
     {
         var runId = existing ?? await EnqueuePhaseRunAsync(
-            state, phase, prompt, ct);
+            state, phase, prompt, ct, parentRunId: parentRunId);
         state.Runs[runKey ?? phase] = runId;
         state.Phase = phase;
         await SaveAsync(null, state, ct);
@@ -510,6 +566,288 @@ public sealed class DevPipelineService(
     }
 
     /// <summary>Fan-out do implement (SPEC-20261123): um chat irmão +
+    /// <summary>Orquestração declarativa (SPEC-20261124): itera
+    /// <see cref="State.Steps"/> a partir de <see cref="State.StepIndex"/>
+    /// — cada step bem-sucedido avança o índice e persiste, então resume
+    /// retoma do ponto. Sem auto-commit: <c>kind:commit</c> é explícito.</summary>
+    private async Task RunStepsAsync(State state, CancellationToken ct)
+    {
+        for (var i = state.StepIndex; i < state.Steps!.Count; i++)
+        {
+            var step = state.Steps[i];
+            state.Phase = step.Key;
+            var anchor = AnchorRunId(state, i);
+            var ok = step.Kind switch
+            {
+                "llm" => await RunLlmPhaseAsync(
+                    state, step.Key,
+                    Interpolate(step.Prompt ?? state.Task, state)
+                        + ResultTrailer, ct, runKey: step.Key,
+                    parentRunId: anchor),
+                "parallel" => await RunParallelStepAsync(
+                    state, step, anchor, ct),
+                "tool" => await RunToolStepAsync(state, step, ct),
+                "validate" => await RunValidateStepAsync(state, step, ct),
+                "commit" => await RunCommitStepAsync(state, step, ct),
+                _ => await FailStepAsync(state,
+                    $"kind desconhecido '{step.Kind}' no step '{step.Key}'"),
+            };
+            if (!ok)
+            {
+                return;
+            }
+            state.StepIndex = i + 1;
+            await SaveAsync(null, state, ct);
+        }
+        state.Status = "done";
+        await SaveAsync(null, state, ct);
+        await ReportAsync(state, ct);
+    }
+
+    private const string ResultTrailer =
+        "\nTermine com <pipeline_result>{\"files\":[\"paths\"],"
+            + "\"summary\":\"resumo\"}</pipeline_result>.";
+
+    /// <summary>Run âncora do step: a última run concluída de step
+    /// anterior no chat filho — a run seguinte herda o worktree isolado
+    /// dela, então as mudanças dos steps se acumulam (como implement→test
+    /// na pipeline fixa). Fallback: a run do plan ou a run pai.</summary>
+    internal static string? AnchorRunId(State state, int beforeStep)
+    {
+        for (var j = beforeStep - 1; j >= 0; j--)
+        {
+            var key = state.Steps![j].Key;
+            if (state.Runs.TryGetValue(key, out var id))
+            {
+                return id;
+            }
+            var worker = state.Runs.Keys.FirstOrDefault(
+                k => k.StartsWith(key + ":", StringComparison.Ordinal));
+            if (worker is not null)
+            {
+                return state.Runs[worker];
+            }
+        }
+        return state.ParentRunId;
+    }
+
+    private async Task<bool> FailStepAsync(State state, string error)
+    {
+        await MarkFailedAsync(state, $"workflow: {error}");
+        return false;
+    }
+
+    /// <summary>Interpolação de prompt (RF-003): <c>{task}</c>,
+    /// <c>{plan}</c> e <c>{results:key}</c> — o equivalente leve do
+    /// <c>trajectory()</c>: cada step pode ler o resultado dos anteriores.</summary>
+    internal static string Interpolate(string text, State state)
+    {
+        var result = text.Replace("{task}", state.Task);
+        if (state.Plan is { } plan)
+        {
+            result = result.Replace("{plan}", plan);
+        }
+        foreach (var (key, value) in state.PhaseResults)
+        {
+            result = result.Replace(
+                $"{{results:{key}}}", value.Verdict ?? value.Summary ?? "");
+        }
+        return result;
+    }
+
+    /// <summary>Step <c>tool</c>: executa builtin server-side com os args
+    /// declarados — o gate aconteceu na chamada do run_workflow (Exec).
+    /// Resultado (texto) vira <see cref="PhaseResult"/> da key.</summary>
+    private async Task<bool> RunToolStepAsync(
+        State state, WorkflowStep step, CancellationToken ct)
+    {
+        using var scope = scopes.CreateScope();
+        var registry = scope.ServiceProvider
+            .GetRequiredService<BuiltinToolRegistry>();
+        var repos = scope.ServiceProvider
+            .GetRequiredService<WorkspaceRepoService>();
+        var env = scope.ServiceProvider
+            .GetRequiredService<IHostEnvironment>();
+        var bare = step.Tool is { } t
+            && t.StartsWith("builtin:", StringComparison.OrdinalIgnoreCase)
+                ? t["builtin:".Length..] : step.Tool;
+        var builtin = bare is null ? null : registry.All.FirstOrDefault(
+            x => string.Equals(x.Name, bare, StringComparison.OrdinalIgnoreCase));
+        if (builtin is null)
+        {
+            return await FailStepAsync(state,
+                $"tool '{step.Tool}' não existe ou está desabilitada");
+        }
+        JsonElement argsEl;
+        try
+        {
+            argsEl = BuiltinToolRegistry.NormalizeArgs(step.Args ?? "{}");
+        }
+        catch (JsonException)
+        {
+            return await FailStepAsync(state,
+                $"args inválidos p/ '{bare}' — JSON malformado");
+        }
+        var workdir = await repos.ResolveWorkdirAsync(
+            state.UserId, state.ChildChatId, ct);
+        var uploads = Path.Join(
+            DataPaths.Root(env.ContentRootPath), "uploads", state.UserId);
+        BuiltinToolResult result;
+        try
+        {
+            result = await builtin.ExecuteAsync(argsEl,
+                new BuiltinToolContext(state.UserId, state.ChildChatId, null,
+                    workdir, uploads,
+                    state.Models.GetValueOrDefault(step.Key)), ct);
+        }
+        catch (Exception ex)
+        {
+            return await FailStepAsync(state,
+                $"tool '{bare}' lançou exceção: {ex.Message}");
+        }
+        state.PhaseResults[step.Key] = new PhaseResult(
+            null, Tail(result.Text ?? "", 500),
+            result.Refused ? "issues" : "pass", null, null, null);
+        if (result.Refused)
+        {
+            return await FailStepAsync(state,
+                $"tool '{bare}' recusou: {result.RefuseReason}");
+        }
+        return true;
+    }
+
+    /// <summary>Step <c>validate</c>: ProjectValidation determinístico —
+    /// falha encerra a pipeline (sem fix automático; o autor encadeia um
+    /// step <c>llm</c> de correção lendo <c>{results:key}</c>).</summary>
+    private async Task<bool> RunValidateStepAsync(
+        State state, WorkflowStep step, CancellationToken ct)
+    {
+        var outcome = await ValidateAsync(state, ct);
+        state.ValidationOutput = outcome?.Summary;
+        state.PhaseResults[step.Key] = new PhaseResult(
+            null, outcome?.Summary,
+            outcome is { Passed: false } ? "issues" : "pass",
+            null, null, null);
+        if (outcome is { Passed: false })
+        {
+            return await FailStepAsync(state,
+                $"validate '{step.Key}' falhou — {Tail(outcome.Output, 500)}");
+        }
+        return true;
+    }
+
+    /// <summary>Step <c>commit</c>: git determinístico no workdir do
+    /// filho; <c>push:true</c> no step habilita o push nesta pipeline.</summary>
+    private async Task<bool> RunCommitStepAsync(
+        State state, WorkflowStep step, CancellationToken ct)
+    {
+        if (step.Push == true)
+        {
+            state.Push = true;
+        }
+        try
+        {
+            var sha = await CommitAsync(state, ct);
+            state.CommitSha ??= sha;
+            state.PhaseResults[step.Key] = new PhaseResult(
+                null, sha is { } ? $"commit {sha}" : "commit skipped",
+                "pass", null, null, null);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            return await FailStepAsync(state,
+                $"commit '{step.Key}' falhou: {ex.Message}");
+        }
+    }
+
+    /// <summary>Step <c>parallel</c> (RF-002): workers em chats irmãos +
+    /// worktree isolado, ondas de <see cref="State.MaxFanout"/>, wait-all
+    /// por onda e merge sequencial no workdir do filho. Prompt do item é
+    /// o declarado no workflow (+ trailer de resultado). Exige binding.</summary>
+    private async Task<bool> RunParallelStepAsync(
+        State state, WorkflowStep step, string? anchor,
+        CancellationToken ct)
+    {
+        var items = step.Items ?? [];
+        if (items.Count == 0)
+        {
+            return await FailStepAsync(state,
+                $"parallel '{step.Key}' sem items");
+        }
+        if (!await HasRepoBindingAsync(state, ct))
+        {
+            return await FailStepAsync(state,
+                $"parallel '{step.Key}' exige binding de repo no chat filho");
+        }
+        foreach (var wave in items.Chunk(Math.Max(1, state.MaxFanout)))
+        {
+            var workers = new List<(string Key, string ChatId, string RunId, string Prompt)>();
+            foreach (var item in wave)
+            {
+                var key = $"{step.Key}:{item.Id}";
+                var prompt =
+                    $"[run_workflow — {step.Key} · {item.Id}]\n"
+                        + Interpolate(item.Prompt, state)
+                        + (item.Files is { Count: > 0 } f
+                            ? $"\nEscopo de arquivos: {string.Join(", ", f)}"
+                            : string.Empty)
+                        + ResultTrailer;
+                state.FanoutItemChats.TryGetValue(key, out var chatId);
+                var runId = state.Runs.GetValueOrDefault(key);
+                if (runId is not null
+                    && await RunStatusAsync(runId, ct)
+                        is { Status: ChatRunStatus.Completed })
+                {
+                    if (chatId is not null)
+                    {
+                        workers.Add((key, chatId, runId, prompt));
+                    }
+                    continue; // resume: completou — só merge
+                }
+                chatId ??= await CreateSiblingChatAsync(state, item.Id, ct);
+                if (chatId is null)
+                {
+                    return await FailStepAsync(state,
+                        $"parallel '{key}': sem chat irmão (sem binding?)");
+                }
+                state.FanoutItemChats[key] = chatId;
+                runId ??= await EnqueuePhaseRunAsync(
+                    state, step.Key, prompt, ct,
+                    chatId: chatId, parentRunId: anchor);
+                state.Runs[key] = runId;
+                workers.Add((key, chatId, runId, prompt));
+            }
+            await SaveAsync(null, state, ct);
+            var results = await Task.WhenAll(workers.Select(w =>
+                WaitRunAsync(w.RunId, state, step.Key, w.Prompt, ct,
+                    w.Key, w.ChatId)));
+            for (var i = 0; i < workers.Count; i++)
+            {
+                var w = workers[i];
+                if (results[i].Status is not ChatRunStatus.Completed)
+                {
+                    return await FailStepAsync(state,
+                        $"parallel '{w.Key}' terminou como "
+                            + $"'{results[i].Status}'"
+                            + (results[i].Error is { } e
+                                ? $": {e}" : string.Empty));
+                }
+                await ParsePhaseResultAsync(
+                    state, step.Key, ct, resultKey: w.Key, chatId: w.ChatId);
+            }
+            var conflicts = await MergeFanoutAsync(state, workers, ct);
+            if (conflicts.Count > 0)
+            {
+                return await FailStepAsync(state,
+                    $"parallel '{step.Key}': merge não aplicou "
+                        + $"{conflicts.Count} arquivo(s): "
+                        + Tail(string.Join("; ", conflicts), 400));
+            }
+        }
+        return true;
+    }
+
     /// worktree isolado por item, wait-all em paralelo, merge sequencial
     /// no workdir do filho e implement-rest sequencial p/ itens fora do
     /// lote. Conflitos de merge alimentam o fix; nunca são forçados.</summary>
@@ -536,7 +874,8 @@ public sealed class DevPipelineService(
                 }
                 continue; // resume: já completou — entra só p/ o merge
             }
-            chatId ??= await CreateSiblingChatAsync(state, item, ct);
+            chatId ??= await CreateSiblingChatAsync(
+                state, item.Title ?? item.Id ?? "item", ct);
             if (chatId is null)
             {
                 await MarkFailedAsync(state,
@@ -607,7 +946,7 @@ public sealed class DevPipelineService(
     /// <summary>Chat irmão do worker: mesmo pai/preset do filho, binding
     /// herdado → worktree próprio do mesmo repo (isolamento real).</summary>
     private async Task<string?> CreateSiblingChatAsync(
-        State state, PlanItem item, CancellationToken ct)
+        State state, string label, CancellationToken ct)
     {
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -625,7 +964,6 @@ public sealed class DevPipelineService(
             return null;
         }
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var label = item.Title ?? item.Id ?? "item";
         var sib = new Chat
         {
             UserId = state.UserId,

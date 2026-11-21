@@ -58,19 +58,13 @@
 - **dev_pipeline fan-out** (SPEC-20261123): `plan` emite `items[{id,title,files[],independent}]`; ≥2 independentes + binding → um chat irmão por item (`InheritChatBinding` → worktree próprio) + run `implement:{id}` em paralelo (`Task.WhenAll` de `WaitRunAsync`), merge `MergeAsync` sequencial no workdir do filho; dependentes/overflow → run `implement-rest`. Stall retry passou a ser **por runKey** (`StallRetriesByKey`) — worker travado não consome budget das irmãs; `CommitAsync` generalizou o merge p/ última run de cada base key (`-stallN` cobre substitutas; `plan` nunca mergeia). Cap `Agent:DevPipeline:MaxFanout` default 4 (clamp 1-8); arg `fanout` default true; sem binding/items → sequencial.
 - **Lição**: chat irmão do worker precisa de `ParentRunId` de OUTRO chat (`PlanRunId`) → `sameChatParent` falso → `force:true` → worktree isolado por run; runs encadeadas no MESMO chat dividem o worktree do pai (é assim que test/fix do sequencial aterrissam no worktree do implement).
 
-## 2026-11-24 — Watchdog global de runs
+## Handoff 2026-11-24 (watchdog + telemetria + event-wake + run_workflow)
 
-- `ChatRunDispatcher.SweepOrphansAsync` rodava só no boot — runs que ficam
-  stale com o servidor no ar nunca eram reavaliadas. `WatchdogLoopAsync`
-  (`ChatRuns:WatchdogSeconds`, default 60) repete o sweep em modo
-  periódico: não re-enfileira `queued` (a fila em memória está viva —
-  duplicar entradas no bounded channel derrubaria enqueues legítimos).
-- Run stale + `OwnerInstance` local + ainda em `_runCancels` → `TryStop`,
-  NUNCA requeue (segundo worker executaria em dobro). Após
-  `ChatRuns:WatchdogInterruptAfter` (default 3) ticks → `interrupted`.
-- `TryStop` blindado contra `ObjectDisposedException`: janela entre o
-  lookup no dicionário e o dispose pelo worker — cancel sobre cts morto
-  propagava exceção que abortava o sweep inteiro.
-- Hooks internos p/ teste no dispatcher: `CurrentInstanceId`,
-  `RegisterRunCancelForTest`/`Unregister...`; fixture desliga o loop real
-  com `ChatRuns__WatchdogSeconds=0` e chama o sweep explicitamente.
+- **Watchdog** (SPEC-20261124-run-watchdog): `SweepOrphansAsync` só rodava no boot — `WatchdogLoopAsync` periódico (`ChatRuns:WatchdogSeconds` default 60, <=0 desliga) reusa o sweep com modo periódico: queued NÃO re-enfileira (fila in-memory viva → duplicata), run stale cujo owner é esta instância e segue ativa → `TryStop` em vez de requeue, e após `ChatRuns:WatchdogInterruptAfter` (default 3) ticks consecutivos stale → força `interrupted`.
+- **Telemetria por run no report**: `CollectTelemetryAsync` agrega `key → (status, duração, stalls)` das runs da pipeline (`Runs` + sufixos `-stallN`) no `BuildReport`.
+- **Event-wake**: `WaitRunAsync` faz race `WaitStreamClosedAsync(broadcaster, runId)` × poll 5s — `Complete` do broadcaster acorda na hora; poll segue como fonte de verdade p/ staleness; re-inscreve no runId da substituta. Falha de subscribe degrada p/ poll.
+- **run_workflow** (SPEC-20261124): orquestração declarativa — o autor escreve `steps` em JSON, o servidor executa. Kinds: `llm` (run no chat filho + trailer `<pipeline_result>` automático), `parallel` (workers em chats irmãos+worktree, ondas de `MaxFanout`, merge sequencial, exige binding), `tool` (builtin server-side — o gate aconteceu na call Exec do workflow), `validate` (ProjectValidation — falha para a pipeline; retry é um step `llm` do autor lendo `{results:key}`), `commit` (git determinístico, `push:true` por step). Resume por `State.StepIndex`; `status`/`resume` pelo `dev_pipeline` (mesmo kv `devpipeline:{id}`).
+- **Lição**: steps llm precisam encadear `ParentRunId` na run do step anterior (`AnchorRunId`) — sem isso cada run abriria worktree isolado NOVO da run pai e as mudanças entre steps se perderiam. `AnchorRunId` varre `state.Runs` do step i-1 pra trás (inclui workers `key:item` do parallel).
+- **Lição**: `BuiltinToolResult` não tem `IsError` — falha de builtin em step `tool` é `Refused` (+`RefuseReason`) ou exceção; ambos viram FailStep.
+- **P2 succession**: adiado — `ContextCompactionService` + `AsyncCompactionScheduler` + `ContextPruner` já fazem compactação 3-tier com spawn automático por estimativa de tokens; gatilho por contagem de spawns (agy, 32) é marginal.
+- **Lição (watchdog)**: `TryStop` foi blindado contra `ObjectDisposedException` — janela entre o lookup no dicionário e o dispose pelo worker; cancel sobre cts morto propagava exceção que abortava o sweep inteiro. Hooks internos p/ teste no dispatcher: `CurrentInstanceId`, `RegisterRunCancelForTest`/`Unregister...`; fixture desliga o loop real com `ChatRuns__WatchdogSeconds=0` e chama o sweep explicitamente.
