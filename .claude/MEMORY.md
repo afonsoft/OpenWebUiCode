@@ -91,3 +91,19 @@
   run invoca run_workflow.
 - Pendente (único item restante do roadmap): provider programável no
   fixture — destrava coverage debt do fan-out + e2e real.
+
+## Fix: always-allow automático + fake-200 de billing (PR #769)
+- `always-allow`: após hard-denies (ruleset/user deny), retorna Allow
+  ANTES do forcePrompt — regra `ask`, override `prompt` e o default
+  de `external_directory` não estacionam mais a run.
+- Pollinations devolve HTTP 200 com `usage` POSITIVO até no aviso de
+  "not enough credits" (chat 9ead0a1f) — o gate usage≤0 deixava passar.
+  `MatchesStrongNotice` (termo de crédito + ação de billing juntos)
+  vence o usage quando a resposta é curta (≤640); prosa longa com os
+  dois marcadores segue liberando (anti-falso-positivo).
+- ATENÇÃO: o check fake-200 buffered existe em 3 lugares —
+  `ParseCompletionMessage` + `CompleteOllamaAsync`/`CompleteOpenAiAsync`
+  inline. Mudança de contrato tem de tocar os três (o 2º furo da
+  correção foi descoberto pelo teste que não lançava).
+- E2E `Run_ProviderReal_*` flake: quando o gateway fica sem crédito o
+  teste falha — o fix converte o aviso em 402/fallback.
