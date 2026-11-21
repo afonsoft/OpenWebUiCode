@@ -73,6 +73,29 @@ public class RepoSlashCommandsTests
         Assert.That(foraDoPrefixo, Is.Empty);
     }
 
+    /// <summary>SPEC-20261122-mode-transitions RF-004: os slashes de modo
+    /// (/plan, /build, /code alias, /chat) são builtins — o /code mapeia
+    /// para a mesma chave i18n do /build.</summary>
+    [Test]
+    public void Builtins_IncluemSlashesDeModo()
+    {
+        var commands = RepoSlashCommands.Builtins.Select(b => b.Command).ToList();
+        Assert.Multiple(() =>
+        {
+            Assert.That(commands, Does.Contain("plan"));
+            Assert.That(commands, Does.Contain("build"));
+            Assert.That(commands, Does.Contain("code"));
+            Assert.That(commands, Does.Contain("chat"));
+            Assert.That(RepoSlashCommands.Builtins
+                .First(b => b.Command == "code").Title,
+                Is.EqualTo("chat.cmd_build"));
+        });
+
+        var sugestao = RepoSlashCommands.Merge(
+            [], [], [], "bu", builtins: RepoSlashCommands.Builtins);
+        Assert.That(sugestao.Select(i => i.Command), Is.EqualTo(new[] { "build" }));
+    }
+
     [Test]
     public void Interpolate_Arguments()
     {

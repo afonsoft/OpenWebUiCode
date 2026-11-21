@@ -76,13 +76,14 @@ public sealed class AgentModeTests
         });
     }
 
+    /// <summary>SPEC-20261122: build não exige mais repo vinculado
+    /// (a pasta scratch cobre o workdir) — todas as opções ficam livres.</summary>
     [Test]
-    public void Toggle_Build_SemRepo_FicaDesabilitadoComHint()
+    public void Toggle_SemRepo_TodasOpcoesHabilitadas()
     {
         var ctx = Setup();
         using var cut = ctx.Render<AgentModeToggle>(p => p
-            .Add(c => c.Mode, "chat")
-            .Add(c => c.HasRepo, false));
+            .Add(c => c.Mode, "chat"));
         cut.Find("button").Click();
 
         var items = cut.FindAll("[role=menuitemradio]");
@@ -90,25 +91,10 @@ public sealed class AgentModeTests
         {
             Assert.That(items[0].HasAttribute("disabled"), Is.False, "chat livre");
             Assert.That(items[1].HasAttribute("disabled"), Is.False, "plan livre");
-            Assert.That(items[2].HasAttribute("disabled"), Is.True, "build travado sem repo");
-            Assert.That(items[2].TextContent, Does.Contain("chat.mode_build_locked"));
-        });
-    }
-
-    [Test]
-    public void Toggle_Build_ComRepo_Habilitado()
-    {
-        var ctx = Setup();
-        using var cut = ctx.Render<AgentModeToggle>(p => p
-            .Add(c => c.Mode, "chat")
-            .Add(c => c.HasRepo, true));
-        cut.Find("button").Click();
-
-        var build = cut.FindAll("[role=menuitemradio]")[^1];
-        Assert.Multiple(() =>
-        {
-            Assert.That(build.HasAttribute("disabled"), Is.False);
-            Assert.That(build.TextContent, Does.Not.Contain("chat.mode_build_locked"));
+            Assert.That(items[2].HasAttribute("disabled"), Is.False,
+                "build sem repo também é selecionável");
+            Assert.That(items[2].TextContent,
+                Does.Not.Contain("chat.mode_build_locked"));
         });
     }
 

@@ -51,8 +51,21 @@ public sealed class DevPipelineBuiltinTool(
             },
             "max_fix_attempts": {
               "type": "integer",
-              "description": "LLM fix runs allowed after a failed validation (default 1).",
+              "description": "LLM fix runs allowed after a failed validation or verify issues (default 1).",
               "default": 1
+            },
+            "plan": {
+              "type": "boolean",
+              "description": "true (default): a plan phase decomposes the task before implement — planner→worker split.",
+              "default": true
+            },
+            "worker_model": {
+              "type": "string",
+              "description": "Optional model id for the plan/implement/test/verify phases — typically the cheaper worker model."
+            },
+            "fix_model": {
+              "type": "string",
+              "description": "Optional model id for fix phases — typically the stronger corrector model."
             },
             "pipeline_id": {
               "type": "string",
@@ -95,6 +108,8 @@ public sealed class DevPipelineBuiltinTool(
             && p.ValueKind == JsonValueKind.True;
         var maxFix = args.TryGetProperty("max_fix_attempts", out var m)
             && m.TryGetInt32(out var n) ? n : 1;
+        var plan = !args.TryGetProperty("plan", out var pl)
+            || pl.ValueKind != JsonValueKind.False;
 
         DevPipelineService.State state;
         using (var scope = scopes.CreateScope())
@@ -102,7 +117,10 @@ public sealed class DevPipelineBuiltinTool(
             var service = scope.ServiceProvider
                 .GetRequiredService<DevPipelineService>();
             state = await service.StartAsync(
-                context, task, ReadString(args, "context"), push, maxFix, ct);
+                context, task, ReadString(args, "context"), push, maxFix, ct,
+                enablePlan: plan,
+                workerModel: ReadString(args, "worker_model"),
+                fixModel: ReadString(args, "fix_model"));
         }
 
         // Runner em background: escopos próprios por fase — seguro para

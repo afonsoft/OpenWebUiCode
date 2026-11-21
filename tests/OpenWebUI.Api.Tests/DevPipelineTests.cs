@@ -294,6 +294,118 @@ public class DevPipelineUnitTests
         Assert.That(error, Is.Not.Null);
     }
 
+    // ---------- ParsePhaseResult / LlmPhases (RF-006/010) ----------
+
+    private static DevPipelineService.State NewState(bool enablePlan = true) =>
+        new()
+        {
+            Id = "dp-test", UserId = "u1", ParentChatId = "c1",
+            ParentRunId = "r1", Task = "tarefa",
+            EnablePlan = enablePlan, CreatedAt = 1, UpdatedAt = 1,
+        };
+
+    [Test]
+    public void LlmPhases_ComPlan_PlanPrimeiro()
+    {
+        var phases = DevPipelineService.LlmPhases(NewState(enablePlan: true))
+            .Select(p => p.Phase).ToList();
+        Assert.That(phases, Is.EqualTo(new[] { "plan", "implement", "test" }));
+    }
+
+    [Test]
+    public void LlmPhases_SemPlan_ComecaNoImplement()
+    {
+        var phases = DevPipelineService.LlmPhases(NewState(enablePlan: false))
+            .Select(p => p.Phase).ToList();
+        Assert.That(phases, Is.EqualTo(new[] { "implement", "test" }));
+    }
+
+    [Test]
+    public void LlmPhases_Implement_CarregaPlanoNoPrompt()
+    {
+        var state = NewState();
+        state.Plan = "1. arquivo a.cs; 2. teste";
+        var prompt = DevPipelineService.LlmPhases(state)
+            .First(p => p.Phase == "implement").Prompt;
+        Assert.That(prompt, Does.Contain("Plano aprovado"));
+        Assert.That(prompt, Does.Contain("arquivo a.cs"));
+    }
+
+    [Test]
+    public void ParsePhaseResult_BlocoValido_ExtraiCampos()
+    {
+        var text = "trabalho feito.\n<pipeline_result>"
+            + """{"files":["a.cs","b.cs"],"summary":"ok","verdict":"issues","issues":["x","y"],"plan":"1. passo"}"""
+            + "</pipeline_result>";
+        var r = DevPipelineService.ParsePhaseResult(text);
+        Assert.That(r, Is.Not.Null);
+        Assert.That(r!.Files, Is.EqualTo(new[] { "a.cs", "b.cs" }));
+        Assert.That(r.Verdict, Is.EqualTo("issues"));
+        Assert.That(r.Issues, Is.EqualTo(new[] { "x", "y" }));
+        Assert.That(r.Plan, Is.EqualTo("1. passo"));
+        Assert.That(r.Summary, Is.EqualTo("ok"));
+    }
+
+    [Test]
+    public void ParsePhaseResult_SemBlocoOuMalformado_Null()
+    {
+        Assert.That(DevPipelineService.ParsePhaseResult(null), Is.Null);
+        Assert.That(DevPipelineService.ParsePhaseResult("sem bloco"), Is.Null);
+        Assert.That(DevPipelineService.ParsePhaseResult(
+            "<pipeline_result>{invalido}</pipeline_result>"), Is.Null);
+    }
+
+    // ---------- TryModeSlash (RF-004) ----------
+
+    [Test]
+    public void TryModeSlash_ModosReconhecidos()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash("/plan faça o plano")!.Value.Target,
+                Is.EqualTo("plan"));
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash("/build implemente")!.Value.Target,
+                Is.EqualTo("build"));
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash("/code implemente")!.Value.Target,
+                Is.EqualTo("build"), "/code é alias de build");
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash("/chat conversa")!.Value.Target,
+                Is.EqualTo("chat"));
+        });
+    }
+
+    [Test]
+    public void TryModeSlash_RestanteViraConteudo_VazioViraDiretiva()
+    {
+        var comArgs = OpenWebUI.Api.Endpoints.ChatRunEndpoints
+            .TryModeSlash("/build   implemente x  ")!.Value;
+        Assert.That(comArgs.Remainder, Is.EqualTo("implemente x"));
+
+        var semArgs = OpenWebUI.Api.Endpoints.ChatRunEndpoints
+            .TryModeSlash("/plan")!.Value;
+        Assert.That(semArgs.Remainder, Does.Contain("modo plan"));
+    }
+
+    [Test]
+    public void TryModeSlash_NaoComandoOuDesconhecido_Null()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash(null), Is.Null);
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash("mensagem comum"), Is.Null);
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash("/planx não é modo"), Is.Null);
+            Assert.That(OpenWebUI.Api.Endpoints.ChatRunEndpoints
+                .TryModeSlash("/deploy prod"), Is.Null,
+                "comando de repo não é interceptado pelo slash de modo");
+        });
+    }
+
     // ---------- PermissionRuleset.ShouldAnnounce ----------
 
     [Test]
@@ -442,6 +554,134 @@ public class DevPipelineIntegrationTests
         Assert.That(reload.MaxFixAttempts, Is.EqualTo(1));
     }
 
+    // ---------- mode_switch + preset de entrada (SPEC-20261122) ----------
+
+    /// <summary>Semeia um chat simples do usuário e devolve ids + userId.</summary>
+    private async Task<(string UserId, string ChatId)> SeedChatAsync(
+        string email, string mode = "chat")
+    {
+        var auth = await SignUpAsync("MU", email);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var chat = new Chat
+        {
+            UserId = auth.User.Id, Title = "modes",
+            ModelsJson = "[]", Mode = mode,
+            ApprovalPreset = "approve-mutations",
+            CreatedAt = now, UpdatedAt = now,
+        };
+        chat.Id = Guid.NewGuid().ToString("N");
+        db.Chats.Add(chat);
+        await db.SaveChangesAsync();
+        return (auth.User.Id, chat.Id);
+    }
+
+    private OpenWebUI.Infrastructure.ChatTools.Tools.ModeSwitchBuiltinTool ModeTool() =>
+        new(_factory.Services.GetRequiredService<IServiceScopeFactory>());
+
+    private static JsonElement ModeArgs(string mode) =>
+        JsonDocument.Parse($"{{\"mode\":\"{mode}\"}}").RootElement;
+
+    [Test]
+    public async Task ModeSwitch_ChatParaPlan_TrocaModoESobePreset()
+    {
+        var (userId, chatId) = await SeedChatAsync("ms-plan@test.local");
+        var result = await ModeTool().ExecuteAsync(
+            ModeArgs("plan"),
+            new BuiltinToolContext(userId, chatId, null, "/tmp", "/tmp"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Text, Does.Contain("'plan'"));
+            Assert.That(result.Text, Does.Contain("smart"));
+        });
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var chat = await db.Chats.FindAsync(chatId);
+        Assert.That(chat!.Mode, Is.EqualTo("plan"));
+        Assert.That(chat.ApprovalPreset, Is.EqualTo("smart"));
+    }
+
+    [Test]
+    public async Task ModeSwitch_ChatParaBuild_TrocaParaBuild()
+    {
+        var (userId, chatId) = await SeedChatAsync("ms-build@test.local");
+        var result = await ModeTool().ExecuteAsync(
+            ModeArgs("build"),
+            new BuiltinToolContext(userId, chatId, null, "/tmp", "/tmp"),
+            CancellationToken.None);
+
+        Assert.That(result.Text, Does.Contain("'build'"));
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var chat = await db.Chats.FindAsync(chatId);
+        Assert.That(chat!.Mode, Is.EqualTo("build"));
+        Assert.That(chat.ApprovalPreset, Is.EqualTo("smart"));
+    }
+
+    [Test]
+    public async Task ModeSwitch_PlanParaBuild_RecusaEApontaPlanExit()
+    {
+        var (userId, chatId) = await SeedChatAsync(
+            "ms-planbuild@test.local", mode: "plan");
+        var result = await ModeTool().ExecuteAsync(
+            ModeArgs("build"),
+            new BuiltinToolContext(userId, chatId, null, "/tmp", "/tmp"),
+            CancellationToken.None);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Text, Does.Contain("plan_exit"),
+                "plan→build exige a aprovação humana do plan_exit");
+        });
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var chat = await db.Chats.FindAsync(chatId);
+        Assert.That(chat!.Mode, Is.EqualTo("plan"), "modo não mudou");
+    }
+
+    [Test]
+    public async Task ModeSwitch_MesmoAlvo_NoOp()
+    {
+        var (userId, chatId) = await SeedChatAsync("ms-noop@test.local");
+        var result = await ModeTool().ExecuteAsync(
+            ModeArgs("chat"),
+            new BuiltinToolContext(userId, chatId, null, "/tmp", "/tmp"),
+            CancellationToken.None);
+        Assert.That(result.Text, Does.Contain("já está no modo chat"));
+    }
+
+    [Test]
+    public async Task ModeSwitch_PresetPinado_NaoSobrescreve()
+    {
+        var (userId, chatId) = await SeedChatAsync("ms-pin@test.local");
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var config = scope.ServiceProvider
+                .GetRequiredService<ConfigService>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var chat = await db.Chats.FindAsync(chatId);
+            chat!.ApprovalPreset = "allow-readonly";
+            await db.SaveChangesAsync();
+            await ChatModeTransitions.PinPresetAsync(
+                config, chatId, CancellationToken.None);
+        }
+
+        var result = await ModeTool().ExecuteAsync(
+            ModeArgs("build"),
+            new BuiltinToolContext(userId, chatId, null, "/tmp", "/tmp"),
+            CancellationToken.None);
+
+        Assert.That(result.Text, Does.Not.Contain("smart"));
+        using var scope2 = _factory.Services.CreateScope();
+        var db2 = scope2.ServiceProvider.GetRequiredService<AppDbContext>();
+        var chat2 = await db2.Chats.FindAsync(chatId);
+        Assert.That(chat2!.ApprovalPreset, Is.EqualTo("allow-readonly"),
+            "preset pinado pelo dono nunca é sobrescrito");
+    }
+
     [Test]
     public async Task RunAsync_SemProvider_FalhaImplementEReportaNoPai()
     {
@@ -454,15 +694,16 @@ public class DevPipelineIntegrationTests
             ctx, "implementar x", null, push: false,
             maxFixAttempts: 1, CancellationToken.None);
 
-        // A run da fase implement é despachada e falha sem provider —
-        // o orquestrador marca a pipeline failed e reporta no chat pai.
+        // A run da fase plan (primeira LLM do ciclo) é despachada e falha
+        // sem provider — o orquestrador marca a pipeline failed e reporta
+        // no chat pai.
         await service.RunAsync(state.Id);
 
         var final = await service.GetAsync(state.Id, CancellationToken.None);
         Assert.That(final, Is.Not.Null);
         Assert.That(final!.Status, Is.EqualTo("failed"));
-        Assert.That(final.Error, Does.Contain("implement"));
-        Assert.That(final.Runs, Contains.Key("implement"));
+        Assert.That(final.Error, Does.Contain("plan"));
+        Assert.That(final.Runs, Contains.Key("plan"));
 
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

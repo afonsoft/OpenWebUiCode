@@ -23,17 +23,14 @@
              @onkeydown="OnMenuKeyDown">
             @foreach (var option in s_options)
             {
-                var locked = option == "build" && !HasRepo;
                 var active = AgentModeVisuals.Normalize(Mode) == option;
                 <button type="button" role="menuitemradio" aria-checked="@(active ? "true" : "false")"
-                        class="w-full flex items-center gap-2.5 px-3 py-2 text-left transition enabled:cursor-pointer enabled:hover:bg-gray-50 disabled:opacity-50 enabled:dark:hover:bg-gray-850 @(active ? "text-blue-600 dark:text-blue-400" : "text-gray-700 dark:text-gray-300")"
-                        disabled="@locked"
-                        title="@(locked ? L["chat.mode_build_locked"] : null)"
+                        class="w-full flex items-center gap-2.5 px-3 py-2 text-left transition cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-850 @(active ? "text-blue-600 dark:text-blue-400" : "text-gray-700 dark:text-gray-300")"
                         @onclick="() => SelectAsync(option)">
                     @AgentModeVisuals.Icon(option)
                     <span class="min-w-0 flex-1">
                         <span class="block truncate text-sm">@L["chat.mode_" + option]</span>
-                        <span class="block truncate text-[0.6875rem] text-gray-400 dark:text-gray-500">@(locked ? L["chat.mode_build_locked"] : L["chat.mode_" + option + "_hint"])</span>
+                        <span class="block truncate text-[0.6875rem] text-gray-400 dark:text-gray-500">@L["chat.mode_" + option + "_hint"]</span>
                     </span>
                     @if (active)
                     {
@@ -54,9 +51,6 @@
 
     /// <summary>Desabilita o seletor (chat carregando).</summary>
     [Parameter] public bool Disabled { get; set; }
-
-    /// <summary>Há repositório vinculado (ou pendente) — libera o build.</summary>
-    [Parameter] public bool HasRepo { get; set; }
 
     /// <summary>Callback com o modo escolhido — o pai aplica e persiste.</summary>
     [Parameter] public EventCallback<string> OnSelect { get; set; }

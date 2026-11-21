@@ -206,13 +206,14 @@ public class AgentModeE2ETests
     }
 
     private async Task<ChatRunResponse> EnfileirarAsync(
-        string chatId, IReadOnlyList<string>? toolIds = null)
+        string chatId, IReadOnlyList<string>? toolIds = null,
+        string content = "planeje")
     {
         // Corpos de /api/chat ficam por teste — a bag é compartilhada.
         _chatBodies.Clear();
         var response = await _client.PostAsJsonAsync(
             $"/api/v1/chats/{chatId}/messages",
-            new EnqueueChatRunRequest("planeje", "fake:1", ToolIds: toolIds));
+            new EnqueueChatRunRequest(content, "fake:1", ToolIds: toolIds));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
             await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<ChatRunResponse>())!;
@@ -351,6 +352,84 @@ public class AgentModeE2ETests
         var planFiles = Directory.GetFiles(planDir, "*.md");
         Assert.That(planFiles, Is.Not.Empty);
         Assert.That(File.ReadAllText(planFiles[0]), Does.Contain("1. Ler"));
+    }
+
+    /// <summary>SPEC-20261122 RF-001: sem repo vinculado o plano aprovado
+    /// promove para build do mesmo jeito (a pasta scratch cobre o workdir)
+    /// — antes ia para chat e a aprovação parecia "não fazer nada".</summary>
+    [Test]
+    public async Task PlanMode_PlanExitAprovado_SemBinding_PromoveBuild()
+    {
+        _emit = "plan_exit";
+        var chat = await CriarChatAsync("plan");
+        // Sem seed de binding — o cenário do bug reportado.
+
+        var run = await EnfileirarAsync(chat.Id, ["builtin:file_write"]);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var eventos = await LerStreamAteFecharAsync(chat.Id, run.Id, true, cts.Token);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(eventos.Any(e => e.Event == "mode"
+                && e.Data.Contains("\"build\"")), Is.True,
+                "aprovação sem binding tem de promover a build");
+        });
+        var reload = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        Assert.That(reload!.Mode, Is.EqualTo("build"));
+    }
+
+    /// <summary>RF-004+RF-005: "/build …" digitado troca o modo, sobe o
+    /// preset para smart e persiste só o restante como mensagem.</summary>
+    [Test]
+    public async Task Enqueue_SlashBuild_MudaModoPresetEConteudo()
+    {
+        var chat = await CriarChatAsync();
+        Assert.That(chat.Mode, Is.EqualTo("chat"));
+
+        _ = await EnfileirarAsync(chat.Id, content: "/build implemente x");
+
+        var reload = await _client.GetFromJsonAsync<ChatResponse>(
+            $"/api/v1/chats/{chat.Id}");
+        Assert.Multiple(() =>
+        {
+            Assert.That(reload!.Mode, Is.EqualTo("build"));
+            Assert.That(reload.ApprovalPreset, Is.EqualTo("smart"),
+                "entrada em build sobe o preset default para smart");
+            Assert.That(reload.Messages.Any(m => m.Role == "user"
+                && m.Content == "implemente x"), Is.True,
+                "o /build não pode vazar para a mensagem persistida");
+            Assert.That(reload.Messages.Any(m => m.Role == "user"
+                && m.Content.StartsWith("/build")), Is.False);
+        });
+    }
+
+    /// <summary>RF-005: preset pinado pelo dono não é sobrescrito pelas
+    /// transições de modo.</summary>
+    [Test]
+    public async Task Patch_ModeEBumpDePreset_RespeitandoPin()
+    {
+        var chat = await CriarChatAsync();
+
+        // Entrada em plan: preset conservador (default) → smart.
+        var plan = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}", new ChatPatchRequest(null, Mode: "plan"));
+        var planChat = (await plan.Content.ReadFromJsonAsync<ChatResponse>())!;
+        Assert.That(planChat.ApprovalPreset, Is.EqualTo("smart"));
+
+        // Escolha manual marca o pin — a transição seguinte não mexe.
+        var manual = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}",
+            new ChatPatchRequest("approve-mutations", Mode: "chat"));
+        Assert.That((await manual.Content
+            .ReadFromJsonAsync<ChatResponse>())!.ApprovalPreset,
+            Is.EqualTo("approve-mutations"));
+
+        var build = await _client.PatchAsJsonAsync(
+            $"/api/v1/chats/{chat.Id}", new ChatPatchRequest(null, Mode: "build"));
+        var buildChat = (await build.Content.ReadFromJsonAsync<ChatResponse>())!;
+        Assert.That(buildChat.ApprovalPreset, Is.EqualTo("approve-mutations"),
+            "preset pinado pelo dono sobrevive à entrada em build");
     }
 
     [Test]

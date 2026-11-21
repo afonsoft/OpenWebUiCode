@@ -928,7 +928,7 @@
                     </div>
 
                     <div id="chat-composer-toolbar-right" class="self-end flex items-center gap-1 mr-1">
-                        <AgentModeToggle Mode="@EffectiveAgentMode" HasRepo="@(_repo?.Repo is not null)"
+                        <AgentModeToggle Mode="@EffectiveAgentMode"
                                          Disabled="@_loading" OnSelect="SetAgentModeAsync" />
                         @if (_streaming)
                         {
@@ -1246,11 +1246,10 @@
     private WorkspaceRepoResponse? _pendingRepo;
 
     /// <summary>
-    /// Modo efetivo do composer (SPEC-15): o intent "build" só vale com
-    /// repo vinculado (ou pendente de bind) — sem ele roda em chat.
+    /// Modo efetivo do composer (SPEC-20261122 RF-002): o modo vale literal
+    /// — build sem repo roda na pasta scratch da conversa (SPEC-20261027).
     /// </summary>
-    private string EffectiveAgentMode =>
-        _agentMode == "build" && _repo?.Repo is null ? "chat" : _agentMode;
+    private string EffectiveAgentMode => _agentMode;
     private bool _showModeMenu;
     private ElementReference _toolsTrigger;
     private ElementReference _toolsMenu;
@@ -1954,9 +1953,12 @@
     private async Task SelectBuiltinAsync(SlashItem item)
     {
         var builtinArgs = RepoSlashCommands.ArgsAfter(_input);
-        if (item.Command == "plan")
+        // RF-004: /plan, /build, /code (alias de build) e /chat trocam o
+        // modo do chat — o texto após o comando permanece como mensagem.
+        if (item.Command is "plan" or "build" or "code" or "chat")
         {
-            await SetAgentModeAsync("plan");
+            await SetAgentModeAsync(
+                item.Command == "code" ? "build" : item.Command);
             _input = builtinArgs;
         }
         else if (item.Command == "compact")
@@ -4664,16 +4666,8 @@
                 _repoSkills = [];
                 _repoCommands = [];
             }
-            // SPEC-15: intent "build" materializa ao vincular; ao desvincular
-            // o servidor já derrubou o modo persistido — o intent cai a chat.
-            if (_repo is not null && _agentMode == "build")
-            {
-                await SetAgentModeAsync("build");
-            }
-            else if (_repo is null && _agentMode == "build")
-            {
-                _agentMode = "chat";
-            }
+            // SPEC-20261122 RF-002: desvincular não derruba o modo — build
+            // segue válido na pasta scratch da conversa (SPEC-20261027).
         }
         _git = null;
         await RefreshGitAsync();

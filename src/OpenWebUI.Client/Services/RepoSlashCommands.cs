@@ -26,6 +26,10 @@ public static class RepoSlashCommands
     public static IReadOnlyList<SlashItem> Builtins { get; } =
     [
         new SlashItem("plan", "chat.cmd_plan", "builtin"),
+        // SPEC-20261122-mode-transitions RF-004: /code é alias de /build.
+        new SlashItem("build", "chat.cmd_build", "builtin"),
+        new SlashItem("code", "chat.cmd_build", "builtin"),
+        new SlashItem("chat", "chat.cmd_chat", "builtin"),
         new SlashItem("compact", "chat.cmd_compact", "builtin"),
     ];
 

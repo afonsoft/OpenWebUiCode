@@ -309,6 +309,7 @@ builder.Services.AddScoped<IBuiltinChatTool, TeamStatusBuiltinTool>();
 // validate→commit + tool de validação pontual.
 builder.Services.AddScoped<OpenWebUI.Api.DevPipeline.DevPipelineService>();
 builder.Services.AddScoped<IBuiltinChatTool, AgentValidateBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ModeSwitchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, OpenWebUI.Api.DevPipeline.DevPipelineBuiltinTool>();
 // LSP (SPEC-20261009-lsp-diagnostics): singleton dono dos processos
 // filhos + tools read-only builtin:lsp_*.

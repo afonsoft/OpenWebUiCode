@@ -781,6 +781,7 @@ public static class ChatEndpoints
         ChatPatchRequest request,
         HttpContext http,
         AppDbContext db,
+        ConfigService config,
         CancellationToken ct)
     {
         var user = await AuthEndpoints.FindUserAsync(http, db, ct);
@@ -801,6 +802,9 @@ public static class ChatEndpoints
                     new { detail = "approvalPreset inválido." });
             }
             chat.ApprovalPreset = request.ApprovalPreset;
+            // RF-005: escolha manual do dono — as transições de modo nunca
+            // mais sobrescrevem o preset deste chat.
+            await ChatModeTransitions.PinPresetAsync(config, chat.Id, ct);
             changed = true;
         }
         if (request.Mode is not null)
@@ -812,7 +816,13 @@ public static class ChatEndpoints
             {
                 return Results.BadRequest(new { detail = "mode inválido." });
             }
-            chat.Mode = request.Mode;
+            if (!string.Equals(chat.Mode, request.Mode, StringComparison.Ordinal))
+            {
+                chat.Mode = request.Mode;
+                // RF-005: preset de entrada smart quando não pinado.
+                _ = await ChatModeTransitions.ApplyEntryPresetAsync(
+                    config, chat, request.Mode, ct);
+            }
             changed = true;
         }
         if (request.AdvisorEnabled is { } advisor)

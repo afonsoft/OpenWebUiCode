@@ -89,6 +89,20 @@ public static class ChatRunEndpoints
         }
         request = hookedRequest;
 
+        // SPEC-20261122-mode-transitions RF-004: texto começando com um
+        // slash de modo (/plan, /build, /code, /chat) troca o modo do
+        // chat — cobre clientes que digitam o comando sem usar o picker.
+        if (TryModeSlash(request.Content) is { } modeSlash)
+        {
+            if (!string.Equals(chat.Mode, modeSlash.Target, StringComparison.Ordinal))
+            {
+                chat.Mode = modeSlash.Target;
+                _ = await ChatModeTransitions.ApplyEntryPresetAsync(
+                    deps.Config, chat, modeSlash.Target, ct);
+            }
+            request = request with { Content = modeSlash.Remainder };
+        }
+
         // SPEC-20261016-commands-v2 RF-003/RF-004: submit via command — o
         // servidor expande o template (a mensagem persistida mostra o texto
         // final) e aplica overrides de agent/mode/model declarados no
@@ -198,6 +212,37 @@ public static class ChatRunEndpoints
                 statusCode: 429);
         }
         return Results.Accepted(value: ToResponse(run));
+    }
+
+    /// <summary>Slash de modo digitado (RF-004): <c>/plan</c>,
+    /// <c>/build</c>, <c>/code</c> (alias de build) e <c>/chat</c> seguidos
+    /// de espaço/fim trocam o modo; o restante vira o conteúdo — vazio,
+    /// uma diretiva mínima para a run não ficar sem mensagem.</summary>
+    internal static (string Target, string Remainder)? TryModeSlash(
+        string? content)
+    {
+        if (content is null || !content.StartsWith('/'))
+        {
+            return null;
+        }
+        var space = content.IndexOf(' ');
+        var word = content[1..(space < 0 ? content.Length : space)]
+            .ToLowerInvariant();
+        var mapped = word switch
+        {
+            "plan" or "build" or "chat" => word,
+            "code" => "build",
+            _ => null,
+        };
+        if (mapped is null)
+        {
+            return null;
+        }
+        var rest = space < 0 ? string.Empty : content[(space + 1)..].Trim();
+        return (mapped, rest.Length > 0
+            ? rest
+            : $"(o usuário ativou o modo {mapped} via /{word} — prossiga "
+                + "neste modo.)");
     }
 
     /// <summary>Hooks <c>UserPromptSubmit</c> do repo vinculado (RF-005):
