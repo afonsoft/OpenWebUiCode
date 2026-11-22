@@ -1,11 +1,21 @@
-# Open WebUI Multi-License Notice
+# License Notice
 
-This repository contains code governed by multiple licenses based on the date and origin of contribution:
+This fork (OpenWebUiCode — Open WebUI migrated to .NET/Blazor) is licensed
+under the MIT License — see `LICENSE`.
 
-1. All code committed prior to commit a76068d69cd59568b920dfab85dc573dbbb8f131 is licensed under the MIT License (see LICENSE_HISTORY).
+It is derived from the upstream Open WebUI project
+(https://github.com/open-webui/open-webui). Upstream code and materials
+retain their original copyright and license terms as recorded in
+`LICENSE_HISTORY`:
 
-2. All code committed from commit a76068d69cd59568b920dfab85dc573dbbb8f131 up to and including commit 60d84a3aae9802339705826e9095e272e3c83623 is licensed under the BSD 3-Clause License (see LICENSE_HISTORY).
+1. Code committed prior to commit `a76068d69cd59568b920dfab85dc573dbbb8f131`
+   — MIT License (Timothy Jaeryang Baek).
 
-3. All code contributed or modified after commit 60d84a3aae9802339705826e9095e272e3c83623 is licensed under the Open WebUI License (see LICENSE).
+2. Code committed from `a76068d69cd59568b920dfab85dc573dbbb8f131` up to and
+   including commit `60d84a3aae9802339705826e9095e272e3c83623`
+   — BSD 3-Clause License (Timothy Jaeryang Baek).
 
-For details on which commits are covered by which license, refer to LICENSE_HISTORY.
+3. Code contributed or modified after `60d84a3aae9802339705826e9095e272e3c83623`
+   — Open WebUI License (Open WebUI Inc.), reproduced in `LICENSE_HISTORY`.
+
+All work original to this fork is MIT.

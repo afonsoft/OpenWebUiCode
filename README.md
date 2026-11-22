@@ -361,4 +361,4 @@ Full pipeline & tooling map: [docs/en/CI-CD.md](docs/en/CI-CD.md) ·
 
 ## License
 
-BSD-3-Clause — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Fork of [Open WebUI](https://github.com/open-webui/open-webui); upstream license terms preserved in [LICENSE_NOTICE](LICENSE_NOTICE)/[LICENSE_HISTORY](LICENSE_HISTORY).
