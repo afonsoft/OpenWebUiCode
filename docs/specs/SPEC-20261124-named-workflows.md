@@ -1,6 +1,6 @@
 # SPEC-20261124-named-workflows — workflows nomeados reutilizáveis
 
-## Status: Implementado
+**Status**: Completed
 
 ## Motivação
 
@@ -26,3 +26,7 @@ subagentes/workflows como biblioteca.
 - `ValidWorkflowName` — alfabeto/limite.
 - Roundtrip service-level: save → get → list → delete (+ isolamento
   por userId).
+
+## Delivered
+
+- PR [#768](https://github.com/afonsoft/OpenWebUiCode/pull/768) — merge commit `09c480d`.
