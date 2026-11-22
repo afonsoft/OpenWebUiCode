@@ -337,6 +337,19 @@ public static class PermissionRuleset
                     ? $"fetch:{uri.Scheme}://{uri.Host}/**"
                     : "fetch:*";
             }
+            case "delegate_task":
+            {
+                // SPEC-20261124-denied-agents-hidden (opencode dev):
+                // assinatura por alvo da delegação — agent, ou persona
+                // quando agent ausente. Regra "deny subagent" com
+                // resource delegate_task:agent:danger-* passa a casar
+                // esta call; o catálogo omite os agentes negados.
+                var agent = TryGetString(argumentsJson, "agent")
+                    ?? TryGetString(argumentsJson, "persona");
+                return string.IsNullOrWhiteSpace(agent)
+                    ? "*"
+                    : $"agent:{agent.Trim()}";
+            }
             default:
                 return "*";
         }

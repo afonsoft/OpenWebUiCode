@@ -50,8 +50,19 @@ public interface IContextSummarizer
 {
     /// <summary>Resume o trecho de conversa (formatado "role: content").</summary>
     /// <param name="userId">Usuário dono da conversa — resolve BYOK quando habilitado.</param>
+    /// <param name="promptOverride">
+    /// SPEC-20261124-compaction-hook (opencode dev
+    /// <c>experimental.session.compacting</c>): prompt inteiro substituto
+    /// emitido por hook <c>SessionCompacting</c> do tipo prompt —
+    /// <c>null</c> usa o prompt padrão (V3/V1).
+    /// </param>
+    /// <param name="contextAppend">
+    /// Texto de <c>additionalContext</c> dos hooks SessionCompacting —
+    /// anexado ao prompt vigente antes do transcript.
+    /// </param>
     Task<ContextSummary?> SummarizeAsync(
-        string model, string transcript, string? userId, CancellationToken ct);
+        string model, string transcript, string? userId, CancellationToken ct,
+        string? promptOverride = null, string? contextAppend = null);
 }
 
 /// <summary>
@@ -152,11 +163,17 @@ public sealed class LlmContextSummarizer(
 
     /// <inheritdoc />
     public async Task<ContextSummary?> SummarizeAsync(
-        string model, string transcript, string? userId, CancellationToken ct)
+        string model, string transcript, string? userId, CancellationToken ct,
+        string? promptOverride = null, string? contextAppend = null)
     {
-        var prompt = config is null
-            || await config.GetAsync("compaction:summarizer_v3", true, ct)
-                ? PromptV3 : Prompt;
+        var prompt = promptOverride
+            ?? (config is null
+                || await config.GetAsync("compaction:summarizer_v3", true, ct)
+                    ? PromptV3 : Prompt);
+        if (!string.IsNullOrWhiteSpace(contextAppend))
+        {
+            prompt += contextAppend.Trim() + "\n\n";
+        }
         var request = new ChatCompletionRequest(model,
             [new ChatCompletionMessage("user", prompt + transcript)], Stream: false);
         var result = await providers.CompleteAsync(request, userId, ct);
@@ -250,7 +267,11 @@ public sealed record CompactionDeps(
     /// (SPEC-20261102 RF-002): o trabalho sobrevive ao scope do request e
     /// precisa de DbContext próprio — compartilhar o contexto do chamador
     /// correria contra operações concorrentes da run.</summary>
-    IServiceScopeFactory? Scopes = null);
+    IServiceScopeFactory? Scopes = null,
+    /// <summary>Hooks <c>SessionCompacting</c>
+    /// (SPEC-20261124-compaction-hook): context/prompt do summarizer —
+    /// null desliga o evento.</summary>
+    ChatTools.LifecycleHookService? Hooks = null);
 
 public sealed class ContextCompactionService(
     AppDbContext db,
@@ -265,6 +286,7 @@ public sealed class ContextCompactionService(
     private readonly ProviderService? providers = extras?.Providers;
     private readonly ModelCapabilityResolver? caps = extras?.Caps;
     private readonly IServiceScopeFactory? scopes = extras?.Scopes;
+    private readonly ChatTools.LifecycleHookService? hooks = extras?.Hooks;
     private readonly AsyncCompactionScheduler scheduler =
         scheduler ?? new AsyncCompactionScheduler();
     private static readonly JsonSerializerOptions JsonOptions =
@@ -455,7 +477,8 @@ public sealed class ContextCompactionService(
     public async Task<bool> MaybeCompactAsync(
         string chatId, IReadOnlyList<ChatCompletionMessage> history,
         string model, CancellationToken ct, string? userId = null,
-        bool force = false, double tailScale = 1.0)
+        bool force = false, double tailScale = 1.0,
+        string? workdir = null)
     {
         try
         {
@@ -471,7 +494,11 @@ public sealed class ContextCompactionService(
 
             var head = await ComputeHeadSummaryAsync(
                 new HeadSummaryArgs(config, roles, summarizer,
-                    chatId, history, model, userId), t, ct,
+                    chatId, history, model, userId,
+                    Db: db, Hooks: hooks, Workdir: workdir,
+                    Trigger: tailScale < 1.0
+                        ? "overflow"
+                        : force ? "manual" : "auto"), t, ct,
                 tolerateSummaryFailure: force);
             if (head.HeadEnd <= 0 || head.Summary is null)
             {
@@ -497,7 +524,10 @@ public sealed class ContextCompactionService(
     private sealed record HeadSummaryArgs(
         ConfigService Cfg, ModelRoleResolver Roles, IContextSummarizer Sum,
         string ChatId, IReadOnlyList<ChatCompletionMessage> History,
-        string Model, string? UserId);
+        string Model, string? UserId,
+        AppDbContext? Db = null,
+        ChatTools.LifecycleHookService? Hooks = null,
+        string? Workdir = null, string Trigger = "auto");
 
     /// <summary>
     /// Corte do head + transcript podado + chamada do summarizer — trecho
@@ -529,11 +559,19 @@ public sealed class ContextCompactionService(
         var summaryModel = a.UserId is null
             ? a.Model
             : await a.Roles.ResolveAsync("memory", a.UserId, a.Model, ct);
+        // SPEC-20261124-compaction-hook (opencode
+        // experimental.session.compacting): hooks SessionCompacting do
+        // workdir/home rodam antes do summarizer — additionalContext
+        // anexa ao prompt; updatedInput de hook "prompt" substitui o
+        // prompt inteiro. Falha do hook nunca impede a compactação.
+        var (promptOverride, contextAppend) = await RunCompactingHooksAsync(
+            a, summaryModel, transcript, ct);
         ContextSummary? summary = null;
         try
         {
             summary = await a.Sum.SummarizeAsync(
-                summaryModel, transcript, a.UserId, ct);
+                summaryModel, transcript, a.UserId, ct,
+                promptOverride, contextAppend);
         }
         catch (Exception) when (tolerateSummaryFailure)
         {
@@ -557,6 +595,68 @@ public sealed class ContextCompactionService(
             };
         }
         return new HeadSummary(headEnd, turnPrefix, summary, records, todos);
+    }
+
+    /// <summary>
+    /// SPEC-20261124-compaction-hook: executa os hooks
+    /// <c>SessionCompacting</c> resolvidos para o workdir da conversa
+    /// sobre a run mais recente do chat (payload + auditoria). Devolve
+    /// <c>(promptOverride, contextAppend)</c> — override só é honrado
+    /// quando existe hook do tipo <c>prompt</c> registrado no evento
+    /// (command hooks contribuem contexto, nunca substituem). Sem run
+    /// ou sem hooks → <c>(null, null)</c>, sem custo.
+    /// </summary>
+    private static async Task<(string? PromptOverride, string? ContextAppend)>
+        RunCompactingHooksAsync(
+            HeadSummaryArgs a, string summaryModel, string transcript,
+            CancellationToken ct)
+    {
+        if (a.Hooks is null || a.Db is null)
+        {
+            return (null, null);
+        }
+        try
+        {
+            var hasPromptHook = a.Hooks.Resolve(a.Workdir)
+                .Any(h => string.Equals(h.Event, "SessionCompacting",
+                    StringComparison.OrdinalIgnoreCase)
+                    && h.Type.Equals("prompt", StringComparison.OrdinalIgnoreCase));
+            var contexts = a.Hooks.Resolve(a.Workdir)
+                .Where(h => string.Equals(h.Event, "SessionCompacting",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (contexts.Count == 0)
+            {
+                return (null, null);
+            }
+            var run = await a.Db.ChatRuns.AsNoTracking()
+                .Where(r => r.ChatId == a.ChatId)
+                .OrderByDescending(r => r.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (run is null)
+            {
+                return (null, null);
+            }
+            var outcome = await a.Hooks.RunAsync(
+                "SessionCompacting", a.Workdir, run, null,
+                new
+                {
+                    chatId = a.ChatId,
+                    model = summaryModel,
+                    trigger = a.Trigger,
+                    transcriptChars = transcript.Length,
+                }, ct);
+            var append = outcome.AdditionalContexts is { Count: > 0 } acs
+                ? string.Join("\n\n", acs.Where(s => !string.IsNullOrWhiteSpace(s)))
+                : null;
+            var promptOverride = hasPromptHook ? outcome.UpdatedInput : null;
+            return (promptOverride,
+                string.IsNullOrWhiteSpace(append) ? null : append);
+        }
+        catch (Exception)
+        {
+            return (null, null);
+        }
     }
 
     /// <summary>Descarta breadcrumbs <c>[pos]</c> fora do range
@@ -733,7 +833,8 @@ public sealed class ContextCompactionService(
     /// </summary>
     public async Task<SpawnResult> MaybeSpawnAsync(
         string chatId, IReadOnlyList<ChatCompletionMessage> history,
-        string model, string? userId, CancellationToken ct)
+        string model, string? userId, CancellationToken ct,
+        string? workdir = null)
     {
         try
         {
@@ -768,7 +869,8 @@ public sealed class ContextCompactionService(
             var estimateTokens = estimate;
             var spawned = scheduler.TryStart(chatId, token =>
                 CompactToPendingAsync(
-                    chatId, snapshot, model, userId, t, estimateTokens, token));
+                    chatId, snapshot, model, userId, t, estimateTokens, token,
+                    workdir));
             if (spawned)
             {
                 logger.LogInformation(
@@ -854,7 +956,7 @@ public sealed class ContextCompactionService(
     private async Task CompactToPendingAsync(
         string chatId, IReadOnlyList<ChatCompletionMessage> snapshot,
         string model, string? userId, Thresholds t, int estimateTokens,
-        CancellationToken ct)
+        CancellationToken ct, string? workdir = null)
     {
         try
         {
@@ -867,14 +969,19 @@ public sealed class ContextCompactionService(
                         sp.GetRequiredService<ConfigService>(),
                         sp.GetRequiredService<ModelRoleResolver>(),
                         sp.GetRequiredService<IContextSummarizer>(),
-                        chatId, snapshot, model, userId),
+                        chatId, snapshot, model, userId,
+                        Db: sp.GetRequiredService<AppDbContext>(),
+                        Hooks: sp.GetService<ChatTools.LifecycleHookService>(),
+                        Workdir: workdir, Trigger: "auto"),
                     t, estimateTokens, ct);
             }
             else
             {
                 await CompactToPendingCoreAsync(
                     new HeadSummaryArgs(config, roles, summarizer,
-                        chatId, snapshot, model, userId),
+                        chatId, snapshot, model, userId,
+                        Db: db, Hooks: hooks, Workdir: workdir,
+                        Trigger: "auto"),
                     t, estimateTokens, ct);
             }
         }
@@ -1123,11 +1230,129 @@ public sealed class ContextCompactionService(
             history.Skip(newHeadStart).Take(summaryEnd - newHeadStart).ToList(), chatId);
         // Marcadores [pos] (RF-005): posição absoluta no histórico — os
         // breadcrumbs do resumo podem citá-los como âncoras de busca.
-        var transcript = (prev is not null && newHeadStart > 0
-                ? $"Resumo anterior já compactado: {prev.Summary}\n\n" : string.Empty)
-            + string.Join("\n\n", head.Select(
-                (m, i) => $"[{newHeadStart + i}] {m.Role}: {m.Content}"));
-        return (transcript, newHeadStart);
+        var prefix = prev is not null && newHeadStart > 0
+            ? $"Resumo anterior já compactado: {prev.Summary}\n\n" : string.Empty;
+        // SPEC-20261124-compaction-diet: escada de redução até caber no
+        // budget — o summarizer nunca recebe transcript maior do que ele
+        // mesmo consegue ler.
+        var budget = await cfg.GetAsync(
+            "compaction:transcript_max_chars", 120_000, ct);
+        return (ApplyTranscriptDiet(head, newHeadStart, budget, prefix),
+            newHeadStart);
+    }
+
+    /// <summary>
+    /// Dieta progressiva do transcript (SPEC-20261124-compaction-diet,
+    /// portada do opencode <c>compaction.ts</c>): mídia vira marcador,
+    /// depois a escada clip tool outputs → clip tool inputs → clip user
+    /// → omitir trocas antigas, parando no primeiro ponto em que o
+    /// transcript cabe no <paramref name="budget"/>. Marcadores
+    /// <c>[pos]</c> permanecem absolutos e a troca mais recente nunca
+    /// é omitida.
+    /// </summary>
+    internal static string ApplyTranscriptDiet(
+        List<ChatCompletionMessage> head, int headStart, int budget,
+        string prefix = "")
+    {
+        var items = head.Select((m, i) => (Pos: headStart + i, Msg: m))
+            .ToList();
+        ReplaceMedia(items);
+        if (Fits())
+        {
+            return Render();
+        }
+        ClipWhere(m => m.Role == "tool");
+        if (Fits())
+        {
+            return Render();
+        }
+        ClipWhere(m => m.Role != "tool"
+            && m.ToolCallsJson is { Length: > 0 });
+        if (Fits())
+        {
+            return Render();
+        }
+        ClipWhere(m => m.Role == "user");
+        OmitLeadingSegments();
+        return Render();
+
+        bool Fits() => Render().Length <= budget;
+
+        string Render() => prefix + string.Join("\n\n",
+            items.Select(t => $"[{t.Pos}] {t.Msg.Role}: {t.Msg.Content}"));
+
+        void ClipWhere(Func<ChatCompletionMessage, bool> pred)
+        {
+            for (var i = 0; i < items.Count; i++)
+            {
+                var m = items[i].Msg;
+                if (pred(m) && m.Content.Length > 2 * DietClipEdge)
+                {
+                    items[i] = (items[i].Pos, m with
+                    {
+                        Content = ClipMiddle(m.Content, DietClipEdge),
+                    });
+                }
+            }
+            if (Fits())
+            {
+                return;
+            }
+        }
+
+        // Omite trocas (segmento = user + o que segue até o próximo
+        // user) do início do head — a troca mais recente nunca sai.
+        void OmitLeadingSegments()
+        {
+            while (!Fits())
+            {
+                var nextUser = items.FindIndex(1,
+                    t => t.Msg.Role == "user");
+                if (nextUser < 0)
+                {
+                    return; // 1 segmento só — último recurso, preserva
+                }
+                items.RemoveRange(0, nextUser);
+            }
+        }
+    }
+
+    /// <summary>Aresta preservada em cada ponta do clip da dieta.</summary>
+    private const int DietClipEdge = 2_000;
+
+    /// <summary>Data-URL → marcador textual (nunca binário pro summarizer).</summary>
+    private static readonly System.Text.RegularExpressions.Regex DataUrlRe =
+        new(@"data:([\w/+.-]+);base64,[A-Za-z0-9+/=\s]{40,}",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static void ReplaceMedia(
+        List<(int Pos, ChatCompletionMessage Msg)> items)
+    {
+        for (var i = 0; i < items.Count; i++)
+        {
+            var m = items[i].Msg;
+            if (m.Content.Contains("base64,", StringComparison.Ordinal))
+            {
+                items[i] = (items[i].Pos, m with
+                {
+                    Content = DataUrlRe.Replace(m.Content,
+                        mm => $"[{mm.Groups[1].Value} omitted]"),
+                });
+            }
+        }
+    }
+
+    /// <summary>Mantém head+tail de <paramref name="edge"/> chars com
+    /// marcador de elisão no meio.</summary>
+    internal static string ClipMiddle(string s, int edge)
+    {
+        if (s.Length <= 2 * edge)
+        {
+            return s;
+        }
+        return string.Concat(s.AsSpan(0, edge),
+            $"\n…[elided {s.Length - 2 * edge} chars]…\n",
+            s.AsSpan(s.Length - edge));
     }
 
     /// <summary>

@@ -159,7 +159,35 @@ public sealed class ChatRunApprovals
                 [pending.ArgPattern] = true;
         }
 
-        return pending.Completion.TrySetResult(new ApprovalResult(approved, message));
+        var resolved = pending.Completion.TrySetResult(
+            new ApprovalResult(approved, message));
+        if (resolved && !approved)
+        {
+            // SPEC-20261124-reject-siblings (portado do opencode dev):
+            // reject nega também as demais APROVAÇÕES pendentes do mesmo
+            // chat — um grupo paralelo não deixa prompts órfãos após o
+            // dono rejeitar um. Perguntas (ask_user) e plan_exit — que
+            // usam payload de question_asked — permanecem: rejeitar uma
+            // tool não deve matar uma pergunta aberta.
+            DenySiblingApprovals(chatId);
+        }
+
+        return resolved;
+    }
+
+    /// <summary>Nega as aprovações de tool pendentes do chat (não toca
+    /// em <c>question_asked</c>). A call alvo já resolveu — o
+    /// TrySetResult duplicado é no-op.</summary>
+    private void DenySiblingApprovals(string chatId)
+    {
+        foreach (var pending in _pending.Values)
+        {
+            if (pending.ChatId == chatId
+                && pending.AskedPayload is Application.Contracts.RunApprovalAskedEvent)
+            {
+                pending.Completion.TrySetResult(new ApprovalResult(false, null));
+            }
+        }
     }
 
     /// <summary>Nega todas as aprovações pendentes da run (stop/shutdown).</summary>

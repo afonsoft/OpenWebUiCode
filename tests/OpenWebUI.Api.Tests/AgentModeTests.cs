@@ -267,6 +267,27 @@ public class AgentModeTests
     public void ArgPattern_OutrasTools_Curinga() =>
         Assert.That(PermissionRuleset.ArgPattern("code_interpreter", "{}"), Is.EqualTo("*"));
 
+    // SPEC-20261124-denied-agents-hidden: assinatura por alvo da delegação.
+    [Test]
+    public void ArgPattern_DelegateTask_AgenteOuPersona()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(PermissionRuleset.ArgPattern(
+                "builtin:delegate_task", """{"agent":"code-review","prompt":"x"}"""),
+                Is.EqualTo("agent:code-review"));
+            Assert.That(PermissionRuleset.ArgPattern(
+                "delegate_task", """{"persona":"tester","prompt":"x"}"""),
+                Is.EqualTo("agent:tester"));
+            Assert.That(PermissionRuleset.ArgPattern(
+                "delegate_task", """{"prompt":"x"}"""),
+                Is.EqualTo("*"));
+            Assert.That(PermissionRuleset.ArgPattern(
+                "delegate_task", """{"agent":"ext:claude","prompt":"x"}"""),
+                Is.EqualTo("agent:ext:claude"));
+        });
+    }
+
     // ---- ChatRunApprovals — allowlist por padrão (RF-005) ----
 
     [Test]

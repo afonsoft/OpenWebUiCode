@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |-------|-------|
-| Status | Implementado |
+| Status | `Completed` |
 | Autor | Devin (agente) |
 | Data | 2026-11-24 |
 | Relacionadas | SPEC-20261121-dev-pipeline, SPEC-20261123-pipeline-fanout, SPEC-20261124-run-watchdog |
@@ -98,3 +98,7 @@ para smoke manual; o contrato e os helpers ficam sob unit test):
    (step N herda o worktree isolado da run do step N-1).
 5. `WorkflowStep_DesserializaDoJson` — contrato JSON dos steps.
 6. `RunWorkflowTool_SemTaskOuSteps_ErroClaro` — validação de args na tool.
+
+## Delivered
+
+- PR [#768](https://github.com/afonsoft/OpenWebUiCode/pull/768) — merge commit `09c480d`.

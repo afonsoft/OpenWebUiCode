@@ -280,7 +280,7 @@ public class ContextCompactionTests
     {
         public int Calls { get; private set; }
 
-        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null)
         {
             Calls++;
             return Task.FromResult(result is null ? null
@@ -290,7 +290,7 @@ public class ContextCompactionTests
 
     private sealed class ThrowingSummarizer : IContextSummarizer
     {
-        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct) =>
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null) =>
             throw new InvalidOperationException("boom");
     }
 }

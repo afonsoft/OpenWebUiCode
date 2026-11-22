@@ -85,9 +85,24 @@ public sealed class PromptHookEvaluator(
             if (doc.RootElement.TryGetProperty("pass", out var p)
                 && p.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
+                // SPEC-20261124-compaction-hook: o modelo pode devolver
+                // "updatedInput" (substitui o prompt do evento — ex.:
+                // prompt custom do summarizer) e "additionalContext".
+                var updated = doc.RootElement.TryGetProperty("updatedInput",
+                    out var u)
+                        ? u.ValueKind == JsonValueKind.String
+                            ? u.GetString()
+                            : u.GetRawText()
+                        : null;
+                var contexts = doc.RootElement.TryGetProperty("additionalContext",
+                    out var ac) && ac.ValueKind == JsonValueKind.String
+                    && ac.GetString() is { Length: > 0 } ctx
+                        ? new List<string> { ctx }
+                        : new List<string>();
+                var pass = p.GetBoolean();
                 return new HookOutcome(
-                    p.GetBoolean() ? HookDecision.Approve : HookDecision.Block,
-                    null, p.GetBoolean() ? null : hook.Source, null, []);
+                    pass ? HookDecision.Approve : HookDecision.Block,
+                    null, pass ? null : hook.Source, updated, contexts);
             }
         }
         catch (JsonException)

@@ -365,4 +365,4 @@ Mapa completo de pipelines e ferramentas: [docs/pt/CI-CD.md](docs/pt/CI-CD.md) �
 
 ## Licença
 
-BSD-3-Clause — ver [LICENSE](LICENSE).
+MIT — ver [LICENSE](LICENSE). Fork do [Open WebUI](https://github.com/open-webui/open-webui); termos de licença do upstream preservados em [LICENSE_NOTICE](LICENSE_NOTICE)/[LICENSE_HISTORY](LICENSE_HISTORY).

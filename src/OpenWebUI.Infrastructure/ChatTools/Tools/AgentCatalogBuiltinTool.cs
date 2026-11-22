@@ -11,7 +11,8 @@ namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 /// decidir a quem delegar via <c>builtin:delegate_task(agent:…)</c>.
 /// Somente leitura — não executa nada.
 /// </summary>
-public sealed class AgentCatalogBuiltinTool(AgentDefinitionService agents)
+public sealed class AgentCatalogBuiltinTool(
+    AgentDefinitionService agents, PermissionRuleEvaluator rules)
     : IBuiltinChatTool
 {
     /// <inheritdoc />
@@ -45,15 +46,30 @@ public sealed class AgentCatalogBuiltinTool(AgentDefinitionService agents)
                     + "ou data/users/<id>/agents).");
         }
 
-        var sb = new StringBuilder("Agentes disponíveis (delegate via agent: nome):\n");
+        var header = "Agentes disponíveis (delegate via agent: nome):\n";
+        var sb = new StringBuilder(header);
         foreach (var def in catalog.Values.OrderBy(d => d.Name, StringComparer.Ordinal))
         {
+            // SPEC-20261124-denied-agents-hidden (opencode dev): agente
+            // com deny em regra do usuário é omitido do catálogo — o
+            // modelo nunca vê o que não pode invocar (o deny no gate
+            // continua enforcement, a omissão é UX/economia de turno).
+            var effect = await rules.EvaluateAsync(context.UserId,
+                "subagent", [$"delegate_task:agent:{def.Name}"], ct);
+            if (string.Equals(effect, "deny", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             sb.Append("- ").Append(def.Name)
                 .Append(" [").Append(def.Source).Append(']')
                 .Append(def.Model is { } m ? $" model={m}" : " model=(herda do caller)")
                 .Append(def.Spawns.Count > 0 ? $" spawns=[{string.Join(",", def.Spawns)}]" : string.Empty)
                 .Append(" — ").Append(def.Description).Append('\n');
         }
-        return new BuiltinToolResult(sb.ToString().TrimEnd());
+        return sb.Length == header.Length
+            ? new BuiltinToolResult(
+                "Nenhum agente delegável — todos os agentes do catálogo "
+                    + "estão negados por regra de permissão.")
+            : new BuiltinToolResult(sb.ToString().TrimEnd());
     }
 }

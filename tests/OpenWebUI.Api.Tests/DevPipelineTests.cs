@@ -811,7 +811,7 @@ public class DevPipelineUnitTests
         Assert.Multiple(() =>
         {
             Assert.That(steps![0].Items![0].Id, Is.EqualTo("a"));
-            Assert.That(steps[0].Items[0].Files,
+            Assert.That(steps[0].Items![0].Files,
                 Is.EqualTo(new[] { "x.cs" }));
             Assert.That(steps[1].Push, Is.True);
             Assert.That(steps[2].Kind, Is.EqualTo("gate"));

@@ -18,7 +18,7 @@ public static class HookConfigLoader
     public static readonly string[] KnownEvents =
     [
         "PreToolUse", "PostToolUse", "UserPromptSubmit",
-        "Stop", "SessionStart", "SessionEnd",
+        "Stop", "SessionStart", "SessionEnd", "SessionCompacting",
         // futuros — aceitos no parse, ignorados sem ponto de integração
         "PermissionRequest", "PostCompaction",
     ];

@@ -1,6 +1,6 @@
 # SPEC-20261124-workflow-v2 — steps condicionais (`when`) + gate humano
 
-## Status: Implementado
+**Status**: Completed
 
 ## Motivação
 
@@ -125,3 +125,7 @@ o gate é **máquina de estado da pipeline**, não uma tool call.
   expansão (diamantes permitidos — `seen` é por caminho, não global).
 - `save_as` guarda os steps crus (sub fica simbólico — re-resolve a
   workflow nomeada a cada run).
+
+## Delivered
+
+- PR [#768](https://github.com/afonsoft/OpenWebUiCode/pull/768) — merge commit `09c480d`.

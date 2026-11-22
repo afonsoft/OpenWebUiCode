@@ -1,5 +1,7 @@
 # SPEC-20261122-programmable-provider — Fixture de provider programável
 
+**Status**: Completed
+
 ## Problema
 
 A suíte NUnit não exercita a maquinaria de orquestração (`DevPipelineService`
@@ -41,3 +43,7 @@ runs reais do `ChatRunExecutor` dentro do `WebApplicationFactory`.
 - Refatorar mocks existentes (`AgentLoopAutoChainTests` etc.) — o novo
   mock convive; migração gradual depois.
 - Worktree real do fan-out (git) — segue coberto por testes unitários.
+
+## Delivered
+
+- PR [#770](https://github.com/afonsoft/OpenWebUiCode/pull/770) — merge commit `c751a30`.
