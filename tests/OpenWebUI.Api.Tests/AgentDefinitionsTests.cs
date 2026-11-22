@@ -73,7 +73,9 @@ public class AgentDefinitionsTests
             _.GetRequiredService<IServiceScopeFactory>(),
             _.GetRequiredService<IChatRunDispatcher>()));
         services.AddScoped<IBuiltinChatTool>(sp =>
-            new AgentCatalogBuiltinTool(sp.GetRequiredService<AgentDefinitionService>()));
+            new AgentCatalogBuiltinTool(
+                sp.GetRequiredService<AgentDefinitionService>(),
+                new PermissionRuleEvaluator(sp.GetRequiredService<AppDbContext>())));
         services.AddScoped<BuiltinToolRegistry>();
         services.AddScoped<HistoryResourceService>();
         _dispatcher = new RecordingDispatcher();
@@ -437,6 +439,79 @@ public class AgentDefinitionsTests
             Assert.That(result.Text, Does.Contain("code-reviewer"));
             Assert.That(result.Text, Does.Contain("[builtin]"));
         });
+    }
+
+    /// <summary>
+    /// SPEC-20261124-denied-agents-hidden (opencode dev): regra
+    /// <c>deny subagent</c> com resource <c>delegate_task:agent:{nome}</c>
+    /// omite o agente do catálogo — ask/allow seguem listados.
+    /// </summary>
+    [Test]
+    public async Task AgentCatalog_DenyRule_OmiteAgente()
+    {
+        WriteAgent(Path.Join(DataRoot, "users", "u1", "agents"), "d.agent.md", """
+            ---
+            name: danger-bot
+            description: agente perigoso
+            ---
+            corpo
+            """);
+        AgentDefinitionService.Invalidate("u1");
+        await using (var db = NewDb())
+        {
+            db.UserPermissionRules.Add(new UserPermissionRule
+            {
+                UserId = "u1", Action = "subagent",
+                Resource = "delegate_task:agent:danger-*",
+                Effect = "deny", Position = 1,
+            });
+            db.UserPermissionRules.Add(new UserPermissionRule
+            {
+                UserId = "u1", Action = "subagent",
+                Resource = "delegate_task:agent:code-reviewer",
+                Effect = "ask", Position = 2,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var tool = _provider.GetServices<IBuiltinChatTool>()
+            .OfType<AgentCatalogBuiltinTool>().Single();
+        var ctx = new BuiltinToolContext("u1", null, null, _root, _root);
+        var result = await tool.ExecuteAsync(
+            System.Text.Json.JsonDocument.Parse("{}").RootElement, ctx, default);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Text, Does.Not.Contain("danger-bot"),
+                "agente negado por glob não pode aparecer no catálogo");
+            Assert.That(result.Text, Does.Contain("code-reviewer"),
+                "ask continua listado — só deny omite");
+        });
+    }
+
+    /// <summary>Todos negados → mensagem de catálogo vazio, não header órfão.</summary>
+    [Test]
+    public async Task AgentCatalog_TodosNegados_MensagemVazia()
+    {
+        AgentDefinitionService.Invalidate("u1");
+        await using (var db = NewDb())
+        {
+            db.UserPermissionRules.Add(new UserPermissionRule
+            {
+                UserId = "u1", Action = "subagent",
+                Resource = "delegate_task:agent:*",
+                Effect = "deny", Position = 1,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var tool = _provider.GetServices<IBuiltinChatTool>()
+            .OfType<AgentCatalogBuiltinTool>().Single();
+        var ctx = new BuiltinToolContext("u1", null, null, _root, _root);
+        var result = await tool.ExecuteAsync(
+            System.Text.Json.JsonDocument.Parse("{}").RootElement, ctx, default);
+
+        Assert.That(result.Text, Does.Contain("Nenhum agente delegável"));
     }
 
     // ---------------- delegate_task agent: (RF-003) ----------------

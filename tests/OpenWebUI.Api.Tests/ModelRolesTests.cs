@@ -306,7 +306,7 @@ public class ModelRolesTests
     {
         public string? LastModel { get; private set; }
 
-        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null)
         {
             LastModel = model;
             return Task.FromResult(result is null ? null

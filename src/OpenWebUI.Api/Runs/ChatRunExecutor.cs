@@ -1091,8 +1091,10 @@ public sealed class ChatRunExecutor(
                         .ToUnixTimeMilliseconds(),
                 }, ct);
         }
+        var hooksWorkdir = await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct);
         var spawn = await compaction.MaybeSpawnAsync(
-            run.ChatId, request.Messages, request.Model, run.UserId, ct);
+            run.ChatId, request.Messages, request.Model, run.UserId, ct,
+            hooksWorkdir);
         if (spawn.Spawned)
         {
             await runEvents.AppendAsync(run.Id, RunEventWriter.Types.Note,
@@ -1146,7 +1148,8 @@ public sealed class ChatRunExecutor(
         if (!hardWait.Applied)
         {
             await compaction.MaybeCompactAsync(
-                run.ChatId, request.Messages, request.Model, ct, run.UserId);
+                run.ChatId, request.Messages, request.Model, ct, run.UserId,
+                workdir: hooksWorkdir);
         }
         var compacted = await compaction.ApplyAsync(
             run.ChatId, request.Messages, ct);
@@ -1473,7 +1476,8 @@ public sealed class ChatRunExecutor(
             // → compacta o histórico do loop com tail progressivo e
             // devolve a janela reduzida; null = sem como reduzir.
             OnOverflowCompactAsync: (history, tailScale, t) =>
-                CompactOverflowAttemptAsync(run, effective, history, tailScale, t),
+                CompactOverflowAttemptAsync(run, effective, history, tailScale,
+                    builtinContext.WorkspacePath, t),
             OnCallAsync: async (call, t) =>
             {
                 await PublishToolCallAsync(run, call);
@@ -1641,7 +1645,7 @@ public sealed class ChatRunExecutor(
     private async Task<IReadOnlyList<ChatCompletionMessage>?> CompactOverflowAttemptAsync(
         ChatRun run, ChatCompletionRequest effective,
         IReadOnlyList<ChatCompletionMessage> history, double tailScale,
-        CancellationToken t)
+        string? workdir, CancellationToken t)
     {
         if (extendContext.TryConsume(run.Id))
         {
@@ -1670,7 +1674,7 @@ public sealed class ChatRunExecutor(
         }
         var didCompact = await compaction.MaybeCompactAsync(
             run.ChatId, history, effective.Model, t, run.UserId,
-            force: true, tailScale: tailScale);
+            force: true, tailScale: tailScale, workdir: workdir);
         if (!didCompact)
         {
             // Observabilidade (RF-004): falha de compactação no overflow
@@ -2202,7 +2206,10 @@ public sealed class ChatRunExecutor(
                         m.Role, m.Content, m.ToolCallId, m.ToolCallsJson))
                     .ToList();
                 if (await compaction.MaybeCompactAsync(
-                        run.ChatId, history, run.Model, ct, run.UserId, force: true))
+                        run.ChatId, history, run.Model, ct, run.UserId,
+                        force: true,
+                        workdir: await repos.ResolveWorkdirAsync(
+                            run.UserId, run.ChatId, ct)))
                 {
                     lock (_contextNotes)
                     {

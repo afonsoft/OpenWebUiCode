@@ -1041,7 +1041,7 @@ public class ContextCompactionV2Tests
 
         public int Calls { get; private set; }
 
-        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null)
         {
             Calls++;
             return Task.FromResult(_result);
@@ -1052,7 +1052,7 @@ public class ContextCompactionV2Tests
     {
         public int Calls { get; private set; }
 
-        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
+        public Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null)
         {
             Calls++;
             throw new InvalidOperationException(
@@ -1068,7 +1068,7 @@ public class ContextCompactionV2Tests
 
         public void Release() => _gate.TrySetResult();
 
-        public async Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct)
+        public async Task<ContextSummary?> SummarizeAsync(string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null)
         {
             Calls++;
             await _gate.Task.WaitAsync(ct);

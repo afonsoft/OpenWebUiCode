@@ -493,7 +493,7 @@ public class ChatBranchingTests
         public string? LastModel { get; private set; }
 
         public Task<ContextSummary?> SummarizeAsync(
-            string model, string transcript, string? userId, CancellationToken ct)
+            string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null)
         {
             Calls++;
             LastModel = model;

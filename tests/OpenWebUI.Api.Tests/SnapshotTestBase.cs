@@ -71,14 +71,14 @@ public abstract class SnapshotTestBase
     internal sealed class FakeSummarizer(string? result) : IContextSummarizer
     {
         public Task<ContextSummary?> SummarizeAsync(
-            string model, string transcript, string? userId, CancellationToken ct) =>
+            string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null) =>
             Task.FromResult(result is null ? null : new ContextSummary(result, [], [], []));
     }
 
     internal sealed class ThrowingSummarizer : IContextSummarizer
     {
         public Task<ContextSummary?> SummarizeAsync(
-            string model, string transcript, string? userId, CancellationToken ct) =>
+            string model, string transcript, string? userId, CancellationToken ct, string? promptOverride = null, string? contextAppend = null) =>
             throw new InvalidOperationException("boom");
     }
 
