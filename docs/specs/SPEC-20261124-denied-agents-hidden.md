@@ -1,6 +1,6 @@
 # SPEC-20261124-denied-agents-hidden — agente negado some da spec do delegate_task
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -38,3 +38,8 @@ prompt (`SystemPromptContributors.cs:609+`) — sem filtro por regra.
   regra `deny` casa `delegate_task:x`, mesmo com a tool listada.
 - `SystemPrompt_AgenteNegado_Ausente` — seção de delegação não cita.
 - Regressão: sem regras, catálogo idêntico ao atual.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/772
+- Branch: feature/agent-20261124-opencode-gaps

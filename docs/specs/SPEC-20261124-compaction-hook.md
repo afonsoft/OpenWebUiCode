@@ -1,6 +1,6 @@
 # SPEC-20261124-compaction-hook — hook SessionCompacting no summarizer
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -45,3 +45,8 @@ sem evento de compactação.
 - `Compact_HookFalha_UsaPadrao` — hook que explode não impede o resumo.
 - `Compact_Nativo_NaoDispara` — rota `compaction` nativa do provider
   não emite o evento.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/772
+- Branch: feature/agent-20261124-opencode-gaps

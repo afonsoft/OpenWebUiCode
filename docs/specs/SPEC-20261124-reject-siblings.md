@@ -1,6 +1,6 @@
 # SPEC-20261124-reject-siblings — reject cancela aprovações irmãs pendentes
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -37,3 +37,8 @@ paralelo pode deixar 3 prompts órfãos depois do usuário rejeitar 1.
 - `Resolve_Approve_NaoCascata` — approve só resolve a alvo.
 - E2E de grupo paralelo: 4 calls ask → reject 1 → as 3 viram falha sem
   estacionar.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/772
+- Branch: feature/agent-20261124-opencode-gaps

@@ -1,6 +1,6 @@
 # SPEC-20261124-compaction-diet — dieta progressiva do transcript do summarizer
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -48,3 +48,8 @@ Sem mudança de contrato: o summarizer continua recebendo
 - `Diet_PosicoesCorretas` — breadcrumbs `[pos]` permanecem absolutos
   após omissões.
 - E2E: chat com head enorme → `CompactAsync` não lança e resumo sai.
+
+## Delivered
+
+- PR: https://github.com/afonsoft/OpenWebUiCode/pull/772
+- Branch: feature/agent-20261124-opencode-gaps
