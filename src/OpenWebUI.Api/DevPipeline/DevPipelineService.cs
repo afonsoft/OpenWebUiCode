@@ -1644,9 +1644,11 @@ public sealed class DevPipelineService(
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var target = chatId ?? state.ChildChatId;
+        // Position, não Timestamp — granularidade de segundo empata
+        // tool_call + resposta final e podia ler a mensagem errada.
         var lastAssistant = await db.ChatMessages.AsNoTracking()
             .Where(m => m.ChatId == target && m.Role == "assistant")
-            .OrderByDescending(m => m.Timestamp)
+            .OrderByDescending(m => m.Position)
             .Select(m => m.Content)
             .FirstOrDefaultAsync(ct);
         var parsed = ParsePhaseResult(lastAssistant);
