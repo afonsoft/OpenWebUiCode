@@ -48,6 +48,16 @@ public sealed class ScriptedLlmMock : IDisposable
     public void On(Func<string, bool> when, MockResponse response) =>
         _handlers.Add((when, response));
 
+    private readonly List<(Func<string, bool> When,
+        Func<string, MockResponse> Respond)> _responders = new();
+
+    /// <summary>Handler dinâmico — a resposta é construída a partir do
+    /// body da request (ex.: extrair o board id injetado no prompt).
+    /// Consultado antes dos handlers estáticos.</summary>
+    public void OnFunc(Func<string, bool> when,
+        Func<string, MockResponse> respond) =>
+        _responders.Add((when, respond));
+
     /// <summary>Atalho: casa quando o body contém <paramref name="marker"/>.</summary>
     public void OnContains(string marker, MockResponse response) =>
         On(b => b.Contains(marker, StringComparison.Ordinal), response);
@@ -150,8 +160,17 @@ public sealed class ScriptedLlmMock : IDisposable
         if (path is "/api/chat" or "/chat/completions")
         {
             Bodies.Add(body);
-            var hit = _handlers.FirstOrDefault(h => h.When(body));
-            var r = hit.Response ?? Fallback;
+            MockResponse r;
+            var dyn = _responders.FirstOrDefault(h => h.When(body));
+            if (dyn.Respond is not null)
+            {
+                r = dyn.Respond(body);
+            }
+            else
+            {
+                var hit = _handlers.FirstOrDefault(h => h.When(body));
+                r = hit.Response ?? Fallback;
+            }
             // OpenAI quer envelope chat.completion, não Ollama.
             if (path == "/chat/completions" && r.Status == 200
                 && !r.Body.Contains("\"choices\""))

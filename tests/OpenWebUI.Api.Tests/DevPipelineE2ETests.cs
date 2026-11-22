@@ -64,6 +64,20 @@ public sealed class DevPipelineE2ETests
         {
             TestInfra.DeleteDb(_dbPath);
         }
+        try
+        {
+            var dir = Path.Join(AppContext.BaseDirectory,
+                "..", "..", "..", "..", "..", "src", "OpenWebUI.Api",
+                "data", "workspaces", _userId);
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // Limpeza best-effort — data/ é ignorada pelo git.
+        }
     }
 
     private async Task<AuthResponse> SignUpAsync(string name, string email)
@@ -92,13 +106,16 @@ public sealed class DevPipelineE2ETests
         return (await patched.Content.ReadFromJsonAsync<ChatResponse>())!;
     }
 
-    /// <summary>Run pai real completada — dá o RequestJson (model fake:1)
-    /// que a pipeline herda nas runs de fase.</summary>
-    private async Task<ChatRun> EnfileirarPaiAsync(string chatId)
+    /// <summary>Run pai real completada — dá o RequestJson (model fake:1
+    /// + toolset) que a pipeline herda nas runs de fase. Sem ToolIds o
+    /// filho não anuncia tools e o tool_call do worker vira no-op.</summary>
+    private async Task<ChatRun> EnfileirarPaiAsync(
+        string chatId, params string[] toolIds)
     {
         var response = await _client.PostAsJsonAsync(
             $"/api/v1/chats/{chatId}/messages",
-            new EnqueueChatRunRequest("msg inicial", "fake:1", ToolIds: []));
+            new EnqueueChatRunRequest("msg inicial", "fake:1",
+                ToolIds: toolIds));
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted),
             await response.Content.ReadAsStringAsync());
         var run = (await response.Content.ReadFromJsonAsync<ChatRunResponse>())!;
@@ -256,5 +273,150 @@ public sealed class DevPipelineE2ETests
         var final = await DirigirAsync(state.Id);
         Assert.That(final.Status, Is.EqualTo("failed"));
         Assert.That(final.Error, Is.Not.Null.And.Not.Empty);
+    }
+
+    // ---- e2e: timeout_sec por step — budget estoura → issue ----
+
+    [Test]
+    public async Task Workflow_TimeoutSec_RegistraIssue()
+    {
+        // Provider nunca responde dentro do budget (25s >> 2s).
+        _mock.OnContains("fase lenta",
+            new ScriptedLlmMock.MockResponse(200, "{}", DelayMs: 25_000));
+
+        var chat = await CriarChatBuildAsync();
+        var pai = await EnfileirarPaiAsync(chat.Id);
+        var state = await IniciarAsync(chat, pai.Id,
+            [
+                new()
+                {
+                    Kind = "llm", Key = "s1",
+                    Prompt = "fase lenta", TimeoutSec = 2,
+                },
+            ]);
+
+        var final = await DirigirAsync(state.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(final.Status, Is.EqualTo("failed"));
+            Assert.That(final.PhaseResults["s1"].Summary,
+                Does.Contain("timeout"));
+        });
+    }
+
+    // ---- e2e: parallel — 2 workers em chats irmãos/worktrees reais,
+    // board via tool_call, colheita no join + merge ----
+
+    [Test]
+    public async Task Workflow_ParallelDoisWorkers_BoardEMerge()
+    {
+        // Worker A: 1ª request → tool_call pipeline_board (board id
+        // extraído do prompt — BoardTrailer injeta board="{pipelineId}";
+        // no body JSON as aspas chegam escapadas: board=\u0022dp-…).
+        // Não assert dentro do handler — exceção no mock é engolida e a
+        // run veria "resposta vazia" (loop de nudge). O board id dp-… é
+        // único por pipeline: se faltar, o post vai a um board errado e
+        // o assert de harvest embaixo denuncia.
+        string? boardId = null;
+        _mock.OnFunc(
+            b => b.Contains("worker A", StringComparison.Ordinal)
+                && !b.Contains("\"role\":\"tool\"", StringComparison.Ordinal),
+            b =>
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(
+                    b, "(dp-[a-f0-9]+)");
+                boardId = m.Success ? m.Groups[1].Value : "missing";
+                return _mock.ToolCall("builtin:pipeline_board",
+                    "{\"op\":\"post\",\"board\":\"" + boardId
+                        + "\",\"author\":\"wA\",\"message\":\"decisão X\"}");
+            });
+        _mock.OnFunc(
+            b => b.Contains("worker A", StringComparison.Ordinal)
+                && b.Contains("\"role\":\"tool\"", StringComparison.Ordinal),
+            _ => _mock.Text(
+                "A ok <pipeline_result>{\"files\":[\"a.txt\"],"
+                    + "\"summary\":\"A feito\",\"verdict\":\"pass\"}"
+                    + "</pipeline_result>"));
+        _mock.OnContains("worker B", _mock.Text(
+            "B ok <pipeline_result>{\"files\":[\"b.txt\"],"
+                + "\"summary\":\"B feito\",\"verdict\":\"pass\"}"
+                + "</pipeline_result>"));
+
+        var chat = await CriarChatComRepoAsync();
+        var pai = await EnfileirarPaiAsync(chat.Id,
+            "builtin:pipeline_board");
+        var state = await IniciarAsync(chat, pai.Id,
+            [
+                new()
+                {
+                    Kind = "parallel", Key = "p1",
+                    Items =
+                    [
+                        new("wA", "worker A: implementa a parte A"),
+                        new("wB", "worker B: implementa a parte B"),
+                    ],
+                },
+            ]);
+
+        var final = await DirigirAsync(state.Id, segundos: 120);
+        var keys = string.Join(",", final.PhaseResults.Keys);
+        Assert.Multiple(() =>
+        {
+            Assert.That(final.Status, Is.EqualTo("done"),
+                $"error={final.Error}; keys={keys}");
+            Assert.That(final.PhaseResults.Keys, Does.Contain("p1:wA"));
+            Assert.That(final.PhaseResults.Keys, Does.Contain("p1:wB"));
+            Assert.That(final.PhaseResults["p1:wA"].Verdict,
+                Is.EqualTo("pass"));
+            Assert.That(final.PhaseResults["p1:wB"].Verdict,
+                Is.EqualTo("pass"));
+            Assert.That(boardId, Is.Not.Null.And.Not.EqualTo("missing"),
+                "prompt do worker sem board id injetado");
+            // HarvestBoardAsync: post do worker A colhido no join.
+            Assert.That(final.PhaseResults.ContainsKey("p1:board"), Is.True,
+                "board não colhido no join do parallel");
+            Assert.That(final.PhaseResults["p1:board"].Summary,
+                Does.Contain("decisão X"));
+        });
+    }
+
+    /// <summary>Chat build com binding de repo GIT REAL em
+    /// <c>data/workspaces/{user}/repos/a__b</c> — habilita worktrees por
+    /// chat irmão (fan-out/parallel).</summary>
+    private async Task<ChatResponse> CriarChatComRepoAsync()
+    {
+        var chat = await CriarChatBuildAsync();
+        var repoDir = RepoDir();
+        Directory.CreateDirectory(repoDir);
+        Git(repoDir, "init -b main");
+        Git(repoDir, "-c user.email=t@t -c user.name=t "
+            + "commit --allow-empty -m init");
+        using var scope = _factory.Services.CreateScope();
+        var config = scope.ServiceProvider
+            .GetRequiredService<ConfigService>();
+        await config.SetAsync($"chat:{chat.Id}:workspace.repo",
+            new WorkspaceRepoBinding("a/b", "main", "repos/a__b",
+                null, null),
+            default);
+        return chat;
+    }
+
+    private string RepoDir() => Path.Join(AppContext.BaseDirectory,
+        "..", "..", "..", "..", "..", "src", "OpenWebUI.Api", "data",
+        "workspaces", _userId, "repos", "a__b");
+
+    private static void Git(string workdir, string args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git", args)
+        {
+            WorkingDirectory = workdir,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+        };
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        var err = p.StandardError.ReadToEnd();
+        Assert.That(p.WaitForExitAsync().Wait(TimeSpan.FromSeconds(15)),
+            Is.True, $"git {args} travou");
+        Assert.That(p.ExitCode, Is.EqualTo(0), $"git {args}: {err}");
     }
 }
