@@ -5,7 +5,7 @@
 | Campo | Valor |
 |-------|-------|
 | Owner | afonsoft |
-| Status | `Approved` |
+| Status | `Delivered` |
 | Origem | pedido do usuário — "aprovo o plano e ele continua no modo plano"; quer transições automáticas entre chat→plan→build (ou chat→build direto) e preset `smart` como default em plan/build |
 
 ## 1. User Story

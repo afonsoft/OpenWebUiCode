@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |-------|-------|
-| Status | Em execução |
+| Status | `Delivered` |
 | Autor | Devin (agente) |
 | Data | 2026-11-24 |
 | Relacionadas | SPEC-20261016-run-recovery (RF-003/005), SPEC-20261121-dev-pipeline |
