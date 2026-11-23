@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using OpenWebUI.Infrastructure.ChatTools;
+using OpenWebUI.Infrastructure.ChatTools.Tools;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -113,6 +114,61 @@ public sealed class SecretFileGuardTests
             Assert.That(full, Is.Not.Null);
             Assert.That(error, Is.Empty);
         });
+    }
+
+    // ---------- Git staging check ----------
+
+    private static void Git(string workdir, string args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git", args)
+        {
+            WorkingDirectory = workdir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit(10_000);
+    }
+
+    [Test]
+    public async Task GitCommit_ComEnvStaged_Bloqueado()
+    {
+        Git(_workdir, "init");
+        File.WriteAllText(Path.Combine(_workdir, ".env"), "SECRET=x");
+        Git(_workdir, "add .env");
+        var result = await ShellExecBuiltinTool.GitSecretStagingCheckAsync(
+            "git commit -m x", _workdir, CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result!.Text, Does.Contain("staged"));
+        });
+    }
+
+    [Test]
+    public async Task GitAdd_EnvLiteral_Bloqueado()
+    {
+        Git(_workdir, "init");
+        var result = await ShellExecBuiltinTool.GitSecretStagingCheckAsync(
+            "git add .env", _workdir, CancellationToken.None);
+        Assert.That(result, Is.Not.Null);
+    }
+
+    [Test]
+    public async Task GitStatus_NaoVerifica()
+    {
+        var result = await ShellExecBuiltinTool.GitSecretStagingCheckAsync(
+            "git status", _workdir, CancellationToken.None);
+        Assert.That(result, Is.Null);
+    }
+
+    [Test]
+    public async Task GitAdd_ArquivoComum_Liberado()
+    {
+        Git(_workdir, "init");
+        var result = await ShellExecBuiltinTool.GitSecretStagingCheckAsync(
+            "git add README.md", _workdir, CancellationToken.None);
+        Assert.That(result, Is.Null);
     }
 
     // ---------- Detector de credencial literal ----------

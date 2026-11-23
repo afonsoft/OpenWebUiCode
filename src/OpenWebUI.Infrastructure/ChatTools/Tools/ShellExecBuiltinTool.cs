@@ -120,7 +120,7 @@ public sealed class ShellExecBuiltinTool(
     /// (<c>git diff --cached --name-only</c>). Não roda git quando o
     /// workdir não é repo — o comando segue e falha normalmente.
     /// </summary>
-    private static async Task<BuiltinToolResult?> GitSecretStagingCheckAsync(
+    internal static async Task<BuiltinToolResult?> GitSecretStagingCheckAsync(
         string command, string workdir, CancellationToken ct)
     {
         var tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);

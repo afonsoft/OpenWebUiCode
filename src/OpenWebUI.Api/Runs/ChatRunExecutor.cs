@@ -3415,39 +3415,53 @@ public sealed class ChatRunExecutor(
 
         ChatCompletionRequest BuildKeepaliveRequest(string model)
         {
-            try
+            var requestJson = db.ChatRuns.AsNoTracking()
+                .Where(r => r.Id == w.RunId)
+                .Select(r => r.RequestJson)
+                .FirstOrDefault();
+            return ChatRunExecutor.BuildKeepaliveRequest(model, requestJson);
+        }
+    }
+
+    /// <summary>
+    /// Monta o ping de keepalive reusando o prefixo cacheado da run
+    /// (SPEC-20261123-cache-keepalive): system messages + tools do
+    /// <paramref name="requestJson"/> persistido + format de cache —
+    /// providers com prompt-cache por prefixo só renovam o TTL quando o
+    /// início do request coincide com o bloco cacheado. Sem request ou
+    /// JSON inválido → ping mínimo.
+    /// </summary>
+    internal static ChatCompletionRequest BuildKeepaliveRequest(
+        string model, string? requestJson)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(requestJson))
             {
-                var requestJson = db.ChatRuns.AsNoTracking()
-                    .Where(r => r.Id == w.RunId)
-                    .Select(r => r.RequestJson)
-                    .FirstOrDefault();
-                if (!string.IsNullOrWhiteSpace(requestJson))
+                var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
+                    requestJson, JsonOptions);
+                if (req is not null)
                 {
-                    var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
-                        requestJson, JsonOptions);
-                    if (req is not null)
+                    var prefix = req.Messages
+                        .Where(m => m.Role == "system")
+                        .Append(new ChatCompletionMessage("user", "."))
+                        .ToList();
+                    return req with
                     {
-                        var prefix = req.Messages
-                            .Where(m => m.Role == "system")
-                            .Append(new ChatCompletionMessage("user", "."))
-                            .ToList();
-                        return req with
-                        {
-                            Messages = prefix,
-                            Stream = false,
-                            CacheFormat = req.CacheFormat ?? "anthropic",
-                        };
-                    }
+                        Messages = prefix,
+                        Stream = false,
+                        CacheFormat = req.CacheFormat ?? "anthropic",
+                    };
                 }
             }
-            catch (Exception)
-            {
-                // RequestJson indisponível — cai no ping mínimo abaixo.
-            }
-            return new ChatCompletionRequest(
-                model, [new ChatCompletionMessage("user", ".")],
-                Stream: false);
         }
+        catch (Exception)
+        {
+            // RequestJson indisponível — cai no ping mínimo abaixo.
+        }
+        return new ChatCompletionRequest(
+            model, [new ChatCompletionMessage("user", ".")],
+            Stream: false);
     }
 
     private string? _keepaliveModel;
