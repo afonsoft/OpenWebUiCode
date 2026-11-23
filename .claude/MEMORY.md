@@ -107,3 +107,9 @@
   correção foi descoberto pelo teste que não lançava).
 - E2E `Run_ProviderReal_*` flake: quando o gateway fica sem crédito o
   teste falha — o fix converte o aviso em 402/fallback.
+
+## Coverage gate flake (2026-11-24)
+
+- `.ci/coverage-baseline.txt` fica no fio (89.78%) — variância de medição ±0.04-0.08 entre runs idênticas pode reprovar PRs **sem nenhuma mudança de código** (aconteceu no #784: 89.69% numa branch sem código novo). TOL=0.05 não cobre.
+- Ação correta: **rerun do job falho** (`gh run rerun <id> --failed`) — nunca baixar o baseline para destravar (é controle de compliance).
+- Branch de trabalho cortada de outra branch de feature carrega o conteúdo dela — o merge da filha esvazia a mãe; fechar a mãe com comentário explicando.
