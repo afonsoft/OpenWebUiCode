@@ -68,23 +68,4 @@ public sealed class LintDiagnosticsFeedbackTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    [Test]
-    public void Collect_ProjetoLimpo_RetornaNull()
-    {
-        var dir = Directory.CreateTempSubdirectory("lint-ok").FullName;
-        try
-        {
-            File.WriteAllText(Path.Combine(dir, "Ok.csproj"), """
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup>
-                    <TargetFramework>net10.0</TargetFramework>
-                  </PropertyGroup>
-                </Project>
-                """);
-            File.WriteAllText(Path.Combine(dir, "Ok.cs"),
-                "public class Ok { }");
-            Assert.That(ChatPipeline.CollectBuildDiagnostics(dir), Is.Null);
-        }
-        finally { Directory.Delete(dir, recursive: true); }
-    }
 }

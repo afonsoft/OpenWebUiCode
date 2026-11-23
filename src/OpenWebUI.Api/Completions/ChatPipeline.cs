@@ -2096,13 +2096,17 @@ public static class ChatPipeline
             {
                 return null;
             }
+            // Drena os pipes enquanto o build roda — ler só depois do
+            // WaitForExit trava o filho quando o buffer enche.
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
             if (!proc.WaitForExit(90_000))
             {
                 try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
                 return null;
             }
-            var output = proc.StandardOutput.ReadToEnd()
-                + proc.StandardError.ReadToEnd();
+            var output = stdoutTask.GetAwaiter().GetResult()
+                + stderrTask.GetAwaiter().GetResult();
             var errors = output.Split('\n')
                 .Select(l => l.Trim())
                 .Where(l => l.Contains(": error ", StringComparison.Ordinal))
