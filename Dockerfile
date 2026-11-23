@@ -70,7 +70,7 @@ FROM mcr.microsoft.com/dotnet/runtime-deps:10.0 AS runtime
 ARG GH_VERSION=2.102.0
 RUN apt-get update \
  && apt-get upgrade -y \
- && apt-get install -y --no-install-recommends curl git sudo procps tesseract-ocr \
+ && apt-get install -y --no-install-recommends curl git sudo procps tesseract-ocr libatomic1 \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /data/workspaces \
  && arch="$(uname -m)" \
