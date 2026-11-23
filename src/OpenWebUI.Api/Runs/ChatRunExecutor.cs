@@ -1334,6 +1334,13 @@ public sealed class ChatRunExecutor(
         var (run, user, commandMode, chatMode, effective, loopTools,
             budgetLimits, outletRules, resumeSeed, state) = l;
         var builtinContext = await BuildToolContextAsync(run, user, ct);
+        // SPEC-20261124-devin-parity-batch2 RF-002: edições externas no
+        // workdir durante a run entram como nota <user_edits> na fronteira
+        // do round — escritas das tools são filtradas via MarkWrite.
+        Directory.CreateDirectory(builtinContext.WorkspacePath);
+        using var editWatcher = new WorkspaceEditWatcher(
+            builtinContext.WorkspacePath);
+        builtinContext = builtinContext with { EditWatcher = editWatcher };
         // SessionStart (SPEC-20261031-lifecycle-hooks RF-006): contextos
         // injetados viram notas system do primeiro round.
         var startHook = await hooks.RunAsync("SessionStart",

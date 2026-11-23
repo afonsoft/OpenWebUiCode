@@ -10,7 +10,7 @@
 | Repository | `OpenWebUiCode` |
 | Branch | `feature/Devin-20261113-composer-sliders-mcp-ids` |
 | Ticket | `GH#727` |
-| Status | `In implementation` |
+| Status | `Delivered` |
 
 ## 1. User Story
 

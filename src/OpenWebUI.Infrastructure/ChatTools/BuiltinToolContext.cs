@@ -27,4 +27,9 @@ public sealed record BuiltinToolContext(
     string WorkspacePath,
     string UploadDir,
     string? Model = null,
-    IReadOnlyList<string>? AttachedRefs = null);
+    IReadOnlyList<string>? AttachedRefs = null,
+    /// <summary>Watcher de edições externas no workdir
+    /// (SPEC-20261124-devin-parity-batch2 RF-002) — criado por run pelo
+    /// executor; o pipeline marca escritas das tools e drena o resto
+    /// como nota <c>&lt;user_edits&gt;</c>.</summary>
+    WorkspaceEditWatcher? EditWatcher = null);

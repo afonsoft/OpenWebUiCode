@@ -9,7 +9,7 @@
 | Stack | `.NET 10 / ASP.NET Core / EF Core` |
 | Repository | `OpenWebUiCode` |
 | Branch | `feature/dev-pipeline` |
-| Status | `In implementation` |
+| Status | `Delivered` |
 
 ## 1. User Story
 

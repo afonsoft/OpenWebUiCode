@@ -5,7 +5,7 @@
 | Campo | Valor |
 |-------|-------|
 | Owner | afonsoft |
-| Status | `Approved` |
+| Status | `Delivered` |
 | Origem | aprovado pelo usuário — inspirado no swarm/board do Antigravity |
 | Depende de | SPEC-20261121-dev-pipeline (plan, modelos por fase, stall) |
 
