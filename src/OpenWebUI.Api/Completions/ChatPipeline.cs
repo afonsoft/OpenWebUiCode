@@ -619,6 +619,10 @@ public static class ChatPipeline
                 continue;
             }
             await ApplyContextNotesAsync(state, callbacks, ct);
+            // SPEC-20261124-devin-parity-batch2 RF-002: arquivos
+            // tocados por fora das tools entram como nota — o modelo
+            // não trabalha sobre cópia mental velha do workdir.
+            await ApplyUserEditsAsync(state, builtinContext, callbacks, ct);
             await SnapshotLoopAsync(state, callbacks, ct);
             if (await CheckBudgetAsync(state, callbacks, ct) is { } vetoed)
             {
@@ -880,6 +884,33 @@ public static class ChatPipeline
             && await notes(ct) is { Count: > 0 } added)
         {
             state.Messages.AddRange(added);
+        }
+    }
+
+    /// <summary>Edições externas no workdir (Devin user-edits-injected):
+    /// o watcher drena os paths alterados desde o round anterior — o
+    /// modelo reconhece o estado novo em vez de sobrescrever mudanças
+    /// que não viu.</summary>
+    internal static async Task ApplyUserEditsAsync(
+        ToolLoopMutable state, BuiltinToolContext? builtinContext,
+        ToolLoopCallbacks? callbacks, CancellationToken ct)
+    {
+        var edits = builtinContext?.EditWatcher?.Drain();
+        if (edits is not { Count: > 0 })
+        {
+            return;
+        }
+        var note = new ChatCompletionMessage("user",
+            "<user_edits>\n"
+            + "Arquivos do workdir alterados fora das tools (por você ou "
+            + "outro processo) — reconheça o estado novo antes de editar "
+            + "por cima (não anuncie esta nota):\n"
+            + string.Join('\n', edits.Select(p => "- " + p))
+            + "\n</user_edits>");
+        state.Messages.Add(note);
+        if (callbacks?.OnMessagesAddedAsync is { } added)
+        {
+            await added([note], [], ct);
         }
     }
 
@@ -1529,7 +1560,7 @@ public static class ChatPipeline
         TimeSpan elapsed, IReadOnlySet<string> repairedIds,
         CancellationToken ct)
     {
-        var (state, _, _, _, _, callbacks, log, _) = ctx;
+        var (state, _, _, builtinContext, _, callbacks, log, _) = ctx;
         var denied = !gate.Approved;
         var output = outcome.Text;
         if (repairedIds.Contains(call.Id))
@@ -1543,6 +1574,10 @@ public static class ChatPipeline
             && IsFileMutatingTool(call.Name))
         {
             state.EditsApplied++;
+            // SPEC-20261124-devin-parity-batch2 RF-002: escritas da tool
+            // são marcadas no watcher — só toques EXTERNOS viram
+            // <user_edits>, as nossas não voltam como edição do usuário.
+            MarkWatcherWrites(builtinContext, call);
         }
         if (SecretScrubber.ContainsSecret(call.ArgumentsJson))
         {
@@ -2016,6 +2051,86 @@ public static class ChatPipeline
         || name.EndsWith("file_edit", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith("apply_patch", StringComparison.OrdinalIgnoreCase)
         || name.EndsWith("notebook_edit", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>SPEC-20261124-devin-parity-batch2 RF-002: marca no watcher
+    /// os paths que a tool acabou de escrever — o FSW os vê como eventos,
+    /// mas não são edições do usuário. Cobre <c>path</c>/<c>notebook_path</c>
+    /// e os alvos <c>*** Add/Update/Delete File:</c>/<c>Move to:</c> do
+    /// corpo de um apply_patch.</summary>
+    private static void MarkWatcherWrites(
+        BuiltinToolContext? builtinContext, ProviderToolCall call)
+    {
+        if (builtinContext?.EditWatcher is not { } watcher)
+        {
+            return;
+        }
+        foreach (var rel in ExtractWrittenPaths(call.ArgumentsJson))
+        {
+            if (rel is not null && !Path.IsPathFullyQualified(rel))
+            {
+                watcher.MarkWrite(
+                    Path.GetFullPath(Path.Join(builtinContext.WorkspacePath, rel)));
+            }
+            else if (rel is not null)
+            {
+                watcher.MarkWrite(rel);
+            }
+        }
+    }
+
+    /// <summary>Paths escritos por uma call mutável: arg <c>path</c>/
+    /// <c>notebook_path</c>, ou alvos do texto do patch.</summary>
+    internal static List<string?> ExtractWrittenPaths(string argumentsJson)
+    {
+        var paths = new List<string?>();
+        try
+        {
+            using var doc = JsonDocument.Parse(argumentsJson);
+            var args = doc.RootElement;
+            foreach (var key in (string[])["path", "notebook_path"])
+            {
+                if (args.TryGetProperty(key, out var el)
+                    && el.ValueKind == JsonValueKind.String)
+                {
+                    paths.Add(el.GetString());
+                }
+            }
+            if (args.TryGetProperty("patch", out var patchEl)
+                && patchEl.ValueKind == JsonValueKind.String)
+            {
+                paths.AddRange(ExtractPatchTargets(patchEl.GetString()));
+            }
+        }
+        catch (JsonException) { /* args reparados/malformados — ignora. */ }
+        return paths;
+    }
+
+    /// <summary>Alvos de um apply_patch: <c>*** Add/Update/Delete
+    /// File: p</c> e <c>*** Move to: q</c>.</summary>
+    internal static IEnumerable<string> ExtractPatchTargets(string? patch)
+    {
+        if (string.IsNullOrEmpty(patch))
+        {
+            yield break;
+        }
+        foreach (var raw in patch.Split('\n'))
+        {
+            var line = raw.Trim();
+            foreach (var marker in (string[])["*** Add File:", "*** Update File:",
+                "*** Delete File:", "*** Move to:"])
+            {
+                if (line.StartsWith(marker, StringComparison.Ordinal))
+                {
+                    var target = line[marker.Length..].Trim();
+                    if (target.Length > 0)
+                    {
+                        yield return target;
+                    }
+                    break;
+                }
+            }
+        }
+    }
 
     /// <summary>
     /// Após um batch que editou código: roda <c>dotnet build</c> silencioso

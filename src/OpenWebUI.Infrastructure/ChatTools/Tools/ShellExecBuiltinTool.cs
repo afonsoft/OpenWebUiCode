@@ -39,6 +39,10 @@ public sealed class ShellExecBuiltinTool(
               "type": "boolean",
               "description": "true = run detached as a durable job; poll with job_output and kill with job_kill.",
               "default": false
+            },
+            "wait_for": {
+              "type": "string",
+              "description": "Regex: command starts detached as a job and the call returns as soon as output matches (readiness), the job exits, or timeout hits. Process survives — poll job_output, kill job_kill."
             }
           },
           "required": ["command"]
@@ -81,6 +85,18 @@ public sealed class ShellExecBuiltinTool(
         }
 
         var timeout = ResolveTimeout(args);
+
+        // SPEC-20261124-devin-parity-batch2 RF-001 (Devin wait_for):
+        // comando sobe como job e a call volta no primeiro match de
+        // readiness — servidor/dev-server fica pronto antes do próximo
+        // passo em vez de dormir um tempo chutado.
+        var waitFor = args.TryGetProperty("wait_for", out var w)
+            && w.ValueKind == JsonValueKind.String
+            ? w.GetString() : null;
+        if (!string.IsNullOrEmpty(waitFor))
+        {
+            return await RunAndWaitForAsync(command, waitFor, context, timeout, ct);
+        }
 
         Directory.CreateDirectory(context.WorkspacePath);
 
@@ -223,6 +239,95 @@ public sealed class ShellExecBuiltinTool(
             status = job.Status,
             pid = job.Pid,
         });
+    }
+
+    /// <summary>
+    /// RF-001 wait_for: inicia o job e faz poll no log até o regex casar,
+    /// o job terminar ou o timeout estourar — o processo segue vivo.
+    /// Regex inválido falha antes de spawnar nada.
+    /// </summary>
+    private async Task<BuiltinToolResult> RunAndWaitForAsync(
+        string command, string pattern, BuiltinToolContext context,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        System.Text.RegularExpressions.Regex regex;
+        try
+        {
+            regex = new System.Text.RegularExpressions.Regex(
+                pattern, System.Text.RegularExpressions.RegexOptions.Compiled,
+                TimeSpan.FromSeconds(2));
+        }
+        catch (ArgumentException ex)
+        {
+            return new BuiltinToolResult(
+                $"Regex de wait_for inválido: {ex.Message}");
+        }
+
+        var job = await jobs.StartAsync(command, context, ct);
+        if (job.Status != ChatJobStatus.Running)
+        {
+            return new BuiltinToolResult(
+                $"Job falhou ao iniciar: {job.Error}",
+                new { jobId = job.Id, status = job.Status, matched = false });
+        }
+
+        var poll = await PollForPatternAsync(
+            async pollCt =>
+            {
+                var snap = await jobs.GetOutputAsync(
+                    context.UserId, job.Id, 16_000, pollCt);
+                return snap is null
+                    ? (true, string.Empty)
+                    : (snap.Value.Job.Status != ChatJobStatus.Running,
+                        snap.Value.Output);
+            },
+            regex, timeout, ct);
+
+        var status = poll.Matched ? "matched"
+            : poll.JobFinished ? "job exited before match"
+            : "timed out";
+        var text = $"[wait_for {status}] job {job.Id} (pid {job.Pid}) "
+            + "— segue rodando; job_output lê mais, job_kill mata.\n"
+            + poll.Output;
+        return new BuiltinToolResult(text, new
+        {
+            jobId = job.Id,
+            pid = job.Pid,
+            matched = poll.Matched,
+            timedOut = poll.TimedOut,
+            jobExited = poll.JobFinished,
+        });
+    }
+
+    /// <summary>Resultado do poll do wait_for.</summary>
+    internal sealed record WaitPollResult(
+        bool Matched, bool TimedOut, bool JobFinished, string Output);
+
+    /// <summary>
+    /// Loop do wait_for: poll a cada ~400ms até o regex casar na saída,
+    /// a fonte sinalizar fim ou o timeout. Separado do job real para
+    /// testar com fonte fake.
+    /// </summary>
+    internal static async Task<WaitPollResult> PollForPatternAsync(
+        Func<CancellationToken, Task<(bool Finished, string Output)>> poll,
+        System.Text.RegularExpressions.Regex pattern,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        var last = string.Empty;
+        var finished = false;
+        while (DateTimeOffset.UtcNow < deadline && !ct.IsCancellationRequested)
+        {
+            (finished, last) = await poll(ct);
+            if (pattern.IsMatch(last) || finished)
+            {
+                break;
+            }
+            await Task.Delay(400, ct);
+        }
+        return new WaitPollResult(
+            pattern.IsMatch(last), !finished && !pattern.IsMatch(last),
+            finished && !pattern.IsMatch(last), last);
     }
 
     /// <summary><c>timeout_seconds</c> clampeado a [1, 300]s; default 60s.</summary>

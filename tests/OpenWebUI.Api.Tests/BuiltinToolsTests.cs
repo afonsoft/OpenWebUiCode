@@ -447,6 +447,130 @@ public class BuiltinToolsTests
         Assert.That(job!.Status, Is.EqualTo(ChatJobStatus.Killed));
     }
 
+    // ---------------- wait_for (SPEC-20261124-devin-parity-batch2) ----------------
+
+    [Test]
+    public async Task ShellExec_WaitFor_CasaOutputERetornaJobVivo()
+    {
+        var jobs = NewJobService();
+        var shell = new ShellExecBuiltinTool(jobs);
+        // Job imprime o marcador e segue vivo — wait_for retorna no match.
+        var r = await shell.ExecuteAsync(
+            Args("{\"command\":\"sleep 1; echo READY-MARKER; sleep 60\","
+                + "\"wait_for\":\"READY-MARKER\",\"timeout_seconds\":30}"),
+            Ctx(), default);
+
+        var meta = JsonDocument.Parse(
+            JsonSerializer.Serialize(r.Result!)).RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Refused, Is.False);
+            Assert.That(r.Text, Does.Contain("wait_for matched"));
+            Assert.That(meta.GetProperty("matched").GetBoolean(), Is.True);
+        });
+        var jobId = meta.GetProperty("jobId").GetString()!;
+        Assert.That((await jobs.GetAsync("u1", jobId, default))!.Status,
+            Is.EqualTo(ChatJobStatus.Running), "processo sobrevive ao match");
+        await jobs.KillAsync("u1", jobId, default);
+    }
+
+    [Test]
+    public async Task ShellExec_WaitFor_RegexInvalidoFalhaSemSpawn()
+    {
+        var jobs = NewJobService();
+        var shell = new ShellExecBuiltinTool(jobs);
+        var r = await shell.ExecuteAsync(
+            Args("{\"command\":\"echo x\",\"wait_for\":\"([\"}"), Ctx(), default);
+        var spawned = await jobs.ListAsync("u1", "c1", true, default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("wait_for inválido"));
+            Assert.That(spawned, Is.Empty,
+                "regex inválido não pode spawnar job");
+        });
+    }
+
+    [Test]
+    public async Task ShellExec_WaitFor_JobTerminaAntesDoMatch()
+    {
+        var jobs = NewJobService();
+        var shell = new ShellExecBuiltinTool(jobs);
+        var r = await shell.ExecuteAsync(
+            Args("{\"command\":\"echo pronto\",\"wait_for\":\"nunca-vai-casar\","
+                + "\"timeout_seconds\":30}"), Ctx(), default);
+        var meta = JsonDocument.Parse(
+            JsonSerializer.Serialize(r.Result!)).RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("job exited before match"));
+            Assert.That(meta.GetProperty("jobExited").GetBoolean(), Is.True);
+        });
+    }
+
+    [Test]
+    public async Task PollForPattern_MatchPrimeiroPoll()
+    {
+        var regex = new System.Text.RegularExpressions.Regex("READY");
+        var r = await ShellExecBuiltinTool.PollForPatternAsync(
+            _ => Task.FromResult((false, "boot... READY ok")),
+            regex, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Matched, Is.True);
+            Assert.That(r.TimedOut, Is.False);
+            Assert.That(r.JobFinished, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task PollForPattern_FimSemMatch()
+    {
+        var regex = new System.Text.RegularExpressions.Regex("READY");
+        var r = await ShellExecBuiltinTool.PollForPatternAsync(
+            _ => Task.FromResult((true, "exited")),
+            regex, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Matched, Is.False);
+            Assert.That(r.JobFinished, Is.True);
+            Assert.That(r.TimedOut, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task PollForPattern_TimeoutSemMatch()
+    {
+        var regex = new System.Text.RegularExpressions.Regex("READY");
+        var r = await ShellExecBuiltinTool.PollForPatternAsync(
+            _ => Task.FromResult((false, "tick")),
+            regex, TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Matched, Is.False);
+            Assert.That(r.TimedOut, Is.True);
+            Assert.That(r.JobFinished, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task PollForPattern_MatchEmPollPosterior()
+    {
+        var regex = new System.Text.RegularExpressions.Regex("READY");
+        var calls = 0;
+        var r = await ShellExecBuiltinTool.PollForPatternAsync(
+            _ =>
+            {
+                calls++;
+                return Task.FromResult((false, calls > 2 ? "READY" : "tick"));
+            },
+            regex, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Matched, Is.True);
+            Assert.That(calls, Is.EqualTo(3));
+        });
+    }
+
     [Test]
     public async Task JobService_ComandoCompletaComOutputPersistido()
     {
