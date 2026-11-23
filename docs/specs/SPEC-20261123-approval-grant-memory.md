@@ -1,6 +1,6 @@
 # SPEC-20261123-approval-grant-memory — grants persistentes de aprovação
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -42,3 +42,8 @@ Hoje o `ChatRunApprovals` resolve cada pendência individualmente: aprovar
 - `Grant_Revoke` — revoke da assinatura → próxima call volta a perguntar.
 - `Grant_OutroChatNaoVaza` — grant do chat A não auto-aprova chat B.
 - `Grant_Reject_NaoGrava` — reject não grava grant (espelha `remember`).
+
+## Delivered
+
+Implementado em feature/agent-20261123-devin-parity — ver commit da
+branch e testes dedicados em tests/OpenWebUI.Api.Tests.

@@ -1,6 +1,6 @@
 # SPEC-20261123-secret-file-guard — guarda de arquivos secretos nas builtin tools
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -45,3 +45,8 @@ de escrever `appsettings.json` com a chave em claro.
   bloqueado até unstage.
 - `Guard_LiteralCredential_Avisa` — args contendo `sk-…` → aviso no result.
 - `Guard_SemPadrao_NaoInterfere` — paths normais inalterados.
+
+## Delivered
+
+Implementado em feature/agent-20261123-devin-parity — ver commit da
+branch e testes dedicados em tests/OpenWebUI.Api.Tests.

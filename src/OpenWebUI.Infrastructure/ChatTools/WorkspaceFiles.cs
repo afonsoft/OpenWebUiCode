@@ -148,11 +148,25 @@ public static class WorkspaceFiles
         var full = ResolveInsideFinal(workspace, relative, out error);
         if (full is not null)
         {
+            // SPEC-20261123-secret-file-guard: arquivos de credenciais
+            // (.env, chaves, keystores, ~/.ssh …) são bloqueados para as
+            // tools de arquivo — Devin secret_file_guard.
+            if (SecretPathGuard.IsSecretPath(RelativeOf(workspace, full)))
+            {
+                error = SecretPathGuard.BlockMessage(
+                    relative ?? Path.GetFileName(full));
+                return null;
+            }
             return full;
         }
         var allowed = external?.ResolveAllowed(runId, workspace, relative);
         if (allowed is not null)
         {
+            if (SecretPathGuard.IsSecretPath(allowed))
+            {
+                error = SecretPathGuard.BlockMessage(relative ?? allowed);
+                return null;
+            }
             error = string.Empty;
             return allowed;
         }

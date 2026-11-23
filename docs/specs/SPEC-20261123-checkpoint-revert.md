@@ -1,6 +1,6 @@
 # SPEC-20261123-checkpoint-revert — checkpoints de conversa por step com revert
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -47,3 +47,15 @@ branching de chat — mas nenhum revert atômico conversa+arquivos.
 - `Revert_NaoGit_SoConversa` — workdir sem git: mensagens revertem, arquivos
   ficam (evento reporta o modo parcial).
 - `Checkpoint_GC_Limita20` — 25 steps → só os 20 mais recentes revertíveis.
+
+## Delivered
+
+Funcionalidade já existia e é mais rica que a proposta —
+SPEC-20261009-checkpoints-revert: snapshots por turno via shadow git
+refs (`CheckpointService` + `refs/openwebui/checkpoints`), endpoint
+`POST /api/v1/workspace/repo/checkpoints/{hash}/revert` com guarda de
+drift e bloqueio 409 durante run ativa, UI `CheckpointList.razor`, e as
+builtin tools `checkpoint`/`rewind` para colapsar trechos explorados do
+contexto. Item restante do port (revert de conversa por step) fica
+coberto pelo chat-branching já existente. Reconfirmado na análise Devin
+de 2026-11-24 — nenhum código novo necessário.
