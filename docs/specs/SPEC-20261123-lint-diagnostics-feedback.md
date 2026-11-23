@@ -1,6 +1,6 @@
 # SPEC-20261123-lint-diagnostics-feedback — injeção de diagnósticos de build pós-edição
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -45,3 +45,8 @@ de LLM entre "editou errado" e "soube que errou".
 - `Diagnostics_ErroPreExistente_Dedup` — erro que já existia antes do run
   não é reportado como novo.
 - `Diagnostics_CapEDesligamento` — >20 erros trunca; `enabled=false` no-op.
+
+## Delivered
+
+Implementado em feature/agent-20261123-devin-parity — ver commit da
+branch e testes dedicados em tests/OpenWebUI.Api.Tests.

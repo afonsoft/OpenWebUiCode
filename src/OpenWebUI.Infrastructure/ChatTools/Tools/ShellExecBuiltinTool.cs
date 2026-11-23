@@ -64,6 +64,15 @@ public sealed class ShellExecBuiltinTool(
             return RefusedResult(assessment);
         }
 
+        // SPEC-20261123-secret-file-guard: git add/commit não pode
+        // incluir arquivo de credenciais (staged ou path literal no
+        // comando) — o vetor de vazamento mais comum de um agente.
+        if (await GitSecretStagingCheckAsync(command, context.WorkspacePath, ct)
+            is { } gitRefuse)
+        {
+            return gitRefuse;
+        }
+
         var background = args.TryGetProperty("background", out var b)
             && b.ValueKind is JsonValueKind.True;
         if (background)
@@ -102,6 +111,82 @@ public sealed class ShellExecBuiltinTool(
             result = result with { Text = result.Text + "\n" + footer };
         }
         return result;
+    }
+
+    /// <summary>
+    /// SPEC-20261123-secret-file-guard: comandos <c>git add</c>/<c>git
+    /// commit</c> são barrados quando um arquivo de credenciais aparece
+    /// como path literal no comando ou já está staged
+    /// (<c>git diff --cached --name-only</c>). Não roda git quando o
+    /// workdir não é repo — o comando segue e falha normalmente.
+    /// </summary>
+    internal static async Task<BuiltinToolResult?> GitSecretStagingCheckAsync(
+        string command, string workdir, CancellationToken ct)
+    {
+        var tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var isGitMutate = false;
+        for (var i = 0; i + 1 < tokens.Length; i++)
+        {
+            if (tokens[i].Equals("git", StringComparison.Ordinal)
+                && tokens[i + 1] is "add" or "commit" or "stage")
+            {
+                isGitMutate = true;
+                break;
+            }
+        }
+        if (!isGitMutate)
+        {
+            return null;
+        }
+        // Path literal no comando que já é segredo (git add .env).
+        var secretToken = tokens.Skip(1)
+            .FirstOrDefault(t => !t.StartsWith('-') && SecretPathGuard.IsSecretPath(t));
+        if (secretToken is not null)
+        {
+            return new BuiltinToolResult(
+                SecretPathGuard.BlockMessage(secretToken)
+                + " Comando git recusado pelo secret-file-guard.");
+        }
+        // Arquivo de credenciais já staged pega carona no commit.
+        var staged = await GitStagedNamesAsync(workdir, ct);
+        var secretStaged = staged.FirstOrDefault(SecretPathGuard.IsSecretPath);
+        return secretStaged is null
+            ? null
+            : new BuiltinToolResult(
+                SecretPathGuard.BlockMessage(secretStaged)
+                + " O arquivo está staged — remova com 'git restore --staged' "
+                + "antes de commitar.");
+    }
+
+    /// <summary>Nomes dos arquivos staged (vazio fora de repo ou sem git).</summary>
+    private static async Task<string[]> GitStagedNamesAsync(
+        string workdir, CancellationToken ct)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(
+                "git", "diff --cached --name-only")
+            {
+                WorkingDirectory = workdir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+            {
+                return [];
+            }
+            var output = await proc.StandardOutput.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
+            return proc.ExitCode == 0
+                ? output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [];
+        }
+        catch (Exception)
+        {
+            return [];
+        }
     }
 
     /// <summary>Negação do classifier com hint de instalação quando o binário é desconhecido.</summary>

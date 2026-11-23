@@ -677,6 +677,13 @@ public static class ChatPipeline
                     builtinContext, maxParallelTools, callbacks, log,
                     options?.ToolProgressInterval),
                 step.ToolCalls, ct);
+            // SPEC-20261123-lint-diagnostics-feedback (Devin
+            // DiagnosticsHandler): passo que editou código dispara um
+            // build silencioso — erros novos entram como nota user no
+            // contexto, fechando o ciclo editou→compilou→corrigiu sem
+            // esperar o modelo pedir o build.
+            await InjectLintDiagnosticsAsync(
+                state, builtinContext, callbacks, log, ct);
             state.Round++;
 
         }
@@ -816,7 +823,7 @@ public static class ChatPipeline
     /// <summary>Estado mutável compartilhado do tool loop — janela,
     /// tail de tools, contadores de continuação e o request (reescrito
     /// pelo bump de max_tokens) trafegam juntos entre os helpers.</summary>
-    private sealed class ToolLoopMutable
+    internal sealed class ToolLoopMutable
     {
         public required ChatCompletionRequest Request { get; set; }
         public required List<ChatCompletionMessage> Messages { get; init; }
@@ -835,6 +842,10 @@ public static class ChatPipeline
         /// <summary>Nudges de falso sucesso já injetados — execução
         /// alegada em prosa sem tool call com a lista aberta.</summary>
         public int FakeSuccessNudges;
+        /// <summary>Edições de arquivo aplicadas no step corrente
+        /// (SPEC-20261123-lint-diagnostics-feedback) — dispara a coleta
+        /// de diagnósticos de build após o batch de calls.</summary>
+        public int EditsApplied;
     }
 
     /// <summary>Fronteira de rodada: promove steers pendentes — o turno
@@ -1515,11 +1526,37 @@ public static class ChatPipeline
     private static async Task PublishCallResultAsync(
         ToolCallLoopCtx ctx, ProviderToolCall call,
         ToolGateDecision gate, ToolExecutionOutcome outcome,
-        TimeSpan elapsed, CancellationToken ct)
+        TimeSpan elapsed, IReadOnlySet<string> repairedIds,
+        CancellationToken ct)
     {
         var (state, _, _, _, _, callbacks, log, _) = ctx;
         var denied = !gate.Approved;
         var output = outcome.Text;
+        if (repairedIds.Contains(call.Id))
+        {
+            // SPEC-20261123-tool-arg-repair: o modelo vê que os args foram
+            // consertados — evita re-aprender o formato errado.
+            output += "\n\n(nota: os argumentos desta call estavam malformados "
+                + "e foram reparados automaticamente antes da execução.)";
+        }
+        if (!denied && !output.StartsWith("Erro", StringComparison.Ordinal)
+            && IsFileMutatingTool(call.Name))
+        {
+            state.EditsApplied++;
+        }
+        if (SecretScrubber.ContainsSecret(call.ArgumentsJson))
+        {
+            // SPEC-20261123-secret-file-guard: o modelo acabou de colar
+            // uma credencial literal num argumento — o aviso vai junto do
+            // resultado para ele perceber e não persistir/repetir o valor.
+            output += "\n\n(aviso de segurança: os argumentos desta call "
+                + "continham o que parece uma credencial literal — o valor "
+                + "é mascarado nos eventos e na persistência, mas evite "
+                + "repetir segredos em texto; prefira referências via env.)";
+            log?.LogWarning(
+                "Tool {Name} ({Id}): credencial literal detectada nos args.",
+                call.Name, call.Id);
+        }
         log?.LogInformation(
             "Tool {Name}: {Elapsed}ms, denied={Denied}, output={Chars} chars.",
             call.Name, (int)elapsed.TotalMilliseconds, denied, output.Length);
@@ -1570,7 +1607,37 @@ public static class ChatPipeline
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
         CancellationToken ct)
     {
-        var (_, tools, toolExecutor, _, _, callbacks, _, _) = ctx;
+        var (_, tools, toolExecutor, _, _, callbacks, log, _) = ctx;
+        // SPEC-20261123-tool-arg-repair: args malformados são reparados
+        // antes do gate — permissão (ArgPattern), preview de aprovação e
+        // execução passam a ver o mesmo JSON canônico. Campo required
+        // ausente com `default` no schema é preenchido; sem default a
+        // call falha normalmente no executor.
+        var repairedIds = new HashSet<string>(StringComparer.Ordinal);
+        var repairedCalls = new List<ProviderToolCall>(calls.Count);
+        foreach (var raw in calls)
+        {
+            var call = raw;
+            if (ToolArgRepair.TryRepair(call.ArgumentsJson, out var fixedJson))
+            {
+                call = call with { ArgumentsJson = fixedJson };
+                repairedIds.Add(call.Id);
+                log?.LogInformation(
+                    "Args da tool {Name} ({Id}) auto-reparados ({Chars} chars).",
+                    call.Name, call.Id, fixedJson.Length);
+            }
+            if (ToolArgRepair.ApplySchemaDefaults(
+                    call.ArgumentsJson,
+                    ToolExecutor.FindTool(tools, call.Name)?.SpecJson,
+                    out var withDefaults)
+                && !string.Equals(withDefaults, call.ArgumentsJson, StringComparison.Ordinal))
+            {
+                call = call with { ArgumentsJson = withDefaults };
+                repairedIds.Add(call.Id);
+            }
+            repairedCalls.Add(call);
+        }
+        calls = repairedCalls;
         for (var k = 0; k < calls.Count;)
         {
             // Grupo contíguo de paralelizáveis (≥2 vale concorrência).
@@ -1583,7 +1650,7 @@ public static class ChatPipeline
             if (end - k >= 2)
             {
                 await RunParallelCallGroupAsync(
-                    ctx, calls, k, end - k, ct);
+                    ctx, calls, k, end - k, repairedIds, ct);
                 k = end;
                 continue;
             }
@@ -1595,7 +1662,7 @@ public static class ChatPipeline
                 call, gate, null, ctx, ct);
             callSw.Stop();
             await PublishCallResultAsync(
-                ctx, call, gate, outcome, callSw.Elapsed, ct);
+                ctx, call, gate, outcome, callSw.Elapsed, repairedIds, ct);
             k = Math.Max(k + 1, end);
         }
     }
@@ -1605,7 +1672,8 @@ public static class ChatPipeline
     /// ordem (SPEC-20261016-parallel-tool-calls).</summary>
     private static async Task RunParallelCallGroupAsync(
         ToolCallLoopCtx ctx, IReadOnlyList<ProviderToolCall> calls,
-        int start, int count, CancellationToken ct)
+        int start, int count, IReadOnlySet<string> repairedIds,
+        CancellationToken ct)
     {
         var (_, _, _, _, maxParallelTools, callbacks, log, _) = ctx;
         var gates = new ToolGateDecision[count];
@@ -1636,7 +1704,8 @@ public static class ChatPipeline
         for (var g = 0; g < count; g++)
         {
             await PublishCallResultAsync(
-                ctx, calls[start + g], gates[g], outcomes[g], elapsed[g], ct);
+                ctx, calls[start + g], gates[g], outcomes[g], elapsed[g],
+                repairedIds, ct);
         }
         log?.LogInformation(
             "Batch paralelo: {Count} tools em {Elapsed}ms.",
@@ -1936,5 +2005,130 @@ public static class ChatPipeline
         var error = JsonSerializer.Serialize(new { error = message });
         await emitLineAsync($"data: {error}");
         await emitLineAsync("data: [DONE]");
+    }
+
+    // ---------- SPEC-20261123-lint-diagnostics-feedback ----------
+
+    /// <summary>Tools que alteram código-fonte do workdir (sufixo cobre
+    /// <c>builtin:</c>/<c>builtin_</c>/nome cru).</summary>
+    internal static bool IsFileMutatingTool(string name) =>
+        name.EndsWith("file_write", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith("file_edit", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith("apply_patch", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith("notebook_edit", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Após um batch que editou código: roda <c>dotnet build</c> silencioso
+    /// no workdir e injeta os erros novos como nota <c>user</c> —
+    /// espelhando o <c>DiagnosticsHandler</c> do Devin CLI. Sem erros ou
+    /// sem projeto .NET no workdir é no-op silencioso.
+    /// </summary>
+    internal static async Task InjectLintDiagnosticsAsync(
+        ToolLoopMutable state, BuiltinToolContext? builtinContext,
+        ToolLoopCallbacks? callbacks,
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct,
+        Func<string, List<string>?>? collect = null)
+    {
+        if (state.EditsApplied == 0 || builtinContext is null)
+        {
+            state.EditsApplied = 0;
+            return;
+        }
+        state.EditsApplied = 0;
+        var workdir = builtinContext.WorkspacePath;
+        var collector = collect ?? CollectBuildDiagnostics;
+        var diagnostics = await Task.Run(
+            () => collector(workdir), ct);
+        if (diagnostics is null)
+        {
+            return; // sem projeto .NET, build falhou ou zero erros.
+        }
+        log?.LogInformation(
+            "Lint diagnostics: {Count} erro(s) injetados pós-edição.",
+            diagnostics.Count);
+        var note = new ChatCompletionMessage("user",
+            "<lint_diagnostics>\n"
+            + "O build do workspace reportou erros após as suas edições — "
+            + "corrija-os antes de seguir (não anuncie esta nota):\n"
+            + string.Join('\n', diagnostics.Select(d => "- " + d))
+            + "\n</lint_diagnostics>");
+        state.Messages.Add(note);
+        if (callbacks?.OnMessagesAddedAsync is { } added)
+        {
+            await added([note], [], ct);
+        }
+    }
+
+    /// <summary>
+    /// Roda <c>dotnet build --nologo -v:q</c> no primeiro
+    /// <c>.slnx/.sln/.csproj</c> do workdir e devolve as linhas
+    /// <c>: error </c> deduplicadas (cap 15). Null quando não há projeto,
+    /// o build falhou em executar ou saiu limpo.
+    /// </summary>
+    internal static List<string>? CollectBuildDiagnostics(string workdir)
+    {
+        try
+        {
+            var enumOpts = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                MaxRecursionDepth = 4,
+                IgnoreInaccessible = true,
+            };
+            string? target =
+                Directory.EnumerateFiles(workdir, "*.slnx", enumOpts).FirstOrDefault()
+                ?? Directory.EnumerateFiles(workdir, "*.sln", enumOpts).FirstOrDefault()
+                ?? Directory.EnumerateFiles(workdir, "*.csproj", enumOpts)
+                    .FirstOrDefault(p => !p.Contains("/obj/")
+                        && !p.Contains("/bin/"));
+            if (target is null)
+            {
+                return null;
+            }
+            var psi = new System.Diagnostics.ProcessStartInfo(
+                "dotnet", $"build \"{target}\" --nologo -v:q")
+            {
+                WorkingDirectory = workdir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+            {
+                return null;
+            }
+            // Drena os pipes enquanto o build roda — ler só depois do
+            // WaitForExit trava o filho quando o buffer enche.
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(90_000))
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                return null;
+            }
+            var output = stdoutTask.GetAwaiter().GetResult()
+                + stderrTask.GetAwaiter().GetResult();
+            return ParseBuildErrors(output);
+        }
+        catch (Exception)
+        {
+            return null; // dotnet ausente, workdir inacessível — nunca quebra a run.
+        }
+    }
+
+    /// <summary>
+    /// Extrai as linhas <c>: error </c> da saída do build — deduplicadas,
+    /// trimadas, cap de 15. Null quando não há erro nenhum.
+    /// </summary>
+    internal static List<string>? ParseBuildErrors(string output)
+    {
+        var errors = output.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Contains(": error ", StringComparison.Ordinal))
+            .Distinct()
+            .Take(15)
+            .ToList();
+        return errors.Count == 0 ? null : errors;
     }
 }

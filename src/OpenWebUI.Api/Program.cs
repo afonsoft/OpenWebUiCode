@@ -278,6 +278,7 @@ builder.Services.AddScoped<IBuiltinChatTool, AgentCatalogBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, SpecsBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, UnseenMessagesBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ExtendContextBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ContextUsageBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, InstantContextBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RoutineBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReminderBuiltinTool>();

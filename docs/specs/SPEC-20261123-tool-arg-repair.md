@@ -1,6 +1,6 @@
 # SPEC-20261123-tool-arg-repair — reparo de argumentos de tool_call malformados
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -44,3 +44,8 @@ Hoje o `ToolExecutor`/`ChatPipeline` falha a call ou faz nudge genérico de
   call (não inventa valor).
 - `Repair_Telemetria` — reparo bem-sucedido emite `tool_args_repaired` e a
   nota aparece no resultado da tool.
+
+## Delivered
+
+Implementado em feature/agent-20261123-devin-parity — ver commit da
+branch e testes dedicados em tests/OpenWebUI.Api.Tests.

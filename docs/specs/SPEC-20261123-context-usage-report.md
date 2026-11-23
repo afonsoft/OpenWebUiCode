@@ -1,6 +1,6 @@
 # SPEC-20261123-context-usage-report — relatório de uso de contexto + extend
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -44,3 +44,8 @@ comando para o usuário inspecionar onde os tokens estão gastos.
 - `Extend_SubStep_Rejeita` — chamada dentro de sub-workflow step → erro
   "only lead run can extend".
 - `Usage_SemPromptAinda_Fallback` — chat sem run → zeros + `estimating`.
+
+## Delivered
+
+Implementado em feature/agent-20261123-devin-parity — ver commit da
+branch e testes dedicados em tests/OpenWebUI.Api.Tests.

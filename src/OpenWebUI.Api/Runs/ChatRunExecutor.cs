@@ -2892,11 +2892,23 @@ public sealed class ChatRunExecutor(
 
         forcePrompt |= rulesPrompt;
 
+        // SPEC-20261123-approval-grant-memory: grant in-memory do chat
+        // (aprovação "sempre" nesta sessão) libera a call sem prompt —
+        // o evento approval_auto_granted mantém a transparência: o dono
+        // vê no stream que a execução passou por grant anterior.
+        var rememberedGrant = !forcePrompt && tool is not null
+            && ToolExecutor.IsMutable(tool)
+            && approvals.IsRemembered(run.ChatId, call.Name,
+                PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson));
         if (tool is null || (!forcePrompt
-            && (!ToolExecutor.IsMutable(tool)
-                || approvals.IsRemembered(run.ChatId, call.Name,
-                    PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson)))))
+            && (!ToolExecutor.IsMutable(tool) || rememberedGrant)))
         {
+            if (rememberedGrant)
+            {
+                PublishAutoGrant(run, call,
+                    PermissionRuleset.ArgPattern(call.Name, call.ArgumentsJson),
+                    "remembered");
+            }
             return ToolGateDecision.Allow;
         }
 
@@ -3053,7 +3065,10 @@ public sealed class ChatRunExecutor(
             run.UserId, workdir, call.Name, argPattern, ct);
         return saved switch
         {
-            true => (ToolGateDecision.Allow, false),
+            // SPEC-20261123-approval-grant-memory: aprovação salva
+            // (SavedApproval durável) também emite o evento de
+            // transparência — mesma linha do rememberedGrant acima.
+            true => (PublishAutoGrant(run, call, argPattern, "saved"), false),
             false => (new ToolGateDecision(true, Output:
                 $"Erro: a call '{call.Name}' foi rejeitada permanentemente "
                 + "pelo dono neste workdir (aprovação salva deny). "
@@ -3383,15 +3398,70 @@ public sealed class ChatRunExecutor(
                 {
                     return;
                 }
-                await providers.CompleteAsync(new ChatCompletionRequest(
-                    model, [new ChatCompletionMessage("user", ".")],
-                    Stream: false), w.UserId, CancellationToken.None);
+                // SPEC-20261123-cache-keepalive: o ping reusa o prefixo
+                // cacheado (system prompt + tools da run) — providers com
+                // prompt-cache por prefixo (Anthropic cache_control) só
+                // renovam o TTL quando o início do request coincide com o
+                // bloco cacheado.
+                var ping = BuildKeepaliveRequest(model);
+                await providers.CompleteAsync(
+                    ping, w.UserId, CancellationToken.None);
             }
             catch (Exception)
             {
                 // Provider sem prompt-cache ou offline — no-op silencioso.
             }
         }
+
+        ChatCompletionRequest BuildKeepaliveRequest(string model)
+        {
+            var requestJson = db.ChatRuns.AsNoTracking()
+                .Where(r => r.Id == w.RunId)
+                .Select(r => r.RequestJson)
+                .FirstOrDefault();
+            return ChatRunExecutor.BuildKeepaliveRequest(model, requestJson);
+        }
+    }
+
+    /// <summary>
+    /// Monta o ping de keepalive reusando o prefixo cacheado da run
+    /// (SPEC-20261123-cache-keepalive): system messages + tools do
+    /// <paramref name="requestJson"/> persistido + format de cache —
+    /// providers com prompt-cache por prefixo só renovam o TTL quando o
+    /// início do request coincide com o bloco cacheado. Sem request ou
+    /// JSON inválido → ping mínimo.
+    /// </summary>
+    internal static ChatCompletionRequest BuildKeepaliveRequest(
+        string model, string? requestJson)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(requestJson))
+            {
+                var req = JsonSerializer.Deserialize<ChatCompletionRequest>(
+                    requestJson, JsonOptions);
+                if (req is not null)
+                {
+                    var prefix = req.Messages
+                        .Where(m => m.Role == "system")
+                        .Append(new ChatCompletionMessage("user", "."))
+                        .ToList();
+                    return req with
+                    {
+                        Messages = prefix,
+                        Stream = false,
+                        CacheFormat = req.CacheFormat ?? "anthropic",
+                    };
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // RequestJson indisponível — cai no ping mínimo abaixo.
+        }
+        return new ChatCompletionRequest(
+            model, [new ChatCompletionMessage("user", ".")],
+            Stream: false);
     }
 
     private string? _keepaliveModel;
@@ -3448,6 +3518,20 @@ public sealed class ChatRunExecutor(
             ? null
             : Scrub(Truncate(result.Message, PreviewChars));
         return new ToolGateDecision(result.Approved, message);
+    }
+
+    /// <summary>
+    /// SPEC-20261123-approval-grant-memory: a call liberada por grant
+    /// (aprovação "sempre" — in-memory do chat ou SavedApproval durável)
+    /// emite <c>approval_auto_granted</c> com tool + assinatura + origem,
+    /// para o dono ver no stream por que não apareceu prompt.
+    /// </summary>
+    private ToolGateDecision PublishAutoGrant(
+        ChatRun run, ProviderToolCall call, string signature, string source)
+    {
+        broadcaster.Publish(run.Id,
+            $"event: approval_auto_granted\ndata: {JsonSerializer.Serialize(new { callId = call.Id, tool = call.Name, signature, source }, JsonOptions)}");
+        return ToolGateDecision.Allow;
     }
 
     /// <summary>

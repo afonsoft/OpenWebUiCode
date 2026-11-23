@@ -108,6 +108,12 @@ public sealed class ApplyPatchBuiltinTool(FormatHookService? formatHook = null) 
             return (null, $"{op.Path}: {jailError}");
         }
         var rel = WorkspaceFiles.RelativeOf(root, full);
+        // SPEC-20261123-secret-file-guard: o patch não pode criar,
+        // modificar, mover ou apagar arquivos de credenciais.
+        if (SecretPathGuard.IsSecretPath(rel))
+        {
+            return (null, SecretPathGuard.BlockMessage(rel));
+        }
         if (!seen.Add(rel))
         {
             return (null, $"Arquivo '{rel}' aparece 2× no patch.");
@@ -142,7 +148,12 @@ public sealed class ApplyPatchBuiltinTool(FormatHookService? formatHook = null) 
         {
             return (null, null, $"{op.MoveTo}: {moveError}");
         }
-        return (fullMove, WorkspaceFiles.RelativeOf(root, fullMove), null);
+        var relMove = WorkspaceFiles.RelativeOf(root, fullMove);
+        if (SecretPathGuard.IsSecretPath(relMove))
+        {
+            return (null, null, SecretPathGuard.BlockMessage(relMove));
+        }
+        return (fullMove, relMove, null);
     }
 
     /// <summary>Conteúdo resultante da op (add/update/delete) com a mesma ordem de checagens.</summary>

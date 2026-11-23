@@ -1,6 +1,6 @@
 # SPEC-20261123-cache-keepalive — keep-alive de prompt cache entre turnos
 
-**Status**: Proposta
+**Status**: Completed
 
 ## Motivação
 
@@ -43,3 +43,8 @@ maiores no turno seguinte.
 - `Keepalive_SemCacheRead_NoOp` — provider sem `cache_read` no usage →
   política inerte (não dispara).
 - `Keepalive_NaoViraMensagem` — transcript do chat não contém o ping.
+
+## Delivered
+
+Implementado em feature/agent-20261123-devin-parity — ver commit da
+branch e testes dedicados em tests/OpenWebUI.Api.Tests.
