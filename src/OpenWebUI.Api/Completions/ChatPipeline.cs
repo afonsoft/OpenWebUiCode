@@ -823,7 +823,7 @@ public static class ChatPipeline
     /// <summary>Estado mutável compartilhado do tool loop — janela,
     /// tail de tools, contadores de continuação e o request (reescrito
     /// pelo bump de max_tokens) trafegam juntos entre os helpers.</summary>
-    private sealed class ToolLoopMutable
+    internal sealed class ToolLoopMutable
     {
         public required ChatCompletionRequest Request { get; set; }
         public required List<ChatCompletionMessage> Messages { get; init; }
@@ -2023,7 +2023,7 @@ public static class ChatPipeline
     /// espelhando o <c>DiagnosticsHandler</c> do Devin CLI. Sem erros ou
     /// sem projeto .NET no workdir é no-op silencioso.
     /// </summary>
-    private static async Task InjectLintDiagnosticsAsync(
+    internal static async Task InjectLintDiagnosticsAsync(
         ToolLoopMutable state, BuiltinToolContext? builtinContext,
         ToolLoopCallbacks? callbacks,
         Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
