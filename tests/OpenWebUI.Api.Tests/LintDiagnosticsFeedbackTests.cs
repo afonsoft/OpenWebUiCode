@@ -47,28 +47,33 @@ public sealed class LintDiagnosticsFeedbackTests
     }
 
     [Test]
-    public void Collect_ProjetoQuebrado_RetornaLinhasDeErro()
+    public void Parse_SomenteLinhasDeError_DedupECap()
     {
-        var dir = Directory.CreateTempSubdirectory("lint-broken").FullName;
-        try
+        var lines = new List<string> { "Build started", "warn: ignora" };
+        for (var i = 0; i < 20; i++)
         {
-            File.WriteAllText(Path.Combine(dir, "Broken.csproj"), """
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup>
-                    <TargetFramework>net10.0</TargetFramework>
-                  </PropertyGroup>
-                </Project>
-                """);
-            File.WriteAllText(Path.Combine(dir, "Bad.cs"),
-                "public class Bad { public void M( { } }");
-            var errors = ChatPipeline.CollectBuildDiagnostics(dir);
-            Assert.Multiple(() =>
-            {
-                Assert.That(errors, Is.Not.Null.And.Not.Empty);
-                Assert.That(errors!.All(e => e.Contains(": error")), Is.True);
-            });
+            lines.Add($"F{i}.cs({i},1): error CS{i:D4}: erro {i}");
+            lines.Add($"F{i}.cs({i},1): error CS{i:D4}: erro {i}"); // dup
         }
-        finally { Directory.Delete(dir, recursive: true); }
+        var errors = ChatPipeline.ParseBuildErrors(string.Join('\n', lines));
+        Assert.Multiple(() =>
+        {
+            Assert.That(errors, Is.Not.Null);
+            Assert.That(errors!, Has.Count.EqualTo(15), "cap de 15");
+            Assert.That(errors!.All(e => e.Contains(": error")), Is.True);
+        });
+    }
+
+    [Test]
+    public void Parse_SemErros_RetornaNull()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ChatPipeline.ParseBuildErrors(
+                "Build succeeded\n0 Error(s)"), Is.Null);
+            Assert.That(ChatPipeline.ParseBuildErrors(
+                "warn: algo estranho"), Is.Null);
+        });
     }
 
     private static ChatPipeline.ToolLoopMutable NewState() => new()
@@ -80,23 +85,17 @@ public sealed class LintDiagnosticsFeedbackTests
         ContinuedAnswer = new StringBuilder(),
     };
 
+    private static BuiltinToolContext Ctx(string dir) =>
+        new("u", null, null, dir, dir);
+
     [Test]
-    public async Task Inject_ComErrosDeBuild_AdicionaNota()
+    public async Task Inject_ComErros_AdicionaNotaEPublica()
     {
         var dir = Directory.CreateTempSubdirectory("lint-inj").FullName;
         try
         {
-            File.WriteAllText(Path.Combine(dir, "B.csproj"), """
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup>
-                    <TargetFramework>net10.0</TargetFramework>
-                  </PropertyGroup>
-                </Project>
-                """);
-            File.WriteAllText(Path.Combine(dir, "B.cs"), "class B { void M( {}");
             var state = NewState();
             state.EditsApplied = 1;
-            var ctx = new BuiltinToolContext("u", null, null, dir, dir);
             var published = 0;
             var callbacks = new ChatPipeline.ToolLoopCallbacks(
                 OnMessagesAddedAsync: (m, t, ct) =>
@@ -105,14 +104,36 @@ public sealed class LintDiagnosticsFeedbackTests
                     return Task.CompletedTask;
                 });
             await ChatPipeline.InjectLintDiagnosticsAsync(
-                state, ctx, callbacks, null, CancellationToken.None);
+                state, Ctx(dir), callbacks, null, CancellationToken.None,
+                collect: _ => ["a.cs(1,1): error CS1: x"]);
             Assert.Multiple(() =>
             {
                 Assert.That(state.EditsApplied, Is.Zero);
                 Assert.That(state.Messages, Has.Count.EqualTo(1));
                 Assert.That(state.Messages[0].Content,
-                    Does.Contain("<lint_diagnostics>"));
+                    Does.Contain("<lint_diagnostics>")
+                        .And.Contain("a.cs(1,1): error CS1: x"));
                 Assert.That(published, Is.EqualTo(1));
+            });
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Test]
+    public async Task Inject_BuildLimpo_NaoAdicionaNota()
+    {
+        var dir = Directory.CreateTempSubdirectory("lint-clean").FullName;
+        try
+        {
+            var state = NewState();
+            state.EditsApplied = 3;
+            await ChatPipeline.InjectLintDiagnosticsAsync(
+                state, Ctx(dir), null, null, CancellationToken.None,
+                collect: _ => null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(state.EditsApplied, Is.Zero);
+                Assert.That(state.Messages, Is.Empty);
             });
         }
         finally { Directory.Delete(dir, recursive: true); }
@@ -124,19 +145,16 @@ public sealed class LintDiagnosticsFeedbackTests
         var dir = Directory.CreateTempSubdirectory("lint-noop").FullName;
         try
         {
-            File.WriteAllText(Path.Combine(dir, "B.csproj"), """
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup>
-                    <TargetFramework>net10.0</TargetFramework>
-                  </PropertyGroup>
-                </Project>
-                """);
-            File.WriteAllText(Path.Combine(dir, "B.cs"), "class B { void M( {}");
             var state = NewState(); // EditsApplied = 0
-            var ctx = new BuiltinToolContext("u", null, null, dir, dir);
+            var collected = false;
             await ChatPipeline.InjectLintDiagnosticsAsync(
-                state, ctx, null, null, CancellationToken.None);
-            Assert.That(state.Messages, Is.Empty);
+                state, Ctx(dir), null, null, CancellationToken.None,
+                collect: _ => { collected = true; return ["e"]; });
+            Assert.Multiple(() =>
+            {
+                Assert.That(collected, Is.False);
+                Assert.That(state.Messages, Is.Empty);
+            });
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

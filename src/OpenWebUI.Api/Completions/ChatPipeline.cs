@@ -2026,7 +2026,8 @@ public static class ChatPipeline
     internal static async Task InjectLintDiagnosticsAsync(
         ToolLoopMutable state, BuiltinToolContext? builtinContext,
         ToolLoopCallbacks? callbacks,
-        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct)
+        Microsoft.Extensions.Logging.ILogger? log, CancellationToken ct,
+        Func<string, List<string>?>? collect = null)
     {
         if (state.EditsApplied == 0 || builtinContext is null)
         {
@@ -2035,8 +2036,9 @@ public static class ChatPipeline
         }
         state.EditsApplied = 0;
         var workdir = builtinContext.WorkspacePath;
+        var collector = collect ?? CollectBuildDiagnostics;
         var diagnostics = await Task.Run(
-            () => CollectBuildDiagnostics(workdir), ct);
+            () => collector(workdir), ct);
         if (diagnostics is null)
         {
             return; // sem projeto .NET, build falhou ou zero erros.
@@ -2107,17 +2109,26 @@ public static class ChatPipeline
             }
             var output = stdoutTask.GetAwaiter().GetResult()
                 + stderrTask.GetAwaiter().GetResult();
-            var errors = output.Split('\n')
-                .Select(l => l.Trim())
-                .Where(l => l.Contains(": error ", StringComparison.Ordinal))
-                .Distinct()
-                .Take(15)
-                .ToList();
-            return errors.Count == 0 ? null : errors;
+            return ParseBuildErrors(output);
         }
         catch (Exception)
         {
             return null; // dotnet ausente, workdir inacessível — nunca quebra a run.
         }
+    }
+
+    /// <summary>
+    /// Extrai as linhas <c>: error </c> da saída do build — deduplicadas,
+    /// trimadas, cap de 15. Null quando não há erro nenhum.
+    /// </summary>
+    internal static List<string>? ParseBuildErrors(string output)
+    {
+        var errors = output.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Contains(": error ", StringComparison.Ordinal))
+            .Distinct()
+            .Take(15)
+            .ToList();
+        return errors.Count == 0 ? null : errors;
     }
 }
