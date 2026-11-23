@@ -42,4 +42,49 @@ public sealed class LintDiagnosticsFeedbackTests
         Assert.That(ChatPipeline.CollectBuildDiagnostics(
             "/nonexistent-dir-xyz"), Is.Null);
     }
+
+    [Test]
+    public void Collect_ProjetoQuebrado_RetornaLinhasDeErro()
+    {
+        var dir = Directory.CreateTempSubdirectory("lint-broken").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "Broken.csproj"), """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                  </PropertyGroup>
+                </Project>
+                """);
+            File.WriteAllText(Path.Combine(dir, "Bad.cs"),
+                "public class Bad { public void M( { } }");
+            var errors = ChatPipeline.CollectBuildDiagnostics(dir);
+            Assert.Multiple(() =>
+            {
+                Assert.That(errors, Is.Not.Null.And.Not.Empty);
+                Assert.That(errors!.All(e => e.Contains(": error")), Is.True);
+            });
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Test]
+    public void Collect_ProjetoLimpo_RetornaNull()
+    {
+        var dir = Directory.CreateTempSubdirectory("lint-ok").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "Ok.csproj"), """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                  </PropertyGroup>
+                </Project>
+                """);
+            File.WriteAllText(Path.Combine(dir, "Ok.cs"),
+                "public class Ok { }");
+            Assert.That(ChatPipeline.CollectBuildDiagnostics(dir), Is.Null);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 }
