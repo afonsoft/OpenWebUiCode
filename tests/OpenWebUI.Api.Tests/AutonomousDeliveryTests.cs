@@ -270,6 +270,20 @@ public class AutonomousDeliveryTests
         Assert.That(url, Is.Null);
     }
 
+    [Test]
+    public async Task TryCreatePr_Sem_Runner_Real_Path_Nao_Explode()
+    {
+        // Cobre o caminho real (psi + processo): sem gh válido/sem token
+        // real o retorno é null — nunca exceção (PR não é fatal).
+        RequireGit();
+        var dir = NewRepo("main");
+        Git(dir, "remote", "add", "origin", "https://github.com/x/y.git");
+        var url = await WorktreeService.TryCreatePrAsync(
+            dir, new Dictionary<string, string> { ["GH_TOKEN"] = "t" },
+            CancellationToken.None);
+        Assert.That(url, Is.Null);
+    }
+
     // ---------- RF-002: Slugify ----------
 
     [Test]
