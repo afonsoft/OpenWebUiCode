@@ -407,9 +407,10 @@ public static class CommandRiskClassifier
     /// <summary>
     /// Quebra em <c>&amp;&amp;</c>, <c>||</c>, <c>;</c>, <c>|</c> fora de
     /// aspas e tokeniza cada segmento respeitando aspas simples/duplas e
-    /// operadores de redirect como tokens próprios.
+    /// operadores de redirect como tokens próprios. Internal para o
+    /// <see cref="ProtectedBranchGuard"/> reusar a mesma análise.
     /// </summary>
-    private static List<IReadOnlyList<string>> SplitSegments(string command) =>
+    internal static List<IReadOnlyList<string>> SplitSegments(string command) =>
         new Splitter(command).Run();
 
     private sealed class Splitter

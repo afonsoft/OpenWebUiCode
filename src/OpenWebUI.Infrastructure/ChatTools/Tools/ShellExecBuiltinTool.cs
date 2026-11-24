@@ -77,6 +77,18 @@ public sealed class ShellExecBuiltinTool(
             return gitRefuse;
         }
 
+        // SPEC-20261124-autonomous-delivery RF-001: commit/push direto na
+        // branch protegida do repo clonado contorna o fluxo de PR.
+        var protectedCsv = config is null
+            ? null
+            : await config.GetAsync<string?>("git.protectedBranches", null, ct);
+        if (await GitProtectedBranchCheckAsync(
+                command, context.WorkspacePath, protectedCsv, ct)
+            is { } branchRefuse)
+        {
+            return branchRefuse;
+        }
+
         var background = args.TryGetProperty("background", out var b)
             && b.ValueKind is JsonValueKind.True;
         if (background)
@@ -172,6 +184,73 @@ public sealed class ShellExecBuiltinTool(
                 SecretPathGuard.BlockMessage(secretStaged)
                 + " O arquivo está staged — remova com 'git restore --staged' "
                 + "antes de commitar.");
+    }
+
+    /// <summary>
+    /// SPEC-20261124-autonomous-delivery RF-001: comandos git mutantes de
+    /// ref (commit/merge/rebase/cherry-pick/am/push) são barrados quando
+    /// miram uma branch protegida. Precheck barato evita rodar
+    /// <c>rev-parse</c> em todo comando; fora de repo git falha sozinho.
+    /// </summary>
+    internal static async Task<BuiltinToolResult?> GitProtectedBranchCheckAsync(
+        string command, string workdir, string? protectedCsv, CancellationToken ct)
+    {
+        // Precheck: sem subcomando mutante no texto, nem consulta o repo.
+        var tokens = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var maybeMutating = false;
+        for (var i = 0; i + 1 < tokens.Length; i++)
+        {
+            if (tokens[i].Equals("git", StringComparison.Ordinal)
+                && tokens[i + 1] is "commit" or "merge" or "rebase"
+                    or "cherry-pick" or "am" or "push")
+            {
+                maybeMutating = true;
+                break;
+            }
+        }
+        if (!maybeMutating)
+        {
+            return null;
+        }
+
+        var branch = await GitCurrentBranchAsync(workdir, ct);
+        if (branch is null)
+        {
+            return null; // fora de repo — git falha sozinho
+        }
+
+        var violation = ProtectedBranchGuard.Check(
+            command, branch, ProtectedBranchGuard.ParseSet(protectedCsv));
+        return violation is null ? null : new BuiltinToolResult(violation);
+    }
+
+    /// <summary>Branch corrente (<c>HEAD</c> detached → "HEAD"; fora de repo → null).</summary>
+    private static async Task<string?> GitCurrentBranchAsync(
+        string workdir, CancellationToken ct)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(
+                "git", "rev-parse --abbrev-ref HEAD")
+            {
+                WorkingDirectory = workdir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+            {
+                return null;
+            }
+            var output = await proc.StandardOutput.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
+            return proc.ExitCode == 0 ? output.Trim() : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     /// <summary>Nomes dos arquivos staged (vazio fora de repo ou sem git).</summary>

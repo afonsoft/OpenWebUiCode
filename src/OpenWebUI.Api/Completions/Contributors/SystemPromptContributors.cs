@@ -128,11 +128,15 @@ public sealed class SddWorkflowContributor(IConfiguration cfg)
             + "lacks a SPEC, interview the user in rounds (design-tree "
             + "frontier questions), never guess; mark undecided points "
             + "[A DEFINIR] and do not implement — deliver the SPEC. "
-            + "(2) Execution — when a SPEC is Approved: implement in TDD "
+            + "(2) Execution — when a SPEC is Approved: deliver it on a "
+            + "work branch (create feature/{slug} first if HEAD is a "
+            + "protected branch — never commit on it), implement in TDD "
             + "slices (red→green→refactor), tag each test with the "
             + "requirement it covers (\"# Covers RF-001\"), revalidate the "
             + "suite per slice, never pause for permission between slices "
-            + "of an approved SPEC, and keep SPEC/issue status in sync.";
+            + "of an approved SPEC, close the cycle alone "
+            + "(commit→push→'gh pr create --fill') and move to the next "
+            + "Approved SPEC in the queue; keep SPEC/issue status in sync.";
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ContributeAsync(PromptContext ctx)
@@ -846,13 +850,19 @@ public sealed class AgentModeContributor : ISystemPromptContributor
                 + "Não encerre o turno com itens pendentes na lista de "
                 + "tarefas: 'próximos passos' se implementa, não se lista. "
                 + "Ao terminar a entrega, feche o ciclo sozinho: revise "
-                + "git status, commite TODAS as alterações da tarefa "
-                + "(commit parcial é entrega quebrada), faça push da "
-                + "branch de trabalho e abra o PR para o usuário revisar — "
-                + "nunca entregue apenas um link 'crie o PR' nem delegue a "
-                + "etapa final. Para tarefas multi-etapa use "
+                + "git status — se a branch corrente for protegida "
+                + "(main/master), crie primeiro uma branch de trabalho "
+                + "com 'git checkout -b feature/{slug}' (nunca commite "
+                + "direto nela) — depois commite TODAS as alterações da "
+                + "tarefa (commit parcial é entrega quebrada), faça push "
+                + "com 'git push -u origin HEAD' e abra o PR com "
+                + "'gh pr create --fill' (GH_TOKEN já está na env) para "
+                + "o usuário revisar — nunca entregue apenas um link "
+                + "'crie o PR' nem delegue a etapa final; feito isso, "
+                + "siga para a próxima tarefa da fila sem pedir "
+                + "confirmação. Para tarefas multi-etapa use "
                 + "builtin_dev_pipeline (orquestra implement→test→validate→"
-                + "commit no servidor); para validação pontual use "
+                + "commit→push→PR no servidor); para validação pontual use "
                 + "builtin_agent_validate. Merge na branch protegida segue "
                 + "exigindo aprovação humana.",
         ]);

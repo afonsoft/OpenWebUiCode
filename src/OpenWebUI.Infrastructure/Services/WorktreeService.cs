@@ -330,6 +330,106 @@ public sealed class WorktreeService(
         return output;
     }
 
+    /// <summary>
+    /// SPEC-20261124-autonomous-delivery RF-002: garante que o workdir
+    /// não está numa branch protegida antes do commit determinístico —
+    /// se estiver, cria <c>feature/agent-{slug}</c> e devolve o nome;
+    /// se já está numa branch de trabalho (ou fora de repo), null.
+    /// </summary>
+    public static async Task<string?> EnsureWorkBranchAsync(
+        string workdir, string slug, ISet<string> protectedSet, CancellationToken ct)
+    {
+        var current = (await RunGitAsync(
+            workdir, ct, "rev-parse", "--abbrev-ref", "HEAD"))?.Trim();
+        if (current is null || !protectedSet.Contains(current))
+        {
+            return null;
+        }
+
+        var branch = $"feature/agent-{DateTime.UtcNow:yyyyMMdd}-{slug}";
+        var err = await RunGitLoggedAsync(workdir, ct, "checkout", "-b", branch);
+        return err is null ? branch : null;
+    }
+
+    /// <summary>
+    /// SPEC-20261124-autonomous-delivery RF-002: tenta <c>gh pr create
+    /// --fill</c> quando gh existe, o remote é GitHub e a env carrega
+    /// GH_TOKEN (managed PAT). Devolve a URL do PR, ou a razão do skip
+    /// em <paramref name="note"/> — PR nunca é fatal pra pipeline.
+    /// </summary>
+    public static async Task<string?> TryCreatePrAsync(
+        string workdir,
+        IReadOnlyDictionary<string, string> env,
+        CancellationToken ct,
+        Func<string, CancellationToken, Task<(int Code, string Stdout, string Stderr)>>? runner = null)
+    {
+        var remote = await RunGitAsync(workdir, ct, "remote", "get-url", "origin");
+        if (remote is null || !remote.Contains("github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return null; // remoto não-GitHub ou inexistente — nada a fazer
+        }
+
+        if (!env.TryGetValue("GH_TOKEN", out var token) || token.Length == 0)
+        {
+            return null; // sem PAT gerenciado — gh não autentica
+        }
+
+        runner ??= RunWithEnvAsync;
+        var (code, stdout, stderr) = await runner(workdir, ct);
+        return code == 0 && stdout.Trim().StartsWith("http", StringComparison.Ordinal)
+            ? stdout.Trim()
+            : null;
+
+        Task<(int, string, string)> RunWithEnvAsync(
+            string dir, CancellationToken cancel)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ExecutableResolver.Resolve("gh"),
+                WorkingDirectory = dir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            foreach (var arg in new[] { "pr", "create", "--fill" })
+            {
+                psi.ArgumentList.Add(arg);
+            }
+            foreach (var (k, v) in env)
+            {
+                psi.Environment[k] = v;
+            }
+            return RunProcessAsync(psi, cancel);
+        }
+    }
+
+    /// <summary>git genérico com env extra (ex.: GH_TOKEN pra gh/git).</summary>
+    private static async Task<(int Code, string Stdout, string Stderr)> RunProcessAsync(
+        ProcessStartInfo psi, CancellationToken ct)
+    {
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return (-1, "", "processo não iniciou");
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(GitTimeout);
+            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            return (process.ExitCode, await stdout, await stderr);
+        }
+        catch (Exception ex) when (ex is Win32Exception or IOException or InvalidOperationException
+            or OperationCanceledException)
+        {
+            return (-1, "", ex.Message);
+        }
+    }
+
     private static async Task<string?> RunGitAsync(string workdir, CancellationToken ct, params string[] args)
     {
         var (code, stdout, _) = await RunGitInputAsync(workdir, null, ct, args);
