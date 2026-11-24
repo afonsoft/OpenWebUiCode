@@ -3,15 +3,12 @@ name: 🚀 CI Build & Test
 permissions: {}
 
 on:
+  # push só na main — push em branch de PR duplicaria TODOS os gates
+  # (pull_request já cobre; o ref do push não casa com refs/pull/N/merge
+  # no concurrency group, então os dois eventos rodavam em paralelo).
   push:
     branches:
       - "main"
-      - "feature/*"
-      - "fix/*"
-      - "bug/*"
-      - "hotfix/*"
-      - "chore/*"
-      - "test/*"
   pull_request:
     branches:
       - "main"
@@ -79,6 +76,11 @@ jobs:
           git diff --name-only "$BASE_SHA" "$HEAD_SHA" | \
             bash scripts/classify-changes.sh
 
+      # Drift SPEC↔código: SPEC entregue tem que estar arquivada em
+      # docs/specs/ com Status — sem gate isso voltava a acumular.
+      - name: SPEC bookkeeping drift
+        run: python3 tools/check-spec-status.py
+
   build-openwebui:
     name: Build OpenWebUI (.NET 10)
     runs-on: ubuntu-latest
@@ -116,7 +118,10 @@ jobs:
   test:
     name: Tests + Coverage Gate (NUnit)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25min ficou a ~90% com ~3k testes — a suíte roda serial (fixtures
+    # compartilham env vars de processo; paralelizar exige migração de
+    # isolamento dedicada). 35min dá folga real sem abrir mão do gate.
+    timeout-minutes: 35
     needs: [changes, build-openwebui]
     if: ${{ !cancelled() && needs.build-openwebui.result == 'success' }}
     permissions:

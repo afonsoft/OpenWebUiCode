@@ -112,6 +112,7 @@ public class ChatRealE2eTests
 
     [Test]
     [CancelAfter(180_000)]
+    [Retry(1)]
     public async Task Models_ProviderReal_ListaModelosDaConexao()
     {
         var result = await _client.GetFromJsonAsync<ModelListResponse>("/api/models");
@@ -124,7 +125,8 @@ public class ChatRealE2eTests
     }
 
     [Test]
-    [CancelAfter(240_000)]
+    [CancelAfter(360_000)]
+    [Retry(1)]
     public async Task Chat_ProviderReal_StreamSSE_RetornaConteudoEDone()
     {
         var request = new ChatCompletionRequest(
@@ -139,7 +141,8 @@ public class ChatRealE2eTests
     }
 
     [Test]
-    [CancelAfter(300_000)]
+    [CancelAfter(420_000)]
+    [Retry(1)]
     public async Task Chat_ProviderReal_DoisTurnos_PersistemNoChat()
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
