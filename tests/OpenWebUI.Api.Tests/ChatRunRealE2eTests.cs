@@ -130,6 +130,7 @@ public class ChatRunRealE2eTests
     /// </summary>
     [Test]
     [CancelAfter(360_000)]
+    [Retry(1)]
     public async Task Run_ProviderReal_ToolLoop_ExecutaToolEResponde()
     {
         var chat = await CreateChatAsync();
@@ -182,6 +183,7 @@ public class ChatRunRealE2eTests
     /// </summary>
     [Test]
     [CancelAfter(360_000)]
+    [Retry(1)]
     public async Task Run_ProviderReal_HistoricoComDsmlVazado_NaoEncerraVazio()
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -226,6 +228,7 @@ public class ChatRunRealE2eTests
     /// </summary>
     [Test]
     [CancelAfter(360_000)]
+    [Retry(1)]
     public async Task Run_ProviderReal_ReasoningDepoisResposta_NaoParaNoThinking()
     {
         var chat = await CreateChatAsync();
@@ -254,6 +257,7 @@ public class ChatRunRealE2eTests
     /// </summary>
     [Test]
     [CancelAfter(480_000)]
+    [Retry(1)]
     public async Task Run_ProviderReal_DoisTurnosComTools_ContinuaFluxo()
     {
         var chat = await CreateChatAsync();

@@ -113,3 +113,10 @@
 - `.ci/coverage-baseline.txt` fica no fio (89.78%) — variância de medição ±0.04-0.08 entre runs idênticas pode reprovar PRs **sem nenhuma mudança de código** (aconteceu no #784: 89.69% numa branch sem código novo). TOL=0.05 não cobre.
 - Ação correta: **rerun do job falho** (`gh run rerun <id> --failed`) — nunca baixar o baseline para destravar (é controle de compliance).
 - Branch de trabalho cortada de outra branch de feature carrega o conteúdo dela — o merge da filha esvazia a mãe; fechar a mãe com comentário explicando.
+
+## Paralelismo da suíte NUnit — NÃO viável sem migração (2026-11-24)
+
+- Tentativa de `[assembly: Parallelizable(Fixtures)]+LevelOfParallelism(4)` quebrou 164 testes em 12+ fixtures de endpoint: `WebApplicationFactory` + env vars process-global (`ConnectionStrings__Default`, `OPENAI_API_*`, seeds ADMIN_*) são compartilhados por todo fixture — escritores (E2E) corrompem leitores concorrentes (`no such table`, `UNIQUE Users.Email`, `Forbidden/Unauthorized`).
+- Os 10 `[NonParallelizable]` existentes só cobrem static-state *conhecido*; o vetor real é env var — isolamento exige migração (env por worker não existe em .NET; precisaria config-injection ou serialized factory access).
+- Alternativa adotada: `timeout-minutes: 35` no job NUnit (suíte serial ~22min estava a ~90% do limite 25). Shard real = matriz + merge de coverage — projeto separado.
+- `ci-build-test.yml` disparava em `push` (feature/*…) **e** `pull_request` → gates duplicados (~2× compute e ~2× flake exposure); ref do push ≠ refs/pull/N no concurrency group, então nunca dedupava. Fix: `push` só na main.
