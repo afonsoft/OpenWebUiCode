@@ -50,6 +50,12 @@ public sealed class DevPipelineService(
         public Dictionary<string, string> Runs { get; set; } = new();
         public string? ValidationOutput { get; set; }
         public string? CommitSha { get; set; }
+        /// <summary>Branch criada pelo auto-branch do commit (RF-002,
+        /// SPEC-20261124-autonomous-delivery) — null quando já estava
+        /// numa branch de trabalho.</summary>
+        public string? WorkBranch { get; set; }
+        /// <summary>URL do PR criado via gh após push (null = não criado).</summary>
+        public string? PrUrl { get; set; }
         /// <summary>Plano emitido pela fase <c>plan</c> (RF-006).</summary>
         public string? Plan { get; set; }
         /// <summary>Modelo por fase lógica (RF-007): worker_model→plan/
@@ -1796,6 +1802,15 @@ public sealed class DevPipelineService(
             return null; // commit_skipped — nada a commitar
         }
 
+        // SPEC-20261124-autonomous-delivery RF-002: a pipeline nunca
+        // commita numa branch protegida — cria feature/agent-{slug}.
+        var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
+        var protectedCsv = await config.GetAsync<string?>(
+            "git.protectedBranches", null, ct);
+        var protectedSet = ProtectedBranchGuard.ParseSet(protectedCsv);
+        state.WorkBranch = await WorktreeService.EnsureWorkBranchAsync(
+            workdir, Slugify(state.Task), protectedSet, ct);
+
         var subject = ConventionalSubject(state.Task);
         _ = await WorktreeService.GitOutputAsync(workdir, ct, "add", "-A");
         var commitError = await WorktreeService.GitErrorAsync(workdir, ct,
@@ -1816,6 +1831,17 @@ public sealed class DevPipelineService(
                 // sha fica registrado para o relatório não perder o trabalho.
                 state.CommitSha = sha;
                 throw new InvalidOperationException($"git push falhou: {pushError}");
+            }
+
+            // RF-002: push ok → tenta abrir o PR via gh (GH_TOKEN da env
+            // gerenciada); ausência de gh/token/remoto-GH vira nota, não erro.
+            var secrets = scope.ServiceProvider
+                .GetService<AgentSecretsEnvService>();
+            if (secrets is not null)
+            {
+                var env = await secrets.BuildAsync(state.UserId, ct);
+                state.PrUrl = await WorktreeService.TryCreatePrAsync(
+                    workdir, env.Vars, ct);
             }
         }
         return sha;
@@ -1972,7 +1998,9 @@ public sealed class DevPipelineService(
             + (state.StallRetries > 0
                 ? $"Stalls recuperados: {state.StallRetries}\n" : string.Empty)
             + $"Entrega: {commit}"
+            + (state.WorkBranch is { } wb ? $" em {wb}" : string.Empty)
             + (state.Push ? " + push" : string.Empty)
+            + (state.PrUrl is { } pr ? $" → PR {pr}" : string.Empty)
             + (state.Error is { } e ? $"\nErro: {e}" : string.Empty)
             + $"\nChat da pipeline: /c/{state.ChildChatId}\n"
             + (state.FanoutItemChats.Count > 0
@@ -2012,6 +2040,34 @@ public sealed class DevPipelineService(
         {
             logger.LogError(ex, "Pipeline {Id}: falha ao reportar.", state.Id);
         }
+    }
+
+    /// <summary>
+    /// Slug kebab-case da tarefa pra nome de branch (RF-002,
+    /// SPEC-20261124-autonomous-delivery): ASCII minúsculo, ≤40 chars,
+    /// sem espaços/símbolos — ex.: "feat(login): add oauth" →
+    /// "feat-login-add-oauth".
+    /// </summary>
+    internal static string Slugify(string task)
+    {
+        var first = task.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Trim())
+            .FirstOrDefault(l => l.Length > 0) ?? "task";
+        var slug = new string(first
+            .Select(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' ? c
+                : c is >= 'A' and <= 'Z' ? char.ToLowerInvariant(c)
+                : '-')
+            .ToArray());
+        while (slug.Contains("--", StringComparison.Ordinal))
+        {
+            slug = slug.Replace("--", "-", StringComparison.Ordinal);
+        }
+        slug = slug.Trim('-');
+        if (slug.Length > 40)
+        {
+            slug = slug[..40].TrimEnd('-');
+        }
+        return slug.Length == 0 ? "task" : slug;
     }
 
     /// <summary>"feat: {task}" Conventional — primeira linha, ≤72 chars.</summary>
