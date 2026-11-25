@@ -87,6 +87,18 @@ window.openwebui = {
 	getScrollHeight: function (element) {
 		return element ? element.scrollHeight : 0;
 	},
+	// BFCache: ao restaurar a página congelada, o browser já matou o
+	// WebSocket/SSE sem onclose — notifica o .NET para reconectar o hub
+	// /ws e reconciliar a run ativa. Registrado uma vez por janela.
+	watchBfcache: function (dotNetRef) {
+		if (window._owBfcacheWatched) return;
+		window._owBfcacheWatched = true;
+		window.addEventListener('pageshow', function (e) {
+			if (e.persisted) {
+				dotNetRef.invokeMethodAsync('OnBfcacheRestoreAsync');
+			}
+		});
+	},
 	// Compensação pós-prepend: devolve ao usuário o mesmo ponto de leitura
 	// somando o delta de altura ao scrollTop.
 	adjustScrollAfterPrepend: function (element, previousHeight) {

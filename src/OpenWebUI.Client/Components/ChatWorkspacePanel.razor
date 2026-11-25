@@ -918,11 +918,18 @@
     /// <summary>Diretórios de memória reconhecidos no workdir.</summary>
     private static readonly string[] MemoryDirs = [".claude/memory", ".agents/memory"];
 
-    /// <summary>Lista os .md de .claude/memory e .agents/memory do workdir.</summary>
+    /// <summary>Lista os .md de .claude/memory e .agents/memory do workdir.
+    /// Sonda a raiz com depth=2 para descobrir quais dirs de memória existem —
+    /// evita GETs em paths inexistentes (404 no console).</summary>
     private async Task LoadMemoriesAsync()
     {
         var files = new List<WorkspaceFileEntryResponse>();
-        foreach (var dir in MemoryDirs)
+        var root = await Api.GetWorkspaceTreeAsync("", depth: 2, chatId: ChatId);
+        var present = root?.Entries
+            .Where(e => e.Type == "dir")
+            .Select(e => e.Path.Replace('\\', '/'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        foreach (var dir in MemoryDirs.Where(present.Contains))
         {
             var tree = await Api.GetWorkspaceTreeAsync(dir, depth: 1, chatId: ChatId);
             if (tree?.Entries is { } entries)

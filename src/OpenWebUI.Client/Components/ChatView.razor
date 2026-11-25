@@ -1405,6 +1405,7 @@
             // anexo pasted-*.txt; texto pequeno insere na posição do cursor.
             _selfRef ??= DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("openwebui.hookPaste", _composerEl, _selfRef);
+            await JS.InvokeVoidAsync("openwebui.watchBfcache", _selfRef);
         }
         catch (Exception ex) when (ClientErrors.IsTransient(ex) || ex is InvalidOperationException)
         {
@@ -1893,6 +1894,36 @@
                     $"[ChatView] reload pós run.completed falhou: {ex.Message}");
             }
         });
+    }
+
+    /// <summary>
+    /// Restauração de página do BFCache (pageshow persisted): o browser já
+    /// matou o WS/SSE sem onclose confiável — reconecta o hub e reconcilia
+    /// o chat/run. Enquanto streaming, o loop de attach se auto-recupera
+    /// pelo stall watchdog.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnBfcacheRestoreAsync()
+    {
+        try
+        {
+            await Realtime.ConnectAsync(Nav.BaseUri, Auth.Token);
+            if (!_streaming && _loadedChatId is not null)
+            {
+                await ReloadChatAsync(scrollToEnd: false);
+                // run.completed perdido no freeze → procura run ativa para
+                // re-anexar o progresso ao vivo.
+                if (await ChatStream.GetActiveRunAsync(_loadedChatId) is { } run)
+                {
+                    await AttachActiveRunAsync(run);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync(
+                $"[ChatView] reconciliação pós-BFCache falhou: {ex.Message}");
+        }
     }
 
     /// <inheritdoc />
@@ -3853,6 +3884,12 @@
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException)
+        {
+            // Stall watchdog (FirstEventStallMs/StallMs) disparou o token
+            // linkado — cancelamento esperado do attach, não queda do
+            // stream. Re-anexa sem logar erro no console.
         }
         catch (Exception ex)
         {

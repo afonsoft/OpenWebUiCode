@@ -414,9 +414,9 @@ else
                 <button class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer"
                         aria-label="@L["common.close"]" @onclick="() => _shareUrl = null">×</button>
             </div>
-            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">@L["sidebar.public_link"]</label>
+            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1" for="share-url">@L["sidebar.public_link"]</label>
             <input class="w-full rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 px-3 py-2 text-sm outline-none text-gray-800 dark:text-gray-100"
-                   readonly value="@_shareUrl" aria-label="@L["sidebar.public_link"]" @onclick="CopyShareLink" />
+                   id="share-url" readonly value="@_shareUrl" @onclick="CopyShareLink" />
             <button class="mt-3 w-full rounded-full bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition font-normal text-sm py-2.5 cursor-pointer"
                     @onclick="CopyShareLink">@(_copied ? L["sidebar.copied"] : L["sidebar.copy_link"])</button>
             <button class="mt-2 w-full rounded-full text-sm py-2.5 text-red-500 hover:bg-red-500/10 transition cursor-pointer"

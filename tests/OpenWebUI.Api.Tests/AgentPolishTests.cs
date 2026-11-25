@@ -752,6 +752,63 @@ public class AgentPolishTests
         });
     }
 
+    // ---------- SPEC-20261125: catálogo compacto de skills ----------
+
+    private async Task<Completions.Contributors.SkillCatalogContributor> NewCatalogContributor()
+    {
+        var db = Db();
+        db.Database.EnsureCreated();
+        var config = new ConfigService(db, TestCache.Create());
+        var overlay = new UserConfigOverlayService(db, config);
+        var catalog = new RemoteSkillCatalog(new StubFactory(new CatalogHandler()));
+        return new Completions.Contributors.SkillCatalogContributor(
+            new SkillDiscoveryService(catalog), catalog, overlay, config);
+    }
+
+    private OpenWebUI.Infrastructure.SystemPrompt.PromptContext CatalogCtx() =>
+        new()
+        {
+            Request = new ChatCompletionRequest(
+                "m", [new ChatCompletionMessage("user", "oi")], Stream: true),
+            User = new User { Id = "u1", Name = "U", Email = "u@t.local" },
+            LastUserText = "oi", Model = "m", Ct = CancellationToken.None,
+            WorkdirFactory = _ => Task.FromResult(_root!),
+        };
+
+    [Test]
+    public async Task SkillCatalog_ListaNomeEDescricao_SemCorpo()
+    {
+        var dir = Path.Join(_root, ".agents", "skills", "write-specs");
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Join(dir, "SKILL.md"),
+            "---\nname: write-specs\ndescription: cria SPECs SDD\n---\nCorpo longo da skill.");
+        var autoDir = Path.Join(_root, ".agents", "skills", "auto1");
+        Directory.CreateDirectory(autoDir);
+        await File.WriteAllTextAsync(Path.Join(autoDir, "SKILL.md"),
+            "---\nname: auto1\ndescription: injetada\nautoinvoke: true\n---\nCorpo da auto1.");
+
+        var contributor = await NewCatalogContributor();
+        var sections = await contributor.ContributeAsync(CatalogCtx());
+        Assert.Multiple(() =>
+        {
+            Assert.That(sections, Has.Count.EqualTo(1));
+            Assert.That(sections[0], Does.Contain("builtin:skill"));
+            Assert.That(sections[0], Does.Contain("- write-specs — cria SPECs SDD"));
+            // autoinvoke é injetada pelo AutoinvokeSkillsContributor — não
+            // deve duplicar na lista; corpo nunca vem no catálogo.
+            Assert.That(sections[0], Does.Not.Contain("auto1"));
+            Assert.That(sections[0], Does.Not.Contain("Corpo longo"));
+        });
+    }
+
+    [Test]
+    public async Task SkillCatalog_SemSkills_BlocoVazio()
+    {
+        var contributor = await NewCatalogContributor();
+        var sections = await contributor.ContributeAsync(CatalogCtx());
+        Assert.That(sections, Is.Empty);
+    }
+
     [Test]
     public async Task BuildMode_EmiteDiretivaDoLoopDeEntrega()
     {

@@ -63,7 +63,10 @@ public class RealtimeService : IAsyncDisposable
         }
         if (_connection is not null)
         {
-            if (_token == token)
+            if (_token == token
+                && _connection.State is HubConnectionState.Connected
+                    or HubConnectionState.Connecting
+                    or HubConnectionState.Reconnecting)
             {
                 return;
             }
