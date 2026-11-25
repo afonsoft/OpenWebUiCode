@@ -133,7 +133,7 @@
                             @if (!IsCreate && _knowledge is not null)
                             {
                                 <div class="field">
-                                    <label>@L["workspace.files"] (@_knowledge.Files.Count)</label>
+                                    <div class="field-label">@L["workspace.files"] (@_knowledge.Files.Count)</div>
                                     <div class="card-sub">
                                         @foreach (var kf in _knowledge.Files)
                                         {

@@ -196,6 +196,56 @@ public class SkillDiscoveryTests
         Assert.That(SkillDiscoveryService.LoadProjectInstructions(_dir), Is.Null);
     }
 
+    [Test]
+    public void LoadProjectInstructions_ClaudeRules()
+    {
+        WriteFile(".claude/rules/r1.md", "regra claude");
+        var text = SkillDiscoveryService.LoadProjectInstructions(_dir);
+        Assert.That(text, Does.Contain("regra claude"));
+    }
+
+    [Test]
+    public void LoadProjectInstructions_HarnessEMemoria()
+    {
+        WriteFile("AGENTS.md", "veja .agents/CONTEXT.md e .claude/memory");
+        WriteFile(".agents/CONTEXT.md", "contexto harness");
+        WriteFile(".claude/MEMORY.md", "memoria do projeto");
+        WriteFile(".agents/memory/licao.md", "licao aprendida");
+        WriteFile(".claude/memory/nota.md", "nota do repo");
+        var text = SkillDiscoveryService.LoadProjectInstructions(_dir);
+        Assert.Multiple(() =>
+        {
+            Assert.That(text, Does.Contain("contexto harness"));
+            Assert.That(text, Does.Contain("memoria do projeto"));
+            Assert.That(text, Does.Contain("licao aprendida"));
+            Assert.That(text, Does.Contain("nota do repo"));
+            // ordem: instruções → harness → memórias.
+            Assert.That(text!.IndexOf("AGENTS.md"), Is.LessThan(text.IndexOf(".agents/CONTEXT.md")));
+            Assert.That(text.IndexOf(".agents/CONTEXT.md"), Is.LessThan(text.IndexOf(".claude/memory")));
+        });
+    }
+
+    [Test]
+    public void LoadProjectInstructions_SymlinkDedup()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("symlink POSIX — layout skills.sh");
+            return;
+        }
+        var target = WriteFile(".agents/MEMORY.md", "conteudo unico");
+        var link = Path.Join(_dir, ".claude", "MEMORY.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(link)!);
+        File.CreateSymbolicLink(link, target);
+        var text = SkillDiscoveryService.LoadProjectInstructions(_dir);
+        Assert.Multiple(() =>
+        {
+            Assert.That(text, Does.Contain("conteudo unico"));
+            Assert.That(
+                System.Text.RegularExpressions.Regex.Matches(text!, "conteudo unico"),
+                Has.Count.EqualTo(1));
+        });
+    }
 
     [Test]
     public void Scan_LimiteDeItens_CortaEmMaxItems()

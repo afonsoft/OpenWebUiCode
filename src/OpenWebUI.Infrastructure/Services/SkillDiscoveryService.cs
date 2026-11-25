@@ -58,8 +58,10 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
     /// <summary>Teto por arquivo lido (SKILL.md ou command .md).</summary>
     public const int MaxFileBytes = 64 * 1024;
 
-    /// <summary>Teto total das instruções de projeto injetadas no system prompt.</summary>
-    public const int MaxInstructionsBytes = 32 * 1024;
+    /// <summary>Teto total das instruções de projeto injetadas no system
+    /// prompt — inclui rules/harness/memórias dos dirs .agents/.claude
+    /// carregados por <see cref="LoadProjectInstructions"/>.</summary>
+    public const int MaxInstructionsBytes = 48 * 1024;
 
     private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(60);
     private static readonly ConcurrentDictionary<string, (DateTimeOffset At, RepoScanResult Result)> Cache =
@@ -154,30 +156,43 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
 
     /// <summary>
     /// Lê os arquivos de instrução do projeto na ordem AGENTS.md → CLAUDE.md →
-    /// <c>.cursor/rules/*.md</c> → README.md, até <see cref="MaxInstructionsBytes"/>.
+    /// <c>.cursor/rules/*.md</c> → <c>.claude/rules/*.md</c> →
+    /// <c>.agents/*.md</c> → <c>.claude/*.md</c> →
+    /// <c>.agents/memory/*.md</c> → <c>.claude/memory/*.md</c> → README.md,
+    /// até <see cref="MaxInstructionsBytes"/>. Os arquivos de instrução
+    /// apontam convenções nesses dirs (regras, harness, memórias) — carregar
+    /// junto fecha o ciclo de contexto no primeiro prompt.
     /// Retorna <c>null</c> quando nenhum existe.
     /// </summary>
     public static string? LoadProjectInstructions(string workdir)
     {
         var sb = new StringBuilder();
         var budget = MaxInstructionsBytes;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var rel in new[] { "AGENTS.md", "CLAUDE.md" })
         {
-            budget -= AppendFile(sb, Path.Join(workdir, rel), rel, budget);
+            var full = Path.Join(workdir, rel);
+            budget -= AppendFile(sb, full, rel, budget);
+            seen.Add(full);
         }
 
-        var rulesDir = Path.Join(workdir, ".cursor", "rules");
-        if (Directory.Exists(rulesDir) && !IsReparsePoint(rulesDir))
+        // Rules referenciadas pelas instruções.
+        foreach (var rulesDir in new[] { ".cursor/rules", ".claude/rules" })
         {
-            foreach (var file in Directory.EnumerateFiles(rulesDir, "*.md").OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
-            {
-                if (budget <= 0)
-                {
-                    break;
-                }
+            budget = AppendDirMarkdown(sb, workdir, rulesDir, budget, seen);
+        }
 
-                budget -= AppendFile(sb, file, Relative(workdir, file), budget);
-            }
+        // Harness do repo (CONTEXT.md, RULES.md, MEMORY.md, TOOLS.md,
+        // WORKFLOWS.md…) e memórias — referências declaradas nos arquivos
+        // de instrução (AGENTS.md/CLAUDE.md) do layout .agents/.claude.
+        foreach (var relDir in new[] { ".agents", ".claude" })
+        {
+            budget = AppendDirMarkdown(sb, workdir, relDir, budget, seen);
+        }
+
+        foreach (var relDir in new[] { ".agents/memory", ".claude/memory" })
+        {
+            budget = AppendDirMarkdown(sb, workdir, relDir, budget, seen);
         }
 
         if (budget > 0)
@@ -186,6 +201,42 @@ public sealed class SkillDiscoveryService(RemoteSkillCatalog? remote = null)
         }
 
         return sb.Length == 0 ? null : sb.ToString();
+    }
+
+    /// <summary>Anexa os <c>*.md</c> top-level de um dir do workdir (ordem
+    /// estável, dir symlink ignorado, dedup por caminho resolvido — layout
+    /// skills.sh pode linkar <c>.claude/x → .agents/x</c>).</summary>
+    private static int AppendDirMarkdown(
+        StringBuilder sb, string workdir, string relDir, int budget,
+        HashSet<string> seen)
+    {
+        var dir = Path.Join(workdir, relDir);
+        if (!Directory.Exists(dir) || IsReparsePoint(dir))
+        {
+            return budget;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(dir, "*.md")
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+        {
+            if (budget <= 0)
+            {
+                break;
+            }
+
+            var resolved = Path.GetFullPath(file);
+            if (new FileInfo(file).LinkTarget is { } target)
+            {
+                resolved = Path.GetFullPath(
+                    Path.Combine(Path.GetDirectoryName(file)!, target));
+            }
+            if (!seen.Add(resolved))
+            {
+                continue;
+            }
+            budget -= AppendFile(sb, file, Relative(workdir, file), budget);
+        }
+        return budget;
     }
 
     private static IReadOnlyList<RepoEntry> ScanSkills(
