@@ -65,6 +65,15 @@ public sealed class DelegateTaskBuiltinTool(
     public string Name => "delegate_task";
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Auto-parallel (plano P1.15, omp <c>auto-parallel</c>): calls
+    /// <c>delegate_task</c> contíguas num round executam em paralelo
+    /// (cap <c>BuiltinTools:MaxParallel</c>) — cada filha roda em run
+    /// própria e isolada; o merge é sequencial na ordem das calls.
+    /// </remarks>
+    public bool SafeInParallel => true;
+
+    /// <inheritdoc />
     public string Description =>
         "Delegate to a child agent — call for parallel work. "
             + "Never delegate understanding: include file paths, line numbers "

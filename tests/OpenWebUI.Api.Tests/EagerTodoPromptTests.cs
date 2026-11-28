@@ -1,5 +1,8 @@
 using NUnit.Framework;
+using Microsoft.Extensions.Configuration;
 using OpenWebUI.Api.Completions;
+using OpenWebUI.Infrastructure.ChatTools;
+using OpenWebUI.Infrastructure.ChatTools.Tools;
 
 namespace OpenWebUI.Api.Tests;
 
@@ -27,5 +30,17 @@ public sealed class EagerTodoPromptTests
             Assert.That(ChatPipeline.TrackingPrompt, Does.Contain("completed"));
             Assert.That(ChatPipeline.TrackingPrompt, Does.Contain("Examples:"));
         });
+    }
+
+    /// <summary>SPECT-20261128-auto-parallel (plano P1.15): delegate_task
+    /// entra nos grupos paralelos do loop (cap BuiltinTools:MaxParallel).</summary>
+    [Test]
+    public void DelegateTask_EhSeguraEmParalelo()
+    {
+        var registry = new BuiltinToolRegistry(
+            [new DelegateTaskBuiltinTool(null!, null!)],
+            new ConfigurationBuilder().Build());
+        Assert.That(registry.IsSafeInParallel("builtin:delegate_task"),
+            Is.True);
     }
 }
