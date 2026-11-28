@@ -57,6 +57,10 @@ public sealed class ChatActivityFeedTests
                 Is.EqualTo("chat.activity.memory"));
             Assert.That(ToolActivityMap.Map("builtin:read_pdf", "{\"path\":\"docs/spec.pdf\"}"),
                 Is.EqualTo(("chat.activity.read_pdf", "docs/spec.pdf")).AsCollection);
+            Assert.That(ToolActivityMap.Map("builtin:gh_diff", null).Item1,
+                Is.EqualTo("chat.activity.gh_diff"));
+            Assert.That(ToolActivityMap.Map("builtin:gh_comment", null).Item1,
+                Is.EqualTo("chat.activity.gh_comment"));
             Assert.That(ToolActivityMap.Map("builtin:ask_user", null).Item1,
                 Is.EqualTo("chat.activity.tool"));
             Assert.That(ToolActivityMap.Map("mcp:github/create_issue", null).Item1,

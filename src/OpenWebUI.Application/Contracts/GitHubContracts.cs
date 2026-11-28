@@ -105,3 +105,20 @@ public sealed record WorkspacePullDetailResponse(
     bool Github, bool NeedsToken, bool NotFound,
     WorkspacePullResponse? Pull, string? Body,
     int ChangedFiles, int Additions, int Deletions, bool Mergeable);
+
+/// <summary>Diff de um PR (SPEC-20261128-gh-diff-comment, `builtin:gh_diff`).</summary>
+/// <param name="Github">false quando o GitHub está inacessível/sem auth.</param>
+/// <param name="NeedsToken">true quando falta (ou expirou) o PAT.</param>
+/// <param name="NotFound">true quando o número não existe no repo.</param>
+/// <param name="Diff">Patch montado por arquivo, possivelmente truncado.</param>
+/// <param name="Truncated">true quando o cap local/paginação cortou conteúdo.</param>
+public sealed record WorkspacePullDiffResponse(
+    bool Github, bool NeedsToken, bool NotFound, string? Diff, bool Truncated);
+
+/// <summary>Resultado de comentário em PR (`builtin:gh_comment`).</summary>
+/// <param name="Github">false quando o GitHub está inacessível/sem auth.</param>
+/// <param name="NeedsToken">true quando falta (ou expirou) o PAT.</param>
+/// <param name="Created">true quando o comentário foi criado.</param>
+/// <param name="Url">URL web do comentário criado.</param>
+public sealed record WorkspacePullCommentResponse(
+    bool Github, bool NeedsToken, bool Created, string? Url);

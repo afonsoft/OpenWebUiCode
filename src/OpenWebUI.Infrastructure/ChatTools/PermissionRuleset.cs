@@ -68,7 +68,7 @@ public static class PermissionRuleset
         "web_search", "fetch_url", "ask_user", "todo_write",
         "think", "goal",
         "read_archive", "read_sqlite", "read_pdf", "memory_reflect", "wait",
-        "gh_pulls", "gh_view",
+        "gh_pulls", "gh_view", "gh_diff",
         "plan_exit", "write_plan", "browser_screenshot",
         "browser_navigate", "browser_observe", "browser_close",
         "job_list", "job_output", "n8n_list_workflows",
