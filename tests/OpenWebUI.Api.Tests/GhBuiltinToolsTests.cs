@@ -20,6 +20,18 @@ public class GhBuiltinToolsTests
     }
 
     [Test]
+    public void GhView_MetadadosEsperados()
+    {
+        var tool = new GhViewBuiltinTool(null!, null!);
+        Assert.Multiple(() =>
+        {
+            Assert.That(tool.Name, Is.EqualTo("gh_view"));
+            Assert.That(tool.Tier, Is.EqualTo(ApprovalTier.Read));
+            Assert.That(tool.ParametersJson, Does.Contain("number"));
+        });
+    }
+
+    [Test]
     public void GhPulls_EhPermitidoNoPlanMode()
     {
         var field = typeof(PermissionRuleset)
@@ -30,5 +42,6 @@ public class GhBuiltinToolsTests
         var set = field!.GetValue(null)
             as System.Collections.Generic.HashSet<string>;
         Assert.That(set, Is.Not.Null.And.Contain("gh_pulls"));
+        Assert.That(set, Does.Contain("gh_view"));
     }
 }

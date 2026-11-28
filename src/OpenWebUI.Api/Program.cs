@@ -274,6 +274,7 @@ builder.Services.AddScoped<IBuiltinChatTool, WaitBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReadArchiveBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReadSqliteBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, GhPullsBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, GhViewBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RewindBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ContextNotesBuiltinTool>();

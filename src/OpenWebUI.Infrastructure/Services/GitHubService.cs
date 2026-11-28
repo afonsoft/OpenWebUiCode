@@ -245,6 +245,55 @@ public sealed class GitHubService(
         }
     }
 
+    /// <summary>
+    /// Detalhe de um PR (SPEC-20261128-gh-tools, `builtin:gh_view`):
+    /// metadados + checks do head + corpo + estatísticas de diff.
+    /// null quando o GitHub está inacessível (rede/HTTP 5xx).
+    /// </summary>
+    public async Task<WorkspacePullDetailResponse?> GetPullDetailAsync(
+        string userId, string owner, string repo, int number, CancellationToken ct)
+    {
+        var token = await GetTokenAsync(userId, ct);
+        if (token is null)
+        {
+            return new WorkspacePullDetailResponse(false, true, false, null, null, 0, 0, 0, false);
+        }
+        try
+        {
+            var (status, doc) = await SendStatusAsync(token, HttpMethod.Get,
+                $"{ApiBase}/repos/{owner}/{repo}/pulls/{number}", ct);
+            if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return new WorkspacePullDetailResponse(false, true, false, null, null, 0, 0, 0, false);
+            }
+            if (status is HttpStatusCode.NotFound)
+            {
+                return new WorkspacePullDetailResponse(true, false, true, null, null, 0, 0, 0, false);
+            }
+            if (doc is null || doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+            var pr = doc.RootElement;
+            var mapped = await MapPullAsync(token, owner, repo, pr, ct);
+            if (mapped is null)
+            {
+                return new WorkspacePullDetailResponse(false, true, false, null, null, 0, 0, 0, false);
+            }
+            return new WorkspacePullDetailResponse(
+                true, false, false, mapped,
+                GetString(pr, "body"),
+                GetInt(pr, "changed_files"),
+                GetInt(pr, "additions"),
+                GetInt(pr, "deletions"),
+                pr.TryGetProperty("mergeable", out var m) && m.ValueKind is JsonValueKind.True);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Mapeia um PR da API; null quando a auth falha no caminho.</summary>
     private async Task<WorkspacePullResponse?> MapPullAsync(
         string token, string owner, string repo, JsonElement pr, CancellationToken ct)

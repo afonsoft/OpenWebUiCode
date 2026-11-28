@@ -18,3 +18,10 @@
 
 - `gh_view`/`gh_diff`/`gh_comment` (precisam de novos métodos no
   `GitHubService`) — follow-up.
+
+## Adição (esta branch)
+
+- `GhViewBuiltinTool` (`builtin:gh_view`): detalhe de um PR por número —
+  metadados, corpo (truncado em 4000 chars), rollup de CI, +/-/arquivos e
+  `mergeable`. Novo `GitHubService.GetPullDetailAsync` (sem cache — número
+  é explícito e frescor importa).
