@@ -1438,7 +1438,7 @@
   "chat.doc_download": "ー",
   "chat.worklog.collapse": "最小化",
   "chat.status_analyzing": "分析中…",
-  "chat.activity.wait": "待機中",
+  "chat.activity.wait": "",
   "chat.activity.read_archive": "ー",
   "chat.activity.read_sqlite": "ーー",
   "chat.activity.memory_reflect": ""
