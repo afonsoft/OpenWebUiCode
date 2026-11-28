@@ -1054,6 +1054,7 @@
                                 IsAdmin="@(Auth.CurrentUser?.Role == UserRoles.Admin)"
                                 RequestedTab="@_requestedPanelTab"
                                 Checkpoints="_runCheckpoints" ChatId="@_loadedChatId"
+                                ActivityFeed="@MobileActivityFeed"
                                 OnReverted="OnCheckpointRevertedAsync"
                                 OnClose="() => _showPanel = false"
                                 OnKillJob="KillJobAsync" />
@@ -1068,6 +1069,17 @@
 
     /// <summary>Modo playground: conversa em memória, sem persistir chat.</summary>
     [Parameter] public bool Playground { get; set; }
+
+    /// <summary>Feed vivo promovido ao topo do drawer mobile
+    /// (SPEC-20261128-ux-polish RF-001). Null visualmente quando não há calls.</summary>
+    private RenderFragment? MobileActivityFeed => _liveToolCalls.Count == 0
+        ? null
+        : __builder =>
+        {
+            <RunActivityFeed Calls="_liveToolCalls" Streaming="_streaming"
+                             Collapsed="(!_streaming || _feedCollapsed)"
+                             OnRequestCollapse="() => SetFeedCollapsed(true)" />
+        };
 
     private readonly List<ChatMessageModel> _messages = [];
     /// <summary>Instância viva do placeholder de streaming — o índice

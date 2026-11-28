@@ -111,23 +111,39 @@
                 <video src="@VideoPath" controls preload="metadata"
                        class="max-w-sm rounded-lg border border-gray-200 dark:border-gray-800"></video>
             }
-            @if (ResultPreview is not null && IsDiff)
+            @if (ResultPreview is not null)
             {
-                @* file_write/file_edit: saída é diff unificado — colorido por linha *@
-                <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-white dark:bg-gray-950 px-2 py-1 text-[0.6875rem] font-mono">@foreach (var line in DiffLines){<span class="@line.Css">@line.Text
+                @* Preview inteligente (SPEC-20261128-ux-polish RF-002):
+                   cabeçalho resume tipo/tamanho; saídas longas abrem só sob
+                   demanda para não explodir a conversa. *@
+                <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950"
+                     data-testid="tool-output-summary" data-output-kind="@OutputKind(ResultPreview)">
+                    <div class="flex items-center gap-1.5 px-2 py-1 text-[0.625rem] text-gray-500 dark:text-gray-400">
+                        <span class="min-w-0 flex-1 truncate" title="@OutputSummary">@OutputSummary</span>
+                        @if (OutputCollapsible)
+                        {
+                            <button type="button" data-testid="tool-output-toggle"
+                                    class="flex-none text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                                    aria-expanded="@_outputExpanded"
+                                    @onclick="() => _outputExpanded = !_outputExpanded" @onclick:stopPropagation="true">
+                                @(_outputExpanded ? L["chat.tool_collapse"] : L["chat.tool_expand"])
+                            </button>
+                        }
+                    </div>
+                    @if (OutputOpen)
+                    {
+                        @if (IsDiff)
+                        {
+                            @* file_write/file_edit: saída é diff unificado — colorido por linha *@
+                            <pre class="max-h-56 overflow-auto whitespace-pre-wrap break-all border-t border-gray-100 dark:border-gray-800 px-2 py-1 text-[0.6875rem] font-mono">@foreach (var line in DiffLines){<span class="@line.Css">@line.Text
 </span>}</pre>
-            }
-            else if (ResultPreview is not null)
-            {
-                <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-white dark:bg-gray-950 px-2 py-1 text-[0.6875rem] font-mono text-gray-600 dark:text-gray-400">@VisibleOutput</pre>
-                @if (OutputOverflow)
-                {
-                    <button class="self-start text-[0.6875rem] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                            aria-expanded="@_outputExpanded"
-                            @onclick="() => _outputExpanded = !_outputExpanded" @onclick:stopPropagation="true">
-                        @(_outputExpanded ? L["chat.tool_collapse"] : L["chat.tool_expand"])
-                    </button>
-                }
+                        }
+                        else
+                        {
+                            <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-all border-t border-gray-100 dark:border-gray-800 px-2 py-1 text-[0.6875rem] font-mono text-gray-600 dark:text-gray-400">@ResultPreview</pre>
+                        }
+                    }
+                </div>
             }
             @if (ChildChatId is { } subChatId)
             {
@@ -233,7 +249,56 @@
 
     private bool OutputOverflow => !_outputExpanded && OutputLines.Length > OutputMaxLines;
 
-    private string VisibleOutput => OutputOverflow
-        ? string.Join('\n', OutputLines.Take(OutputMaxLines)) + "\n…"
-        : ResultPreview ?? "";
+    private bool OutputCollapsible => OutputLines.Length > OutputMaxLines;
+
+    private bool OutputOpen => _outputExpanded || !OutputCollapsible;
+
+    /// <summary>Resumo de uma linha do output por tipo (diff/JSON/erro/texto).</summary>
+    private string OutputSummary
+    {
+        get
+        {
+            var output = ResultPreview ?? string.Empty;
+            var kind = OutputKind(output);
+            return L.T("chat.tool_output_summary",
+                ("kind", kind),
+                ("lines", OutputLines.Length.ToString()),
+                ("chars", output.Length.ToString()));
+        }
+    }
+
+    private string OutputKind(string output)
+    {
+        if (IsDiff)
+        {
+            var added = OutputLines.Count(l => l.StartsWith('+') && !l.StartsWith("+++"));
+            var removed = OutputLines.Count(l => l.StartsWith('-') && !l.StartsWith("---"));
+            return $"diff +{added}/−{removed}";
+        }
+        var trimmed = output.TrimStart();
+        if ((trimmed.StartsWith('{') || trimmed.StartsWith('[')) && IsJson(output))
+        {
+            return "JSON";
+        }
+        if (trimmed.StartsWith("erro", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("error", StringComparison.OrdinalIgnoreCase))
+        {
+            var first = OutputLines.FirstOrDefault() ?? "erro";
+            return $"erro · {(first.Length <= 60 ? first : first[..60] + "…")}";
+        }
+        return "texto";
+    }
+
+    private static bool IsJson(string output)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 }
