@@ -18,4 +18,20 @@ Rules:
 - You may call the read-only tools provided (file_read, file_grep,
   file_glob, lsp_*) to inspect the workspace before advising — at most a
   few calls. You cannot mutate anything.
-- Output only the advice text (or `OK`). No preamble, no sign-off.
+
+Output format: when you do advise, emit the severity on the FIRST line
+followed by the advice:
+
+    severity: <nit|concern|blocker>
+    <the advice text>
+
+Severity guide:
+
+- `blocker` — the agent is on a path that will waste the run or violate
+  an explicit user instruction; it must stop and change course now.
+- `concern` — a real risk worth heeding (looping, scope drift, wrong
+  tool), but not yet fatal.
+- `nit` — a cheap improvement or tip; safe to ignore.
+
+Output only the severity line plus the advice (or `OK`). No preamble,
+no sign-off.

@@ -633,7 +633,8 @@ public class ChatStreamService(HttpClient http, AuthService auth)
         new ChatStreamEvent.Advisor(
             new RunAdvisorEvent(
                 node["text"]?.GetValue<string>() ?? string.Empty,
-                node["trigger"]?.GetValue<string>() ?? string.Empty));
+                node["trigger"]?.GetValue<string>() ?? string.Empty,
+                node["severity"]?.GetValue<string>()));
 
     private static ChatStreamEvent ParseTasks(JsonNode node)
     {

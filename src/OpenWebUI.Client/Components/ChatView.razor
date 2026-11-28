@@ -4398,7 +4398,7 @@
         _liveToolCalls.Add(new ToolCallView
         {
             Call = new RunToolCallEvent(
-                $"advisor-{_liveToolCalls.Count}", "advisor", null),
+                $"advisor-{_liveToolCalls.Count}", "advisor", advice.Event.Severity),
             Result = new RunToolResultEvent(
                 $"advisor-{_liveToolCalls.Count}", "advisor", true,
                 advice.Event.Text),

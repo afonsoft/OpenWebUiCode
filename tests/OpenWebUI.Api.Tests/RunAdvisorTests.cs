@@ -127,22 +127,62 @@ public class RunAdvisorTests
     // ---- conselho normalizado (RF-003) ----
 
     [Test]
-    public void TruncateAdvice_OkOuVazioViraNull()
+    public void ParseAdvice_OkOuVazioViraNull()
     {
         Assert.Multiple(() =>
         {
-            Assert.That(RunAdvisorService.TruncateAdvice("OK"), Is.Null);
-            Assert.That(RunAdvisorService.TruncateAdvice("  ok  "), Is.Null);
-            Assert.That(RunAdvisorService.TruncateAdvice("   "), Is.Null);
-            Assert.That(RunAdvisorService.TruncateAdvice(null), Is.Null);
+            Assert.That(RunAdvisorService.ParseAdvice("OK"), Is.Null);
+            Assert.That(RunAdvisorService.ParseAdvice("  ok  "), Is.Null);
+            Assert.That(RunAdvisorService.ParseAdvice("   "), Is.Null);
+            Assert.That(RunAdvisorService.ParseAdvice(null), Is.Null);
         });
     }
 
     [Test]
-    public void TruncateAdvice_Capa500Chars()
+    public void ParseAdvice_Capa500Chars()
     {
-        var advice = RunAdvisorService.TruncateAdvice(new string('x', 900));
-        Assert.That(advice, Has.Length.EqualTo(RunAdvisorService.AdviceChars));
+        var advice = RunAdvisorService.ParseAdvice(new string('x', 900));
+        Assert.That(advice!.Text, Has.Length.EqualTo(RunAdvisorService.AdviceChars));
+    }
+
+    // ---- severidade (SPEC-20261128-advisor-v2) ----
+
+    [Test]
+    public void ParseAdvice_HeaderSeverityExtraiNivel()
+    {
+        var advice = RunAdvisorService.ParseAdvice(
+            "severity: blocker\nPare: vai mutar arquivos fora do escopo.");
+        Assert.Multiple(() =>
+        {
+            Assert.That(advice!.Severity, Is.EqualTo("blocker"));
+            Assert.That(advice.Text, Is.EqualTo("Pare: vai mutar arquivos fora do escopo."));
+        });
+    }
+
+    [Test]
+    public void ParseAdvice_SeverityCaseInsensitiveEValidada()
+    {
+        var nit = RunAdvisorService.ParseAdvice("SEVERITY: NIT.\ndica barata");
+        var invalida = RunAdvisorService.ParseAdvice("severity: fatal\ntexto do conselho");
+        Assert.Multiple(() =>
+        {
+            Assert.That(nit!.Severity, Is.EqualTo("nit"));
+            Assert.That(nit.Text, Is.EqualTo("dica barata"));
+            // severidade fora do conjunto → conselho inteiro preservado, sem nível
+            Assert.That(invalida!.Severity, Is.Null);
+            Assert.That(invalida.Text, Does.Contain("severity: fatal"));
+        });
+    }
+
+    [Test]
+    public void ParseAdvice_SemHeader_SeverityNull()
+    {
+        var advice = RunAdvisorService.ParseAdvice("troque grep antes de abrir arquivos");
+        Assert.Multiple(() =>
+        {
+            Assert.That(advice, Is.Not.Null);
+            Assert.That(advice!.Severity, Is.Null);
+        });
     }
 
     // ---- gates de flag (RF-005) ----
@@ -214,7 +254,7 @@ public class RunAdvisorTests
             complete: (_, _, _) => Task.FromResult(
                 new ProviderCompletion(longo, [], "[]")))
             .AdviseAsync(RunFor(chat), "tool_burst", [], null, default);
-        Assert.That(advice, Has.Length.EqualTo(RunAdvisorService.AdviceChars));
+        Assert.That(advice!.Text, Has.Length.EqualTo(RunAdvisorService.AdviceChars));
     }
 
     [Test]
@@ -282,7 +322,7 @@ public class RunAdvisorTests
         Assert.Multiple(() =>
         {
             Assert.That(executou, Is.False, "tool mutável não pode executar");
-            Assert.That(advice, Is.EqualTo("pare o loop"));
+            Assert.That(advice!.Text, Is.EqualTo("pare o loop"));
         });
     }
 
@@ -314,7 +354,7 @@ public class RunAdvisorTests
         Assert.Multiple(() =>
         {
             Assert.That(chamadas, Is.EqualTo(new[] { "builtin_file_grep" }));
-            Assert.That(advice, Is.EqualTo("nada de errado"));
+            Assert.That(advice!.Text, Is.EqualTo("nada de errado"));
         });
     }
 }

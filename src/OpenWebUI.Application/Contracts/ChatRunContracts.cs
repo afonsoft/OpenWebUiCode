@@ -332,7 +332,11 @@ public sealed record ChatPatchRequest(
 /// </summary>
 /// <param name="Text">Conselho (capado a ~500 chars).</param>
 /// <param name="Trigger"><c>user_message</c> | <c>tool_burst</c> | <c>pause</c>.</param>
-public sealed record RunAdvisorEvent(string Text, string Trigger);
+/// <param name="Severity">Severidade do conselho — <c>nit</c> |
+/// <c>concern</c> | <c>blocker</c> (advisor v2, SPEC-20261128-advisor-v2);
+/// null quando o modelo não classificou.</param>
+public sealed record RunAdvisorEvent(
+    string Text, string Trigger, string? Severity = null);
 
 /// <summary>Arquivo alterado num workdir git (numstat + status M/A/D/R).</summary>
 /// <param name="OldPath">Path anterior quando <see cref="Status"/> é <c>R</c> (rename).</param>
