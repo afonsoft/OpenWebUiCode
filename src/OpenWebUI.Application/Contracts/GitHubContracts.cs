@@ -96,3 +96,12 @@ public sealed record WorkspacePullResponse(
 /// <param name="Pulls">PRs abertos do repo vinculado.</param>
 public sealed record WorkspacePullsResponse(
     bool Github, bool NeedsToken, IReadOnlyList<WorkspacePullResponse> Pulls);
+
+/// <summary>Detalhe de um PR (SPEC-20261128-gh-tools, `builtin:gh_view`).</summary>
+/// <param name="Github">false quando o GitHub está inacessível/sem auth.</param>
+/// <param name="NeedsToken">true quando falta (ou expirou) o PAT.</param>
+/// <param name="NotFound">true quando o número não existe no repo.</param>
+public sealed record WorkspacePullDetailResponse(
+    bool Github, bool NeedsToken, bool NotFound,
+    WorkspacePullResponse? Pull, string? Body,
+    int ChangedFiles, int Additions, int Deletions, bool Mergeable);
