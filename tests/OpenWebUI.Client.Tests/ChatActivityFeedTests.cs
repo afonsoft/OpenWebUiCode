@@ -244,6 +244,8 @@ public sealed class ChatActivityFeedTests
             Assert.That(cut.Markup, Does.Contain("tool-output-summary"));
             Assert.That(cut.Markup, Does.Contain("data-output-kind=\"diff +2"));
             Assert.That(cut.Markup, Does.Contain("/−1"));
+            Assert.That(cut.Markup, Does.Contain("-a\n"));
+            Assert.That(cut.Markup, Does.Contain("+b\n"));
         });
     }
 

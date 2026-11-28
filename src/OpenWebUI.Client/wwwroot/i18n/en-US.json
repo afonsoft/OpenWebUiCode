@@ -691,7 +691,7 @@
   "chat.tool_approve": "Approve",
   "chat.tool_deny": "Deny",
   "chat.tool_expand": "expand",
-  "chat.tool_output_summary": "{kind} · {lines} lines · {chars} chars",
+  "chat.tool_output_summary": "{{kind}} · {{lines}} lines · {{chars}} chars",
   "chat.tool_collapse": "collapse",
   "chat.tool_delegate_open": "open subtask",
   "chat.subchat_title": "Subtask",

@@ -576,7 +576,7 @@
   "chat.tool_approve": "Approva",
   "chat.tool_deny": "Nega",
   "chat.tool_expand": "espandi",
-  "chat.tool_output_summary": "{kind} · {lines} righe · {chars} caratteri",
+  "chat.tool_output_summary": "{{kind}} · {{lines}} righe · {{chars}} caratteri",
   "chat.tool_collapse": "comprimi",
   "chat.tool_delegate_open": "apri sottoattività",
   "chat.subchat_title": "Sottoattività",

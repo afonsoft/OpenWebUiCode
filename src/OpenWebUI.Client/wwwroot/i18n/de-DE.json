@@ -576,7 +576,7 @@
   "chat.tool_approve": "Genehmigen",
   "chat.tool_deny": "Ablehnen",
   "chat.tool_expand": "erweitern",
-  "chat.tool_output_summary": "{kind} · {lines} Zeilen · {chars} Zeichen",
+  "chat.tool_output_summary": "{{kind}} · {{lines}} Zeilen · {{chars}} Zeichen",
   "chat.tool_collapse": "einklappen",
   "chat.tool_delegate_open": "Teilaufgabe öffnen",
   "chat.subchat_title": "Unteraufgabe",

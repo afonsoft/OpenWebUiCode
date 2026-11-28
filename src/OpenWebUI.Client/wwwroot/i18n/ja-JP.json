@@ -576,7 +576,7 @@
   "chat.tool_approve": "承認",
   "chat.tool_deny": "拒否",
   "chat.tool_expand": "展開",
-  "chat.tool_output_summary": "{kind} · {lines}行 · {chars}文字",
+  "chat.tool_output_summary": "{{kind}} · {{lines}}行 · {{chars}}文字",
   "chat.tool_collapse": "折りたたむ",
   "chat.tool_delegate_open": "サブタスクを開く",
   "chat.subchat_title": "サブタスク",

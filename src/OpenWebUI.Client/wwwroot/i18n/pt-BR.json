@@ -691,7 +691,7 @@
   "chat.tool_approve": "Aprovar",
   "chat.tool_deny": "Negar",
   "chat.tool_expand": "expandir",
-  "chat.tool_output_summary": "{kind} · {lines} linhas · {chars} chars",
+  "chat.tool_output_summary": "{{kind}} · {{lines}} linhas · {{chars}} chars",
   "chat.tool_collapse": "recolher",
   "chat.tool_delegate_open": "ver subtarefa",
   "chat.subchat_title": "Subtarefa",
