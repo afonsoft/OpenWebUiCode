@@ -262,6 +262,10 @@ builder.Services.AddScoped<IBuiltinChatTool, ToolInstallBuiltinTool>();
 builder.Services.AddSingleton<WorkspaceIndexService>();
 builder.Services.AddScoped<IBuiltinChatTool, CodeSearchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, TodoWriteBuiltinTool>();
+// think/goal (SPEC-20261128-think-goal-tools): raciocínio privado +
+// objetivo declarado da run — estilo Devin/opencode.
+builder.Services.AddScoped<IBuiltinChatTool, ThinkBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, GoalBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RewindBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ContextNotesBuiltinTool>();

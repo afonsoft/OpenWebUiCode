@@ -1437,5 +1437,7 @@
   "chat.panel_tasks_done": "{{done}}/{{total}} concluídas",
   "chat.doc_download": "Baixar",
   "chat.worklog.collapse": "Minimizar",
-  "chat.status_analyzing": "Analisando…"
+  "chat.status_analyzing": "Analisando…",
+  "chat.activity.think": "Pensando",
+  "chat.activity.goal": "Definindo objetivo"
 }

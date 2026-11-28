@@ -71,6 +71,10 @@ public static class ToolActivityMap
                 => "chat.activity.decision_auto",
             _ when Contains(name, "advisor")
                 => "chat.activity.advisor",
+            _ when Contains(name, "think")
+                => "chat.activity.think",
+            _ when Contains(name, "goal")
+                => "chat.activity.goal",
             _ => "chat.activity.tool",
         };
     }
