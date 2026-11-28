@@ -14,7 +14,7 @@ namespace OpenWebUI.Infrastructure.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.15");
 
             modelBuilder.Entity("OpenWebUI.Domain.AdminPolicyStatement", b =>
                 {
@@ -1214,6 +1214,46 @@ namespace OpenWebUI.Infrastructure.Migrations
                     b.HasIndex("RunId", "Status");
 
                     b.ToTable("ChatRunSteers");
+                });
+
+            modelBuilder.Entity("OpenWebUI.Domain.ChatTaskList", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChatId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ItemsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RunId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Seq")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Workdir")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Workdir", "CreatedAt");
+
+                    b.HasIndex("ChatId", "RunId", "Seq");
+
+                    b.ToTable("ChatTaskLists");
                 });
 
             modelBuilder.Entity("OpenWebUI.Domain.ConfigEntry", b =>

@@ -27,6 +27,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     /// <summary>Eventos duráveis append-only por run (SPEC-20261016-run-recovery).</summary>
     public DbSet<ChatRunEvent> ChatRunEvents => Set<ChatRunEvent>();
 
+    /// <summary>Snapshots persistidos da lista de tarefas por run.</summary>
+    public DbSet<ChatTaskList> ChatTaskLists => Set<ChatTaskList>();
+
     /// <summary>Registro de ciclo de vida do chat (SPEC-20261115).</summary>
     public DbSet<ChatArchiveMeta> ChatArchiveMetas => Set<ChatArchiveMeta>();
 
@@ -294,6 +297,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasKey(s => s.Id);
             entity.HasIndex(s => new { s.RunId, s.Status });
             entity.HasIndex(s => s.ChatId);
+        });
+
+        modelBuilder.Entity<ChatTaskList>(entity =>
+        {
+            entity.HasKey(t => t.Id);
+            entity.HasIndex(t => new { t.ChatId, t.RunId, t.Seq });
+            entity.HasIndex(t => new { t.Workdir, t.CreatedAt });
         });
 
         modelBuilder.Entity<ChatArchiveMeta>(entity =>
