@@ -207,6 +207,47 @@ public sealed class ChatActivityFeedTests
 
 
     [Test]
+    public void Persisted_NomeRealVemDoToolCallsJson()
+    {
+        // Cobre RF-001/RF-002: id continua estável, mas o nome exibido e
+        // classificado vem do function.name persistido na mensagem assistant.
+        var assistant = new ChatMessageModel("a1", "assistant", string.Empty, null, 0,
+            ToolCallsJson: "[{\"id\":\"call_20_file_write\",\"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\"{}\"}}]");
+        var malformed = new ChatMessageModel("a2", "assistant", string.Empty, null, 0,
+            ToolCallsJson: "{");
+        var wrongShape = new ChatMessageModel("a3", "assistant", string.Empty, null, 0,
+            ToolCallsJson: "[\"call_sem_objeto\"]");
+
+        var names = ToolCallView.PersistedToolNames([assistant, malformed, wrongShape]);
+        var view = ToolCallView.FromPersisted(
+            new ChatMessageModel("m3", "tool", "diff", null, 0,
+                ToolCallId: "call_20_file_write"),
+            names["call_20_file_write"]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(view.Call.Id, Is.EqualTo("call_20_file_write"));
+            Assert.That(view.Call.Name, Is.EqualTo("file_write"));
+            Assert.That(view.Result?.Name, Is.EqualTo("file_write"));
+        });
+    }
+
+    [Test]
+    public void Persisted_SemMapeamento_MantemFallbackDoId()
+    {
+        // Cobre RF-003: históricos antigos/quebrados não mudam de comportamento.
+        var view = ToolCallView.FromPersisted(
+            new ChatMessageModel("m4", "tool", "ok", null, 0,
+                ToolCallId: "call_sem_mapa"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(view.Call.Name, Is.EqualTo("call_sem_mapa"));
+            Assert.That(view.Result?.Name, Is.EqualTo("call_sem_mapa"));
+        });
+    }
+
+    [Test]
     public void Card_OutputLongo_CabecalhoResumidoPorTipoECollapse()
     {
         using var ctx = Setup();

@@ -19,27 +19,79 @@ public sealed partial class ToolCallView
 
     /// <summary>
     /// Converte uma mensagem persistida role=tool em ToolCallView para o
-    /// work log colapsado do histórico. Para delegate_task, reidrata o
+    /// work log colapsado do histórico. O nome real vem do tool_calls da
+    /// mensagem assistant quando resolvido pelo chamador; sem ele, preserva
+    /// o fallback antigo para o ToolCallId. Para delegate_task, reidrata o
     /// <c>childChatId</c> do link "(chat filho: /c/{id})" gravado no texto
     /// — é o que permite o card embutir a conversa da subtarefa (padrão
     /// Devin web) também no histórico, onde o Result estruturado do SSE
     /// não foi persistido.
     /// </summary>
-    public static ToolCallView FromPersisted(ChatMessageModel m)
+    public static ToolCallView FromPersisted(ChatMessageModel m, string? toolName = null)
     {
-        var name = m.ToolCallId ?? "tool";
+        var id = m.ToolCallId ?? "tool";
+        var name = string.IsNullOrWhiteSpace(toolName) ? id : toolName;
         return new ToolCallView
         {
-            Call = new RunToolCallEvent(name, name, null),
+            Call = new RunToolCallEvent(id, name, null),
             Result = new RunToolResultEvent(
-                name, name, true, m.Content,
-                Result: DelegateResult(m)),
+                id, name, true, m.Content,
+                Result: DelegateResult(m, name)),
         };
     }
 
-    private static JsonElement? DelegateResult(ChatMessageModel m)
+    /// <summary>
+    /// Extrai o mapa id → nome das tool_calls persistidas nas mensagens
+    /// assistant. JSON malformado ou fora do formato esperado é ignorado:
+    /// o histórico antigo pode ter vindo de providers heterogêneos.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> PersistedToolNames(
+        IEnumerable<ChatMessageModel> messages)
     {
-        var name = m.ToolCallId ?? string.Empty;
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var message in messages)
+        {
+            if (string.IsNullOrWhiteSpace(message.ToolCallsJson))
+            {
+                continue;
+            }
+            try
+            {
+                using var doc = JsonDocument.Parse(message.ToolCallsJson);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+                foreach (var call in doc.RootElement.EnumerateArray())
+                {
+                    if (call.ValueKind != JsonValueKind.Object
+                        || !call.TryGetProperty("id", out var idEl)
+                        || idEl.ValueKind != JsonValueKind.String
+                        || !call.TryGetProperty("function", out var fn)
+                        || fn.ValueKind != JsonValueKind.Object
+                        || !fn.TryGetProperty("name", out var nameEl)
+                        || nameEl.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+                    var id = idEl.GetString();
+                    var name = nameEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(name))
+                    {
+                        names[id] = name;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // tool_calls malformado — ignora apenas essa mensagem.
+            }
+        }
+        return names;
+    }
+
+    private static JsonElement? DelegateResult(ChatMessageModel m, string name)
+    {
         if (!name.EndsWith("delegate_task", StringComparison.Ordinal)
             || m.Content is null)
         {
