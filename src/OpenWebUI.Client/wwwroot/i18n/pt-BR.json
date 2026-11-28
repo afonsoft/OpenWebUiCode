@@ -1433,5 +1433,6 @@
   "automations.health_ok": "Saudável",
   "automations.health_warn": "Atenção",
   "automations.health_bad": "Com falhas",
-  "automations.health_ok_runs": "de sucesso nas últimas execuções"
+  "automations.health_ok_runs": "de sucesso nas últimas execuções",
+  "chat.panel_tasks_done": "{{done}}/{{total}} concluídas"
 }

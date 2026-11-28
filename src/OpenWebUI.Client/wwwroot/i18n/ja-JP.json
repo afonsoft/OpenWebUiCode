@@ -1433,5 +1433,6 @@
   "automations.health_ok": "",
   "automations.health_warn": "",
   "automations.health_bad": "あり",
-  "automations.health_ok_runs": "の"
+  "automations.health_ok_runs": "の",
+  "chat.panel_tasks_done": "{{done}}/{{total}} "
 }

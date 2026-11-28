@@ -132,6 +132,10 @@ public sealed class ChatRunExecutor(
     /// </summary>
     private readonly Dictionary<string, RunChangeItem> _changes = new();
 
+    /// <summary>Workdir base resolvido da run (SPEC-20261128-task-history) —
+    /// usado na persistência dos snapshots de tarefas.</summary>
+    private string? _workdir;
+
     /// <summary>
     /// Notas system pendentes → próximo round (conselhos do advisor +
     /// confirmação de compactação forçada por <c>new_context</c>).
@@ -1353,6 +1357,21 @@ public sealed class ChatRunExecutor(
                     new ChatCompletionMessage(RoleSystem, note));
             }
         }
+        // SPEC-20261128-task-history: última lista de tarefas do chat
+        // entra como nota system — a run continua do plano anterior
+        // (padrão Todo.get do opencode) em vez de começar vazia.
+        var prevTasks = await LatestTasksJsonAsync(run.ChatId, ct);
+        if (prevTasks is not null)
+        {
+            lock (_contextNotes)
+            {
+                _contextNotes.Enqueue(new ChatCompletionMessage(RoleSystem,
+                    "<previous_tasks>\n"
+                    + "Lista de tarefas mais recente deste chat (continuar dela — "
+                    + "reemitir via todo_write no início desta run se ainda valer):\n"
+                    + prevTasks + "\n</previous_tasks>"));
+            }
+        }
         // Advisor (SPEC-20261013-run-advisor): a entrada da mensagem
         // do usuário dispara a primeira revisão — em background,
         // com o subset read-only do workspace disponível.
@@ -2267,6 +2286,7 @@ public sealed class ChatRunExecutor(
         // Com repo vinculado o workdir vira o checkout do repo (mesmo jail);
         // binding por chat precede o global (SPEC-20261010-chat-repo-binding).
         var workdir = await repos.ResolveWorkdirAsync(user.Id, run.ChatId, ct);
+        _workdir = workdir;
         // SPEC-20261010-subagent-worktree: sub-runs em CHAT FILHO
         // (delegate_task / command subagent) SEMPRE isolam em worktree;
         // continuações auto-chain do MESMO chat reutilizam o worktree da
@@ -2620,7 +2640,7 @@ public sealed class ChatRunExecutor(
     }
 
     /// <summary>Publica o evento <c>tool_result</c> (ok=false em erro/negação).</summary>
-    private Task PublishToolResultAsync(
+    private async Task PublishToolResultAsync(
         ChatRun run, ProviderToolCall call, string output, JsonElement? result, bool denied)
     {
         var ok = !denied && !output.StartsWith("Erro", StringComparison.Ordinal);
@@ -2634,6 +2654,12 @@ public sealed class ChatRunExecutor(
         {
             (imagePath, videoPath) = ExtractMediaPaths(result);
             PublishTasksSnapshot(run, result);
+            if (result is { } res && res.ValueKind == JsonValueKind.Object
+                && res.TryGetProperty("tasks", out var tasksEl)
+                && tasksEl.ValueKind == JsonValueKind.Array)
+            {
+                await PersistTasksSnapshotAsync(run, tasksEl);
+            }
             if (AccumulateChanges(result))
             {
                 broadcaster.Publish(run.Id,
@@ -2648,7 +2674,6 @@ public sealed class ChatRunExecutor(
         }
         broadcaster.Publish(run.Id,
             $"event: tool_result\ndata: {JsonSerializer.Serialize(new RunToolResultEvent(call.Id, call.Name, ok, Scrub(Truncate(output, PreviewChars)), ImagePath: imagePath, Denied: denied, Result: result, VideoPath: videoPath), JsonOptions)}");
-        return Task.CompletedTask;
     }
 
     /// <summary>Extrai imagePath/videoPath do payload estruturado da tool.</summary>
@@ -2682,6 +2707,46 @@ public sealed class ChatRunExecutor(
         {
             broadcaster.Publish(run.Id, $"event: tasks\ndata: {tasks.GetRawText()}");
         }
+    }
+
+    /// <summary>
+    /// Grava o snapshot da lista de tarefas (SPEC-20261128-task-history):
+    /// append-only por run — alimenta o histórico da aba Tarefas e a
+    /// continuidade entre runs do mesmo chat (padrão <c>Todo.get</c> do
+    /// opencode). Falha não derruba a run (bookkeeping).
+    /// </summary>
+    private async Task PersistTasksSnapshotAsync(ChatRun run, JsonElement tasks)
+    {
+        var seq = await db.ChatTaskLists
+            .CountAsync(t => t.RunId == run.Id) + 1;
+        db.ChatTaskLists.Add(new ChatTaskList
+        {
+            ChatId = run.ChatId,
+            RunId = run.Id,
+            UserId = run.UserId,
+            Workdir = _workdir ?? string.Empty,
+            Seq = seq,
+            ItemsJson = tasks.GetRawText(),
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Último snapshot de tarefas do chat (SPEC-20261128-task-history) —
+    /// injetado como nota system no primeiro round para a run continuar do
+    /// plano anterior em vez de começar com lista vazia.
+    /// </summary>
+    private async Task<string?> LatestTasksJsonAsync(
+        string chatId, CancellationToken ct)
+    {
+        var row = await db.ChatTaskLists.AsNoTracking()
+            .Where(t => t.ChatId == chatId)
+            .OrderByDescending(t => t.CreatedAt)
+            .ThenByDescending(t => t.Seq)
+            .Select(t => t.ItemsJson)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrEmpty(row) ? null : row;
     }
 
     /// <summary>

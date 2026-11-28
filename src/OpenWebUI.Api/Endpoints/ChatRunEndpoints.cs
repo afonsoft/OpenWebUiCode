@@ -47,6 +47,9 @@ public static class ChatRunEndpoints
         // Roster do agent team (SPEC-20261021-harness-seams RF-E1).
         group.MapGet("/{id}/team", GetTeamAsync);
         group.MapGet("/{id}/runs/{runId}/diff", GetRunDiffAsync);
+        // Histórico de listas de tarefas (SPEC-20261128-task-history):
+        // scope=workdir agrega todas as runs do mesmo workspace.
+        group.MapGet("/{id}/task-lists", ListTaskListsAsync);
     }
 
     /// <summary>
@@ -424,6 +427,91 @@ public static class ChatRunEndpoints
             .Take(20)
             .ToListAsync(ct);
         return Results.Ok(runs.Select(ToResponse));
+    }
+
+    /// <summary>
+    /// Último snapshot de tarefas por run (SPEC-20261128-task-history).
+    /// <c>?scope=workdir</c> agrega as runs de todos os chats que
+    /// compartilham o workdir resolvido deste chat.
+    /// </summary>
+    private static async Task<IResult> ListTaskListsAsync(
+        string id, string? scope, HttpContext http, AppDbContext db,
+        WorkspaceRepoService repos, CancellationToken ct)
+    {
+        var user = await AuthEndpoints.FindUserAsync(http, db, ct);
+        if (user is null)
+        {
+            return Results.Unauthorized();
+        }
+
+        var chat = await db.Chats.AsNoTracking()
+            .Where(c => c.Id == id && c.UserId == user.Id)
+            .Select(c => new { c.Id })
+            .FirstOrDefaultAsync(ct);
+        if (chat is null)
+        {
+            return Results.NotFound(new { detail = "Chat não encontrado." });
+        }
+
+        IQueryable<ChatTaskList> query = db.ChatTaskLists.AsNoTracking()
+            .Where(t => t.UserId == user.Id);
+        if (string.Equals(scope, "workdir", StringComparison.OrdinalIgnoreCase))
+        {
+            var workdir = await repos.ResolveWorkdirAsync(user.Id, id, ct);
+            query = query.Where(t => t.Workdir == workdir);
+        }
+        else
+        {
+            query = query.Where(t => t.ChatId == id);
+        }
+
+        var rows = await query
+            .OrderByDescending(t => t.CreatedAt)
+            .Take(500)
+            .ToListAsync(ct);
+
+        // Último snapshot por run (maior Seq dentro do grupo mais recente).
+        var latest = rows
+            .GroupBy(t => t.RunId)
+            .Select(g => g.OrderByDescending(t => t.CreatedAt)
+                          .ThenByDescending(t => t.Seq)
+                          .First())
+            .OrderByDescending(t => t.CreatedAt)
+            .Take(50)
+            .ToList();
+
+        var runIds = latest.Select(t => t.RunId).Distinct().ToList();
+        var metas = await db.ChatRuns.AsNoTracking()
+            .Where(r => runIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.Status, r.Model })
+            .ToListAsync(ct);
+        var chatIds = latest.Select(t => t.ChatId).Distinct().ToList();
+        var titles = await db.Chats.AsNoTracking()
+            .Where(c => chatIds.Contains(c.Id))
+            .Select(c => new { c.Id, c.Title })
+            .ToListAsync(ct);
+
+        var result = latest.Select(t =>
+        {
+            var meta = metas.FirstOrDefault(m => m.Id == t.RunId);
+            var title = titles.FirstOrDefault(c => c.Id == t.ChatId)?.Title;
+            IReadOnlyList<RunTaskItem> items = [];
+            try
+            {
+                items = JsonSerializer
+                    .Deserialize<List<RunTaskItem>>(t.ItemsJson, JsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                // Snapshot corrompido não derruba o histórico.
+            }
+            return new ChatTaskListEntry(
+                t.RunId, t.ChatId, title,
+                meta?.Status ?? "unknown", meta?.Model ?? string.Empty,
+                t.CreatedAt, items);
+        }).ToList();
+
+        return Results.Ok(result);
     }
 
     /// <summary>

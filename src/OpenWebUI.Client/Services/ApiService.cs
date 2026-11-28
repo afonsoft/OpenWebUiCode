@@ -1020,6 +1020,16 @@ public class ApiService(HttpClient http, AuthService auth)
     public async Task<List<ParallelRunResponse>> GetRunsConsoleAsync() =>
         await SendAsync<List<ParallelRunResponse>>(HttpMethod.Get, "/api/v1/chats/runs") ?? [];
 
+    /// <summary>
+    /// Histórico de listas de tarefas do chat (SPEC-20261128-task-history):
+    /// último snapshot por run. <paramref name="workdirScope"/> agrega as
+    /// runs de todos os chats no mesmo workdir.
+    /// </summary>
+    public async Task<List<ChatTaskListEntry>> GetTaskListsAsync(
+        string chatId, bool workdirScope = false) =>
+        await SendAsync<List<ChatTaskListEntry>>(HttpMethod.Get,
+            $"/api/v1/chats/{chatId}/task-lists{(workdirScope ? "?scope=workdir" : "")}") ?? [];
+
     /// <summary>Lê a feature flag do terminal PTY (off por default).</summary>
     public async Task<bool> GetTerminalEnabledAsync()
     {

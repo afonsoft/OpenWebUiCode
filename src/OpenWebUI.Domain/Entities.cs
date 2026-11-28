@@ -414,6 +414,43 @@ public class ChatRunSteer
     public long Timestamp { get; set; }
 }
 
+/// <summary>
+/// Snapshot persistido da lista de tarefas de uma run
+/// (SPEC-20261128-task-history): cada <c>todo_write</c> grava uma linha
+/// append-only — a aba Tarefas do workspace mostra o histórico por run e
+/// a run seguinte do chat continua da lista anterior (padrão
+/// <c>Todo.get</c> do opencode).
+/// </summary>
+public class ChatTaskList
+{
+    /// <summary>Identificador único (GUID).</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>Chat ao qual a lista pertence.</summary>
+    public string ChatId { get; set; } = string.Empty;
+
+    /// <summary>Run que publicou o snapshot.</summary>
+    public string RunId { get; set; } = string.Empty;
+
+    /// <summary>Dono (mesmo do chat — isolamento).</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>Diretório de trabalho base da run — histórico por workdir
+    /// agrega runs de chats distintos no mesmo workspace.</summary>
+    public string Workdir { get; set; } = string.Empty;
+
+    /// <summary>Sequência monotônica do snapshot dentro da run (1..N).</summary>
+    public long Seq { get; set; }
+
+    /// <summary>Snapshot completo da lista em JSON —
+    /// <c>[{id, content, status}]</c>, mesmo shape do evento SSE
+    /// <c>tasks</c>.</summary>
+    public string ItemsJson { get; set; } = "[]";
+
+    /// <summary>Criação (epoch seconds).</summary>
+    public long CreatedAt { get; set; }
+}
+
 /// <summary>Status possíveis de um job de background de chat.</summary>
 public static class ChatJobStatus
 {

@@ -213,6 +213,22 @@ public sealed record RunTaskItem(string Id, string Content, string Status);
 public sealed record RunTasksEvent(IReadOnlyList<RunTaskItem> Tasks);
 
 /// <summary>
+/// Entrada do histórico de listas de tarefas (SPEC-20261128-task-history):
+/// último snapshot persistido de uma run — uma linha por run na resposta
+/// de <c>GET /api/v1/chats/{id}/task-lists</c>.
+/// </summary>
+/// <param name="RunId">Run que publicou a lista.</param>
+/// <param name="ChatId">Chat dono da run.</param>
+/// <param name="ChatTitle">Título do chat (para o header do grupo no painel).</param>
+/// <param name="RunStatus">Status atual da run (queued/running/completed/…).</param>
+/// <param name="Model">Modelo pedido na run.</param>
+/// <param name="CreatedAt">Epoch seconds do snapshot.</param>
+/// <param name="Items">Itens do último snapshot da run.</param>
+public sealed record ChatTaskListEntry(
+    string RunId, string ChatId, string? ChatTitle, string RunStatus,
+    string Model, long CreatedAt, IReadOnlyList<RunTaskItem> Items);
+
+/// <summary>
 /// Evento SSE <c>mode</c> (SPEC-20261009-agent-modes-plan-build RF-003):
 /// emitido quando o modo do agente do chat muda mid-run — o
 /// <c>plan_exit</c> aprovado promove <c>plan</c> → <c>build</c> e o chip
