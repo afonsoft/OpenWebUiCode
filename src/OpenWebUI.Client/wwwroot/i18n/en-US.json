@@ -1441,5 +1441,6 @@
   "chat.activity.wait": "Waiting",
   "chat.activity.read_archive": "Reading archive",
   "chat.activity.read_sqlite": "Querying database",
-  "chat.activity.memory_reflect": "Reflecting on memories"
+  "chat.activity.memory_reflect": "Reflecting on memories",
+  "chat.activity.gh_pulls": "Listing pull requests"
 }

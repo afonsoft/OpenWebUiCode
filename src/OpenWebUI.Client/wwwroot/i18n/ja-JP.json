@@ -1441,5 +1441,6 @@
   "chat.activity.wait": "",
   "chat.activity.read_archive": "ー",
   "chat.activity.read_sqlite": "ーー",
-  "chat.activity.memory_reflect": ""
+  "chat.activity.memory_reflect": "",
+  "chat.activity.gh_pulls": ""
 }
