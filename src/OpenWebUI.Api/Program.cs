@@ -284,6 +284,9 @@ builder.Services.AddScoped<IBuiltinChatTool, WorktreeMergeBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemorySaveBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemorySearchBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, MemoryLearnBuiltinTool>();
+// memory_reflect (plano P1.16): digest determinístico do banco de
+// memórias — contagens por escopo, mais recente por grupo, stale >30d.
+builder.Services.AddScoped<IBuiltinChatTool, MemoryReflectBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, AgentCatalogBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, SpecsBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, UnseenMessagesBuiltinTool>();

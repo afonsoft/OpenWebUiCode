@@ -1440,5 +1440,6 @@
   "chat.status_analyzing": "Analisando…",
   "chat.activity.wait": "Aguardando",
   "chat.activity.read_archive": "Lendo arquivo compactado",
-  "chat.activity.read_sqlite": "Consultando banco de dados"
+  "chat.activity.read_sqlite": "Consultando banco de dados",
+  "chat.activity.memory_reflect": "Refletindo sobre memórias"
 }
