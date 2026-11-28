@@ -1440,6 +1440,7 @@
   "chat.status_analyzing": "分析中…",
   "chat.activity.wait": "",
   "chat.activity.read_archive": "",
+  "chat.activity.read_pdf": "正在读取 PDF",
   "chat.activity.read_sqlite": "",
   "chat.activity.memory_reflect": "",
   "chat.activity.gh_pulls": ""

@@ -81,6 +81,8 @@ public static class ToolActivityMap
                 => "chat.activity.gh_pulls",
             _ when Contains(name, "wait")
                 => "chat.activity.wait",
+            _ when Contains(name, "read_pdf")
+                => "chat.activity.read_pdf",
             _ when Contains(name, "archive")
                 => "chat.activity.read_archive",
             _ when Contains(name, "sqlite")

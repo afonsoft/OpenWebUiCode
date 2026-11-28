@@ -270,9 +270,10 @@ builder.Services.AddScoped<IBuiltinChatTool, GoalBuiltinTool>();
 // de background terminar — metade "processo" do wait/yield.
 builder.Services.AddScoped<IBuiltinChatTool, WaitBuiltinTool>();
 // leitura rica (SPEC-20261128-read-rich-tools, plano P1.17):
-// zip/SQLite inspecionáveis direto do agent loop.
+// zip/SQLite/PDF inspecionáveis direto do agent loop.
 builder.Services.AddScoped<IBuiltinChatTool, ReadArchiveBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ReadSqliteBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ReadPdfBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, GhPullsBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, GhViewBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();

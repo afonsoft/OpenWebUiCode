@@ -1440,6 +1440,7 @@
   "chat.status_analyzing": "分析中…",
   "chat.activity.wait": "",
   "chat.activity.read_archive": "ー",
+  "chat.activity.read_pdf": "PDFを読み込み中",
   "chat.activity.read_sqlite": "ーー",
   "chat.activity.memory_reflect": "",
   "chat.activity.gh_pulls": ""
