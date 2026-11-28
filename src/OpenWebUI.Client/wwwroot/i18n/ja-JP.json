@@ -1434,5 +1434,6 @@
   "automations.health_warn": "",
   "automations.health_bad": "あり",
   "automations.health_ok_runs": "の",
-  "chat.panel_tasks_done": "{{done}}/{{total}} "
+  "chat.panel_tasks_done": "{{done}}/{{total}} ",
+  "chat.doc_download": "ー"
 }

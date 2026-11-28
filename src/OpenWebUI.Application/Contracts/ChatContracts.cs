@@ -29,6 +29,63 @@ public sealed record ChatMessageFileModel(
             { } c when c.StartsWith("video/", StringComparison.OrdinalIgnoreCase) => "video",
             _ => "file",
         });
+
+    /// <summary>
+    /// Extensões tratadas como documento de texto (SPEC-20261128-
+    /// chat-doc-attachments): ganham card com miniatura + viewer em vez
+    /// do chip genérico. Markdown vira HTML no viewer; o resto, pre.
+    /// </summary>
+    private static readonly HashSet<string> DocExtensions = new(
+        StringComparer.OrdinalIgnoreCase)
+    {
+        ".md", ".markdown", ".mdown", ".txt", ".log", ".csv", ".tsv",
+        ".json", ".jsonl", ".yaml", ".yml", ".xml", ".toml", ".ini",
+        ".cfg", ".env", ".diff", ".patch", ".cs", ".razor", ".csproj",
+        ".sln", ".slnx", ".js", ".jsx", ".ts", ".tsx", ".py", ".java",
+        ".go", ".rs", ".rb", ".php", ".sh", ".bash", ".zsh", ".ps1",
+        ".sql", ".html", ".htm", ".css", ".scss", ".vue", ".svelte",
+        ".c", ".h", ".cpp", ".hpp", ".kt", ".swift", ".lua", ".pl",
+    };
+
+    /// <summary>Content-Types que denotam texto mesmo sem extensão conhecida.</summary>
+    private static bool IsTextContentType(string? contentType) =>
+        contentType is { } c
+            && (c.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+                || c is "application/json" or "application/xml"
+                    or "application/x-yaml" or "application/yaml"
+                    or "application/toml" or "application/javascript"
+                    or "application/typescript" or "application/x-sh");
+
+    /// <summary>
+    /// Tipo de documento: <c>markdown</c> (renderiza HTML no viewer),
+    /// <c>text</c> (pre monoespaçado) ou null (não é doc — chip atual).
+    /// Decisão é client-side por extensão/MIME — sem mudança de schema.
+    /// </summary>
+    public string? DocKind
+    {
+        get
+        {
+            if (Type != "file")
+            {
+                return null;
+            }
+            var ext = Path.GetExtension(Name);
+            var markdown = ext is ".md" or ".markdown" or ".mdown"
+                || ContentType is "text/markdown" or "text/x-markdown";
+            if (markdown)
+            {
+                return "markdown";
+            }
+            if (DocExtensions.Contains(ext) || IsTextContentType(ContentType))
+            {
+                return "text";
+            }
+            return null;
+        }
+    }
+
+    /// <summary><see langword="true"/> quando o anexo ganha card de documento.</summary>
+    public bool IsDoc => DocKind is not null;
 }
 
 /// <summary>Uma mensagem dentro de um chat (formato OpenAI simplificado).</summary>

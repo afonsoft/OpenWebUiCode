@@ -141,6 +141,34 @@ window.openwebui = {
 			})();
 			return this._pending[fileId];
 		},
+		// SPEC-20261128-chat-doc-attachments: conteúdo textual do arquivo
+		// (miniatura do card / viewer / copiar) — mesmo pipeline autenticado
+		// do resolve, devolve null em falha. maxChars capa a prévia.
+		readText: async function (fileId, maxChars) {
+			if (!fileId) return null;
+			try {
+				const res = await fetch('/api/v1/files/' + encodeURIComponent(fileId) + '/content', {
+					headers: { 'Authorization': 'Bearer ' + this._token() }
+				});
+				if (!res.ok) return null;
+				const text = await res.text();
+				return maxChars && text.length > maxChars ? text.slice(0, maxChars) : text;
+			} catch (e) {
+				return null;
+			}
+		},
+		// Download com auth: resolve o object URL e dispara <a download>.
+		download: async function (fileId, name) {
+			const url = await this.resolve(fileId);
+			if (!url) return false;
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = name || 'download';
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			return true;
+		},
 		revoke: function (fileId) {
 			const url = this._cache[fileId];
 			if (url) {

@@ -32,8 +32,19 @@
             <div class="flex flex-wrap gap-1.5 mb-1 @(Message.Role == "user" ? "justify-end" : "")">
                 @foreach (var f in files)
                 {
-                    <AttachmentThumb FileId="@f.Id" Name="@f.Name" Type="@f.Type"
-                                     OnOpen="() => OpenPreviewAsync(f)" />
+                    @* SPEC-20261128-chat-doc-attachments: docs de texto/md
+                       ganham card com miniatura + viewer; mídia e demais
+                       tipos seguem no thumb/chip atual. *@
+                    if (f.IsDoc)
+                    {
+                        <DocAttachmentCard FileId="@f.Id" Name="@f.Name"
+                                           Size="@f.Size" DocKind="@f.DocKind" />
+                    }
+                    else
+                    {
+                        <AttachmentThumb FileId="@f.Id" Name="@f.Name" Type="@f.Type"
+                                         OnOpen="() => OpenPreviewAsync(f)" />
+                    }
                 }
             </div>
         }
