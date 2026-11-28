@@ -1438,6 +1438,7 @@
   "chat.doc_download": "Baixar",
   "chat.worklog.collapse": "Minimizar",
   "chat.status_analyzing": "Analisando…",
-  "chat.activity.think": "Pensando",
-  "chat.activity.goal": "Definindo objetivo"
+  "chat.activity.wait": "Aguardando",
+  "chat.activity.read_archive": "Lendo arquivo compactado",
+  "chat.activity.read_sqlite": "Consultando banco de dados"
 }

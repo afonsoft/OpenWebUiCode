@@ -266,6 +266,10 @@ builder.Services.AddScoped<IBuiltinChatTool, TodoWriteBuiltinTool>();
 // objetivo declarado da run — estilo Devin/opencode.
 builder.Services.AddScoped<IBuiltinChatTool, ThinkBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, GoalBuiltinTool>();
+// leitura rica (SPEC-20261128-read-rich-tools, plano P1.17):
+// zip/SQLite inspecionáveis direto do agent loop.
+builder.Services.AddScoped<IBuiltinChatTool, ReadArchiveBuiltinTool>();
+builder.Services.AddScoped<IBuiltinChatTool, ReadSqliteBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, CheckpointBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, RewindBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, ContextNotesBuiltinTool>();

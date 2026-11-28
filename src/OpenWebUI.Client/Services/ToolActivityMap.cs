@@ -75,6 +75,10 @@ public static class ToolActivityMap
                 => "chat.activity.think",
             _ when Contains(name, "goal")
                 => "chat.activity.goal",
+            _ when Contains(name, "archive")
+                => "chat.activity.read_archive",
+            _ when Contains(name, "sqlite")
+                => "chat.activity.read_sqlite",
             _ => "chat.activity.tool",
         };
     }

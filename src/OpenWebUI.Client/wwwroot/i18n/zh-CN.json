@@ -1438,6 +1438,7 @@
   "chat.doc_download": "",
   "chat.worklog.collapse": "最小化",
   "chat.status_analyzing": "分析中…",
-  "chat.activity.think": "思考中",
-  "chat.activity.goal": "设定目标"
+  "chat.activity.wait": "等待中",
+  "chat.activity.read_archive": "",
+  "chat.activity.read_sqlite": ""
 }
