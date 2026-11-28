@@ -1445,5 +1445,7 @@
   "chat.activity.read_pdf": "Lendo PDF",
   "chat.activity.read_sqlite": "Consultando banco de dados",
   "chat.activity.memory_reflect": "Refletindo sobre memórias",
-  "chat.activity.gh_pulls": "Listando pull requests"
+  "chat.activity.gh_pulls": "Listando pull requests",
+  "chat.activity.gh_diff": "Lendo diff do PR",
+  "chat.activity.gh_comment": "Comentando no PR"
 }

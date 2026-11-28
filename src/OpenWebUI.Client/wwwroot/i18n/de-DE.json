@@ -1445,5 +1445,7 @@
   "chat.activity.read_pdf": "PDF wird gelesen",
   "chat.activity.read_sqlite": "Datenbankabfrage",
   "chat.activity.memory_reflect": "Erinnerungen werden geprüft",
-  "chat.activity.gh_pulls": "Pull Requests auflisten"
+  "chat.activity.gh_pulls": "Pull Requests auflisten",
+  "chat.activity.gh_diff": "PR-Diff wird gelesen",
+  "chat.activity.gh_comment": "PR wird kommentiert"
 }

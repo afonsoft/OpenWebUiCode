@@ -164,3 +164,154 @@ public sealed class GhViewBuiltinTool(GitHubService github, WorkspaceRepoService
                   mergeable = resp.Mergeable });
     }
 }
+
+/// <summary>
+/// <c>builtin:gh_diff</c> — diff truncado de um PR do repo vinculado
+/// (SPEC-20261128-gh-diff-comment). Read-only e permitido no plan mode.
+/// </summary>
+public sealed class GhDiffBuiltinTool(GitHubService github, WorkspaceRepoService repos)
+    : IBuiltinChatTool
+{
+    /// <inheritdoc />
+    public string Name => "gh_diff";
+
+    /// <inheritdoc />
+    public string Description =>
+        "Read the truncated patch of one pull request in the chat's bound repository. Read-only.";
+
+    /// <inheritdoc />
+    public string ParametersJson => """
+        {
+          "type": "object",
+          "properties": {
+            "number": { "type": "integer", "description": "Pull request number." }
+          },
+          "required": ["number"]
+        }
+        """;
+
+    /// <inheritdoc />
+    public ApprovalTier Tier => ApprovalTier.Read;
+
+    /// <inheritdoc />
+    public async Task<BuiltinToolResult> ExecuteAsync(
+        JsonElement args, BuiltinToolContext context, CancellationToken ct)
+    {
+        var number = args.TryGetProperty("number", out var nEl)
+            && nEl.ValueKind is JsonValueKind.Number
+                ? nEl.GetInt32()
+                : 0;
+        if (number <= 0)
+        {
+            return new BuiltinToolResult(
+                "Erro: 'number' (inteiro > 0) é obrigatório.");
+        }
+
+        var (binding, _) = await repos.ResolveBindingAsync(
+            context.UserId, context.ChatId, ct);
+        if (binding?.Repo is not { } slug
+            || slug.Split('/') is not [var owner, var repo])
+        {
+            return new BuiltinToolResult(
+                "Erro: este chat não tem repo vinculado.");
+        }
+
+        var resp = await github.GetPullDiffAsync(
+            context.UserId, owner, repo, number, ct);
+        if (resp is null || !resp.Github)
+        {
+            return new BuiltinToolResult(
+                resp?.NeedsToken == true
+                    ? "Erro: falta (ou expirou) o PAT do GitHub — configure em Integrações."
+                    : "Erro: GitHub inacessível agora.");
+        }
+        if (resp.NotFound)
+        {
+            return new BuiltinToolResult(
+                $"PR #{number} não encontrado em {slug}.");
+        }
+
+        var header = $"# diff de {slug} PR #{number}"
+            + (resp.Truncated ? " (truncado)" : "") + "\n\n";
+        return new BuiltinToolResult(
+            header + (resp.Diff ?? "(diff vazio)"),
+            new { number, truncated = resp.Truncated });
+    }
+}
+
+/// <summary>
+/// <c>builtin:gh_comment</c> — cria um comentário em PR do repo vinculado
+/// (SPEC-20261128-gh-diff-comment). É write: exige aprovação fora do plan mode.
+/// </summary>
+public sealed class GhCommentBuiltinTool(GitHubService github, WorkspaceRepoService repos)
+    : IBuiltinChatTool
+{
+    /// <inheritdoc />
+    public string Name => "gh_comment";
+
+    /// <inheritdoc />
+    public string Description =>
+        "Comment on one pull request in the chat's bound repository. This writes to GitHub and requires approval.";
+
+    /// <inheritdoc />
+    public string ParametersJson => """
+        {
+          "type": "object",
+          "properties": {
+            "number": { "type": "integer", "description": "Pull request number." },
+            "body": { "type": "string", "description": "Markdown comment body." }
+          },
+          "required": ["number", "body"]
+        }
+        """;
+
+    /// <inheritdoc />
+    public ApprovalTier Tier => ApprovalTier.Write;
+
+    /// <inheritdoc />
+    public async Task<BuiltinToolResult> ExecuteAsync(
+        JsonElement args, BuiltinToolContext context, CancellationToken ct)
+    {
+        var number = args.TryGetProperty("number", out var nEl)
+            && nEl.ValueKind is JsonValueKind.Number
+                ? nEl.GetInt32()
+                : 0;
+        var body = args.TryGetProperty("body", out var bEl)
+            && bEl.ValueKind is JsonValueKind.String
+                ? bEl.GetString()
+                : null;
+        if (number <= 0 || string.IsNullOrWhiteSpace(body))
+        {
+            return new BuiltinToolResult(
+                "Erro: 'number' (inteiro > 0) e 'body' são obrigatórios.");
+        }
+
+        var (binding, _) = await repos.ResolveBindingAsync(
+            context.UserId, context.ChatId, ct);
+        if (binding?.Repo is not { } slug
+            || slug.Split('/') is not [var owner, var repo])
+        {
+            return new BuiltinToolResult(
+                "Erro: este chat não tem repo vinculado.");
+        }
+
+        var resp = await github.CommentPullAsync(
+            context.UserId, owner, repo, number, body, ct);
+        if (resp is null || !resp.Github)
+        {
+            return new BuiltinToolResult(
+                resp?.NeedsToken == true
+                    ? "Erro: falta (ou expirou) o PAT do GitHub — configure em Integrações."
+                    : "Erro: GitHub inacessível agora.");
+        }
+        if (!resp.Created)
+        {
+            return new BuiltinToolResult(
+                $"Erro: GitHub não criou o comentário no PR #{number}.");
+        }
+
+        return new BuiltinToolResult(
+            $"Comentário criado em {slug} PR #{number}: {resp.Url ?? "(url não retornada)"}",
+            new { number, url = resp.Url });
+    }
+}

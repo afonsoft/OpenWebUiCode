@@ -133,6 +133,154 @@ public class GitHubWorkspaceTests
         });
     }
 
+
+    [Test]
+    public async Task GetPullDiff_MontaPatchDosArquivos()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        var diff = await _svc.GetPullDiffAsync("u1", "afonsoft", "OpenWebUiCode", 7, default);
+        Assert.That(diff, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff!.Github, Is.True);
+            Assert.That(diff.Diff, Does.Contain("diff --git a/src/a.cs b/src/a.cs"));
+            Assert.That(diff.Diff, Does.Contain("+linha nova"));
+            Assert.That(diff.Truncated, Is.False);
+        });
+    }
+
+    [Test]
+    public async Task GetPullDiff_PatchGrande_TruncaExplicitamente()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        var patch = new string('x', 20 * 1024);
+        _github.PullFilesBody = "[{\"filename\":\"big.txt\",\"patch\":\""
+            + patch + "\"}]";
+        var diff = await _svc.GetPullDiffAsync("u1", "afonsoft", "OpenWebUiCode", 7, default);
+        Assert.That(diff, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff!.Diff, Does.Contain("truncado"));
+            Assert.That(diff.Truncated, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task GetPullDiff_SemToken_NeedsToken()
+    {
+        var diff = await _svc.GetPullDiffAsync("u1", "afonsoft", "OpenWebUiCode", 7, default);
+        Assert.That(diff, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff!.Github, Is.False);
+            Assert.That(diff.NeedsToken, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task CommentPull_PostNoEndpointDeIssueComments()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        var created = await _svc.CommentPullAsync(
+            "u1", "afonsoft", "OpenWebUiCode", 7, "comentario do agente", default);
+        Assert.That(created, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(created!.Github, Is.True);
+            Assert.That(created.Created, Is.True);
+            Assert.That(created.Url, Does.Contain("/issues/comments/99"));
+            Assert.That(_github.LastMethod, Is.EqualTo("POST"));
+            Assert.That(_github.LastPath, Is.EqualTo("/repos/afonsoft/OpenWebUiCode/issues/7/comments"));
+            Assert.That(_github.LastRequestBody, Does.Contain("comentario do agente"));
+        });
+    }
+
+    [Test]
+    public async Task CommentPull_SemToken_NeedsToken()
+    {
+        var created = await _svc.CommentPullAsync(
+            "u1", "afonsoft", "OpenWebUiCode", 7, "x", default);
+        Assert.That(created, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(created!.Github, Is.False);
+            Assert.That(created.NeedsToken, Is.True);
+            Assert.That(created.Created, Is.False);
+        });
+    }
+
+
+    [Test]
+    public async Task GetPullDiff_AuthRecusada_NeedsToken()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        _github.Status = HttpStatusCode.Unauthorized;
+        var diff = await _svc.GetPullDiffAsync("u1", "afonsoft", "OpenWebUiCode", 7, default);
+        Assert.That(diff, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff!.Github, Is.False);
+            Assert.That(diff.NeedsToken, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task GetPullDiff_NaoEncontrado_MarcaNotFound()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        _github.Status = HttpStatusCode.NotFound;
+        var diff = await _svc.GetPullDiffAsync("u1", "afonsoft", "OpenWebUiCode", 7, default);
+        Assert.That(diff, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(diff!.Github, Is.True);
+            Assert.That(diff.NotFound, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task GetPullDiff_GithubFora_RetornaNull()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        _github.Throw = new HttpRequestException("dns");
+        var diff = await _svc.GetPullDiffAsync("u1", "afonsoft", "OpenWebUiCode", 7, default);
+        Assert.That(diff, Is.Null);
+    }
+
+    [Test]
+    public async Task GetPullDiff_PatchOmitido_MarcaNoTexto()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        _github.PullFilesBody = "[{\"filename\":\"bin.dat\"}]";
+        var diff = await _svc.GetPullDiffAsync("u1", "afonsoft", "OpenWebUiCode", 7, default);
+        Assert.That(diff!.Diff, Does.Contain("patch omitido"));
+    }
+
+    [Test]
+    public async Task CommentPull_AuthRecusada_NeedsToken()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        _github.Status = HttpStatusCode.Unauthorized;
+        var created = await _svc.CommentPullAsync(
+            "u1", "afonsoft", "OpenWebUiCode", 7, "x", default);
+        Assert.That(created, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(created!.Github, Is.False);
+            Assert.That(created.NeedsToken, Is.True);
+        });
+    }
+
+    [Test]
+    public async Task CommentPull_GithubFora_RetornaNull()
+    {
+        await _svc.SetTokenAsync("u1", "pat-1", default);
+        _github.Throw = new HttpRequestException("dns");
+        var created = await _svc.CommentPullAsync(
+            "u1", "afonsoft", "OpenWebUiCode", 7, "x", default);
+        Assert.That(created, Is.Null);
+    }
+
     // ---------------- WorkspaceRepoService ----------------
 
     [Test]
@@ -838,21 +986,30 @@ public class GitHubWorkspaceTests
         public string? Body { get; set; }
         public string? BranchesBody { get; set; }
         public string? PullsBody { get; set; }
+        public string? PullFilesBody { get; set; }
+        public string? LastMethod { get; private set; }
+        public string? LastPath { get; private set; }
+        public string? LastRequestBody { get; private set; }
         public string? StatusBody { get; set; }
         public string? CheckRunsBody { get; set; }
         public Exception? Throw { get; set; }
         public int RequestCount { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastAuth = request.Headers.Authorization?.ToString();
+            LastMethod = request.Method.Method;
             RequestCount++;
             if (Throw is not null)
             {
                 throw Throw;
             }
             var path = request.RequestUri!.AbsolutePath;
+            LastPath = path;
+            LastRequestBody = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
             var body = Body
                 ?? (Status != HttpStatusCode.OK ? "{}"
                 : path == "/user" ? "{\"login\":\"afonso\"}"
@@ -863,6 +1020,13 @@ public class GitHubWorkspaceTests
                      {"full_name":"afonsoft/outro","name":"outro","private":false,
                       "default_branch":"dev","html_url":"https://github.com/afonsoft/outro",
                       "description":"repo 2","updated_at":null}]
+                    """
+                : path.Contains("/pulls/") && path.EndsWith("/files") ? (PullFilesBody ?? """
+                    [{"filename":"src/a.cs","status":"modified","additions":1,"deletions":0,
+                      "patch":"@@ -1 +1 @@\n-linha velha\n+linha nova"}]
+                    """)
+                : path.Contains("/issues/") && path.EndsWith("/comments") ? """
+                    {"id":99,"html_url":"https://github.com/afonsoft/OpenWebUiCode/issues/comments/99"}
                     """
                 : path.EndsWith("/pulls") ? (PullsBody ?? """
                     [{"number":7,"title":"feat: painel","draft":false,
@@ -888,7 +1052,7 @@ public class GitHubWorkspaceTests
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
             _pending.Add(response);
-            return Task.FromResult(response);
+            return response;
         }
 
         private readonly List<HttpResponseMessage> _pending = [];

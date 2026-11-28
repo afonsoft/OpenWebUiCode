@@ -31,6 +31,32 @@ public class GhBuiltinToolsTests
         });
     }
 
+
+    [Test]
+    public void GhDiff_MetadadosEsperados()
+    {
+        var tool = new GhDiffBuiltinTool(null!, null!);
+        Assert.Multiple(() =>
+        {
+            Assert.That(tool.Name, Is.EqualTo("gh_diff"));
+            Assert.That(tool.Tier, Is.EqualTo(ApprovalTier.Read));
+            Assert.That(tool.ParametersJson, Does.Contain("number"));
+        });
+    }
+
+    [Test]
+    public void GhComment_MetadadosWriteForaDoPlan()
+    {
+        var tool = new GhCommentBuiltinTool(null!, null!);
+        Assert.Multiple(() =>
+        {
+            Assert.That(tool.Name, Is.EqualTo("gh_comment"));
+            Assert.That(tool.Tier, Is.EqualTo(ApprovalTier.Write));
+            Assert.That(((IBuiltinChatTool)tool).RequiresApproval, Is.True);
+            Assert.That(tool.ParametersJson, Does.Contain("body"));
+        });
+    }
+
     [Test]
     public void GhPulls_EhPermitidoNoPlanMode()
     {
@@ -43,5 +69,7 @@ public class GhBuiltinToolsTests
             as System.Collections.Generic.HashSet<string>;
         Assert.That(set, Is.Not.Null.And.Contain("gh_pulls"));
         Assert.That(set, Does.Contain("gh_view"));
+        Assert.That(set, Does.Contain("gh_diff"));
+        Assert.That(set, Does.Not.Contain("gh_comment"));
     }
 }

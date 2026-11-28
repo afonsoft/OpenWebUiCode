@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Hybrid;
 using OpenWebUI.Application.Contracts;
@@ -287,6 +288,110 @@ public sealed class GitHubService(
                 GetInt(pr, "additions"),
                 GetInt(pr, "deletions"),
                 pr.TryGetProperty("mergeable", out var m) && m.ValueKind is JsonValueKind.True);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Diff de um PR (`builtin:gh_diff`): primeira página de arquivos do
+    /// endpoint <c>/pulls/{n}/files</c>, montada como patch unificado e
+    /// truncada em 16 KiB. null quando o GitHub está inacessível.
+    /// </summary>
+    public async Task<WorkspacePullDiffResponse?> GetPullDiffAsync(
+        string userId, string owner, string repo, int number, CancellationToken ct)
+    {
+        var token = await GetTokenAsync(userId, ct);
+        if (token is null)
+        {
+            return new WorkspacePullDiffResponse(false, true, false, null, false);
+        }
+        try
+        {
+            var (status, doc) = await SendStatusAsync(token, HttpMethod.Get,
+                $"{ApiBase}/repos/{owner}/{repo}/pulls/{number}/files?per_page=100", ct);
+            if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return new WorkspacePullDiffResponse(false, true, false, null, false);
+            }
+            if (status is HttpStatusCode.NotFound)
+            {
+                return new WorkspacePullDiffResponse(true, false, true, null, false);
+            }
+            if (doc is null || doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            const int maxChars = 16 * 1024;
+            var sb = new StringBuilder();
+            var files = 0;
+            var truncated = false;
+            foreach (var file in doc.RootElement.EnumerateArray())
+            {
+                files++;
+                var name = GetString(file, "filename") ?? "arquivo-desconhecido";
+                var patch = GetString(file, "patch");
+                var chunk = $"diff --git a/{name} b/{name}\n"
+                    + (patch is null
+                        ? "# patch omitido pelo GitHub (arquivo grande/binário)\n"
+                        : patch + "\n");
+                if (sb.Length + chunk.Length > maxChars)
+                {
+                    sb.Append("\n… (diff truncado em 16 KiB)\n");
+                    truncated = true;
+                    break;
+                }
+                sb.Append(chunk);
+            }
+            if (files == 100)
+            {
+                // 100 é o cap da página — pode haver mais arquivos no GitHub.
+                truncated = true;
+                sb.Append("\n… (primeira página de 100 arquivos; diff pode continuar)\n");
+            }
+            return new WorkspacePullDiffResponse(
+                true, false, false, sb.ToString(), truncated);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Cria um comentário no PR (`builtin:gh_comment`) pelo endpoint de
+    /// issue comments. null quando o GitHub está inacessível.
+    /// </summary>
+    public async Task<WorkspacePullCommentResponse?> CommentPullAsync(
+        string userId, string owner, string repo, int number, string body, CancellationToken ct)
+    {
+        var token = await GetTokenAsync(userId, ct);
+        if (token is null)
+        {
+            return new WorkspacePullCommentResponse(false, true, false, null);
+        }
+        try
+        {
+            using var content = JsonContent.Create(new { body });
+            var (status, doc) = await SendStatusAsync(token, HttpMethod.Post,
+                $"{ApiBase}/repos/{owner}/{repo}/issues/{number}/comments", ct, content);
+            if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return new WorkspacePullCommentResponse(false, true, false, null);
+            }
+            if (status is HttpStatusCode.NotFound || doc is null)
+            {
+                return status == HttpStatusCode.NotFound
+                    ? new WorkspacePullCommentResponse(true, false, false, null)
+                    : null;
+            }
+            var url = doc.RootElement.ValueKind == JsonValueKind.Object
+                ? GetString(doc.RootElement, "html_url")
+                : null;
+            return new WorkspacePullCommentResponse(true, false, true, url);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
@@ -591,10 +696,12 @@ public sealed class GitHubService(
 
     /// <summary><see cref="SendAsync"/> que também devolve o status HTTP (401/403 importam).</summary>
     private async Task<(HttpStatusCode Status, JsonDocument? Doc)> SendStatusAsync(
-        string token, HttpMethod method, string uri, CancellationToken ct)
+        string token, HttpMethod method, string uri, CancellationToken ct,
+        HttpContent? content = null)
     {
         var client = httpFactory.CreateClient(HttpClientName);
         using var request = new HttpRequestMessage(method, uri);
+        request.Content = content;
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Headers.Accept.ParseAdd("application/vnd.github+json");
         request.Headers.UserAgent.ParseAdd("OpenWebUI-NET");
