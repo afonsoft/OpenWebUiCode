@@ -266,6 +266,9 @@ builder.Services.AddScoped<IBuiltinChatTool, TodoWriteBuiltinTool>();
 // objetivo declarado da run — estilo Devin/opencode.
 builder.Services.AddScoped<IBuiltinChatTool, ThinkBuiltinTool>();
 builder.Services.AddScoped<IBuiltinChatTool, GoalBuiltinTool>();
+// wait (SPEC-20261128-wait-tool): aguarda N segundos ou um job
+// de background terminar — metade "processo" do wait/yield.
+builder.Services.AddScoped<IBuiltinChatTool, WaitBuiltinTool>();
 // leitura rica (SPEC-20261128-read-rich-tools, plano P1.17):
 // zip/SQLite inspecionáveis direto do agent loop.
 builder.Services.AddScoped<IBuiltinChatTool, ReadArchiveBuiltinTool>();

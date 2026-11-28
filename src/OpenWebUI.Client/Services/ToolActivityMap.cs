@@ -77,6 +77,8 @@ public static class ToolActivityMap
                 => "chat.activity.goal",
             _ when Contains(name, "memory_reflect")
                 => "chat.activity.memory_reflect",
+            _ when Contains(name, "wait")
+                => "chat.activity.wait",
             _ when Contains(name, "archive")
                 => "chat.activity.read_archive",
             _ when Contains(name, "sqlite")
