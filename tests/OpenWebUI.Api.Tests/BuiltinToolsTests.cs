@@ -3215,4 +3215,42 @@ public class BuiltinToolsTests
                 Is.EqualTo("x.txt"));
         });
     }
+
+    // ---------------- memory_reflect (plano P1.16) ----------------
+
+    [Test]
+    public async Task MemoryReflect_DigestPorEscopoEStale()
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        using (var seed = NewDb())
+        {
+            seed.AgentMemories.AddRange(
+                new AgentMemory { UserId = "u1", Scope = "global",
+                    Title = "nova", Content = "c", UpdatedAt = now },
+                new AgentMemory { UserId = "u1", Scope = "global",
+                    Title = "velha", Content = "c",
+                    UpdatedAt = now - 40L * 86400 });
+            seed.SaveChanges();
+        }
+        var tool = new MemoryReflectBuiltinTool(NewDb(), Repos());
+        var r = await tool.ExecuteAsync(Args("""{"scope":"global"}"""),
+            Ctx(), default);
+        Assert.Multiple(() =>
+        {
+            Assert.That(r.Text, Does.Contain("2 entradas"));
+            Assert.That(r.Text, Does.Contain("'nova'"),
+                "mais recente do grupo");
+            Assert.That(r.Text, Does.Contain("'velha'"),
+                "candidata a stale (>30d)");
+        });
+    }
+
+    [Test]
+    public async Task MemoryReflect_EscopoVazio_MensagemClara()
+    {
+        var tool = new MemoryReflectBuiltinTool(NewDb(), Repos());
+        var r = await tool.ExecuteAsync(
+            Args("""{"scope":"repo"}"""), Ctx(), default);
+        Assert.That(r.Text, Does.Contain("nada a refletir"));
+    }
 }

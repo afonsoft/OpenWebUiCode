@@ -67,6 +67,7 @@ public static class PermissionRuleset
         "file_list", "file_read", "file_grep", "file_glob",
         "web_search", "fetch_url", "ask_user", "todo_write",
         "think", "goal",
+        "read_archive", "read_sqlite", "memory_reflect",
         "plan_exit", "write_plan", "browser_screenshot",
         "browser_navigate", "browser_observe", "browser_close",
         "job_list", "job_output", "n8n_list_workflows",

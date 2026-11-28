@@ -42,6 +42,16 @@ public static class ChatPipeline
         + "up front, keep exactly one item in_progress, mark each item completed "
         + "as soon as it finishes, and rewrite the list whenever the plan "
         + "changes. "
+        // SPEC-20261128-eager-todo (plano P2.23 + P2.21 few-shots,
+        // opencode anthropic.txt / omp eager-todo): quando o pedido é
+        // claramente multi-step, a PRIMEIRA tool call deve ser
+        // builtin_todo_write — nunca "um pouco de trabalho" antes do plano.
+        + "When the request is clearly multi-step, the FIRST tool call must be "
+        + "builtin_todo_write — plan before touching anything else. Examples: "
+        + "finishing a step → immediately todo_write marking it completed "
+        + "(never batch it into a later call); editing three files → "
+        + "todo_write with the file list first; one step done, two pending → "
+        + "exactly one of the two becomes in_progress in the same call. "
         + "ALWAYS persist durable knowledge via builtin_memory_save — decisions "
         + "made, repo conventions, gotchas, user preferences and facts that must "
         + "survive the session (never secrets or credentials); re-saving the "

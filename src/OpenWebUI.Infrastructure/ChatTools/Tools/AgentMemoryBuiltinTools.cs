@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using OpenWebUI.Domain;
@@ -248,6 +249,118 @@ public sealed class MemorySearchBuiltinTool(AppDbContext db, WorkspaceRepoServic
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max] + "…";
+}
+
+/// <summary>
+/// <c>builtin:memory_reflect</c> — síntese sobre MUITAS memórias
+/// (plano P1.16, omp <c>memory_reflect</c>): digest determinístico —
+/// contagens por escopo/repo, o título mais recente de cada grupo e
+/// candidatas a staleness (sem update há &gt;30d) — para o agente
+/// revisar o banco antes de agir ou consolidar duplicatas.
+/// Sem chamada de LLM: o resumo é agrupado por máquina e o modelo
+/// reflete sobre ele. Read-only.
+/// </summary>
+public sealed class MemoryReflectBuiltinTool(AppDbContext db, WorkspaceRepoService repos)
+    : IBuiltinChatTool
+{
+    /// <summary>Dias sem update para uma memória ser marcada como stale.</summary>
+    private const int StaleDays = 30;
+
+    /// <summary>Cap de grupos devolvidos.</summary>
+    private const int MaxGroups = 25;
+
+    /// <inheritdoc />
+    public string Name => "memory_reflect";
+
+    /// <inheritdoc />
+    public string Description =>
+        "Digest of your durable memories — counts by scope/repo, latest "
+            + "entry per group and stale candidates (>30d untouched). Use "
+            + "to reflect on the memory bank before acting or to find "
+            + "entries worth consolidating. Read-only.";
+
+    /// <inheritdoc />
+    public string ParametersJson => """
+        {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": ["default", "global", "repo", "all"],
+              "description": "Same scope filter as memory_search (default: global + current chat's repo)."
+            }
+          }
+        }
+        """;
+
+    /// <inheritdoc />
+    public ApprovalTier Tier => ApprovalTier.Read;
+
+    /// <inheritdoc />
+    public async Task<BuiltinToolResult> ExecuteAsync(
+        JsonElement args, BuiltinToolContext context, CancellationToken ct)
+    {
+        var scopeArg = args.TryGetProperty("scope", out var sc)
+            && sc.ValueKind == JsonValueKind.String
+                ? sc.GetString()
+                : "default";
+        string? repoSlug = null;
+        if (scopeArg is "default" or "repo")
+        {
+            var (binding, _) = await repos.ResolveBindingAsync(
+                context.UserId, context.ChatId, ct);
+            repoSlug = binding?.Repo;
+        }
+
+        var scoped = db.AgentMemories.AsNoTracking()
+            .Where(m => m.UserId == context.UserId);
+        scoped = scopeArg switch
+        {
+            "all" => scoped,
+            MemoryToolScopes.Global => scoped.Where(m => m.Scope == MemoryToolScopes.Global),
+            "repo" => repoSlug is not null
+                ? scoped.Where(m => m.Scope == "repo" && m.RepoSlug == repoSlug)
+                : scoped.Where(m => false),
+            _ => repoSlug is not null
+                ? scoped.Where(m => m.Scope == MemoryToolScopes.Global
+                    || (m.Scope == "repo" && m.RepoSlug == repoSlug))
+                : scoped.Where(m => m.Scope == MemoryToolScopes.Global),
+        };
+
+        var all = await scoped
+            .OrderByDescending(m => m.UpdatedAt)
+            .Select(m => new { m.Title, m.Scope, m.RepoSlug, m.UpdatedAt })
+            .ToListAsync(ct);
+        if (all.Count == 0)
+        {
+            return new BuiltinToolResult(
+                "Nenhuma memória no escopo — nada a refletir ainda.");
+        }
+
+        var staleCut = DateTimeOffset.UtcNow.AddDays(-StaleDays).ToUnixTimeSeconds();
+        static string DateOf(long epoch) =>
+            DateTimeOffset.FromUnixTimeSeconds(epoch).ToString("yyyy-MM-dd");
+        var sb = new StringBuilder();
+        sb.AppendLine($"# Memory digest — {all.Count} entradas");
+        foreach (var g in all
+                     .GroupBy(m => m.Scope + (m.RepoSlug is not null ? $" {m.RepoSlug}" : ""))
+                     .OrderByDescending(g => g.Count())
+                     .Take(MaxGroups))
+        {
+            sb.AppendLine($"- {g.Key}: {g.Count()} — mais recente: "
+                + $"'{g.First().Title}' ({DateOf(g.First().UpdatedAt)})");
+        }
+        var stale = all.Where(m => m.UpdatedAt < staleCut).Take(10).ToList();
+        if (stale.Count > 0)
+        {
+            sb.AppendLine($"# {stale.Count} possível(is) obsoleta(s) (+{StaleDays}d sem update):");
+            foreach (var m in stale)
+            {
+                sb.AppendLine($"- '{m.Title}' ({DateOf(m.UpdatedAt)})");
+            }
+        }
+        return new BuiltinToolResult(sb.ToString(), new { count = all.Count });
+    }
 }
 
 /// <summary>
