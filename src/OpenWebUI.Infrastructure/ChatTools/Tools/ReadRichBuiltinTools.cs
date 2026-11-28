@@ -2,6 +2,9 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Core;
+using UglyToad.PdfPig.Exceptions;
 
 namespace OpenWebUI.Infrastructure.ChatTools.Tools;
 
@@ -253,5 +256,154 @@ public sealed class ReadSqliteBuiltinTool : IBuiltinChatTool
         {
             return new BuiltinToolResult($"Erro SQLite: {ex.Message}");
         }
+    }
+}
+
+/// <summary>
+/// <c>builtin read_pdf</c> — extrai texto de um PDF do workspace
+/// (SPEC-20261128-read-pdf, plano P1.17). Cap de 20 páginas por chamada
+/// e 64 KiB de texto; <c>startPage</c> (1-based) permite paginar.
+/// Read-only, mesmo sandbox do <c>file_read</c>.
+/// </summary>
+public sealed class ReadPdfBuiltinTool : IBuiltinChatTool
+{
+    /// <summary>Máximo de páginas extraídas por chamada.</summary>
+    private const int MaxPages = 20;
+
+    /// <summary>Cap de texto extraído por chamada.</summary>
+    private const int MaxChars = 64 * 1024;
+
+    /// <inheritdoc />
+    public string Name => "read_pdf";
+
+    /// <inheritdoc />
+    public string Description =>
+        "Extract text from a PDF in the workspace. Use startPage (1-based) "
+            + "to paginate large documents (max 20 pages / 64 KiB per call). Read-only.";
+
+    /// <inheritdoc />
+    public string ParametersJson => """
+        {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "description": "Path of the PDF relative to the workspace." },
+            "startPage": { "type": "integer", "description": "Optional 1-based first page to extract (default 1)." }
+          },
+          "required": ["path"]
+        }
+        """;
+
+    /// <inheritdoc />
+    public ApprovalTier Tier => ApprovalTier.Read;
+
+    /// <inheritdoc />
+    public bool SafeInParallel => true;
+
+    /// <inheritdoc />
+    public async Task<BuiltinToolResult> ExecuteAsync(
+        JsonElement args, BuiltinToolContext context, CancellationToken ct)
+    {
+        if (!args.TryGetProperty("path", out var pathEl)
+            || pathEl.ValueKind is not JsonValueKind.String
+            || string.IsNullOrWhiteSpace(pathEl.GetString()))
+        {
+            return new BuiltinToolResult("Erro: 'path' é obrigatório.");
+        }
+        var relative = pathEl.GetString()!;
+        var full = WorkspaceFiles.ResolveInsideOrExternal(
+            context.WorkspacePath, relative, null, context.RunId, out var error);
+        if (full is null)
+        {
+            return new BuiltinToolResult($"Erro: {error}");
+        }
+        if (!File.Exists(full))
+        {
+            return new BuiltinToolResult($"Erro: arquivo '{relative}' não encontrado.");
+        }
+
+        var startPage = 1;
+        if (args.TryGetProperty("startPage", out var startEl)
+            && (startEl.ValueKind is not JsonValueKind.Number
+                || !startEl.TryGetInt32(out startPage)
+                || startPage < 1))
+        {
+            return new BuiltinToolResult("Erro: 'startPage' deve ser inteiro >= 1.");
+        }
+
+        try
+        {
+            return await Task.Run(() => Extract(full, relative, startPage), ct);
+        }
+        catch (PdfDocumentEncryptedException)
+        {
+            return new BuiltinToolResult($"Erro: PDF '{relative}' está criptografado.");
+        }
+        catch (PdfDocumentFormatException ex)
+        {
+            return new BuiltinToolResult($"Erro: PDF inválido em '{relative}': {ex.Message}");
+        }
+        catch (IOException ex)
+        {
+            return new BuiltinToolResult($"Erro ao ler '{relative}': {ex.Message}");
+        }
+    }
+
+    private static BuiltinToolResult Extract(string full, string relative, int startPage)
+    {
+        using var document = PdfDocument.Open(full);
+        var totalPages = document.NumberOfPages;
+        if (startPage > totalPages)
+        {
+            return new BuiltinToolResult(
+                $"Erro: 'startPage' {startPage} além do fim — '{relative}' tem {totalPages} página(s).");
+        }
+
+        var endPage = Math.Min(startPage + MaxPages - 1, totalPages);
+        var sb = new StringBuilder();
+        sb.AppendLine($"# {relative} — {totalPages} página(s), exibindo {startPage}-{endPage}");
+        var chars = 0;
+        var truncatedChars = false;
+        var lastCompletePage = startPage - 1;
+        for (var pageNumber = startPage; pageNumber <= endPage; pageNumber++)
+        {
+            var text = document.GetPage(pageNumber).Text ?? string.Empty;
+            var block = $"\n## Página {pageNumber}\n{text.Trim()}\n";
+            if (chars + block.Length > MaxChars)
+            {
+                var remaining = MaxChars - chars;
+                if (remaining > 0)
+                {
+                    sb.Append(block[..remaining]);
+                }
+                truncatedChars = true;
+                break;
+            }
+            sb.Append(block);
+            chars += block.Length;
+            lastCompletePage = pageNumber;
+        }
+
+        if (truncatedChars)
+        {
+            sb.AppendLine($"\n… (texto truncado em {MaxChars} chars)");
+        }
+        if (!truncatedChars && endPage < totalPages)
+        {
+            sb.AppendLine(
+                $"\n… {totalPages - endPage} página(s) restantes — use startPage={endPage + 1}");
+        }
+        else if (truncatedChars && lastCompletePage < totalPages)
+        {
+            sb.AppendLine(
+                $"… documento continua — use startPage={Math.Max(startPage, lastCompletePage + 1)}");
+        }
+
+        return new BuiltinToolResult(sb.ToString(), new
+        {
+            pages = totalPages,
+            startPage,
+            endPage = truncatedChars ? lastCompletePage : endPage,
+            truncated = truncatedChars || endPage < totalPages,
+        });
     }
 }

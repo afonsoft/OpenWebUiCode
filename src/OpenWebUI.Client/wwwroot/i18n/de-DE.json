@@ -1440,6 +1440,7 @@
   "chat.status_analyzing": "Analysiere…",
   "chat.activity.wait": "Wartet",
   "chat.activity.read_archive": "Archiv wird gelesen",
+  "chat.activity.read_pdf": "PDF wird gelesen",
   "chat.activity.read_sqlite": "Datenbankabfrage",
   "chat.activity.memory_reflect": "Erinnerungen werden geprüft",
   "chat.activity.gh_pulls": "Pull Requests auflisten"
