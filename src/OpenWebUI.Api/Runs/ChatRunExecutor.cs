@@ -2184,11 +2184,16 @@ public sealed class ChatRunExecutor(
                     return;
                 }
                 broadcaster.Publish(runId,
-                    $"event: advisor\ndata: {JsonSerializer.Serialize(new RunAdvisorEvent(advice, trigger), JsonOptions)}");
+                    $"event: advisor\ndata: {JsonSerializer.Serialize(new RunAdvisorEvent(advice.Text, trigger, advice.Severity), JsonOptions)}");
                 lock (_contextNotes)
                 {
+                    // advisor-v2: a severidade entra na nota para o agente
+                    // calibrar a reação (blocker = parar e mudar de rumo).
+                    var tag = advice.Severity is null
+                        ? "[advisor]"
+                        : $"[advisor:{advice.Severity}]";
                     _contextNotes.Enqueue(new ChatCompletionMessage(
-                        RoleSystem, $"[advisor] {advice}"));
+                        RoleSystem, $"{tag} {advice.Text}"));
                 }
             }
             catch (Exception ex)

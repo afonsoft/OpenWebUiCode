@@ -75,13 +75,16 @@ public sealed class RunAdvisorService(
     /// Produz o conselho de um gatilho. Retorna null quando o advisor não
     /// tem nada a dizer (<c>OK</c>/vazio), quando o recurso está desligado
     /// ou quando a chamada falha — o caller nunca precisa tratar erro.
+    /// Advisor v2 (SPEC-20261128-advisor-v2): o conselho carrega
+    /// <see cref="AdvisorAdvice.Severity"/> quando o modelo emite o header
+    /// <c>severity: nit|concern|blocker</c>.
     /// </summary>
     /// <param name="run">Run em execução (POCO — não é tracked neste escopo).</param>
     /// <param name="trigger"><c>user_message</c> | <c>tool_burst</c> | <c>pause</c>.</param>
-    /// <param name="recentTools">Linhas curtas "nome → preview" das últimas tool calls.</param>
+    /// <param name="recentTools">Linhas curtas \"nome → preview\" das últimas tool calls.</param>
     /// <param name="builtinContext">Contexto do workspace da run; null desabilita tools do advisor.</param>
     /// <param name="ct">Cancelamento (timeout do caller).</param>
-    public async Task<string?> AdviseAsync(
+    public async Task<AdvisorAdvice?> AdviseAsync(
         ChatRun run, string trigger, IReadOnlyList<string> recentTools,
         BuiltinToolContext? builtinContext, CancellationToken ct)
     {
@@ -132,7 +135,7 @@ public sealed class RunAdvisorService(
             var step = await completeWithTools(request, run.UserId, ct);
             if (step.ToolCalls.Count == 0)
             {
-                return TruncateAdvice(step.Content);
+                return ParseAdvice(step.Content);
             }
 
             messages.Add(new ChatCompletionMessage(
@@ -175,11 +178,17 @@ public sealed class RunAdvisorService(
         name is "file_read" or "file_grep" or "file_glob"
         || name.StartsWith("lsp_", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Severidades conhecidas do advisor v2 (oh-my-pi style).</summary>
+    internal static readonly HashSet<string> Severities = new(StringComparer.OrdinalIgnoreCase)
+        { "nit", "concern", "blocker" };
+
     /// <summary>
     /// Normaliza o conselho: <c>OK</c>/vazio → null (nada a dizer);
-    /// demais textos capados a <see cref="AdviceChars"/> (RF-003).
+    /// linha inicial <c>severity: nit|concern|blocker</c> é extraída para
+    /// <see cref="AdvisorAdvice.Severity"/>; demais textos capados a
+    /// <see cref="AdviceChars"/> (RF-003 + advisor-v2).
     /// </summary>
-    internal static string? TruncateAdvice(string? content)
+    internal static AdvisorAdvice? ParseAdvice(string? content)
     {
         var text = content?.Trim();
         if (string.IsNullOrEmpty(text)
@@ -187,7 +196,25 @@ public sealed class RunAdvisorService(
         {
             return null;
         }
-        return text.Length <= AdviceChars ? text : text[..AdviceChars];
+
+        string? severity = null;
+        var nl = text.IndexOf('\n');
+        var firstLine = nl >= 0 ? text[..nl].Trim() : text;
+        if (firstLine.StartsWith("severity:", StringComparison.OrdinalIgnoreCase))
+        {
+            var candidate = firstLine["severity:".Length..].Trim().TrimEnd('.', ';');
+            if (Severities.Contains(candidate))
+            {
+                severity = candidate.ToLowerInvariant();
+                text = nl >= 0 ? text[(nl + 1)..].Trim() : string.Empty;
+            }
+        }
+        if (string.IsNullOrEmpty(text))
+        {
+            return null;
+        }
+        return new AdvisorAdvice(
+            text.Length <= AdviceChars ? text : text[..AdviceChars], severity);
     }
 
     /// <summary>
@@ -236,6 +263,10 @@ public sealed class RunAdvisorService(
         }
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>Conselho do advisor v2: texto curto + severidade opcional
+    /// (<c>nit</c> | <c>concern</c> | <c>blocker</c>), SPEC-20261128-advisor-v2.</summary>
+    public sealed record AdvisorAdvice(string Text, string? Severity);
 
     /// <summary>Prompt do advisor como asset (.md embedded) — nunca inline.</summary>
     private static string LoadPrompt()
