@@ -237,7 +237,10 @@
                             @L["chat.loading_older"]
                         </button>
                     }
-                    @{ var i = 0; }
+                    @{
+                        var persistedToolNames = ToolCallView.PersistedToolNames(_messages);
+                        var i = 0;
+                    }
                     @while (i < _messages.Count)
                     {
                         var index = i;
@@ -254,7 +257,7 @@
                             }
                             var persisted = _messages
                                 .Skip(index).Take(lastTool - index + 1)
-                                .Select(PersistedToolCall).ToList();
+                                .Select(m => PersistedToolCall(m, persistedToolNames)).ToList();
                             <div class="msg-cv"><RunActivityFeed Calls="persisted" Streaming="false" Collapsed="true" /></div>
                             i = lastTool + 1;
                             continue;
@@ -1268,8 +1271,12 @@
 
     /// <summary>Converte mensagem persistida role=tool em ToolCallView para
     /// o work log colapsado (histórico — sem ArgsPreview disponível).</summary>
-    private static ToolCallView PersistedToolCall(ChatMessageModel m) =>
-        ToolCallView.FromPersisted(m);
+    private static ToolCallView PersistedToolCall(
+        ChatMessageModel m, IReadOnlyDictionary<string, string> names) =>
+        ToolCallView.FromPersisted(m,
+            m.ToolCallId is not null && names.TryGetValue(m.ToolCallId, out var name)
+                ? name
+                : null);
 
     /// <summary>Nome do repo sem o owner (chip compacto em &lt; sm — SPEC-15 RF-002).</summary>
     private static string RepoName(string slug) =>
