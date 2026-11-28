@@ -27,6 +27,7 @@
     <None Remove="data/**" />
     <Content Remove="data/**" />
     <EmbeddedResource Remove="data/**" />
+    <EmbeddedResource Include="Completions\prompts\*.md" />
   </ItemGroup>
 
 </Project>

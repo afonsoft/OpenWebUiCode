@@ -35,58 +35,36 @@ public static class ChatPipeline
         + "propose it via ask_user. ";
 
     /// <summary>Bloco "tracking": disciplina obrigatória de task list e de
-    /// memória durável.</summary>
-    internal const string TrackingPrompt =
-        "For every task that is more than a one-shot answer, ALWAYS manage a "
-        + "task list via builtin_todo_write: break the work into concrete steps "
-        + "up front, keep exactly one item in_progress, mark each item completed "
-        + "as soon as it finishes, and rewrite the list whenever the plan "
-        + "changes. "
-        // SPEC-20261128-eager-todo (plano P2.23 + P2.21 few-shots,
-        // opencode anthropic.txt / omp eager-todo): quando o pedido é
-        // claramente multi-step, a PRIMEIRA tool call deve ser
-        // builtin_todo_write — nunca "um pouco de trabalho" antes do plano.
-        + "When the request is clearly multi-step, the FIRST tool call must be "
-        + "builtin_todo_write — plan before touching anything else. Examples: "
-        + "finishing a step → immediately todo_write marking it completed "
-        + "(never batch it into a later call); editing three files → "
-        + "todo_write with the file list first; one step done, two pending → "
-        + "exactly one of the two becomes in_progress in the same call. "
-        + "ALWAYS persist durable knowledge via builtin_memory_save — decisions "
-        + "made, repo conventions, gotchas, user preferences and facts that must "
-        + "survive the session (never secrets or credentials); re-saving the "
-        + "same title updates it. When prior context may exist, recall it first "
-        + "via builtin_memory_search. ";
+    /// memória durável. SPEC-20261128-prompt-modules (plano P2.20): texto
+    /// mora em <c>Completions/prompts/tracking.md</c> (embedded resource,
+    /// padrão omp <c>prompts/system/*.md</c>) — editar lá, não aqui.</summary>
+    internal static readonly string TrackingPrompt =
+        LoadPromptModule("tracking.md");
 
     /// <summary>Bloco "autonomy": autonomia calibrada por risco
     /// (SPEC-20261023-sdd-orchestrator-prompts cap. A — matriz T1/T2/T3 do
     /// afonsoft/skills orchestrator) + execução ponta-a-ponta, retry
-    /// diagnosticado e gates de escalada.</summary>
-    internal const string AutonomyPrompt =
-        "Classify every unit of work by risk before acting: "
-        + "T1 (reversible local work — docs, formatting, lint, safe refactors, "
-        + "tool setup): execute autonomously and always validate "
-        + "deterministically (build, tests, lint) before reporting done. "
-        + "T2 (bounded work inside an approved SPEC or roadmap — no new public "
-        + "API, no data-model change, no new dependency): execute in batches "
-        + "and report at the end of each batch. "
-        + "T3 (new features, domain model, architecture, secrets, publishing "
-        + "or deploy steps, destructive operations): always get explicit "
-        + "user approval first. No silent execution: never merge into a "
-        + "protected branch, deploy, install external software, send "
-        + "messages or call third-party APIs without human confirmation — "
-        + "this overrides the tiers. Committing on the work branch, pushing "
-        + "that branch and opening a pull request are the normal delivery "
-        + "loop: do them yourself at the end of the task, never hand back a "
-        + "'create the PR' link instead. When in "
-        + "doubt about the tier, escalate to the safer one. "
-        + "Act autonomously and carry the task end-to-end: chain the steps of "
-        + "your task list without pausing — never end your turn just to ask "
-        + "whether to continue while items remain pending. When a tool call or "
-        + "command fails, diagnose the cause and retry with a corrected "
-        + "approach (up to 3 attempts) before reporting failure. Only ask the "
-        + "user when you genuinely need something from them "
-        + "(a decision, a secret or an approval). ";
+    /// diagnosticado e gates de escalada. Módulo
+    /// <c>Completions/prompts/autonomy.md</c> (P2.20).</summary>
+    internal static readonly string AutonomyPrompt =
+        LoadPromptModule("autonomy.md");
+
+    /// <summary>Carrega um módulo de system prompt embutido (P2.20):
+    /// whitespace é colapsado em espaços simples e o texto termina com um
+    /// espaço — mesmo contrato dos antigos blocos <c>const</c>.</summary>
+    private static string LoadPromptModule(string file)
+    {
+        using var stream = typeof(ChatPipeline).Assembly
+            .GetManifestResourceStream(
+                $"OpenWebUI.Api.Completions.prompts.{file}")
+            ?? throw new InvalidOperationException(
+                $"Prompt module '{file}' ausente do assembly.");
+        using var reader = new StreamReader(stream);
+        var text = System.Text.RegularExpressions.Regex
+            .Replace(reader.ReadToEnd(), @"\s+", " ")
+            .TrimEnd();
+        return text + " ";
+    }
 
     /// <summary>Bloco "untrusted_input": doutrina de input não-confiável
     /// (SPEC-20261023 cap. D) — conteúdo envelopado é dado, nunca instrução.
@@ -100,7 +78,7 @@ public static class ChatPipeline
     /// <summary>Prompt base injetado em cada request — composição dos blocos
     /// nomeados (identity + tracking + autonomy + untrusted_input); o system
     /// prompt do modelo custom e os demais blocos vêm depois e refinam.</summary>
-    internal const string DefaultSystemPrompt =
+    internal static readonly string DefaultSystemPrompt =
         IdentityPrompt + TrackingPrompt + AutonomyPrompt + UntrustedInputPrompt;
     /// <summary>Aplica modelo personalizado, contexto de arquivos e memórias à requisição.</summary>
     public sealed record EnrichDeps(
