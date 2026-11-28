@@ -576,7 +576,7 @@
   "chat.tool_approve": "Approuver",
   "chat.tool_deny": "Refuser",
   "chat.tool_expand": "développer",
-  "chat.tool_output_summary": "{kind} · {lines} lignes · {chars} caractères",
+  "chat.tool_output_summary": "{{kind}} · {{lines}} lignes · {{chars}} caractères",
   "chat.tool_collapse": "réduire",
   "chat.tool_delegate_open": "voir la sous-tâche",
   "chat.subchat_title": "Sous-tâche",

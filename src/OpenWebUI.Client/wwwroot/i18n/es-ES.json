@@ -576,7 +576,7 @@
   "chat.tool_approve": "Aprobar",
   "chat.tool_deny": "Denegar",
   "chat.tool_expand": "expandir",
-  "chat.tool_output_summary": "{kind} · {lines} líneas · {chars} caracteres",
+  "chat.tool_output_summary": "{{kind}} · {{lines}} líneas · {{chars}} caracteres",
   "chat.tool_collapse": "contraer",
   "chat.tool_delegate_open": "ver subtarea",
   "chat.subchat_title": "Subtarea",

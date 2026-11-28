@@ -227,14 +227,14 @@
         (ResultPreview ?? string.Empty).Split('\n').Skip(1).Select<string, (string, string)>(l => l switch
         {
             _ when l.StartsWith("+++") || l.StartsWith("---")
-                => (l, "text-gray-400 dark:text-gray-500"),
+                => (l + "\n", "text-gray-400 dark:text-gray-500"),
             _ when l.StartsWith("@@")
-                => (l, "text-blue-600 dark:text-blue-400"),
+                => (l + "\n", "text-blue-600 dark:text-blue-400"),
             _ when l.StartsWith('+')
-                => (l, "text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40"),
+                => (l + "\n", "text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40"),
             _ when l.StartsWith('-')
-                => (l, "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/40"),
-            _ => (l, "text-gray-500 dark:text-gray-400"),
+                => (l + "\n", "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/40"),
+            _ => (l + "\n", "text-gray-500 dark:text-gray-400"),
         });
 
     private string? Summary => ToolArgsPreview.Summary(Name, ArgsPreview);

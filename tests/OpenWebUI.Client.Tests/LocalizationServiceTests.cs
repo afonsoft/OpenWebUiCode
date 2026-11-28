@@ -37,6 +37,27 @@ public class LocalizationServiceTests
         ["settings.language"] = "Language",
     };
 
+
+    [Test]
+    public void RecursoToolOutputSummary_UsaPlaceholdersDuplosNosLocales()
+    {
+        var root = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        foreach (var file in Directory.GetFiles(
+            Path.Combine(root, "src/OpenWebUI.Client/wwwroot/i18n"), "*.json")
+            .Where(f => Path.GetFileName(f) != "locales.json"))
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            var value = doc.RootElement.GetProperty("chat.tool_output_summary").GetString()!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(value, Does.Contain("{{kind}}"), file);
+                Assert.That(value, Does.Contain("{{lines}}"), file);
+                Assert.That(value, Does.Contain("{{chars}}"), file);
+            });
+        }
+    }
+
     [Test]
     public async Task Initialize_CarregaPtBrComoPadrao()
     {

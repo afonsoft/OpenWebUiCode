@@ -576,7 +576,7 @@
   "chat.tool_approve": "批准",
   "chat.tool_deny": "拒绝",
   "chat.tool_expand": "展开",
-  "chat.tool_output_summary": "{kind} · {lines} 行 · {chars} 字符",
+  "chat.tool_output_summary": "{{kind}} · {{lines}} 行 · {{chars}} 字符",
   "chat.tool_collapse": "折叠",
   "chat.tool_delegate_open": "打开子任务",
   "chat.subchat_title": "",
