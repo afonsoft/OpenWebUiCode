@@ -1436,5 +1436,6 @@
   "automations.health_ok_runs": "success on recent runs",
   "chat.panel_tasks_done": "{{done}}/{{total}} done",
   "chat.doc_download": "Download",
-  "chat.worklog.collapse": "Minimize"
+  "chat.worklog.collapse": "Minimize",
+  "chat.status_analyzing": "Analyzing…"
 }

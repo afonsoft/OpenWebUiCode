@@ -4335,6 +4335,11 @@
             case "answering":
                 _statusLabel = L["chat.status_writing"];
                 break;
+            case "analyzing":
+                // SPEC-20261128-analysis-phase: fase única no início da
+                // run — o agente analisa antes de agir (Devin web).
+                _statusLabel = L["chat.status_analyzing"];
+                break;
             case "preparing_context":
             case "compacting":
             case "searching_web":

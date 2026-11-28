@@ -154,6 +154,11 @@ public sealed class ChatRunExecutor(
     /// <summary>Revisão em voo — no máx. uma por vez (RF-001).</summary>
     private volatile bool _advisorInFlight;
 
+    /// <summary>Fase "analyzing" já publicada nesta run
+    /// (SPEC-20261128-analysis-phase) — emite-se uma vez, antes do
+    /// primeiro <c>generating</c>.</summary>
+    private volatile bool _analyzingPhasePublished;
+
     /// <summary>Último disparo (cooldown do RF-001).</summary>
     private DateTimeOffset _advisorLastAt = DateTimeOffset.MinValue;
 
@@ -1474,6 +1479,14 @@ public sealed class ChatRunExecutor(
             OnPhaseAsync: async (phase, label, t) =>
             {
                 await pauses.WaitIfPausedAsync(run.Id, t);
+                // SPEC-20261128-analysis-phase: uma fase "analyzing" extra
+                // antes do primeiro generating da run — o usuário vê o
+                // agente analisar antes de agir (estilo Devin web).
+                if (phase == "generating" && !_analyzingPhasePublished)
+                {
+                    _analyzingPhasePublished = true;
+                    await PublishPhaseAsync(run, "analyzing", label);
+                }
                 // generating carrega {step,maxSteps} (RF-006).
                 await PublishPhaseAsync(run, phase, label,
                     phase == "generating" ? state.CurrentStep : null,
@@ -1819,6 +1832,13 @@ public sealed class ChatRunExecutor(
         await KickAdvisorAsync(run, "user_message", null, ct);
         // RF-005: a run sem tools não emitia nenhuma fase — a UI
         // ficava no "Pensando…" estático até o primeiro token.
+        // SPEC-20261128-analysis-phase: analyzing uma vez também no
+        // caminho plain (sem tool loop) antes do primeiro generating.
+        if (!_analyzingPhasePublished)
+        {
+            _analyzingPhasePublished = true;
+            await PublishPhaseAsync(run, "analyzing", null);
+        }
         await PublishPhaseAsync(run, "generating", null);
         state.Answered = false;
         // RF-001 provider-resilience: o stream do chat sem tools

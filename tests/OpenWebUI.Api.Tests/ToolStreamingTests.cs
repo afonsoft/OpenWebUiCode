@@ -1423,6 +1423,15 @@ public class ToolStreamingTests
                 Is.LessThan(fases.IndexOf("generating")));
             Assert.That(fases.IndexOf("generating"),
                 Is.LessThan(fases.IndexOf("answering")));
+            // SPEC-20261128-analysis-phase: uma fase "analyzing" única
+            // antes do primeiro generating (Devin web — analisa antes
+            // de executar).
+            Assert.That(fases, Does.Contain("analyzing"),
+                "faltou fase analyzing");
+            Assert.That(fases.IndexOf("analyzing"),
+                Is.LessThan(fases.IndexOf("generating")));
+            Assert.That(fases.Count(f => f == "analyzing"), Is.EqualTo(1),
+                "analyzing deve emitir uma única vez");
         });
 
         // Canal separado: thinking sai como delta.reasoning — nunca
