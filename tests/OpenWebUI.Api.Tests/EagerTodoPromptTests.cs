@@ -43,4 +43,21 @@ public sealed class EagerTodoPromptTests
         Assert.That(registry.IsSafeInParallel("builtin:delegate_task"),
             Is.True);
     }
+
+    /// <summary>SPEC-20261128-prompt-modules (plano P2.20): os blocos
+    /// tracking/autonomy vêm dos .md embutidos — o prompt composto deve
+    /// conter as âncoras dos dois módulos.</summary>
+    [Test]
+    public void DefaultSystemPrompt_CarregaModulosMd()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(ChatPipeline.DefaultSystemPrompt,
+                Does.Contain("FIRST tool call must be builtin_todo_write"),
+                "tracking.md não carregado");
+            Assert.That(ChatPipeline.DefaultSystemPrompt,
+                Does.Contain("Classify every unit of work by risk"),
+                "autonomy.md não carregado");
+        });
+    }
 }
