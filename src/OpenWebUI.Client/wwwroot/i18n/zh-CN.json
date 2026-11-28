@@ -1435,5 +1435,6 @@
   "automations.health_bad": "",
   "automations.health_ok_runs": "",
   "chat.panel_tasks_done": "{{done}}/{{total}} ",
-  "chat.doc_download": ""
+  "chat.doc_download": "",
+  "chat.worklog.collapse": "最小化"
 }

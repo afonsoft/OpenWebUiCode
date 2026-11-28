@@ -292,7 +292,9 @@
                                texto que a run produz — feed em cima, resposta
                                embaixo. No histórico as role=tool já ficam
                                antes da resposta por natureza. *@
-                            <RunActivityFeed Calls="_liveToolCalls" Streaming="_streaming" Collapsed="!_streaming" />
+                            <RunActivityFeed Calls="_liveToolCalls" Streaming="_streaming"
+                                             Collapsed="(!_streaming || _feedCollapsed)"
+                                             OnRequestCollapse="() => SetFeedCollapsed(true)" />
                         }
                         <MessageBubble @key="msgKey"
                             Message="message"
@@ -334,7 +336,31 @@
                 @* Fallback: feed embaixo quando a run ainda não tem
                    placeholder de assistant na lista (ex.: eventos antes
                    da primeira delta). *@
-                <RunActivityFeed Calls="_liveToolCalls" Streaming="_streaming" Collapsed="!_streaming" />
+                <RunActivityFeed Calls="_liveToolCalls" Streaming="_streaming"
+                                 Collapsed="(!_streaming || _feedCollapsed)"
+                                 OnRequestCollapse="() => SetFeedCollapsed(true)" />
+            }
+
+            @if (_streaming && _runTasks.Count > 0)
+            {
+                @* SPEC-20261128-chat-mobile-devin-parity §4: badge flutuante
+                   de progresso das tarefas (mobile), safe-area aware; toque
+                   abre o drawer na aba Tarefas. *@
+                <button type="button"
+                        class="fixed right-4 z-30 lg:hidden flex items-center gap-2 rounded-full bg-gray-900 text-white dark:bg-white dark:text-gray-900 px-3.5 py-2 text-xs font-medium shadow-lg cursor-pointer"
+                        style="bottom: calc(7rem + env(safe-area-inset-bottom, 0px))"
+                        aria-label="@L["chat.tasks"]" title="@L["chat.tasks"]"
+                        @onclick="OpenPanelAtTasksAsync">
+                    <svg class="size-3.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+                    </svg>
+                    <span class="tabular-nums">
+                        @L.T("chat.panel_tasks_done",
+                            ("done", _runTasks.Count(t => t.Status == "completed").ToString()),
+                            ("total", _runTasks.Count.ToString()))
+                    </span>
+                </button>
             }
 
             @if (_runTasks.Count > 0)
@@ -398,14 +424,31 @@
             }
             else if (_streaming && !string.IsNullOrEmpty(StatusChipLabel))
             {
-                @* No mobile o chip do header fica oculto — mantém o status inline *@
-                <div class="sm:hidden py-1 flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
-                    <svg class="size-3 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                @* SPEC-20261128-chat-mobile-devin-parity §1: status line
+                   persistente no mobile — etapa + tarefa atual + done/total;
+                   toque abre o drawer na aba Tarefas. *@
+                <button type="button"
+                        class="sm:hidden py-1 flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500 cursor-pointer"
+                        role="status" aria-live="polite"
+                        @onclick="OpenPanelAtTasksAsync">
+                    <svg class="size-3 flex-none animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
                     </svg>
-                    @StatusChipLabel
-                </div>
+                    <span class="truncate">@StatusChipLabel</span>
+                    @if (_runTasks.FirstOrDefault(t => t.Status == "in_progress") is { } current)
+                    {
+                        <span class="truncate text-gray-500 dark:text-gray-400">— @current.Content</span>
+                    }
+                    @if (_runTasks.Count > 0)
+                    {
+                        <span class="flex-none tabular-nums text-gray-400 dark:text-gray-600">
+                            @L.T("chat.panel_tasks_done",
+                                ("done", _runTasks.Count(t => t.Status == "completed").ToString()),
+                                ("total", _runTasks.Count.ToString()))
+                        </span>
+                    }
+                </button>
             }
 
             @if (_arena is not null)
@@ -1201,8 +1244,12 @@
     /// <summary>Estado efetivo da seção de pensamento: o override do
     /// usuário ganha; no automático fica aberta só enquanto a run ainda
     /// não emitiu conteúdo (RF-004 — auto-colapsa no 1º delta).</summary>
+    /// <summary>Mobile: thinking nasce colapsado (SPEC-20261128-
+    /// chat-mobile-devin-parity §3) — o toggle manual continua ganhando.</summary>
+    private bool _isMobileViewport;
+
     private bool ThinkingExpanded =>
-        _thinkingOpen ?? (_reasoning.Length > 0 && !_hasDeltas);
+        _thinkingOpen ?? (_reasoning.Length > 0 && !_hasDeltas && !_isMobileViewport);
 
     /// <summary>Toggle do usuário — fixa o estado até o fim da run.</summary>
     private void ToggleThinking() => _thinkingOpen = !ThinkingExpanded;
@@ -1399,6 +1446,9 @@
         {
             _voiceSupported = await JS.InvokeAsync<bool>("openwebui.audio.sttSupported");
             _ttsSupported = await JS.InvokeAsync<bool>("openwebui.audio.ttsSupported");
+            // SPEC-20261128-chat-mobile-devin-parity §3: thinking nasce
+            // colapsado no mobile (1ª linha + "Ver raciocínio").
+            _isMobileViewport = await JS.InvokeAsync<bool>("openwebui.isMobileViewport");
             // Listener de "perto do fim" para o auto-scroll do stream.
             await JS.InvokeVoidAsync("openwebui.initPinnedScroll", _scrollContainer);
             // attachments-v2 RF-004: hook de paste — texto grande vira
@@ -4678,6 +4728,26 @@
             await RefreshPanelAsync();
         }
     }
+
+    /// <summary>Status line/badge mobile → abre o drawer na aba Tarefas
+    /// (SPEC-20261128-chat-mobile-devin-parity §1/§4).</summary>
+    private async Task OpenPanelAtTasksAsync()
+    {
+        _requestedPanelTab = "tasks";
+        if (!_showPanel)
+        {
+            _showPanel = true;
+            await RefreshPanelAsync();
+        }
+    }
+
+    /// <summary>Bloco de trabalho minimizado por chat (sessão) — Devin web
+    /// collapse (SPEC-20261128-chat-mobile-devin-parity §3).</summary>
+    private readonly Dictionary<string, bool> _feedCollapsedByChat = new();
+    private bool _feedCollapsed =>
+        _feedCollapsedByChat.TryGetValue(_loadedChatId ?? string.Empty, out var c) && c;
+    private void SetFeedCollapsed(bool collapsed) =>
+        _feedCollapsedByChat[_loadedChatId ?? string.Empty] = collapsed;
 
     /// <summary>
     /// Snapshot git do workspace (RF-018): usa a run ativa, senão a mais
