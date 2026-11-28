@@ -28,6 +28,31 @@
             }
         </div>
 
+        @if (TaskHistory.Count > 0)
+        {
+            @* P2.26: estatísticas de insights ancoradas no histórico real
+               de tarefas por run — mesmo snapshot da aba Tasks, sem novo
+               endpoint/backend. *@
+            <div class="mb-2 rounded-lg border border-gray-100 px-2 py-1.5 dark:border-gray-800"
+                 data-testid="insight-task-stats">
+                <div class="mb-1 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    @L["insights.task_stats"]
+                </div>
+                <ul class="flex flex-col gap-1" role="list">
+                    @foreach (var entry in TaskHistory.Take(3))
+                    {
+                        var done = entry.Items.Count(i => i.Status == "completed");
+                        <li class="flex items-center gap-1.5 text-[0.6875rem]">
+                            <span class="size-1.5 flex-none rounded-full @(entry.RunStatus == "completed" ? "bg-green-500" : entry.RunStatus == "running" ? "bg-blue-500" : "bg-gray-400")"></span>
+                            <span class="min-w-0 flex-1 truncate text-gray-600 dark:text-gray-400"
+                                  title="@(entry.ChatTitle ?? entry.RunId)">@(entry.ChatTitle ?? entry.RunId[..Math.Min(8, entry.RunId.Length)])</span>
+                            <span class="flex-none tabular-nums text-gray-500 dark:text-gray-400">@done/@entry.Items.Count</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+
         @if (_insight.Issues.Count > 0)
         {
             <div class="mb-2 flex flex-col gap-1">
@@ -124,6 +149,9 @@
 @code {
     /// <summary>Chat alvo do painel — recarrega ao trocar.</summary>
     [Parameter] public string? ChatId { get; set; }
+
+    /// <summary>Histórico de tarefas por run já carregado pelo workspace panel.</summary>
+    [Parameter] public IReadOnlyList<ChatTaskListEntry> TaskHistory { get; set; } = [];
 
     private ChatInsightResponse? _insight;
     private bool _loading;

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Bunit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
+using OpenWebUI.Application.Contracts;
 using OpenWebUI.Client.Components;
 using OpenWebUI.Client.Services;
 
@@ -152,6 +153,38 @@ public sealed class InsightsPanelTests
         {
             Assert.That(cut.Markup, Does.Contain("insights.applied"));
             Assert.That(posts, Has.Count.EqualTo(1));
+        }, TimeSpan.FromSeconds(5));
+    }
+
+
+    [Test]
+    public void Panel_TaskHistory_ExibeProgressoPorRun()
+    {
+        using var ctx = Setup(_ => Json(InsightPayload("M")));
+        var history = new List<ChatTaskListEntry>
+        {
+            new("run-1", "c1", "corrigir bug", "completed", "m", 1,
+            [
+                new RunTaskItem("1", "ler código", "completed"),
+                new RunTaskItem("2", "rodar testes", "completed"),
+            ]),
+            new("run-2", "c1", "revisar PR", "running", "m", 2,
+            [
+                new RunTaskItem("3", "abrir diff", "completed"),
+                new RunTaskItem("4", "comentar", "pending"),
+            ]),
+        };
+        var cut = ctx.Render<InsightsPanel>(p => p
+            .Add(c => c.ChatId, "c1")
+            .Add(c => c.TaskHistory, history));
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("insight-task-stats"));
+            Assert.That(cut.Markup, Does.Contain("corrigir bug"));
+            Assert.That(cut.Markup, Does.Contain("2/2"));
+            Assert.That(cut.Markup, Does.Contain("revisar PR"));
+            Assert.That(cut.Markup, Does.Contain("1/2"));
         }, TimeSpan.FromSeconds(5));
     }
 

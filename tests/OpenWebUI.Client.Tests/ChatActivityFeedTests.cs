@@ -199,6 +199,48 @@ public sealed class ChatActivityFeedTests
         Assert.That(other.Result?.Result, Is.Null);
     }
 
+
+    [Test]
+    public void Card_OutputLongo_CabecalhoResumidoPorTipoECollapse()
+    {
+        using var ctx = Setup();
+        var output = string.Join("\n", Enumerable.Range(1, 12).Select(i => $"linha {i}"));
+        var cut = ctx.Render<ToolCallCard>(p => p
+            .Add(c => c.Name, "builtin:web_search")
+            .Add(c => c.ArgsPreview, "{\"query\":\"dotnet\"}")
+            .Add(c => c.ResultPreview, output)
+            .Add(c => c.Ok, true));
+
+        cut.Find("button[aria-expanded]").Click();
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("tool-output-summary"));
+            Assert.That(cut.Markup, Does.Contain("12"));
+            Assert.That(cut.Markup, Does.Not.Contain("linha 12"));
+        });
+        cut.Find("[data-testid='tool-output-toggle']").Click();
+        Assert.That(cut.Markup, Does.Contain("linha 12"));
+    }
+
+    [Test]
+    public void Card_OutputDiff_ResumoContaMaisMenos()
+    {
+        using var ctx = Setup();
+        var diff = "diff --git a/a.cs b/a.cs\n@@ -1 +1 @@\n-a\n+b\n+c";
+        var cut = ctx.Render<ToolCallCard>(p => p
+            .Add(c => c.Name, "builtin:file_edit")
+            .Add(c => c.ResultPreview, diff)
+            .Add(c => c.Ok, true));
+
+        cut.Find("button[aria-expanded]").Click();
+        Assert.Multiple(() =>
+        {
+            Assert.That(cut.Markup, Does.Contain("tool-output-summary"));
+            Assert.That(cut.Markup, Does.Contain("data-output-kind=\"diff +2"));
+            Assert.That(cut.Markup, Does.Contain("/−1"));
+        });
+    }
+
     [Test]
     public async Task Card_Shell_AutoAbreRodando_ColapsaAoTerminar()
     {

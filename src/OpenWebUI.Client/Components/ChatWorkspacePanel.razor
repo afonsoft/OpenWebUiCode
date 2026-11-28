@@ -20,6 +20,17 @@
         </button>
     </div>
 
+    @if (ActivityFeed is not null)
+    {
+        @* Drawer mobile (SPEC-20261128-ux-polish RF-001): feed da run
+           promovido ao topo, antes das tabs — a atividade continua visível
+           quando o usuário abre o painel. *@
+        <div class="border-b border-gray-100 px-2 py-1.5 dark:border-gray-800"
+             data-testid="workspace-activity-top">
+            @ActivityFeed
+        </div>
+    }
+
     @* Setas < > navegam as tabs quando a largura do painel não as comporta
        (sidebar estreita): a seta ativa a tab vizinha e a rola para a vista. *@
     <div class="flex items-center gap-0.5 px-1 py-1.5 border-b border-gray-100 dark:border-gray-800">
@@ -653,7 +664,7 @@
 
                 @* Session insights (SPEC-20261104-session-insights-v2 RF-004):
                    chip XS–XL + categoria + issues/timeline + análise sob demanda. *@
-                <InsightsPanel ChatId="@ChatId" />
+                <InsightsPanel ChatId="@ChatId" TaskHistory="_taskHistory" />
                 break;
         }
     </div>
@@ -708,6 +719,9 @@
 
     /// <summary>Mostra a aba MCPs (endpoints são admin-only).</summary>
     [Parameter] public bool IsAdmin { get; set; }
+
+    /// <summary>Feed de atividade da run para o topo do drawer mobile.</summary>
+    [Parameter] public RenderFragment? ActivityFeed { get; set; }
 
     /// <summary>Fecha o painel.</summary>
     /// <summary>Chat cujo binding resolve o workspace (SPEC-20261010-workspace-chatid-scope); null = global.</summary>
