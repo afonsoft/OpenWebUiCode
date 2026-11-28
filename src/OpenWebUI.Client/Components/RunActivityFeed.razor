@@ -32,6 +32,23 @@
             </button>
         }
 
+        @if (!Collapsed && Streaming && OnRequestCollapse.HasDelegate)
+        {
+            @* SPEC-20261128-chat-mobile-devin-parity §3: bloco de trabalho
+               fluido — minimizar durante o streaming devolve a linha de
+               resumo (Collapsed), estado persistido por chat no pai. *@
+            <button type="button"
+                    class="flex items-center gap-1.5 self-start px-1 py-0.5 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+                    title="@L["chat.worklog.collapse"]" aria-label="@L["chat.worklog.collapse"]"
+                    @onclick="() => OnRequestCollapse.InvokeAsync()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                     stroke="currentColor" class="size-3" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+                </svg>
+                @L.T("chat.worklog.steps", ("count", Calls.Count.ToString()))
+            </button>
+        }
+
         @if (!Collapsed || _open)
         {
             @foreach (var t in Calls)
@@ -111,6 +128,10 @@
 
     /// <summary>Colapsa para "N passos" expansível (fim de run / histórico).</summary>
     [Parameter] public bool Collapsed { get; set; }
+
+    /// <summary>Pedido de minimização durante o streaming — o pai persiste
+    /// o estado por chat e devolve <c>Collapsed=true</c>.</summary>
+    [Parameter] public EventCallback OnRequestCollapse { get; set; }
 
     private bool _open;
     private string? _detailsFor;

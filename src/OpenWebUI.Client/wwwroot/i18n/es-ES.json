@@ -1435,5 +1435,6 @@
   "automations.health_bad": "Con fallos",
   "automations.health_ok_runs": "de éxito en ejecuciones recientes",
   "chat.panel_tasks_done": "{{done}}/{{total}} completadas",
-  "chat.doc_download": "Descargar"
+  "chat.doc_download": "Descargar",
+  "chat.worklog.collapse": "Minimizar"
 }

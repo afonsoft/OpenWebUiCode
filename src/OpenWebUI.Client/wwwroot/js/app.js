@@ -109,6 +109,11 @@ window.openwebui = {
 	copyText: function (text) {
 		return navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.resolve();
 	},
+	// SPEC-20261128-chat-mobile-devin-parity: viewport <sm (640px) — o
+	// bloco de thinking nasce colapsado e o layout denso é ativado.
+	isMobileViewport: function () {
+		return window.matchMedia('(max-width: 639px)').matches;
+	},
 	// SPEC-20261013-chat-media-attachments RF-002: entrega autenticada de
 	// mídia — a API é Bearer-only (sem cookie), então o JS busca os bytes
 	// com o token da sessão e cria um object URL cacheado por fileId.
